@@ -51,6 +51,8 @@ pub struct Evaluated {
     pub mechanism: Option<serde_json::Value>,
     /// What the configuration it was evaluated in left out.
     pub left_out: LeftOut,
+    /// Stock items and connectors the program declared.
+    pub declared: crate::stock::Declared,
 }
 
 /// What a configuration left out of a program's result (see
@@ -219,6 +221,7 @@ pub fn evaluate_in(source: &str, params: &[(String, f64)], tolerance: f64, input
         e.metrics = output.metrics;
         e.mechanism = output.mechanism;
         e.left_out = output.left_out.unwrap_or_default();
+        e.declared = output.declared;
         e
     })
 }
@@ -235,6 +238,9 @@ pub(crate) struct Output {
     /// What the configuration left out.
     #[serde(default)]
     pub(crate) left_out: Option<LeftOut>,
+    /// Stock items and connectors.
+    #[serde(default)]
+    pub(crate) declared: crate::stock::Declared,
 }
 
 /// A measured fact a program reports with metric(): area, keys, seats…
@@ -320,6 +326,7 @@ pub(crate) fn finish_parts(list: Vec<(String, Option<String>, Option<String>, Ma
         metrics: Default::default(),
         mechanism: None,
         left_out: LeftOut::default(),
+        declared: Default::default(),
     })
 }
 
@@ -359,6 +366,7 @@ pub(crate) fn finish(solid: Manifold) -> Result<Evaluated, String> {
         metrics: Default::default(),
         mechanism: None,
         left_out: LeftOut::default(),
+        declared: Default::default(),
     })
 }
 

@@ -2771,3 +2771,39 @@ fn a_tube_held_all_round_its_outside_is_stressed_as_plane_strain_lame_says() {
     assert!(!peak.singular && !peak.at_support && peak.change <= 0.1);
     assert!((r.max_stress - peak.stress).abs() < 1e-9, "largest {} vs settled peak {}", r.max_stress, peak.stress);
 }
+
+#[test]
+fn a_program_declares_its_stock_item_and_where_things_attach() {
+    let src = r#"
+        stock({ standard: "ISO 4762", partNumber: `ISO 4762 M3×${p.len} A2`, unitPrice: 0.04, pack: 100,
+                sources: [{ supplier: "McMaster-Carr", sku: "91292A113" }] });
+        connector("Head", { at: [0, 0, 0], axis: [0, 0, -1] });
+        return cylinder(p.len, 1.5);"#;
+    let e = runtime::evaluate(src, &[("len".into(), 12.0)], 0.01).unwrap();
+    let s = e.declared.stock.as_ref().unwrap();
+    assert_eq!(s.part_number, "ISO 4762 M3×12 A2");
+    assert_eq!(s.pack, Some(100));
+    assert_eq!(s.sources[0].sku.as_deref(), Some("91292A113"));
+    let c = &e.declared.connectors[0];
+    assert_eq!((c.name.as_str(), c.axis, c.x), ("Head", [0.0, 0.0, -1.0], [1.0, 0.0, 0.0]));
+
+    // A bought part of a multi-part program is bought; a connector names its part.
+    let src = r#"
+        connector("Shaft", { part: "Servo", at: [0, 0, 40], axis: [0, 0, 1], x: [1, 1, 5] });
+        return [part("Bracket", box(10, 10, 2)), part("Servo", box(4, 4, 40), { stock: { partNumber: "MG996R", massG: 55 } })];"#;
+    let e = runtime::evaluate(src, &[], 0.01).unwrap();
+    assert_eq!(e.parts[1].process.as_deref(), Some("buy"));
+    assert_eq!(e.declared.parts["Servo"].mass_g, Some(55.0));
+    let x = e.declared.connectors[0].x;
+    assert!((x[0] - x[1]).abs() < 1e-12 && x[2].abs() < 1e-12, "x is made square to the axis");
+
+    for (bad, says) in [
+        (r#"stock({ standard: "ISO 15" }); return box(1, 1, 1);"#, "partNumber"),
+        (r#"connector("A", { part: "Nope" }); return [part("B", box(1, 1, 1))];"#, "no part"),
+        (r#"connector("A", { axis: [0, 0, 1], x: [0, 0, 2] }); return box(1, 1, 1);"#, "along the axis"),
+        (r#"return [part("S", box(1, 1, 1), { process: "3d_print", stock: { partNumber: "X" } })];"#, "bought"),
+    ] {
+        let err = runtime::evaluate(bad, &[], 0.01).unwrap_err();
+        assert!(err.contains(says), "{bad}: {err}");
+    }
+}

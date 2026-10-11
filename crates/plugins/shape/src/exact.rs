@@ -26,6 +26,8 @@ pub struct Exact {
     pub single: bool,
     /// What the configuration it was evaluated in left out.
     pub left_out: crate::runtime::LeftOut,
+    /// Stock items and connectors the program declared.
+    pub declared: crate::stock::Declared,
 }
 
 pub struct ExactPart {
@@ -78,7 +80,7 @@ fn exact_within(arena: Arena, name: &str, source: &str, params: &[(String, f64)]
     let mut faceted = state.faceted;
     faceted.sort();
     faceted.dedup();
-    Ok((state.arena, Exact { arena: Arena::empty(), parts, faceted, metrics: output.metrics, mechanism: output.mechanism, single, left_out: output.left_out.unwrap_or_default() }))
+    Ok((state.arena, Exact { arena: Arena::empty(), parts, faceted, metrics: output.metrics, mechanism: output.mechanism, single, left_out: output.left_out.unwrap_or_default(), declared: output.declared }))
 }
 
 /// The view of a program that uses operations only the exact kernel has
@@ -94,6 +96,7 @@ pub(crate) fn evaluate_meshed(source: &str, params: &[(String, f64)], tolerance:
     e.metrics = exact.metrics;
     e.mechanism = exact.mechanism;
     e.left_out = exact.left_out;
+    e.declared = exact.declared;
     Ok(e)
 }
 

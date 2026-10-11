@@ -472,14 +472,97 @@ class Part {
  * and fabrication file). Names must be unique within the assembly.
  *   part("Left side", panel, { material: "Birch ply", process: "cnc_router" })
  */
-function part(name, solid, { material, process } = {}) {
+function part(name, solid, { material, process, stock: bought } = {}) {
   if (typeof name !== "string" || !name.trim()) throw new TypeError("part() needs a name");
   asSolid(solid);
+  if (bought !== undefined) {
+    if (process !== undefined && process !== "buy") throw new Error(`part ${name}: a stock part is bought (process "buy")`);
+    process = "buy";
+    __declared.parts[name.trim()] = __stockInfo(`part ${name}`, bought);
+  }
   if (process !== undefined && !PROCESSES.includes(process)) {
     throw new Error(`part ${name}: unknown process "${process}" (use one of ${PROCESSES.join(", ")})`);
   }
   if (material !== undefined && typeof material !== "string") throw new TypeError(`part ${name}: material is a name`);
   return new Part(name.trim(), solid, material, process);
+}
+
+// ---- Stock items and connectors ------------------------------------------------
+
+const __declared = { stock: null, parts: {}, connectors: [] };
+const __optText = (where, what, v) => {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "string" || !v.trim()) throw new TypeError(`${where}: ${what} is text`);
+  return v.trim();
+};
+const __optNum = (where, what, v) => {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0) throw new TypeError(`${where}: ${what} is a number of at least 0`);
+  return v;
+};
+function __stockInfo(where, s) {
+  if (!s || typeof s !== "object") throw new TypeError(`${where}: stock is { partNumber, standard?, description?, … }`);
+  const partNumber = __optText(where, "partNumber", s.partNumber);
+  if (!partNumber) throw new TypeError(`${where}: a stock item needs its partNumber (what a buyer orders)`);
+  const pack = __optNum(where, "pack", s.pack);
+  if (pack !== undefined && !Number.isInteger(pack)) throw new TypeError(`${where}: pack is a whole number`);
+  const sources = (s.sources ?? []).map((x, i) => {
+    const w = `${where}: sources[${i}]`;
+    const supplier = __optText(w, "supplier", x?.supplier);
+    if (!supplier) throw new TypeError(`${w} needs a supplier`);
+    return { supplier, sku: __optText(w, "sku", x.sku), url: __optText(w, "url", x.url), unit_price: __optNum(w, "unitPrice", x.unitPrice), currency: __optText(w, "currency", x.currency) };
+  });
+  return {
+    standard: __optText(where, "standard", s.standard),
+    part_number: partNumber,
+    description: __optText(where, "description", s.description),
+    manufacturer: __optText(where, "manufacturer", s.manufacturer),
+    mpn: __optText(where, "mpn", s.mpn),
+    unit_price: __optNum(where, "unitPrice", s.unitPrice),
+    currency: __optText(where, "currency", s.currency),
+    pack,
+    mass_g: __optNum(where, "massG", s.massG),
+    sources,
+  };
+}
+
+/**
+ * The whole shape is one bought-in item, as a buyer orders it. Evaluated per
+ * configuration, so the part number can follow the size:
+ *   stock({ standard: "ISO 4762", partNumber: `ISO 4762 M3×${p.length} A2`,
+ *           description: "Socket head cap screw", unitPrice: 0.04, pack: 100,
+ *           sources: [{ supplier: "McMaster-Carr", sku: "91292A113" }] })
+ * In a multi-part program, give a bought part `stock` instead:
+ *   part("Servo", body, { material: "Servo", stock: { partNumber: "MG996R" } })
+ */
+function stock(info) {
+  __declared.stock = __stockInfo("stock()", info);
+}
+
+/**
+ * A named frame where something attaches, in the program's own coordinates:
+ * a servo's output shaft, a bearing's bore, a mounting hole, a face. `axis`
+ * is the shaft or hole axis (or a face's outward normal); `x` fixes the turn
+ * about it (any direction not along the axis; default the one nearest +X).
+ * Assemblies join instances connector to connector.
+ *   connector("Output shaft", { at: [0, 0, 42.9], axis: [0, 0, 1] })
+ */
+function connector(name, { at = [0, 0, 0], axis = [0, 0, 1], x, part: on } = {}) {
+  if (typeof name !== "string" || !name.trim()) throw new TypeError("connector() needs a name");
+  const n = name.trim();
+  if (__declared.connectors.some((c) => c.name === n)) throw new TypeError(`connector(): two connectors are called "${n}"`);
+  const len = (v) => Math.hypot(...v);
+  if (!(len(vec3(axis)) > 1e-9)) throw new TypeError(`connector ${n}: axis must be a direction`);
+  const a = __unit(vec3(axis));
+  let r = x === undefined ? (Math.abs(a[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]) : vec3(x);
+  const d = __dot(r, a);
+  r = [r[0] - d * a[0], r[1] - d * a[1], r[2] - d * a[2]];
+  if (!(len(r) > 1e-9)) throw new TypeError(`connector ${n}: x must not lie along the axis`);
+  r = __unit(r);
+  const pt = vec3(at);
+  if (!pt.every(Number.isFinite)) throw new TypeError(`connector ${n}: at must be a point`);
+  __declared.connectors.push({ name: n, part: on === undefined ? undefined : String(on).trim(), at: pt, axis: a, x: r });
+  return n;
 }
 
 const __metrics = {};
@@ -673,11 +756,21 @@ function __result(out, p) {
     left_out = { parts: [], all: [], missing: [...__partsOff], dropped: [] };
   }
   if (__finishes.length) out = __finish(out, p, off);
+  const names = out instanceof Solid ? null : new Set(out.flat(Infinity).map((x) => x.name));
+  for (const c of __declared.connectors) {
+    if (c.part !== undefined && !names) throw new Error(`connector ${c.name}: the program returns one solid, it has no part "${c.part}"`);
+    if (c.part !== undefined && !names.has(c.part) && !off.has(c.part)) throw new Error(`connector ${c.name}: there is no part "${c.part}"`);
+  }
+  const declared = {
+    stock: __declared.stock ?? undefined,
+    parts: Object.fromEntries(Object.entries(__declared.parts).filter(([n]) => names && names.has(n))),
+    connectors: __declared.connectors.filter((c) => c.part === undefined || !off.has(c.part)),
+  };
   const m = __mechanism;
   const mechanism = m.bodies.length || m.meshes.length || m.joints.length ? m : undefined;
-  if (out instanceof Solid) return JSON.stringify({ solid: out.h, metrics: __metrics, mechanism, left_out });
+  if (out instanceof Solid) return JSON.stringify({ solid: out.h, metrics: __metrics, mechanism, left_out, declared });
   list = out.flat(Infinity);
-  return JSON.stringify({ parts: list.map((x) => ({ name: x.name, h: x.solid.h, material: x.material ?? null, process: x.process ?? null })), metrics: __metrics, mechanism, left_out });
+  return JSON.stringify({ parts: list.map((x) => ({ name: x.name, h: x.solid.h, material: x.material ?? null, process: x.process ?? null })), metrics: __metrics, mechanism, left_out, declared });
 }
 
 /**
