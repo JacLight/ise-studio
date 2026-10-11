@@ -102,9 +102,14 @@ Build like a designer: smallest components first, then assemblies of them.
 
 Design-review comments are pinned to a point on a part and sync to the team like any change. Sign them `"author": "Forma AI"`.
 - `comment.create { target, at: [x,y,z], normal?, part?, text, author, markup? }` pins a thread. `target` is a box, a placed shape or a top-level instance; `at` is in project coordinates (mm), converted to the part's own so the pin follows the part when it moves (`point` instead gives part coordinates directly). `normal` is the surface direction there (pins behind the model dim by it); `part` names the part of a multi-part shape. `markup: [{ points: [[x,y,z], …], arrow? }]` draws strokes or arrows on the model, in the same coordinates as the point.
-- `comment.reply { thread, text, author }` answers; `comment.resolve { target, author }` / `comment.reopen { target }`.
+- `comment.reply { thread, text, author, markup?, markup_at? }` answers, optionally with strokes drawn on the thread's part (`markup` in the part's own coordinates, `markup_at` in project coordinates; with markup the text may be empty). `comment.markup { target, author, markup?, markup_at?, replace? }` adds strokes to your own thread or reply later. `comment.resolve { target, author }` / `comment.reopen { target }`.
 - `comment.edit { target, text, author }` and `comment.delete { target, author }` work only on the author's own comment (deleting a thread deletes its replies).
 - Threads are `comment.thread` components (anchor, author, created ms, text, resolved, markup); replies are separate `comment.reply` entities with `thread`. Read them with `./forma list` / `get` to answer "what is still open?".
+
+## Versions and branches
+- `version.create { name, note?, author?, revision? }` names the project as it is now (or as it was after an earlier revision of this copy): "v1.2", "Sent to supplier". Versions are `core.version` entities in the project (synced to teammates); `version.update { target, name?, note? }`, `version.delete { target }`.
+- A version holds a set of changes (a version vector), not a revision number, so it means the same state on every teammate's copy. The engine can show it read-only (`/?project=…&version=<id>`, or `&at=<revision>`), compare it with now (`GET /versions/compare?project=…&version=<id>`), restore it as one new undoable change (`POST /versions/restore`, comments and versions are left as they are), or branch from it into a new project (`POST /versions/branch`) that later merges back (`POST /branch/merge?project=<branch>`; clashes are reported like teammates').
+- Never rewrite history to "go back": restore is a new change.
 
 ## Linked parameters
 

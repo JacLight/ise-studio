@@ -2284,7 +2284,7 @@ mod tests {
 
         // Work on the branch: a new part. Merge back: it lands in the original, the title does not.
         box_part(&branch);
-        assert_eq!(history::branch_status(&server, &branch_name)["ahead"], 2, "the title change and the new part");
+        assert_eq!(history::branch_status(&server, &branch_name)["ahead"], 1, "the new part (its own title stays on the branch)");
         let parts = |a: &App| boxes(a).len();
         assert_eq!(parts(&app), 1);
         let merged = client(&format!("/branch/merge?project={branch_name}"), json!({})).await;

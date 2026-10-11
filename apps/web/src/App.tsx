@@ -20,6 +20,7 @@ import { sketchOf } from "./sketchModel";
 import { ComponentTree, InstanceBody, ParameterSets, StackingPlan, parameterSet, stackingSubject } from "./Components";
 import { type AiMode, type Group, type PanelKind, type UiPrefs, loadPrefs, savePrefs } from "./ui";
 import { ProjectsHome } from "./ProjectsHome";
+import { VersionsSection, openVersion } from "./Versions";
 import { type CommentPin, type CommentsView, type MarkupTool, type PinAnchor, type Stroke, type ThreadMarks, CommentsPanel, DraftCard, ThreadCard, colorFor, initialsOf, pinsFor, placeName, useThreads } from "./Comments";
 import { type ViewName, Viewport, type ViewportHandle } from "./Viewport";
 
@@ -739,6 +740,8 @@ export function App({ engine }: { engine: Engine }) {
   const [openThread, setOpenThread] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ anchor: PinAnchor; strokes: Stroke[] } | null>(null);
   const [markTool, setMarkTool] = useState<MarkupTool | null>(null);
+  // A revision picked in the history to name as a version.
+  const [markAt, setMarkAt] = useState<number | null>(null);
   // Marks being drawn in the open thread (a reply's, or more on one of your messages).
   const [threadMarks, setThreadMarks] = useState<ThreadMarks | null>(null);
   useEffect(() => {
@@ -1600,7 +1603,17 @@ export function App({ engine }: { engine: Engine }) {
               onCheck={runCheck}
             />
           )}
-          {panel === "history" && <HistoryBody history={state.history} userId={state.userId} onUndo={undo} onRedo={redo} />}
+          {panel === "history" && (
+            <HistoryBody
+              history={state.history}
+              userId={state.userId}
+              onUndo={undo}
+              onRedo={redo}
+              onView={(revision) => openVersion({ revision })}
+              onMark={setMarkAt}
+              versions={<VersionsSection revision={state.revision} me={me} run={run} entities={state.entities} markAt={markAt} onMarked={() => setMarkAt(null)} />}
+            />
+          )}
           {panel === "views" && (
             <ViewsBody
               view={view}

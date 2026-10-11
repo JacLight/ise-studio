@@ -248,8 +248,14 @@ pub fn branch_status(server: &Server, name: &str) -> Value {
             let mine = fresh(&app.project.lock().unwrap(), &b.base);
             let theirs = original.project.lock().unwrap();
             let known = theirs.known();
-            let ahead = mine.iter().filter(|w| w.stamp.as_ref().is_some_and(|s| !de_core::versions::covers(known, &s.origin, s.clock))).count();
-            let behind = theirs.log_beyond(&b.base).len();
+            // The branch's own title and description stay on it: they are not "ahead".
+            let own_name_only = |w: &WireChangeSet| w.ops.iter().all(|op| match op {
+                WireOp::Set { kind, .. } => kind == "core.project",
+                WireOp::Create { id } | WireOp::Delete { id } => w.ops.iter().any(|o| matches!(o, WireOp::Set { id: i, kind, .. } if i == id && kind == "core.project")),
+            });
+            let ahead = mine.iter().filter(|w| !own_name_only(w) && w.stamp.as_ref().is_some_and(|s| !de_core::versions::covers(known, &s.origin, s.clock))).count();
+            // Its own changes since (not the branch's, merged back).
+            let behind = theirs.log_beyond(&b.base).iter().filter(|w| w.stamp.as_ref().is_none_or(|s| s.origin != b.origin) && !w.ops.is_empty()).count();
             (ahead, behind)
         }
         _ => (0, 0),

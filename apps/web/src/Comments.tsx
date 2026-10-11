@@ -337,7 +337,10 @@ export function ThreadCard(props: {
   const t = props.thread;
   const end = useRef<HTMLDivElement>(null);
   const count = t.replies.length;
-  useEffect(() => end.current?.scrollIntoView({ block: "nearest" }), [count]);
+  // (scrollIntoView returns a promise in newer browsers: never hand it back as a cleanup.)
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: "nearest" });
+  }, [count]);
   const marks = props.marks ?? null;
   const replyMarks = marks?.target === "reply" ? marks.strokes : [];
   const addingTo = marks && marks.target !== "reply" ? marks : null;
@@ -516,7 +519,9 @@ export function CommentsPanel(props: {
   pinsShown: boolean;
   onPinsShown: (on: boolean) => void;
   onOpen: (id: string) => void;
-  onNew: () => void;
+  onNew?: () => void;
+  /** A view that cannot add comments. */
+  readOnly?: boolean;
 }) {
   const open = props.threads.filter((t) => !t.resolved).length;
   const resolved = props.threads.length - open;
@@ -538,9 +543,11 @@ export function CommentsPanel(props: {
         ))}
       </div>
       <div className="comments-tools">
-        <button type="button" className="secondary" onClick={props.onNew}>
-          <Icon name="comment" /> New comment <kbd>C</kbd>
-        </button>
+        {!props.readOnly && (
+          <button type="button" className="secondary" onClick={props.onNew}>
+            <Icon name="comment" /> New comment <kbd>C</kbd>
+          </button>
+        )}
         <label className="comments-toggle" title="Show pins on the model">
           <input type="checkbox" checked={props.pinsShown} onChange={(e) => props.onPinsShown(e.target.checked)} /> Pins
         </label>
@@ -551,9 +558,13 @@ export function CommentsPanel(props: {
             <Icon name="comment" />
           </span>
           {props.threads.length === 0 ? (
-            <p>
-              No comments yet. Press <kbd>C</kbd> and click the model to pin one. Teammates see it as soon as you post, and it follows the part when it moves.
-            </p>
+            props.readOnly ? (
+              <p>No comments here.</p>
+            ) : (
+              <p>
+                No comments yet. Press <kbd>C</kbd> and click the model to pin one. Teammates see it as soon as you post, and it follows the part when it moves.
+              </p>
+            )
           ) : props.filter === "open" ? (
             <p>Every thread is resolved.</p>
           ) : (
