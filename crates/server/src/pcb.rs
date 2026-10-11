@@ -126,7 +126,7 @@ pub async fn file(State(server): State<Arc<Server>>, Path((id, name)): Path<(Str
         let project = query.get("project").map(|p| format!("&project={p}")).unwrap_or_default();
         return axum::response::Redirect::temporary(&format!("/export/{model}.step?download=1{project}")).into_response();
     }
-    let interop = if name == format!("{stem}.kicad_pcb") { Some(de_pcb::kicad::export(&v, &b)) } else { de_pcb::idf::files(&v, &b).into_iter().find(|(n, _)| *n == name).map(|(_, s)| s) };
+    let interop = if name == format!("{stem}.kicad_pcb") { Some(kicad_text(&server, &query, &id).unwrap_or_else(|| de_pcb::kicad::export(&v, &b))) } else { de_pcb::idf::files(&v, &b).into_iter().find(|(n, _)| *n == name).map(|(_, s)| s) };
     if let Some(body) = interop {
         let disposition = if query.contains_key("download") { format!("attachment; filename=\"{name}\"") } else { "inline".into() };
         return ([(header::CONTENT_TYPE, "text/plain; charset=utf-8".to_string()), (header::CONTENT_DISPOSITION, disposition)], body).into_response();
@@ -161,6 +161,14 @@ pub async fn zip(State(server): State<Arc<Server>>, Path(id): Path<String>, Quer
         Ok((name, bytes)) => ([(header::CONTENT_TYPE, "application/zip".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}\""))], bytes).into_response(),
         Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
+}
+
+/// The board as KiCad text, with each pour's own settings (read from the project).
+fn kicad_text(server: &Server, query: &HashMap<String, String>, id: &str) -> Option<String> {
+    let app = server.project(query.get("project")).ok()?;
+    let project = app.project.lock().unwrap();
+    let id: StableId = serde_json::from_value(json!(id)).ok()?;
+    de_pcb::kicad::export_world(project.world(), id)
 }
 
 /// Files for other EDA and MCAD tools: KiCad board, IDF 3.0 board and library, the 3D board as STEP.
