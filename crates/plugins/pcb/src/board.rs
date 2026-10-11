@@ -114,6 +114,9 @@ pub struct PadView {
     /// Paste openings (the pad itself unless the footprint gives windows).
     pub paste: Vec<Prim>,
     pub side: Side,
+    /// A custom pad's real outline on the board (`prim` is its convex hull).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub polygon: Option<Vec<P>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -124,6 +127,9 @@ pub struct TrackView {
     pub width: f64,
     pub points: Vec<P>,
     pub auto: bool,
+    /// Its end was dragged with a part: check it, or re-route it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub reroute: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -345,6 +351,7 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
                 drill: p.drill,
                 paste,
                 side: c.side,
+                polygon: Some(crate::footprints::pad_polygon(p, c.at, c.rotation, bottom)).filter(|v| !v.is_empty()),
             });
         }
         // Pads of one part that overlap are one piece of copper (USB-C's paired contacts, a switch's legs): one net.
@@ -521,7 +528,7 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
     }
     nets.sort_by(|a, b| crate::natural(&a.name, &b.name));
 
-    let tracks: Vec<TrackView> = items.tracks.iter().map(|(id, t)| TrackView { id: *id, net: t.net.clone(), layer: t.layer.clone(), width: t.width, points: t.points.clone(), auto: t.auto }).collect();
+    let tracks: Vec<TrackView> = items.tracks.iter().map(|(id, t)| TrackView { id: *id, net: t.net.clone(), layer: t.layer.clone(), width: t.width, points: t.points.clone(), auto: t.auto, reroute: t.reroute }).collect();
     let vias: Vec<ViaView> = items.vias.iter().map(|(id, v)| ViaView { id: *id, net: v.net.clone(), at: v.at, drill: v.drill, diameter: v.diameter }).collect();
 
     let mut view = BoardView {

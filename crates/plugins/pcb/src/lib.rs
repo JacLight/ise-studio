@@ -35,10 +35,13 @@ pub mod font;
 pub mod footprints;
 pub mod geom;
 pub mod gerber;
+pub mod idf;
+pub mod kicad;
 pub mod model3d;
 pub mod outputs;
 pub mod reader;
 pub mod route;
+pub mod sexpr;
 pub mod sourcing;
 
 pub use board::BoardView;
@@ -70,6 +73,7 @@ impl Plugin for PcbPlugin {
             .command::<UpdateZone>()
             .command::<DeleteItems>()
             .command::<route::Autoroute>()
+            .command::<kicad::ImportKicad>()
             .command::<OutlineToSketch>()
             .command::<SetSourcing>()
             .derived(Derived { name: "pcb.board", inputs: &[Board::KIND], reads_dependencies: true, compute: board::compute });
@@ -303,6 +307,9 @@ pub struct Track {
     /// Made by the autorouter (it may rip it up again).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub auto: bool,
+    /// An end was dragged along with a part it joins: it may need re-routing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reroute: bool,
 }
 
 impl Persist for Track {
@@ -347,6 +354,40 @@ pub struct Zone {
     /// Islands that join nothing of the net are removed.
     #[serde(default = "yes")]
     pub remove_islands: bool,
+    /// How pads of the zone's net join it: thermal reliefs (default), thermal for through-hole
+    /// pads only, solid, or not at all. Vias always join solid.
+    #[serde(default)]
+    pub connection: PadConnection,
+    /// Gap around a relieved pad (mm); default 0.5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thermal_gap: Option<f64>,
+    /// Width of each relief spoke (mm); default 0.5 (at least the zone's `min_width`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thermal_spoke: Option<f64>,
+}
+
+/// How pads join a pour of their net.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PadConnection {
+    /// Four spokes across a gap: solders well, the pour does not sink the heat.
+    #[default]
+    Thermal,
+    /// Thermal reliefs on through-hole pads, SMD pads joined solid.
+    ThermalTht,
+    /// Joined solid (best current and heat transfer, hardest to solder by hand).
+    Solid,
+    /// Not joined: the pour keeps clear of the net's pads (they need tracks).
+    None,
+}
+
+impl Zone {
+    pub fn gap_thermal(&self) -> f64 {
+        self.thermal_gap.unwrap_or(0.5)
+    }
+    pub fn spoke_width(&self) -> f64 {
+        self.thermal_spoke.unwrap_or(0.5).max(self.min_width)
+    }
 }
 
 fn min_width() -> f64 {
@@ -1003,7 +1044,7 @@ impl Command for CreateTrack {
             return Err(bad("a track width is above 0 and up to 20 mm"));
         }
         let id = tx.create();
-        tx.set(id, Track { board: self.board, net: net.clone(), layer: self.layer, width, points: self.points, auto: false })?;
+        tx.set(id, Track { board: self.board, net: net.clone(), layer: self.layer, width, points: self.points, auto: false, reroute: false })?;
         tx.add_dependency(self.board, id)?;
         Ok(json!({ "id": id, "net": net, "width": width }))
     }
@@ -1046,6 +1087,7 @@ impl Command for UpdateTrack {
             t.net = clean(self.net);
         }
         t.auto = false;
+        t.reroute = false;
         tx.set(self.target, t)?;
         Ok(json!({ "id": self.target }))
     }
@@ -1094,6 +1136,20 @@ pub struct CreateZone {
     #[serde(default)]
     pub priority: i32,
     pub remove_islands: Option<bool>,
+    /// "thermal" (default), "thermal_tht", "solid" or "none".
+    pub connection: Option<PadConnection>,
+    pub thermal_gap: Option<f64>,
+    pub thermal_spoke: Option<f64>,
+}
+
+fn check_thermal(gap: Option<f64>, spoke: Option<f64>) -> Result<(), CommandError> {
+    if gap.is_some_and(|g| !(g.is_finite() && (0.0..=5.0).contains(&g))) {
+        return Err(bad("thermal_gap is 0 to 5 mm"));
+    }
+    if spoke.is_some_and(|w| !(w.is_finite() && w > 0.0 && w <= 5.0)) {
+        return Err(bad("thermal_spoke is above 0 and up to 5 mm"));
+    }
+    Ok(())
 }
 
 impl Command for CreateZone {
@@ -1118,7 +1174,11 @@ impl Command for CreateZone {
             min_width: self.min_width.unwrap_or(0.25),
             priority: self.priority,
             remove_islands: self.remove_islands.unwrap_or(true),
+            connection: self.connection.unwrap_or_default(),
+            thermal_gap: self.thermal_gap,
+            thermal_spoke: self.thermal_spoke,
         };
+        check_thermal(z.thermal_gap, z.thermal_spoke)?;
         let id = tx.create();
         tx.set(id, z)?;
         tx.add_dependency(self.board, id)?;
@@ -1137,6 +1197,9 @@ pub struct UpdateZone {
     pub min_width: Option<f64>,
     pub priority: Option<i32>,
     pub remove_islands: Option<bool>,
+    pub connection: Option<PadConnection>,
+    pub thermal_gap: Option<f64>,
+    pub thermal_spoke: Option<f64>,
 }
 
 impl Command for UpdateZone {
@@ -1168,6 +1231,16 @@ impl Command for UpdateZone {
         if let Some(v) = self.remove_islands {
             z.remove_islands = v;
         }
+        if let Some(v) = self.connection {
+            z.connection = v;
+        }
+        if self.thermal_gap.is_some() {
+            z.thermal_gap = self.thermal_gap;
+        }
+        if self.thermal_spoke.is_some() {
+            z.thermal_spoke = self.thermal_spoke;
+        }
+        check_thermal(z.thermal_gap, z.thermal_spoke)?;
         tx.set(self.target, z)?;
         Ok(json!({ "id": self.target }))
     }
