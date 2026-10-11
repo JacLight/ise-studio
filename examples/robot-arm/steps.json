@@ -3556,7 +3556,7 @@
    "name": "Elbow",
    "value": 0,
    "limits": [
-    -90,
+    -60,
     90
    ]
   }
@@ -4804,7 +4804,7 @@
    "rule": {
     "kind": "no_clashes_in_motion",
     "joint": "$69.id",
-    "steps": 72
+    "steps": 36
    }
   }
  },
@@ -4814,7 +4814,7 @@
    "rule": {
     "kind": "no_clashes_in_motion",
     "joint": "$144.id",
-    "steps": 72
+    "steps": 36
    }
   }
  },
@@ -4824,7 +4824,7 @@
    "rule": {
     "kind": "no_clashes_in_motion",
     "joint": "$244.id",
-    "steps": 72
+    "steps": 36
    }
   }
  },
@@ -4834,7 +4834,7 @@
    "rule": {
     "kind": "no_clashes_in_motion",
     "joint": "$271.id",
-    "steps": 72
+    "steps": 36
    }
   }
  },
@@ -4844,7 +4844,7 @@
    "rule": {
     "kind": "no_clashes_in_motion",
     "joint": "$303.id",
-    "steps": 72
+    "steps": 36
    }
   }
  },

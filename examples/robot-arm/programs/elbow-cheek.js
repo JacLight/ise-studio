@@ -23,8 +23,8 @@ if (left) {
   const yOut = hy - HORN.MG996R.floor;
   body = xz(outline, yOut, yIn).fillet(3, onPlane(1, yOut)).add(xz(lug, yIn - 0.01, yL));
   // The elbow servo's case runs down the upper arm: −Z at rest.
-  cuts.push(hornSeat("MG996R", frame([0, hy, 0], [0, 0, -1], [0, -1, 0]), "Elbow", { cb: 0 }));
-  cols.forEach(([x, z], i) => cuts.push(clearHole("M3", [x, yOut, z], [0, -1, 0], yL - yOut, `Screw ${i + 1}`, 4)));
+  cuts.push(hornSeat("MG996R", frame([0, hy, 0], [0, 0, -1], [0, -1, 0]), "Elbow", { cb: 3.5 }));
+  cols.forEach(([x, z], i) => cuts.push(clearHole("M3", [x, yOut, z], [0, -1, 0], yL - yOut, `Screw ${i + 1}`, 7)));
   conn("Forearm seat", [0, yL, 0], [0, 1, 0], [1, 0, 0]);
 } else {
   const yIn = ARM.uaHalf + ARM.bearingGap; // 23

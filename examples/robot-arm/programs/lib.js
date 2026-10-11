@@ -26,7 +26,7 @@ const caseAbove = (s) => s.caseTop - s.tabTop; // MG996R 6.9, MG90S 3.5
 // Aluminium disc horns (servo_horn.js): tapped holes on a circle at 45° + k·90°.
 // A horn sits in a recess of the part it drives: `recess` deep, `floor` behind its face.
 const HORN = {
-  MG996R: { pcd: 16, disc: 24, tap: 3, height: 6.5, recess: 6, floor: 4, centre: 6.5 },
+  MG996R: { pcd: 16, disc: 24, tap: 3, height: 6.5, recess: 6, floor: 7, centre: 6.5 }, // screws counterbored 3.5 into the floor
   MG90S: { pcd: 11, disc: 16, tap: 2, height: 5.6, recess: 5, floor: 3, centre: 4.5 },
 };
 /** Gap between a servo housing's face (case top flush) and the driven part's face. */

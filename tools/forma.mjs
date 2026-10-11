@@ -49,6 +49,8 @@ function connect() {
       } else if (m.type === "changed") {
         revision = m.revision;
       } else if (m.type === "result") {
+        // A commit's result carries the new revision; the "changed" broadcast may come after it.
+        if (m.ok && typeof m.value?.revision === "number") revision = Math.max(revision, m.value.revision);
         waiters.get(m.request_id)?.(m);
       }
     };

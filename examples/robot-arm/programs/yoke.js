@@ -22,7 +22,7 @@ for (const x0 of [-28, 24]) body = body.add(frame([x0, 0, 0], [0, 1, 0], [1, 0, 
 
 const cuts = [];
 // The horn: its x along the shoulder servo's case, which runs up the arm (+Z at rest).
-cuts.push(hornSeat("MG996R", frame([0, hy, 0], [0, 0, 1], [0, -1, 0]), "Shoulder"));
+cuts.push(hornSeat("MG996R", frame([0, hy, 0], [0, 0, 1], [0, -1, 0]), "Shoulder", { cb: 3.5 }));
 ARM.yokeBolts.forEach(([x, y], i) => cuts.push(clearHole("M3", [x, y, z0 + foot], [0, 0, 1], foot, `Foot screw ${i + 1}`)));
 for (const x of [-20, 20]) cuts.push(insertHole("M3", [x, 38, z0 + foot], [0, 0, 1], `Cheek insert ${x < 0 ? 1 : 2}`));
 body = body.subtract(union(cuts));
