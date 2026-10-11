@@ -6,10 +6,11 @@ import { StorageDialog } from "./Dialog";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
 import { RequirementsPanel } from "./RequirementsPanel";
 import { type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, type TeamCursor, mm, projectName, projectTitle, projectUrl } from "./engine";
-import { type EdgeFinish, type Frac, type LiveEdit, type Shape, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
+import { type EdgeFinish, type Frac, type LiveEdit, type Shape, assemblyParts, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
 import { HistoryBody, ObjectsBody, ProjectBody, PropertiesBody, ToolPanel, ViewsBody } from "./Panels";
 import { useEdgeEditor } from "./EdgeEditor";
-import type { MotionGrab, ProgramFace, StressView, TurnBody } from "./Viewport";
+import type { MotionGrab, ProgramFace, StressView, TurnBody, TurnOptions } from "./Viewport";
+import { useExplode } from "./Explode";
 import type { FaceDriver } from "./engine";
 import { SyncBanner, TeamDialog, TeamPill, useTeam } from "./Team";
 import { PlaneMenu, useSketchEditor } from "./SketchEditor";
@@ -175,6 +176,16 @@ export function App({ engine }: { engine: Engine }) {
           case "color":
             setColorBy(value === "status" ? "status" : "material");
             break;
+          case "explode":
+            // An assembly pulled apart (value: the spread, or "off" to put it back).
+            if (!target) return;
+            if (value === "off") setExplode((e) => (e?.id === target ? { ...e, open: false } : e));
+            else {
+              setSelected(target);
+              setPanel("properties");
+              setExplode({ id: target, spread: Math.min(2.5, Math.max(0.25, Number(value) || 1)), open: true });
+            }
+            break;
           case "camera":
             if (value === "top" || value === "front" || value === "bottom" || value === "perspective") {
               setView(value);
@@ -290,8 +301,20 @@ export function App({ engine }: { engine: Engine }) {
     }, 4000);
     return () => window.clearTimeout(timer);
   }, [state.revision, state.connection, state.entities.size]);
-  // Showing a mechanism turned (stable, so the panel's effects run only when it changes).
-  const turn = useCallback((id: string, bodies: TurnBody[] | null, options?: { ghost?: boolean }) => viewport.current?.turn(id, bodies, options), []);
+  // Showing a mechanism turned (stable, so the panel's effects run only when it changes),
+  // with an exploded view laid over it.
+  const showTurned = useCallback((id: string, bodies: TurnBody[] | null, options?: TurnOptions) => viewport.current?.turn(id, bodies, options), []);
+  const entitiesNow = useRef(state.entities);
+  entitiesNow.current = state.entities;
+  const partsOf = useCallback((id: string) => assemblyParts(entitiesNow.current.get(id)), []);
+  const { explode, setExplode, turn, apply: reshow } = useExplode(showTurned, partsOf, (id) => viewport.current?.frame(id, true));
+  // A rebuilt shape is drawn afresh: lay its explode over it again.
+  const explodedMesh = explode ? state.entities.get(explode.id)?.mesh : undefined;
+  useEffect(() => {
+    if (explode) reshow(explode.id);
+    // Only when the exploded shape's mesh changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [explodedMesh, reshow]);
   const undo = useCallback(() => engine.undo().catch((e: EngineError) => notify(e.message)), [engine, notify]);
   const redo = useCallback(() => engine.redo().catch((e: EngineError) => notify(e.message)), [engine, notify]);
 
@@ -1308,6 +1331,8 @@ export function App({ engine }: { engine: Engine }) {
               entities={state.entities}
               selectedPart={selectedPartName}
               onSelectPart={setSelectedPartName}
+              explode={explode}
+              onExplode={setExplode}
             />
           )}
           {panel === "requirements" && (

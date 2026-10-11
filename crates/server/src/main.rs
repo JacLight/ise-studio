@@ -812,7 +812,7 @@ async fn session(app: Arc<App>, socket: WebSocket, user_id: String) {
                         reply(request_id, Ok(json!({ "stopped": true })))
                     }
                     AiMessage::View { request_id, action, target, value, to } => {
-                        const ACTIONS: &[&str] = &["select", "frame", "isolate", "show_all", "hide", "show", "color", "camera"];
+                        const ACTIONS: &[&str] = &["select", "frame", "isolate", "show_all", "hide", "show", "color", "camera", "explode"];
                         let known = target.is_none_or(|id| app.project.lock().unwrap().entity(id).is_some());
                         if !ACTIONS.contains(&action.as_str()) {
                             reply(request_id, Err(CommandError::new(ErrorCode::InvalidParameters, format!("unknown view action {action} (use {})", ACTIONS.join(", ")))))

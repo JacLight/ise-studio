@@ -35,6 +35,7 @@ const PATHS = {
   envelope: "M3 8l9-5 9 5v8l-9 5-9-5z M3 8l9 5 9-5 M12 13v8",
   ruler: "m3 16 13-13 5 5L8 21z M12 7l2 2 M8 11l2 2 M4 15l2 2",
   collide: "M3 8h10v10H3z M11 4h10v10H11z",
+  explode: "M10 10h4v4h-4z M4 4l4 4 M4 7.5V4h3.5 M20 4l-4 4 M16.5 4H20v3.5 M4 20l4-4 M4 16.5V20h3.5 M20 20l-4-4 M20 16.5V20h-3.5",
   refresh: "M20 11a8 8 0 1 0-2.3 5.7 M20 4v7h-7",
   pencil: "M4 20l1-4L16 5l3 3L8 19z M14 7l3 3",
   mail: "M3 6h18v12H3z M3 7l9 6 9-6",

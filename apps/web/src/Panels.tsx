@@ -7,6 +7,7 @@ import { type EntityView, type HistoryEntry, type PartStats, type ProjectInfo, t
 import { Icon, IconButton } from "./icons";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { type DrawingSetup, DrawingView } from "./DrawingView";
+import { type Explode, ExplodeControl } from "./Explode";
 import { GearCheck } from "./GearCheck";
 import { ProjectsHome } from "./ProjectsHome";
 import { StressStudy } from "./StressStudy";
@@ -318,6 +319,9 @@ export type PropertiesProps = {
   /** Picked part of the selected assembly, by name. */
   selectedPart: string | null;
   onSelectPart: (name: string | null) => void;
+  /** The exploded view (of this or another shape), and changing it. */
+  explode: Explode | null;
+  onExplode: (e: Explode | null) => void;
 };
 
 function StatusPill({ status }: { status: EntityView["status"] }) {
@@ -648,6 +652,8 @@ export function PropertiesBody(props: PropertiesProps) {
         displayTolerance={prog?.display_tolerance ?? 0.01}
         selectedPart={props.selectedPart}
         onSelectPart={props.onSelectPart}
+        explode={props.explode}
+        onExplode={props.onExplode}
         run={props.run}
       />
 
@@ -704,6 +710,8 @@ function MakeSections(props: {
   displayTolerance: number;
   selectedPart: string | null;
   onSelectPart: (name: string | null) => void;
+  explode: Explode | null;
+  onExplode: (e: Explode | null) => void;
   run: Run;
 }) {
   const { part, parts } = props;
@@ -728,6 +736,7 @@ function MakeSections(props: {
               {parts.length} {parts.length === 1 ? "item" : "items"} to make · click one in the view
             </span>
           </header>
+          {parts.length > 1 && <ExplodeControl id={part.id} explode={props.explode} onExplode={props.onExplode} />}
           <div className="part-list">
             {parts.map((p, i) => {
               const mat = partMaterial(part, p.material, props.entities);

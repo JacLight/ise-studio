@@ -62,7 +62,7 @@ Stress: POST `/stress/<id>` with `{ supports: [face], loads: [{ face, force: [fx
 
 ## Drawings
 
-`/drawing/{id}` (add `.pdf` or `.dxf`; `?sheet=A3&projection=first|third&part=Name`) lays out front, top, side and isometric views from the exact solid with overall dimensions, hole callouts and a title block; a shape with two or more parts gets a parts list. `shape.set_drawing { target, drawing: { part?, section?, dimensions: [{ view: "front"|"top"|"right", a: [u, v], b: [u, v], kind: "horizontal"|"vertical"|"aligned", offset }] } }` saves a section (front view cut through at `section` percent of the depth, cut faces hatched) and extra dimensions; `a` and `b` are model millimetres along the view's axes (front x,z · top x,y · right y,z), `offset` is sheet mm off the points.
+`/drawing/{id}` (add `.pdf` or `.dxf`; `?sheet=A3&projection=first|third&part=Name`) lays out front, top, side and isometric views from the exact solid with overall dimensions, hole callouts and a title block; a shape with two or more parts gets a parts list, and numbered balloons on the isometric view whose leaders end on each part (the drawing JSON lists them under `balloons`: item, centre, radius, anchor; `iso` says where the isometric sits). Part names are what the list and balloons show, so name parts the way a fitter would call them. `shape.set_drawing { target, drawing: { part?, section?, dimensions: [{ view: "front"|"top"|"right", a: [u, v], b: [u, v], kind: "horizontal"|"vertical"|"aligned", offset }] } }` saves a section (front view cut through at `section` percent of the depth, cut faces hatched) and extra dimensions; `a` and `b` are model millimetres along the view's axes (front x,z · top x,y · right y,z), `offset` is sheet mm off the points.
 
 ## Exact geometry, STEP in and out
 
@@ -112,6 +112,7 @@ You can drive their view, not just the design. When they ask to see something, s
 ./forma view hide L19 / show L19 hide or show one item
 ./forma view color status        paint the building by sale status (color material to undo)
 ./forma view camera top          top, front, bottom or perspective
+./forma view explode Bracket 1.5 pull an assembly's parts apart (spread 0.25–2.5, default 1); `off` puts them back
 ```
 
 Names work (instances like L26, shapes, assemblies) or ids. These change only that person's view; nothing is saved and other people's views stay as they are. The context tells you what their view shows (selection, isolation, hidden items, paint).

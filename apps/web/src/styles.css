@@ -2744,6 +2744,103 @@ dialog p {
   padding: 0 4px;
 }
 
+/* Exploded view: a toggle that opens into a spread slider. */
+.explode {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -2px 0 8px;
+  padding: 4px;
+  border: 1px solid #ebe7f2;
+  border-radius: 10px;
+  background: #fbfafd;
+  transition:
+    border-color 0.2s,
+    background 0.2s;
+}
+
+.explode.open {
+  border-color: #ddd0f6;
+  background: #f6f3fd;
+}
+
+.explode-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px 0 8px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #4b4559;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    box-shadow 0.15s;
+}
+
+.explode-toggle:hover {
+  background: #efebf7;
+}
+
+.explode-toggle .icon {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.35s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+
+.explode.open .explode-toggle {
+  background: #6d4ae0;
+  color: #fff;
+  box-shadow: 0 2px 6px rgb(109 74 224 / 0.3);
+}
+
+.explode.open .explode-toggle .icon {
+  transform: scale(1.15);
+}
+
+.explode-spread {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: #8d869a;
+  animation: explode-in 0.25s ease-out;
+}
+
+.explode-spread input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  accent-color: #6d4ae0;
+}
+
+.explode-spread output {
+  width: 34px;
+  text-align: right;
+  font-size: 11px;
+  font-weight: 650;
+  color: #3e3849;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes explode-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .explode-spread {
+    animation: none;
+  }
+}
+
 .part-row {
   display: flex;
   align-items: center;
