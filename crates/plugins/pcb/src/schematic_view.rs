@@ -1319,3 +1319,8 @@ fn score_path(path: &[P], bodies: &[[f64; 4]], forbidden: &[P], segs: &[(P, P)],
     }
     score
 }
+
+/// One symbol drawn on its own (library previews).
+pub fn symbol_preview(s: &schematic::SchSymbol) -> SymbolView {
+    symbol_view(StableId::new(), s)
+}
