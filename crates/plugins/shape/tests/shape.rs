@@ -2732,3 +2732,42 @@ fn a_configuration_leaving_parts_out_is_what_exports_and_drawings_get() {
     items.sort();
     assert_eq!(items, [1, 2]);
 }
+
+#[test]
+fn a_tube_held_all_round_its_outside_is_stressed_as_plane_strain_lame_says() {
+    // The same tube held all round its outside (a round face) with 100 MPa in its bore. Held axially
+    // there too, its middle is in plane strain: u = A·r + B/r with u(b) = 0 and σr(a) = −p.
+    let program = linkage_program(TUBE);
+    let e = de_shape::evaluated_at(&program, 0.01).unwrap();
+    let steel = de_shape::fea::elastic("Steel").unwrap();
+    let bore = de_shape::resolve_face(&program, None, &curved_pick(&e, [10.0, 0.0, 20.0], [-1.0, 0.0, 0.0])).unwrap();
+    let outside = de_shape::resolve_face(&program, None, &curved_pick(&e, [20.0, 0.0, 20.0], [1.0, 0.0, 0.0])).unwrap();
+    let pressed = de_shape::fea::LoadPick { face: curved_pick(&e, [10.0, 0.0, 20.0], [-1.0, 0.0, 0.0]), magnitude: 100.0, direction: "pressure".into() }.on(bore);
+    let mut s = study(vec![outside], vec![pressed], 56, vec![]);
+    s.refine = true;
+    let r = de_shape::fea::solve(&e.positions, &e.indices, &steel, &s).unwrap();
+    let (a, b, nu, p) = (10.0f64, 20.0f64, steel.nu, 100.0f64);
+    let k = p / (1.0 / (b * b) + (1.0 - 2.0 * nu) / (a * a));
+    let mises = |rr: f64| {
+        let (radial, hoop) = (-k * (1.0 / (b * b) + (1.0 - 2.0 * nu) / (rr * rr)), k * (-1.0 / (b * b) + (1.0 - 2.0 * nu) / (rr * rr)));
+        let axial = nu * (radial + hoop);
+        (0.5 * ((radial - hoop).powi(2) + (hoop - axial).powi(2) + (axial - radial).powi(2))).sqrt()
+    };
+    let mut worst = 0.0f64;
+    for deg in [0.0f64, 45.0, 120.0, 250.0] {
+        let (c, sn) = (deg.to_radians().cos(), deg.to_radians().sin());
+        for rr in [15.0, 17.5] {
+            let at = [rr * c, rr * sn, 20.0];
+            let centre = cube_centre(r.origin, r.cell, at);
+            let want = mises((centre[0] * centre[0] + centre[1] * centre[1]).sqrt());
+            worst = worst.max((de_shape::fea::stress_at(&r, at).unwrap() - want).abs() / want);
+        }
+    }
+    let peak = r.peak.as_ref().unwrap_or_else(|| panic!("no peak: {:?}", r.notes));
+    eprintln!("tube held outside: mid-wall within {:.2} % of plane-strain Lamé ({:.1} MPa at r 15); peak {:.1} MPa (cubes {:.1}) at {:?}, largest {:.1}", worst * 100.0, mises(15.0), peak.stress, peak.coarse, peak.at, r.max_stress);
+    // About 4 %: the hold takes nodes up to half a cube inside the outside, so the wall acts a touch thinner.
+    assert!(worst < 0.05, "off by {:.1} %", worst * 100.0);
+    // The hottest spot is where the bore meets an end; its settled re-solve reads it, not the staircase cube.
+    assert!(!peak.singular && !peak.at_support && peak.change <= 0.1);
+    assert!((r.max_stress - peak.stress).abs() < 1e-9, "largest {} vs settled peak {}", r.max_stress, peak.stress);
+}

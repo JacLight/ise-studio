@@ -1571,7 +1571,11 @@ pub fn solve_parts(bodies: &[Body], study: &Study) -> Result<Result_, String> {
         match refine::sharpen(&model, &u, &pointed, &stresses, &ctx) {
             Ok((p, more)) => {
                 notes.extend(more);
-                if !p.singular && p.stress > max_stress {
+                // A higher peak always counts. A lower one replaces the largest only when it is the
+                // same spot re-read (the coarse cube there was the largest) and it has settled: the
+                // staircase cube at a curved edge reads high, the surface re-solve does not.
+                let same_spot_settled = !p.at_support && p.change <= 0.1 && p.coarse >= max_stress - 1e-9;
+                if !p.singular && (p.stress > max_stress || same_spot_settled) {
                     part_stress[0] = p.stress;
                     max_stress = p.stress;
                 }
