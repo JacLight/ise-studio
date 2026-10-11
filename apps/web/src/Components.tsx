@@ -25,6 +25,7 @@ import { ConfigSection, InstanceConfig } from "./Configurations";
 import { statusColor } from "./Viewport";
 import { AssemblyJoints, type JointView, jointName, jointOf } from "./Joints";
 import { IDENTITY, worldOf } from "./model";
+import { FitCheck } from "./FitCheck";
 
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
 
@@ -362,6 +363,7 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
       {assemblyDef(def) && (
         <AssemblyJoints scope={inst.of} frame={worldOf(entity.id, entities)} title={`Joints inside ${definitionName(inst.of, entities)}`} entities={entities} run={run} view={props.joints} />
       )}
+      {assemblyDef(def) && <FitCheck instance={entity.id} onSelect={props.onSelect} />}
 
       {prog && def && <InstanceConfig entity={entity} def={def} config={inst.config} run={run} />}
 
