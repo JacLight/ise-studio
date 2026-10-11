@@ -1243,7 +1243,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       const origin = s ? new THREE.Vector3(...pivotPoint(s, pivot.current)) : null;
       const selEntity = callbacks.current.selected ? callbacks.current.entities.get(callbacks.current.selected) : undefined;
       // A joint places what it holds: no handles to move it by hand.
-      const held = !!selEntity?.placed?.by;
+      const held = !!selEntity?.placed?.by || !!callbacks.current.poses;
       gizmo.setTurnable(!!instance(selEntity) && !callbacks.current.also?.length);
       gizmo.root.visible = !!s && !f && !wire && !pivotMode && !held && !callbacks.current.edges && !callbacks.current.facePicks && !faceLayer.active && !connectorLayer.active && (!d || d.kind !== "push");
       connectorLayer.layout(camera, renderer.domElement.clientHeight, toScreen, connectorTags.current);

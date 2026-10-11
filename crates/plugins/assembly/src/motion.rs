@@ -301,7 +301,7 @@ fn gaps(world: &World, _j: &Joint, ids: &[(StableId, String)], frames: &[Vec<Tra
     out.clashes = list.iter().filter(|p| p.gap < 1e-4 && !p.joined).cloned().collect();
     out.pairs = list;
     if every > 1 {
-        out.notes.push(format!("Gaps checked at every {every}th step ({} of {}).", frames.len().div_ceil(every), frames.len()));
+        out.notes.push(format!("Gaps checked at {} of the {} steps.", frames.len().div_ceil(every), frames.len()));
     }
     Ok(())
 }
