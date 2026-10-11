@@ -563,6 +563,8 @@ export function DrawingView(props: { id: string; name: string; parts: string[]; 
         fill={on ? "rgb(106 76 219 / 0.08)" : "transparent"}
         stroke={on ? ACCENT : "none"}
         strokeWidth={0.3}
+        // A corner to snap to under the pointer wins over what is drawn there.
+        pointerEvents={tool === "dimension" && snapped ? "none" : undefined}
         onMouseEnter={() => !busyGesture && !move && setHover(key)}
         onMouseLeave={() => setHover(null)}
         onMouseDown={(e) => {
@@ -604,6 +606,8 @@ export function DrawingView(props: { id: string; name: string; parts: string[]; 
         parts.push(markBox(`d-${m.dimension}`, m.bounds, "Click for its tolerance · drag to move it in or out", (e, p) => setMove({ kind: "dimension", index: m.dimension, bounds: m.bounds, start: p, now: p, desk: deskPoint(e) })));
       for (const a of d.annotations ?? []) {
         const key = `${a.kind}-${a.index}-${a.diameter ?? ""}`;
+        // With the Dimension tool on, a detail view is for picking points on.
+        if (a.kind === "detail" && tool === "dimension") continue;
         if (a.kind === "hole") parts.push(markBox(key, a.bounds, "Set a fit on these holes", (e) => setPopover({ kind: "hole", diameter: a.diameter ?? 0, at: deskPoint(e) })));
         else {
           const what = a.kind === "detail" ? "Detail view: click to change its scale · drag to move it" : a.kind === "frame" ? "Feature control frame: click to edit · drag to move it" : "Datum: click to change its letter · drag to move it";
