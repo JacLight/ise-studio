@@ -255,6 +255,9 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
       } else if (k === "v" && b) {
         handled();
         setActive((a) => (a === "top" ? "bottom" : "top"));
+      } else if (k.length === 1 && !e.altKey && k !== "a" && k !== "l") {
+        // The 3D view's tool keys stay with it while the board is open.
+        e.stopImmediatePropagation();
       }
     };
     window.addEventListener("keydown", onKey, true);
@@ -493,13 +496,17 @@ function BoardCanvas(props: {
   }, []);
 
   const fit = useCallback(() => {
-    const [x0, y0, x1, y1] = b.bounds;
+    // The board and anything hanging over its edge (a module's antenna, a connector's mouth).
+    let [x0, y0, x1, y1] = b.bounds;
+    for (const c of b.components) for (const p of [...c.courtyard, [c.label[0], c.label[1] + 1] as P]) [x0, y0, x1, y1] = [Math.min(x0, p[0]), Math.min(y0, p[1]), Math.max(x1, p[0]), Math.max(y1, p[1])];
     const pad = 36;
-    const s = Math.min((size[0] - 2 * pad) / Math.max(x1 - x0, 1), (size[1] - 2 * pad - 40) / Math.max(y1 - y0, 1));
+    const top = 56;
+    const bottom = 40;
+    const s = Math.min((size[0] - 2 * pad) / Math.max(x1 - x0, 1), (size[1] - top - bottom) / Math.max(y1 - y0, 1));
     const cx = (x0 + x1) / 2;
     const cy = (y0 + y1) / 2;
-    setView({ s, tx: size[0] / 2 - (props.fromBelow ? -1 : 1) * cx * s, ty: size[1] / 2 + 20 + cy * s });
-  }, [b.bounds, size, props.fromBelow]);
+    setView({ s, tx: size[0] / 2 - (props.fromBelow ? -1 : 1) * cx * s, ty: top + (size[1] - top - bottom) / 2 + cy * s });
+  }, [b.bounds, b.components, size, props.fromBelow]);
 
   useEffect(() => {
     const key = `${b.id}:${size[0]}x${size[1]}:${props.fromBelow}`;
@@ -906,7 +913,7 @@ function PartsTab(props: { b: BoardView; sel: Selection; onSelect: (id: string) 
           </button>
         ))}
       </div>
-      {chosen && <PartCard key={chosen.id} c={chosen} b={b} commit={props.commit} />}
+      {chosen && <PartCard key={`${chosen.id}:${chosen.at.join(",")}:${chosen.rotation}`} c={chosen} b={b} commit={props.commit} />}
     </>
   );
 }
@@ -1253,7 +1260,7 @@ function ShopTab(props: { d: Detail; commit: (op: string, p: Record<string, unkn
             ) : (
               <div className="links none">Add an MPN to get distributor links</div>
             )}
-            <div className="pick">
+            <div className="pcb-choice">
               <input placeholder="Supplier" defaultValue={l.choice?.supplier ?? ""} onBlur={(e) => e.target.value !== (l.choice?.supplier ?? "") && save(l, { supplier: e.target.value })} />
               <input placeholder="Their part #" defaultValue={l.choice?.sku ?? ""} onBlur={(e) => e.target.value !== (l.choice?.sku ?? "") && save(l, { sku: e.target.value })} />
               <input
