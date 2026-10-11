@@ -175,8 +175,12 @@ export class FaceLayer {
     return !!this.face;
   }
 
-  /** Shows a face (or nothing), placed where its part is drawn. */
-  show(face: FlatFace | null, at: THREE.Vector3 | null) {
+  /**
+   * Shows a face (or nothing), placed where its part is drawn: at the part's
+   * position, and moved as its body is (an exploded or turning part) by
+   * `pose`, the body's rigid move within the part.
+   */
+  show(face: FlatFace | null, at: THREE.Vector3 | null, pose?: THREE.Matrix4 | null) {
     if (this.tint) {
       this.root.remove(this.tint);
       this.tint.geometry.dispose();
@@ -187,7 +191,7 @@ export class FaceLayer {
     this.offset = 0;
     this.root.visible = !!face && !!at;
     if (!face || !at) return;
-    this.root.position.copy(at);
+    this.setPose(at, pose ?? null);
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(face.triangles, 3));
     this.tint = new THREE.Mesh(
@@ -198,6 +202,14 @@ export class FaceLayer {
     this.root.add(this.tint);
     this.arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...face.normal));
     this.place();
+  }
+
+  /** Places the face where its part (and its moved body) now is. */
+  setPose(at: THREE.Vector3, pose: THREE.Matrix4 | null) {
+    const m = new THREE.Matrix4().makeTranslation(at.x, at.y, at.z);
+    if (pose) m.multiply(pose);
+    m.decompose(this.root.position, this.root.quaternion, new THREE.Vector3());
+    this.root.updateMatrixWorld(true);
   }
 
   /** Slides the face and its arrow along the normal while dragging (mm). */
@@ -211,11 +223,11 @@ export class FaceLayer {
     this.arrow.scale.setScalar(s);
   }
 
-  /** The arrow's base in scene coordinates, and the normal. */
+  /** The arrow's base in scene coordinates, and the normal (both as drawn). */
   frame(): { origin: THREE.Vector3; normal: THREE.Vector3 } | null {
     if (!this.face) return null;
-    const n = new THREE.Vector3(...this.face.normal);
-    return { origin: new THREE.Vector3(...this.face.centroid).add(this.root.position), normal: n };
+    const n = new THREE.Vector3(...this.face.normal).applyQuaternion(this.root.quaternion);
+    return { origin: new THREE.Vector3(...this.face.centroid).applyQuaternion(this.root.quaternion).add(this.root.position), normal: n };
   }
 
   /** Whether a ray grabs the arrow or the face itself. */
