@@ -1,0 +1,208 @@
+[
+ {
+  "operation": "solid.material.create",
+  "parameters": {
+   "name": "PLA",
+   "density": {
+    "value": 1240,
+    "unit": "kg/m3"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Print-in-place reducer",
+   "description": "A 1 : 7.5 two-stage reducer that prints in one piece and turns straight off the bed. Every gear stands on the bed in a floorless frame, herringbone teeth lock the train together, and the input hangs from a bridge by its knob: nothing for the slicer to support. Turn the knob; the pointer turns 7.5 times slower.",
+   "source": {
+    "$file": [
+     "../gearbox/involute.js",
+     "print-in-place.js"
+    ]
+   },
+   "display_tolerance": 0.02,
+   "materials": {
+    "PLA": "$0.id"
+   },
+   "params": [
+    {
+     "key": "module1",
+     "label": "Stage 1 module",
+     "value": 1.25,
+     "unit": "mm",
+     "min": 1,
+     "max": 3,
+     "step": 0.25
+    },
+    {
+     "key": "pinion1",
+     "label": "Stage 1 pinion teeth",
+     "value": 14,
+     "unit": "count",
+     "min": 12,
+     "max": 30,
+     "step": 1
+    },
+    {
+     "key": "gear1",
+     "label": "Stage 1 wheel teeth",
+     "value": 42,
+     "unit": "count",
+     "min": 20,
+     "max": 90,
+     "step": 1
+    },
+    {
+     "key": "width1",
+     "label": "Stage 1 face width",
+     "value": 10,
+     "unit": "mm",
+     "min": 5,
+     "max": 30
+    },
+    {
+     "key": "module2",
+     "label": "Stage 2 module",
+     "value": 1.5,
+     "unit": "mm",
+     "min": 1,
+     "max": 3,
+     "step": 0.25
+    },
+    {
+     "key": "pinion2",
+     "label": "Stage 2 pinion teeth",
+     "value": 34,
+     "unit": "count",
+     "min": 20,
+     "max": 80,
+     "step": 1
+    },
+    {
+     "key": "gear2",
+     "label": "Stage 2 wheel teeth",
+     "value": 85,
+     "unit": "count",
+     "min": 40,
+     "max": 160,
+     "step": 1
+    },
+    {
+     "key": "width2",
+     "label": "Stage 2 face width",
+     "value": 14,
+     "unit": "mm",
+     "min": 5,
+     "max": 30
+    },
+    {
+     "key": "helix",
+     "label": "Herringbone helix angle",
+     "value": 30,
+     "unit": "deg",
+     "min": 10,
+     "max": 40,
+     "step": 1
+    },
+    {
+     "key": "clearance",
+     "label": "Running clearance",
+     "value": 0.4,
+     "unit": "mm",
+     "min": 0.2,
+     "max": 1,
+     "step": 0.05
+    },
+    {
+     "key": "layerGap",
+     "label": "Layer gap",
+     "value": 0.4,
+     "unit": "mm",
+     "min": 0.2,
+     "max": 1,
+     "step": 0.05
+    },
+    {
+     "key": "meshGap",
+     "label": "Extra centre distance",
+     "value": 0.3,
+     "unit": "mm",
+     "min": 0,
+     "max": 1,
+     "step": 0.05
+    },
+    {
+     "key": "backlash",
+     "label": "Backlash",
+     "value": 0.5,
+     "unit": "mm",
+     "min": 0.05,
+     "max": 1,
+     "step": 0.05
+    },
+    {
+     "key": "chamfer",
+     "label": "Bottom chamfer",
+     "value": 0.6,
+     "unit": "mm",
+     "min": 0,
+     "max": 2,
+     "step": 0.1
+    },
+    {
+     "key": "bridgeGap",
+     "label": "Gap under the bridge",
+     "value": 1,
+     "unit": "mm",
+     "min": 0.4,
+     "max": 3,
+     "step": 0.1
+    },
+    {
+     "key": "wall",
+     "label": "Wall thickness",
+     "value": 4,
+     "unit": "mm",
+     "min": 2,
+     "max": 10
+    }
+   ]
+  }
+ },
+ {
+  "operation": "intent.requirement.create",
+  "parameters": {
+   "name": "Moving parts never touch",
+   "rule": {
+    "kind": "no_collisions",
+    "parts": [
+     "$1.id"
+    ]
+   }
+  }
+ },
+ {
+  "operation": "intent.requirement.create",
+  "parameters": {
+   "name": "Fits the X1 build volume (256 × 256 × 256 mm)",
+   "rule": {
+    "kind": "fits_within",
+    "parts": [
+     "$1.id"
+    ],
+    "width": {
+     "value": 256,
+     "unit": "mm"
+    },
+    "depth": {
+     "value": 256,
+     "unit": "mm"
+    },
+    "height": {
+     "value": 256,
+     "unit": "mm"
+    }
+   }
+  }
+ }
+]

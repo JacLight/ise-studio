@@ -1,0 +1,173 @@
+[
+  {
+    "operation": "solid.material.create",
+    "parameters": {
+      "name": "Aluminium",
+      "density": {
+        "value": 2700,
+        "unit": "kg/m3"
+      }
+    }
+  },
+  {
+    "operation": "solid.material.create",
+    "parameters": {
+      "name": "PETG",
+      "density": {
+        "value": 1270,
+        "unit": "kg/m3"
+      }
+    }
+  },
+  {
+    "operation": "solid.material.create",
+    "parameters": {
+      "name": "Steel",
+      "density": {
+        "value": 7850,
+        "unit": "kg/m3"
+      }
+    }
+  },
+  {
+    "operation": "solid.material.create",
+    "parameters": {
+      "name": "Brass",
+      "density": {
+        "value": 8500,
+        "unit": "kg/m3"
+      }
+    }
+  },
+  {
+    "operation": "solid.material.create",
+    "parameters": {
+      "name": "Rubber",
+      "density": {
+        "value": 1200,
+        "unit": "kg/m3"
+      }
+    }
+  },
+  {
+    "operation": "solid.material.create",
+    "parameters": {
+      "name": "Silicone",
+      "density": {
+        "value": 1100,
+        "unit": "kg/m3"
+      }
+    }
+  },
+  {
+    "operation": "solid.material.create",
+    "parameters": {
+      "name": "FR4",
+      "density": {
+        "value": 1850,
+        "unit": "kg/m3"
+      }
+    }
+  },
+  {
+    "operation": "solid.material.create",
+    "parameters": {
+      "name": "Stepper motor",
+      "density": {
+        "value": 4960,
+        "unit": "kg/m3"
+      }
+    }
+  },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "CoreXY 3D printer",
+      "description": "CoreXY FDM printer with a 220 mm cube build volume. Frame of cut 2020 T-slot extrusion (true slot profile) with printed PETG gussets; MGN12 Y rails on the top frame, a 2020 X beam on their carriages, MGN9 X rail and a printed toolhead shroud carrying heatsink, milled heater block and turned brass nozzle. The bed rides two \u00d88 rods and a lead screw at the back on a laser-cut yoke. The print-height parameter moves the bed.",
+      "source": {
+        "$file": "printer.js"
+      },
+      "params": [
+        {
+          "key": "build",
+          "label": "Build volume",
+          "value": 220,
+          "unit": "mm",
+          "min": 120,
+          "max": 400
+        },
+        {
+          "key": "printHeight",
+          "label": "Print height (bed position)",
+          "value": 60,
+          "unit": "mm",
+          "min": 0,
+          "max": 220
+        }
+      ],
+      "display_tolerance": 0.02,
+      "materials": {
+        "Aluminium": "$0.id",
+        "PETG": "$1.id",
+        "Steel": "$2.id",
+        "Brass": "$3.id",
+        "Rubber": "$4.id",
+        "Silicone": "$5.id",
+        "FR4": "$6.id",
+        "Stepper motor": "$7.id"
+      }
+    }
+  },
+  {
+    "operation": "intent.requirement.create",
+    "parameters": {
+      "name": "No clashes anywhere in the printer",
+      "rule": {
+        "kind": "no_collisions",
+        "parts": [
+          "$8.id"
+        ]
+      }
+    }
+  },
+  {
+    "operation": "intent.requirement.create",
+    "parameters": {
+      "name": "Fits a 500 \u00d7 500 \u00d7 600 mm enclosure",
+      "rule": {
+        "kind": "fits_within",
+        "parts": [
+          "$8.id"
+        ],
+        "width": {
+          "value": 500,
+          "unit": "mm"
+        },
+        "depth": {
+          "value": 500,
+          "unit": "mm"
+        },
+        "height": {
+          "value": 600,
+          "unit": "mm"
+        }
+      }
+    }
+  },
+  {
+    "operation": "intent.requirement.create",
+    "parameters": {
+      "name": "Under 15 kg",
+      "rule": {
+        "kind": "max_mass",
+        "parts": [
+          "$8.id"
+        ],
+        "limit": {
+          "value": 15,
+          "unit": "kg"
+        }
+      }
+    }
+  }
+]

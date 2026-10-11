@@ -1,0 +1,34 @@
+[
+  { "operation": "solid.material.create", "parameters": { "name": "Birch ply", "density": { "value": 680, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Painted MDF", "density": { "value": 750, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Quartz", "density": { "value": 2400, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Steel", "density": { "value": 7850, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Nylon", "density": { "value": 1150, "unit": "kg/m3" } } },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Kitchen run",
+      "description": "Three base and three wall cabinets, frameless 32 mm system. 18 mm birch ply carcasses with 6 mm backs in 8 mm deep grooves, shelf-pin holes on the 32 mm grid, 18 mm painted MDF doors with 35 mm hinge cups (two doors over 800 mm). Base cabinets on 100 mm adjustable legs behind a toe kick; 20 mm quartz worktop with an undermount sink cut-out and tap hole over the middle cabinet.",
+      "source": { "$file": "kitchen.js" },
+      "params": [
+        { "key": "base1", "label": "Cabinet 1 width", "value": 600, "unit": "mm", "min": 300, "max": 1200 },
+        { "key": "base2", "label": "Sink cabinet width", "value": 900, "unit": "mm", "min": 600, "max": 1200 },
+        { "key": "base3", "label": "Cabinet 3 width", "value": 600, "unit": "mm", "min": 300, "max": 1200 },
+        { "key": "depth", "label": "Base depth", "value": 560, "unit": "mm", "min": 300, "max": 700 },
+        { "key": "baseHeight", "label": "Base carcass height", "value": 720, "unit": "mm", "min": 500, "max": 900 },
+        { "key": "legHeight", "label": "Plinth height", "value": 100, "unit": "mm", "min": 80, "max": 200 },
+        { "key": "panel", "label": "Panel thickness", "value": 18, "unit": "mm", "min": 15, "max": 25 },
+        { "key": "worktop", "label": "Worktop thickness", "value": 20, "unit": "mm", "min": 12, "max": 60 },
+        { "key": "sinkWidth", "label": "Sink cut-out width", "value": 760, "unit": "mm", "min": 300, "max": 1000 },
+        { "key": "sinkDepth", "label": "Sink cut-out depth", "value": 420, "unit": "mm", "min": 300, "max": 500 },
+        { "key": "wallDepth", "label": "Wall cabinet depth", "value": 330, "unit": "mm", "min": 250, "max": 450 },
+        { "key": "wallHeight", "label": "Wall cabinet height", "value": 720, "unit": "mm", "min": 400, "max": 1100 },
+        { "key": "wallBottom", "label": "Wall cabinets from floor", "value": 1450, "unit": "mm", "min": 1300, "max": 1700 }
+      ],
+      "display_tolerance": 0.1,
+      "materials": { "Birch ply": "$0.id", "Painted MDF": "$1.id", "Quartz": "$2.id", "Steel": "$3.id", "Nylon": "$4.id" }
+    }
+  },
+  { "operation": "intent.requirement.create", "parameters": { "name": "No clashes between kitchen parts", "rule": { "kind": "no_collisions", "parts": ["$5.id"] } } },
+  { "operation": "intent.requirement.create", "parameters": { "name": "Fits the 2.1 m wall, under a 2.4 m ceiling", "rule": { "kind": "fits_within", "parts": ["$5.id"], "width": { "value": 2100, "unit": "mm" }, "depth": { "value": 650, "unit": "mm" }, "height": { "value": 2400, "unit": "mm" } } } }
+]

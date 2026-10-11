@@ -1,0 +1,19 @@
+[
+  { "operation": "solid.material.create", "parameters": { "name": "Steel", "density": { "value": 7850, "unit": "kg/m3" } } },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Shelf bracket",
+      "description": "An L bracket: a back plate screwed to the wall and an arm that carries the shelf, with a gusset between them.",
+      "source": "const t = p.thickness;\nconst back = box(t, p.width, p.height);\nconst arm = box(p.reach, p.width, t);\nconst gusset = box(p.reach * 0.5, t, p.height * 0.5).translate(0, (p.width - t) / 2, 0);\nconst holes = [0.3, 0.75].map((f) => cylinder(t + 2, 3).rotate(0, 90, 0).translate(-1, p.width / 2, p.height * f));\nreturn back.add(arm, gusset).subtract(holes);",
+      "materials": { "Steel": "$0.id" },
+      "material": "$0.id",
+      "params": [
+        { "key": "reach", "label": "Reach", "value": 120, "unit": "mm", "min": 20 },
+        { "key": "height", "label": "Height", "value": 100, "unit": "mm", "min": 20 },
+        { "key": "width", "label": "Width", "value": 30, "unit": "mm", "min": 5 },
+        { "key": "thickness", "label": "Thickness", "value": 4, "unit": "mm", "min": 1 }
+      ]
+    }
+  }
+]

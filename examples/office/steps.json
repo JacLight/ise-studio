@@ -1,0 +1,33 @@
+[
+  { "operation": "solid.material.create", "parameters": { "name": "Aluminium", "density": { "value": 2700, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Glass", "density": { "value": 2500, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Galvanised steel", "density": { "value": 7850, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Gypsum", "density": { "value": 700, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Oak", "density": { "value": 750, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Stainless steel", "density": { "value": 8000, "unit": "kg/m3" } } },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Office fit-out",
+      "description": "Three private offices off a corridor. Glazed front: aluminium head and floor tracks, 50 mm mullions, 12 mm toughened glass on setting blocks, 40 mm oak door leaf with a glazed vision slot and a stainless pull, glass transom over the door. Separating walls: 75 mm galvanised C-studs at 600 mm in U-tracks with 12.5 mm gypsum board both sides, boards cut to 1200 mm max.",
+      "source": { "$file": "office.js" },
+      "params": [
+        { "key": "offices", "label": "Offices", "value": 3, "unit": "count", "min": 1, "max": 8, "step": 1 },
+        { "key": "officeWidth", "label": "Office width", "value": 3000, "unit": "mm", "min": 2000, "max": 6000 },
+        { "key": "officeDepth", "label": "Office depth", "value": 3600, "unit": "mm", "min": 2000, "max": 8000 },
+        { "key": "height", "label": "Ceiling height", "value": 2700, "unit": "mm", "min": 2300, "max": 4000 },
+        { "key": "doorWidth", "label": "Door leaf width", "value": 926, "unit": "mm", "min": 700, "max": 1200 },
+        { "key": "doorHeight", "label": "Door height", "value": 2100, "unit": "mm", "min": 1980, "max": 2400 },
+        { "key": "glass", "label": "Glass thickness", "value": 12, "unit": "mm", "min": 6, "max": 20 },
+        { "key": "maxLite", "label": "Largest glass lite", "value": 1500, "unit": "mm", "min": 600, "max": 3000 },
+        { "key": "studWidth", "label": "Stud size", "value": 75, "unit": "mm", "min": 50, "max": 150 },
+        { "key": "studSpacing", "label": "Stud spacing", "value": 600, "unit": "mm", "min": 300, "max": 600 },
+        { "key": "board", "label": "Board thickness", "value": 12.5, "unit": "mm", "min": 9.5, "max": 25 }
+      ],
+      "display_tolerance": 0.2,
+      "materials": { "Aluminium": "$0.id", "Glass": "$1.id", "Galvanised steel": "$2.id", "Gypsum": "$3.id", "Oak": "$4.id", "Stainless steel": "$5.id" }
+    }
+  },
+  { "operation": "intent.requirement.create", "parameters": { "name": "No clashes in the fit-out", "rule": { "kind": "no_collisions", "parts": ["$6.id"] } } },
+  { "operation": "intent.requirement.create", "parameters": { "name": "Within the 9 m × 3.6 m zone", "rule": { "kind": "fits_within", "parts": ["$6.id"], "width": { "value": 9000, "unit": "mm" }, "depth": { "value": 3700, "unit": "mm" }, "height": { "value": 2700, "unit": "mm" } } } }
+]

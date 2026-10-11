@@ -1,0 +1,2640 @@
+[
+  {
+    "operation": "solid.material.create",
+    "parameters": {
+      "name": "Concrete",
+      "density": {
+        "value": 2400,
+        "unit": "kg/m3"
+      }
+    }
+  },
+  {
+    "operation": "solid.material.create",
+    "parameters": {
+      "name": "Glass",
+      "density": {
+        "value": 2500,
+        "unit": "kg/m3"
+      }
+    }
+  },
+  {
+    "operation": "solid.material.create",
+    "parameters": {
+      "name": "Pool water",
+      "density": {
+        "value": 1000,
+        "unit": "kg/m3"
+      }
+    }
+  },
+  {
+    "operation": "solid.material.create",
+    "parameters": {
+      "name": "Gypsum",
+      "density": {
+        "value": 700,
+        "unit": "kg/m3"
+      }
+    }
+  },
+  {
+    "operation": "parameters.create",
+    "parameters": {
+      "name": "Tower footprint",
+      "description": "The plan dimensions every storey follows: tower and podium, core, column grid, slab and façade.",
+      "params": [
+        {
+          "unit": "mm",
+          "key": "towerWidth",
+          "label": "Tower width",
+          "value": 52000,
+          "min": 20000,
+          "max": 90000
+        },
+        {
+          "unit": "mm",
+          "key": "towerDepth",
+          "label": "Tower depth",
+          "value": 26000,
+          "min": 14000,
+          "max": 50000
+        },
+        {
+          "unit": "mm",
+          "key": "cornerRadius",
+          "label": "Corner radius",
+          "value": 4000,
+          "min": 500,
+          "max": 10000
+        },
+        {
+          "unit": "mm",
+          "key": "balconyDepth",
+          "label": "Balcony depth",
+          "value": 2400,
+          "min": 0,
+          "max": 4000
+        },
+        {
+          "unit": "mm",
+          "key": "podiumWidth",
+          "label": "Podium width",
+          "value": 76000,
+          "min": 30000,
+          "max": 150000
+        },
+        {
+          "unit": "mm",
+          "key": "podiumDepth",
+          "label": "Podium depth",
+          "value": 56000,
+          "min": 20000,
+          "max": 120000
+        },
+        {
+          "unit": "mm",
+          "key": "towerSetback",
+          "label": "Tower setback from podium back",
+          "value": 4000,
+          "min": 0,
+          "max": 20000
+        },
+        {
+          "unit": "mm",
+          "key": "coreWidth",
+          "label": "Core width",
+          "value": 18000,
+          "min": 8000,
+          "max": 30000
+        },
+        {
+          "unit": "mm",
+          "key": "coreDepth",
+          "label": "Core depth",
+          "value": 9000,
+          "min": 5000,
+          "max": 16000
+        },
+        {
+          "unit": "mm",
+          "key": "coreWall",
+          "label": "Core wall",
+          "value": 400,
+          "min": 200,
+          "max": 1000
+        },
+        {
+          "unit": "mm",
+          "key": "columnSize",
+          "label": "Column size",
+          "value": 900,
+          "min": 400,
+          "max": 1800
+        },
+        {
+          "unit": "mm",
+          "key": "bay",
+          "label": "Column bay",
+          "value": 8800,
+          "min": 6000,
+          "max": 12000
+        },
+        {
+          "unit": "mm",
+          "key": "slab",
+          "label": "Slab thickness",
+          "value": 250,
+          "min": 180,
+          "max": 450
+        },
+        {
+          "unit": "mm",
+          "key": "glassInset",
+          "label": "Glass line inset",
+          "value": 150,
+          "min": 50,
+          "max": 600
+        },
+        {
+          "unit": "mm",
+          "key": "glassThickness",
+          "label": "Glass unit thickness",
+          "value": 32,
+          "min": 10,
+          "max": 60
+        },
+        {
+          "unit": "mm",
+          "key": "crownHeight",
+          "label": "Crown height",
+          "value": 6000,
+          "min": 1000,
+          "max": 20000
+        },
+        {
+          "unit": "mm",
+          "key": "crownThickness",
+          "label": "Crown thickness",
+          "value": 400,
+          "min": 200,
+          "max": 1500
+        },
+        {
+          "unit": "mm",
+          "key": "poolLength",
+          "label": "Pool length",
+          "value": 25000,
+          "min": 8000,
+          "max": 50000
+        },
+        {
+          "unit": "mm",
+          "key": "poolDepth",
+          "label": "Pool width",
+          "value": 8000,
+          "min": 4000,
+          "max": 20000
+        }
+      ]
+    }
+  },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Lobby level",
+      "description": "Double-height lobby: podium slab, parking-grid and tower columns, core, storefront glazing.",
+      "source": {
+        "$file": [
+          "common.js",
+          "floor.js"
+        ]
+      },
+      "params": [
+        {
+          "key": "kind",
+          "label": "Storey type (0 lobby … 5 roof)",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 5,
+          "step": 1
+        },
+        {
+          "key": "height",
+          "label": "Floor to floor",
+          "value": 6000,
+          "unit": "mm",
+          "min": 2800,
+          "max": 12000
+        },
+        {
+          "key": "layout",
+          "label": "Fit-out (0 shell, 1 home, 2 suites)",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 2,
+          "step": 1
+        },
+        {
+          "key": "stairUp",
+          "label": "Stair to the floor above",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 1,
+          "step": 1
+        },
+        {
+          "key": "stairDown",
+          "label": "Opening for a stair from below",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 1,
+          "step": 1
+        },
+        {
+          "unit": "mm",
+          "key": "towerWidth",
+          "label": "Tower width",
+          "value": 52000,
+          "min": 20000,
+          "max": 90000,
+          "expr": "=Tower footprint.towerWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "towerDepth",
+          "label": "Tower depth",
+          "value": 26000,
+          "min": 14000,
+          "max": 50000,
+          "expr": "=Tower footprint.towerDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "cornerRadius",
+          "label": "Corner radius",
+          "value": 4000,
+          "min": 500,
+          "max": 10000,
+          "expr": "=Tower footprint.cornerRadius"
+        },
+        {
+          "unit": "mm",
+          "key": "balconyDepth",
+          "label": "Balcony depth",
+          "value": 2400,
+          "min": 0,
+          "max": 4000,
+          "expr": "=Tower footprint.balconyDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "podiumWidth",
+          "label": "Podium width",
+          "value": 76000,
+          "min": 30000,
+          "max": 150000,
+          "expr": "=Tower footprint.podiumWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "podiumDepth",
+          "label": "Podium depth",
+          "value": 56000,
+          "min": 20000,
+          "max": 120000,
+          "expr": "=Tower footprint.podiumDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "towerSetback",
+          "label": "Tower setback from podium back",
+          "value": 4000,
+          "min": 0,
+          "max": 20000,
+          "expr": "=Tower footprint.towerSetback"
+        },
+        {
+          "unit": "mm",
+          "key": "coreWidth",
+          "label": "Core width",
+          "value": 18000,
+          "min": 8000,
+          "max": 30000,
+          "expr": "=Tower footprint.coreWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "coreDepth",
+          "label": "Core depth",
+          "value": 9000,
+          "min": 5000,
+          "max": 16000,
+          "expr": "=Tower footprint.coreDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "coreWall",
+          "label": "Core wall",
+          "value": 400,
+          "min": 200,
+          "max": 1000,
+          "expr": "=Tower footprint.coreWall"
+        },
+        {
+          "unit": "mm",
+          "key": "columnSize",
+          "label": "Column size",
+          "value": 900,
+          "min": 400,
+          "max": 1800,
+          "expr": "=Tower footprint.columnSize"
+        },
+        {
+          "unit": "mm",
+          "key": "bay",
+          "label": "Column bay",
+          "value": 8800,
+          "min": 6000,
+          "max": 12000,
+          "expr": "=Tower footprint.bay"
+        },
+        {
+          "unit": "mm",
+          "key": "slab",
+          "label": "Slab thickness",
+          "value": 250,
+          "min": 180,
+          "max": 450,
+          "expr": "=Tower footprint.slab"
+        },
+        {
+          "unit": "mm",
+          "key": "glassInset",
+          "label": "Glass line inset",
+          "value": 150,
+          "min": 50,
+          "max": 600,
+          "expr": "=Tower footprint.glassInset"
+        },
+        {
+          "unit": "mm",
+          "key": "glassThickness",
+          "label": "Glass unit thickness",
+          "value": 32,
+          "min": 10,
+          "max": 60,
+          "expr": "=Tower footprint.glassThickness"
+        },
+        {
+          "unit": "mm",
+          "key": "crownHeight",
+          "label": "Crown height",
+          "value": 6000,
+          "min": 1000,
+          "max": 20000,
+          "expr": "=Tower footprint.crownHeight"
+        },
+        {
+          "unit": "mm",
+          "key": "crownThickness",
+          "label": "Crown thickness",
+          "value": 400,
+          "min": 200,
+          "max": 1500,
+          "expr": "=Tower footprint.crownThickness"
+        },
+        {
+          "unit": "mm",
+          "key": "poolLength",
+          "label": "Pool length",
+          "value": 25000,
+          "min": 8000,
+          "max": 50000,
+          "expr": "=Tower footprint.poolLength"
+        },
+        {
+          "unit": "mm",
+          "key": "poolDepth",
+          "label": "Pool width",
+          "value": 8000,
+          "min": 4000,
+          "max": 20000,
+          "expr": "=Tower footprint.poolDepth"
+        }
+      ],
+      "display_tolerance": 5,
+      "definition": true,
+      "materials": {
+        "Concrete": "$0.id",
+        "Glass": "$1.id",
+        "Pool water": "$2.id",
+        "Gypsum": "$3.id"
+      }
+    }
+  },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Parking level",
+      "description": "Podium parking deck on the parking grid.",
+      "source": {
+        "$file": [
+          "common.js",
+          "floor.js"
+        ]
+      },
+      "params": [
+        {
+          "key": "kind",
+          "label": "Storey type (0 lobby … 5 roof)",
+          "value": 1,
+          "unit": "count",
+          "min": 0,
+          "max": 5,
+          "step": 1
+        },
+        {
+          "key": "height",
+          "label": "Floor to floor",
+          "value": 3200,
+          "unit": "mm",
+          "min": 2800,
+          "max": 12000
+        },
+        {
+          "key": "layout",
+          "label": "Fit-out (0 shell, 1 home, 2 suites)",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 2,
+          "step": 1
+        },
+        {
+          "key": "stairUp",
+          "label": "Stair to the floor above",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 1,
+          "step": 1
+        },
+        {
+          "key": "stairDown",
+          "label": "Opening for a stair from below",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 1,
+          "step": 1
+        },
+        {
+          "unit": "mm",
+          "key": "towerWidth",
+          "label": "Tower width",
+          "value": 52000,
+          "min": 20000,
+          "max": 90000,
+          "expr": "=Tower footprint.towerWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "towerDepth",
+          "label": "Tower depth",
+          "value": 26000,
+          "min": 14000,
+          "max": 50000,
+          "expr": "=Tower footprint.towerDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "cornerRadius",
+          "label": "Corner radius",
+          "value": 4000,
+          "min": 500,
+          "max": 10000,
+          "expr": "=Tower footprint.cornerRadius"
+        },
+        {
+          "unit": "mm",
+          "key": "balconyDepth",
+          "label": "Balcony depth",
+          "value": 2400,
+          "min": 0,
+          "max": 4000,
+          "expr": "=Tower footprint.balconyDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "podiumWidth",
+          "label": "Podium width",
+          "value": 76000,
+          "min": 30000,
+          "max": 150000,
+          "expr": "=Tower footprint.podiumWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "podiumDepth",
+          "label": "Podium depth",
+          "value": 56000,
+          "min": 20000,
+          "max": 120000,
+          "expr": "=Tower footprint.podiumDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "towerSetback",
+          "label": "Tower setback from podium back",
+          "value": 4000,
+          "min": 0,
+          "max": 20000,
+          "expr": "=Tower footprint.towerSetback"
+        },
+        {
+          "unit": "mm",
+          "key": "coreWidth",
+          "label": "Core width",
+          "value": 18000,
+          "min": 8000,
+          "max": 30000,
+          "expr": "=Tower footprint.coreWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "coreDepth",
+          "label": "Core depth",
+          "value": 9000,
+          "min": 5000,
+          "max": 16000,
+          "expr": "=Tower footprint.coreDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "coreWall",
+          "label": "Core wall",
+          "value": 400,
+          "min": 200,
+          "max": 1000,
+          "expr": "=Tower footprint.coreWall"
+        },
+        {
+          "unit": "mm",
+          "key": "columnSize",
+          "label": "Column size",
+          "value": 900,
+          "min": 400,
+          "max": 1800,
+          "expr": "=Tower footprint.columnSize"
+        },
+        {
+          "unit": "mm",
+          "key": "bay",
+          "label": "Column bay",
+          "value": 8800,
+          "min": 6000,
+          "max": 12000,
+          "expr": "=Tower footprint.bay"
+        },
+        {
+          "unit": "mm",
+          "key": "slab",
+          "label": "Slab thickness",
+          "value": 250,
+          "min": 180,
+          "max": 450,
+          "expr": "=Tower footprint.slab"
+        },
+        {
+          "unit": "mm",
+          "key": "glassInset",
+          "label": "Glass line inset",
+          "value": 150,
+          "min": 50,
+          "max": 600,
+          "expr": "=Tower footprint.glassInset"
+        },
+        {
+          "unit": "mm",
+          "key": "glassThickness",
+          "label": "Glass unit thickness",
+          "value": 32,
+          "min": 10,
+          "max": 60,
+          "expr": "=Tower footprint.glassThickness"
+        },
+        {
+          "unit": "mm",
+          "key": "crownHeight",
+          "label": "Crown height",
+          "value": 6000,
+          "min": 1000,
+          "max": 20000,
+          "expr": "=Tower footprint.crownHeight"
+        },
+        {
+          "unit": "mm",
+          "key": "crownThickness",
+          "label": "Crown thickness",
+          "value": 400,
+          "min": 200,
+          "max": 1500,
+          "expr": "=Tower footprint.crownThickness"
+        },
+        {
+          "unit": "mm",
+          "key": "poolLength",
+          "label": "Pool length",
+          "value": 25000,
+          "min": 8000,
+          "max": 50000,
+          "expr": "=Tower footprint.poolLength"
+        },
+        {
+          "unit": "mm",
+          "key": "poolDepth",
+          "label": "Pool width",
+          "value": 8000,
+          "min": 4000,
+          "max": 20000,
+          "expr": "=Tower footprint.poolDepth"
+        }
+      ],
+      "display_tolerance": 5,
+      "definition": true,
+      "materials": {
+        "Concrete": "$0.id",
+        "Glass": "$1.id",
+        "Pool water": "$2.id",
+        "Gypsum": "$3.id"
+      }
+    }
+  },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Amenity deck",
+      "description": "Podium roof with the pool in front of the tower; amenity storey in the tower footprint.",
+      "source": {
+        "$file": [
+          "common.js",
+          "floor.js"
+        ]
+      },
+      "params": [
+        {
+          "key": "kind",
+          "label": "Storey type (0 lobby … 5 roof)",
+          "value": 2,
+          "unit": "count",
+          "min": 0,
+          "max": 5,
+          "step": 1
+        },
+        {
+          "key": "height",
+          "label": "Floor to floor",
+          "value": 5000,
+          "unit": "mm",
+          "min": 2800,
+          "max": 12000
+        },
+        {
+          "key": "layout",
+          "label": "Fit-out (0 shell, 1 home, 2 suites)",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 2,
+          "step": 1
+        },
+        {
+          "key": "stairUp",
+          "label": "Stair to the floor above",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 1,
+          "step": 1
+        },
+        {
+          "key": "stairDown",
+          "label": "Opening for a stair from below",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 1,
+          "step": 1
+        },
+        {
+          "unit": "mm",
+          "key": "towerWidth",
+          "label": "Tower width",
+          "value": 52000,
+          "min": 20000,
+          "max": 90000,
+          "expr": "=Tower footprint.towerWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "towerDepth",
+          "label": "Tower depth",
+          "value": 26000,
+          "min": 14000,
+          "max": 50000,
+          "expr": "=Tower footprint.towerDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "cornerRadius",
+          "label": "Corner radius",
+          "value": 4000,
+          "min": 500,
+          "max": 10000,
+          "expr": "=Tower footprint.cornerRadius"
+        },
+        {
+          "unit": "mm",
+          "key": "balconyDepth",
+          "label": "Balcony depth",
+          "value": 2400,
+          "min": 0,
+          "max": 4000,
+          "expr": "=Tower footprint.balconyDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "podiumWidth",
+          "label": "Podium width",
+          "value": 76000,
+          "min": 30000,
+          "max": 150000,
+          "expr": "=Tower footprint.podiumWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "podiumDepth",
+          "label": "Podium depth",
+          "value": 56000,
+          "min": 20000,
+          "max": 120000,
+          "expr": "=Tower footprint.podiumDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "towerSetback",
+          "label": "Tower setback from podium back",
+          "value": 4000,
+          "min": 0,
+          "max": 20000,
+          "expr": "=Tower footprint.towerSetback"
+        },
+        {
+          "unit": "mm",
+          "key": "coreWidth",
+          "label": "Core width",
+          "value": 18000,
+          "min": 8000,
+          "max": 30000,
+          "expr": "=Tower footprint.coreWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "coreDepth",
+          "label": "Core depth",
+          "value": 9000,
+          "min": 5000,
+          "max": 16000,
+          "expr": "=Tower footprint.coreDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "coreWall",
+          "label": "Core wall",
+          "value": 400,
+          "min": 200,
+          "max": 1000,
+          "expr": "=Tower footprint.coreWall"
+        },
+        {
+          "unit": "mm",
+          "key": "columnSize",
+          "label": "Column size",
+          "value": 900,
+          "min": 400,
+          "max": 1800,
+          "expr": "=Tower footprint.columnSize"
+        },
+        {
+          "unit": "mm",
+          "key": "bay",
+          "label": "Column bay",
+          "value": 8800,
+          "min": 6000,
+          "max": 12000,
+          "expr": "=Tower footprint.bay"
+        },
+        {
+          "unit": "mm",
+          "key": "slab",
+          "label": "Slab thickness",
+          "value": 250,
+          "min": 180,
+          "max": 450,
+          "expr": "=Tower footprint.slab"
+        },
+        {
+          "unit": "mm",
+          "key": "glassInset",
+          "label": "Glass line inset",
+          "value": 150,
+          "min": 50,
+          "max": 600,
+          "expr": "=Tower footprint.glassInset"
+        },
+        {
+          "unit": "mm",
+          "key": "glassThickness",
+          "label": "Glass unit thickness",
+          "value": 32,
+          "min": 10,
+          "max": 60,
+          "expr": "=Tower footprint.glassThickness"
+        },
+        {
+          "unit": "mm",
+          "key": "crownHeight",
+          "label": "Crown height",
+          "value": 6000,
+          "min": 1000,
+          "max": 20000,
+          "expr": "=Tower footprint.crownHeight"
+        },
+        {
+          "unit": "mm",
+          "key": "crownThickness",
+          "label": "Crown thickness",
+          "value": 400,
+          "min": 200,
+          "max": 1500,
+          "expr": "=Tower footprint.crownThickness"
+        },
+        {
+          "unit": "mm",
+          "key": "poolLength",
+          "label": "Pool length",
+          "value": 25000,
+          "min": 8000,
+          "max": 50000,
+          "expr": "=Tower footprint.poolLength"
+        },
+        {
+          "unit": "mm",
+          "key": "poolDepth",
+          "label": "Pool width",
+          "value": 8000,
+          "min": 4000,
+          "max": 20000,
+          "expr": "=Tower footprint.poolDepth"
+        }
+      ],
+      "display_tolerance": 5,
+      "definition": true,
+      "materials": {
+        "Concrete": "$0.id",
+        "Glass": "$1.id",
+        "Pool water": "$2.id",
+        "Gypsum": "$3.id"
+      }
+    }
+  },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Hotel floor",
+      "description": "Typical hotel floor: 12 keys either side of a corridor around the core.",
+      "source": {
+        "$file": [
+          "common.js",
+          "floor.js"
+        ]
+      },
+      "params": [
+        {
+          "key": "kind",
+          "label": "Storey type (0 lobby … 5 roof)",
+          "value": 3,
+          "unit": "count",
+          "min": 0,
+          "max": 5,
+          "step": 1
+        },
+        {
+          "key": "height",
+          "label": "Floor to floor",
+          "value": 3300,
+          "unit": "mm",
+          "min": 2800,
+          "max": 12000
+        },
+        {
+          "key": "layout",
+          "label": "Fit-out (0 shell, 1 home, 2 suites)",
+          "value": 2,
+          "unit": "count",
+          "min": 0,
+          "max": 2,
+          "step": 1
+        },
+        {
+          "key": "stairUp",
+          "label": "Stair to the floor above",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 1,
+          "step": 1
+        },
+        {
+          "key": "stairDown",
+          "label": "Opening for a stair from below",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 1,
+          "step": 1
+        },
+        {
+          "unit": "mm",
+          "key": "towerWidth",
+          "label": "Tower width",
+          "value": 52000,
+          "min": 20000,
+          "max": 90000,
+          "expr": "=Tower footprint.towerWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "towerDepth",
+          "label": "Tower depth",
+          "value": 26000,
+          "min": 14000,
+          "max": 50000,
+          "expr": "=Tower footprint.towerDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "cornerRadius",
+          "label": "Corner radius",
+          "value": 4000,
+          "min": 500,
+          "max": 10000,
+          "expr": "=Tower footprint.cornerRadius"
+        },
+        {
+          "unit": "mm",
+          "key": "balconyDepth",
+          "label": "Balcony depth",
+          "value": 2400,
+          "min": 0,
+          "max": 4000,
+          "expr": "=Tower footprint.balconyDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "podiumWidth",
+          "label": "Podium width",
+          "value": 76000,
+          "min": 30000,
+          "max": 150000,
+          "expr": "=Tower footprint.podiumWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "podiumDepth",
+          "label": "Podium depth",
+          "value": 56000,
+          "min": 20000,
+          "max": 120000,
+          "expr": "=Tower footprint.podiumDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "towerSetback",
+          "label": "Tower setback from podium back",
+          "value": 4000,
+          "min": 0,
+          "max": 20000,
+          "expr": "=Tower footprint.towerSetback"
+        },
+        {
+          "unit": "mm",
+          "key": "coreWidth",
+          "label": "Core width",
+          "value": 18000,
+          "min": 8000,
+          "max": 30000,
+          "expr": "=Tower footprint.coreWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "coreDepth",
+          "label": "Core depth",
+          "value": 9000,
+          "min": 5000,
+          "max": 16000,
+          "expr": "=Tower footprint.coreDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "coreWall",
+          "label": "Core wall",
+          "value": 400,
+          "min": 200,
+          "max": 1000,
+          "expr": "=Tower footprint.coreWall"
+        },
+        {
+          "unit": "mm",
+          "key": "columnSize",
+          "label": "Column size",
+          "value": 900,
+          "min": 400,
+          "max": 1800,
+          "expr": "=Tower footprint.columnSize"
+        },
+        {
+          "unit": "mm",
+          "key": "bay",
+          "label": "Column bay",
+          "value": 8800,
+          "min": 6000,
+          "max": 12000,
+          "expr": "=Tower footprint.bay"
+        },
+        {
+          "unit": "mm",
+          "key": "slab",
+          "label": "Slab thickness",
+          "value": 250,
+          "min": 180,
+          "max": 450,
+          "expr": "=Tower footprint.slab"
+        },
+        {
+          "unit": "mm",
+          "key": "glassInset",
+          "label": "Glass line inset",
+          "value": 150,
+          "min": 50,
+          "max": 600,
+          "expr": "=Tower footprint.glassInset"
+        },
+        {
+          "unit": "mm",
+          "key": "glassThickness",
+          "label": "Glass unit thickness",
+          "value": 32,
+          "min": 10,
+          "max": 60,
+          "expr": "=Tower footprint.glassThickness"
+        },
+        {
+          "unit": "mm",
+          "key": "crownHeight",
+          "label": "Crown height",
+          "value": 6000,
+          "min": 1000,
+          "max": 20000,
+          "expr": "=Tower footprint.crownHeight"
+        },
+        {
+          "unit": "mm",
+          "key": "crownThickness",
+          "label": "Crown thickness",
+          "value": 400,
+          "min": 200,
+          "max": 1500,
+          "expr": "=Tower footprint.crownThickness"
+        },
+        {
+          "unit": "mm",
+          "key": "poolLength",
+          "label": "Pool length",
+          "value": 25000,
+          "min": 8000,
+          "max": 50000,
+          "expr": "=Tower footprint.poolLength"
+        },
+        {
+          "unit": "mm",
+          "key": "poolDepth",
+          "label": "Pool width",
+          "value": 8000,
+          "min": 4000,
+          "max": 20000,
+          "expr": "=Tower footprint.poolDepth"
+        }
+      ],
+      "display_tolerance": 5,
+      "definition": true,
+      "materials": {
+        "Concrete": "$0.id",
+        "Glass": "$1.id",
+        "Pool water": "$2.id",
+        "Gypsum": "$3.id"
+      }
+    }
+  },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Residential floor",
+      "description": "Typical residential floor delivered as a shell, with deep balconies and glass balustrades at 42″.",
+      "source": {
+        "$file": [
+          "common.js",
+          "floor.js"
+        ]
+      },
+      "params": [
+        {
+          "key": "kind",
+          "label": "Storey type (0 lobby … 5 roof)",
+          "value": 4,
+          "unit": "count",
+          "min": 0,
+          "max": 5,
+          "step": 1
+        },
+        {
+          "key": "height",
+          "label": "Floor to floor",
+          "value": 3500,
+          "unit": "mm",
+          "min": 2800,
+          "max": 12000
+        },
+        {
+          "key": "layout",
+          "label": "Fit-out (0 shell, 1 home, 2 suites)",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 2,
+          "step": 1
+        },
+        {
+          "key": "stairUp",
+          "label": "Stair to the floor above",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 1,
+          "step": 1
+        },
+        {
+          "key": "stairDown",
+          "label": "Opening for a stair from below",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 1,
+          "step": 1
+        },
+        {
+          "unit": "mm",
+          "key": "towerWidth",
+          "label": "Tower width",
+          "value": 52000,
+          "min": 20000,
+          "max": 90000,
+          "expr": "=Tower footprint.towerWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "towerDepth",
+          "label": "Tower depth",
+          "value": 26000,
+          "min": 14000,
+          "max": 50000,
+          "expr": "=Tower footprint.towerDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "cornerRadius",
+          "label": "Corner radius",
+          "value": 4000,
+          "min": 500,
+          "max": 10000,
+          "expr": "=Tower footprint.cornerRadius"
+        },
+        {
+          "unit": "mm",
+          "key": "balconyDepth",
+          "label": "Balcony depth",
+          "value": 2400,
+          "min": 0,
+          "max": 4000,
+          "expr": "=Tower footprint.balconyDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "podiumWidth",
+          "label": "Podium width",
+          "value": 76000,
+          "min": 30000,
+          "max": 150000,
+          "expr": "=Tower footprint.podiumWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "podiumDepth",
+          "label": "Podium depth",
+          "value": 56000,
+          "min": 20000,
+          "max": 120000,
+          "expr": "=Tower footprint.podiumDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "towerSetback",
+          "label": "Tower setback from podium back",
+          "value": 4000,
+          "min": 0,
+          "max": 20000,
+          "expr": "=Tower footprint.towerSetback"
+        },
+        {
+          "unit": "mm",
+          "key": "coreWidth",
+          "label": "Core width",
+          "value": 18000,
+          "min": 8000,
+          "max": 30000,
+          "expr": "=Tower footprint.coreWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "coreDepth",
+          "label": "Core depth",
+          "value": 9000,
+          "min": 5000,
+          "max": 16000,
+          "expr": "=Tower footprint.coreDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "coreWall",
+          "label": "Core wall",
+          "value": 400,
+          "min": 200,
+          "max": 1000,
+          "expr": "=Tower footprint.coreWall"
+        },
+        {
+          "unit": "mm",
+          "key": "columnSize",
+          "label": "Column size",
+          "value": 900,
+          "min": 400,
+          "max": 1800,
+          "expr": "=Tower footprint.columnSize"
+        },
+        {
+          "unit": "mm",
+          "key": "bay",
+          "label": "Column bay",
+          "value": 8800,
+          "min": 6000,
+          "max": 12000,
+          "expr": "=Tower footprint.bay"
+        },
+        {
+          "unit": "mm",
+          "key": "slab",
+          "label": "Slab thickness",
+          "value": 250,
+          "min": 180,
+          "max": 450,
+          "expr": "=Tower footprint.slab"
+        },
+        {
+          "unit": "mm",
+          "key": "glassInset",
+          "label": "Glass line inset",
+          "value": 150,
+          "min": 50,
+          "max": 600,
+          "expr": "=Tower footprint.glassInset"
+        },
+        {
+          "unit": "mm",
+          "key": "glassThickness",
+          "label": "Glass unit thickness",
+          "value": 32,
+          "min": 10,
+          "max": 60,
+          "expr": "=Tower footprint.glassThickness"
+        },
+        {
+          "unit": "mm",
+          "key": "crownHeight",
+          "label": "Crown height",
+          "value": 6000,
+          "min": 1000,
+          "max": 20000,
+          "expr": "=Tower footprint.crownHeight"
+        },
+        {
+          "unit": "mm",
+          "key": "crownThickness",
+          "label": "Crown thickness",
+          "value": 400,
+          "min": 200,
+          "max": 1500,
+          "expr": "=Tower footprint.crownThickness"
+        },
+        {
+          "unit": "mm",
+          "key": "poolLength",
+          "label": "Pool length",
+          "value": 25000,
+          "min": 8000,
+          "max": 50000,
+          "expr": "=Tower footprint.poolLength"
+        },
+        {
+          "unit": "mm",
+          "key": "poolDepth",
+          "label": "Pool width",
+          "value": 8000,
+          "min": 4000,
+          "max": 20000,
+          "expr": "=Tower footprint.poolDepth"
+        }
+      ],
+      "display_tolerance": 5,
+      "definition": true,
+      "materials": {
+        "Concrete": "$0.id",
+        "Glass": "$1.id",
+        "Pool water": "$2.id",
+        "Gypsum": "$3.id"
+      }
+    }
+  },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Roof and crown",
+      "description": "Roof slab, parapet crown and machine room.",
+      "source": {
+        "$file": [
+          "common.js",
+          "floor.js"
+        ]
+      },
+      "params": [
+        {
+          "key": "kind",
+          "label": "Storey type (0 lobby … 5 roof)",
+          "value": 5,
+          "unit": "count",
+          "min": 0,
+          "max": 5,
+          "step": 1
+        },
+        {
+          "key": "height",
+          "label": "Floor to floor",
+          "value": 3500,
+          "unit": "mm",
+          "min": 2800,
+          "max": 12000
+        },
+        {
+          "key": "layout",
+          "label": "Fit-out (0 shell, 1 home, 2 suites)",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 2,
+          "step": 1
+        },
+        {
+          "key": "stairUp",
+          "label": "Stair to the floor above",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 1,
+          "step": 1
+        },
+        {
+          "key": "stairDown",
+          "label": "Opening for a stair from below",
+          "value": 0,
+          "unit": "count",
+          "min": 0,
+          "max": 1,
+          "step": 1
+        },
+        {
+          "unit": "mm",
+          "key": "towerWidth",
+          "label": "Tower width",
+          "value": 52000,
+          "min": 20000,
+          "max": 90000,
+          "expr": "=Tower footprint.towerWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "towerDepth",
+          "label": "Tower depth",
+          "value": 26000,
+          "min": 14000,
+          "max": 50000,
+          "expr": "=Tower footprint.towerDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "cornerRadius",
+          "label": "Corner radius",
+          "value": 4000,
+          "min": 500,
+          "max": 10000,
+          "expr": "=Tower footprint.cornerRadius"
+        },
+        {
+          "unit": "mm",
+          "key": "balconyDepth",
+          "label": "Balcony depth",
+          "value": 2400,
+          "min": 0,
+          "max": 4000,
+          "expr": "=Tower footprint.balconyDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "podiumWidth",
+          "label": "Podium width",
+          "value": 76000,
+          "min": 30000,
+          "max": 150000,
+          "expr": "=Tower footprint.podiumWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "podiumDepth",
+          "label": "Podium depth",
+          "value": 56000,
+          "min": 20000,
+          "max": 120000,
+          "expr": "=Tower footprint.podiumDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "towerSetback",
+          "label": "Tower setback from podium back",
+          "value": 4000,
+          "min": 0,
+          "max": 20000,
+          "expr": "=Tower footprint.towerSetback"
+        },
+        {
+          "unit": "mm",
+          "key": "coreWidth",
+          "label": "Core width",
+          "value": 18000,
+          "min": 8000,
+          "max": 30000,
+          "expr": "=Tower footprint.coreWidth"
+        },
+        {
+          "unit": "mm",
+          "key": "coreDepth",
+          "label": "Core depth",
+          "value": 9000,
+          "min": 5000,
+          "max": 16000,
+          "expr": "=Tower footprint.coreDepth"
+        },
+        {
+          "unit": "mm",
+          "key": "coreWall",
+          "label": "Core wall",
+          "value": 400,
+          "min": 200,
+          "max": 1000,
+          "expr": "=Tower footprint.coreWall"
+        },
+        {
+          "unit": "mm",
+          "key": "columnSize",
+          "label": "Column size",
+          "value": 900,
+          "min": 400,
+          "max": 1800,
+          "expr": "=Tower footprint.columnSize"
+        },
+        {
+          "unit": "mm",
+          "key": "bay",
+          "label": "Column bay",
+          "value": 8800,
+          "min": 6000,
+          "max": 12000,
+          "expr": "=Tower footprint.bay"
+        },
+        {
+          "unit": "mm",
+          "key": "slab",
+          "label": "Slab thickness",
+          "value": 250,
+          "min": 180,
+          "max": 450,
+          "expr": "=Tower footprint.slab"
+        },
+        {
+          "unit": "mm",
+          "key": "glassInset",
+          "label": "Glass line inset",
+          "value": 150,
+          "min": 50,
+          "max": 600,
+          "expr": "=Tower footprint.glassInset"
+        },
+        {
+          "unit": "mm",
+          "key": "glassThickness",
+          "label": "Glass unit thickness",
+          "value": 32,
+          "min": 10,
+          "max": 60,
+          "expr": "=Tower footprint.glassThickness"
+        },
+        {
+          "unit": "mm",
+          "key": "crownHeight",
+          "label": "Crown height",
+          "value": 6000,
+          "min": 1000,
+          "max": 20000,
+          "expr": "=Tower footprint.crownHeight"
+        },
+        {
+          "unit": "mm",
+          "key": "crownThickness",
+          "label": "Crown thickness",
+          "value": 400,
+          "min": 200,
+          "max": 1500,
+          "expr": "=Tower footprint.crownThickness"
+        },
+        {
+          "unit": "mm",
+          "key": "poolLength",
+          "label": "Pool length",
+          "value": 25000,
+          "min": 8000,
+          "max": 50000,
+          "expr": "=Tower footprint.poolLength"
+        },
+        {
+          "unit": "mm",
+          "key": "poolDepth",
+          "label": "Pool width",
+          "value": 8000,
+          "min": 4000,
+          "max": 20000,
+          "expr": "=Tower footprint.poolDepth"
+        }
+      ],
+      "display_tolerance": 5,
+      "definition": true,
+      "materials": {
+        "Concrete": "$0.id",
+        "Glass": "$1.id",
+        "Pool water": "$2.id",
+        "Gypsum": "$3.id"
+      }
+    }
+  },
+  {
+    "operation": "assembly.create",
+    "parameters": {
+      "name": "Tower",
+      "description": "40 storeys: lobby, 4 parking levels, amenity deck, 12 hotel floors, 22 residential floors, roof."
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$5.id",
+      "parent": "$11.id",
+      "name": "L01",
+      "at": [
+        0,
+        0,
+        0
+      ],
+      "properties": {
+        "use": "Lobby"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$6.id",
+      "parent": "$11.id",
+      "name": "L02",
+      "at": [
+        0,
+        0,
+        6000
+      ],
+      "properties": {
+        "use": "Parking"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$6.id",
+      "parent": "$11.id",
+      "name": "L03",
+      "at": [
+        0,
+        0,
+        9200
+      ],
+      "properties": {
+        "use": "Parking"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$6.id",
+      "parent": "$11.id",
+      "name": "L04",
+      "at": [
+        0,
+        0,
+        12400
+      ],
+      "properties": {
+        "use": "Parking"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$6.id",
+      "parent": "$11.id",
+      "name": "L05",
+      "at": [
+        0,
+        0,
+        15600
+      ],
+      "properties": {
+        "use": "Parking"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$7.id",
+      "parent": "$11.id",
+      "name": "L06",
+      "at": [
+        0,
+        0,
+        18800
+      ],
+      "properties": {
+        "use": "Amenities"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$8.id",
+      "parent": "$11.id",
+      "name": "L07",
+      "at": [
+        0,
+        0,
+        23800
+      ],
+      "properties": {
+        "use": "Hotel",
+        "status": "Hotel",
+        "owner": "Hotel operator"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$8.id",
+      "parent": "$11.id",
+      "name": "L08",
+      "at": [
+        0,
+        0,
+        27100
+      ],
+      "properties": {
+        "use": "Hotel",
+        "status": "Hotel",
+        "owner": "Hotel operator"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$8.id",
+      "parent": "$11.id",
+      "name": "L09",
+      "at": [
+        0,
+        0,
+        30400
+      ],
+      "properties": {
+        "use": "Hotel",
+        "status": "Hotel",
+        "owner": "Hotel operator"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$8.id",
+      "parent": "$11.id",
+      "name": "L10",
+      "at": [
+        0,
+        0,
+        33700
+      ],
+      "properties": {
+        "use": "Hotel",
+        "status": "Hotel",
+        "owner": "Hotel operator"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$8.id",
+      "parent": "$11.id",
+      "name": "L11",
+      "at": [
+        0,
+        0,
+        37000
+      ],
+      "properties": {
+        "use": "Hotel",
+        "status": "Hotel",
+        "owner": "Hotel operator"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$8.id",
+      "parent": "$11.id",
+      "name": "L12",
+      "at": [
+        0,
+        0,
+        40300
+      ],
+      "properties": {
+        "use": "Hotel",
+        "status": "Hotel",
+        "owner": "Hotel operator"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$8.id",
+      "parent": "$11.id",
+      "name": "L13",
+      "at": [
+        0,
+        0,
+        43600
+      ],
+      "properties": {
+        "use": "Hotel",
+        "status": "Hotel",
+        "owner": "Hotel operator"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$8.id",
+      "parent": "$11.id",
+      "name": "L14",
+      "at": [
+        0,
+        0,
+        46900
+      ],
+      "properties": {
+        "use": "Hotel",
+        "status": "Hotel",
+        "owner": "Hotel operator"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$8.id",
+      "parent": "$11.id",
+      "name": "L15",
+      "at": [
+        0,
+        0,
+        50200
+      ],
+      "properties": {
+        "use": "Hotel",
+        "status": "Hotel",
+        "owner": "Hotel operator"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$8.id",
+      "parent": "$11.id",
+      "name": "L16",
+      "at": [
+        0,
+        0,
+        53500
+      ],
+      "properties": {
+        "use": "Hotel",
+        "status": "Hotel",
+        "owner": "Hotel operator"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$8.id",
+      "parent": "$11.id",
+      "name": "L17",
+      "at": [
+        0,
+        0,
+        56800
+      ],
+      "properties": {
+        "use": "Hotel",
+        "status": "Hotel",
+        "owner": "Hotel operator"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$8.id",
+      "parent": "$11.id",
+      "name": "L18",
+      "at": [
+        0,
+        0,
+        60100
+      ],
+      "properties": {
+        "use": "Hotel",
+        "status": "Hotel",
+        "owner": "Hotel operator"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L19",
+      "at": [
+        0,
+        0,
+        63400
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L20",
+      "at": [
+        0,
+        0,
+        66900
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L21",
+      "at": [
+        0,
+        0,
+        70400
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L22",
+      "at": [
+        0,
+        0,
+        73900
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L23",
+      "at": [
+        0,
+        0,
+        77400
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L24",
+      "at": [
+        0,
+        0,
+        80900
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L25",
+      "at": [
+        0,
+        0,
+        84400
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L26",
+      "at": [
+        0,
+        0,
+        87900
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L27",
+      "at": [
+        0,
+        0,
+        91400
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L28",
+      "at": [
+        0,
+        0,
+        94900
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L29",
+      "at": [
+        0,
+        0,
+        98400
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L30",
+      "at": [
+        0,
+        0,
+        101900
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L31",
+      "at": [
+        0,
+        0,
+        105400
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L32",
+      "at": [
+        0,
+        0,
+        108900
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L33",
+      "at": [
+        0,
+        0,
+        112400
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L34",
+      "at": [
+        0,
+        0,
+        115900
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L35",
+      "at": [
+        0,
+        0,
+        119400
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L36",
+      "at": [
+        0,
+        0,
+        122900
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L37",
+      "at": [
+        0,
+        0,
+        126400
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L38",
+      "at": [
+        0,
+        0,
+        129900
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L39",
+      "at": [
+        0,
+        0,
+        133400
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$11.id",
+      "name": "L40",
+      "at": [
+        0,
+        0,
+        136900
+      ],
+      "properties": {
+        "use": "Residence",
+        "status": "Available"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$10.id",
+      "parent": "$11.id",
+      "name": "Roof",
+      "at": [
+        0,
+        0,
+        140400
+      ]
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$11.id",
+      "name": "Miami condo + hotel tower",
+      "at": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "operation": "assembly.instance.make_unique",
+    "parameters": {
+      "target": "$36.id",
+      "name": "L25 · full-floor residence"
+    }
+  },
+  {
+    "operation": "shape.update",
+    "parameters": {
+      "target": "$54.definition",
+      "description": "L25 sold whole: one full-floor home, bedrooms along the private back side, open living to the front."
+    }
+  },
+  {
+    "operation": "shape.set_params",
+    "parameters": {
+      "target": "$54.definition",
+      "values": {
+        "layout": 1
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.update",
+    "parameters": {
+      "target": "$36.id",
+      "properties": {
+        "status": "Sold",
+        "owner": "Buyer A",
+        "use": "Full-floor residence"
+      }
+    }
+  },
+  {
+    "operation": "assembly.create",
+    "parameters": {
+      "name": "Residence L30–L32",
+      "description": "Three consecutive storeys combined into one home, linked by internal stairs through openings in the slabs."
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$58.id",
+      "name": "L30",
+      "at": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "operation": "assembly.instance.make_unique",
+    "parameters": {
+      "target": "$59.id",
+      "name": "L30 · Residence L30–L32"
+    }
+  },
+  {
+    "operation": "shape.update",
+    "parameters": {
+      "target": "$60.definition",
+      "description": "L30 of the three-storey home: stair up to L31."
+    }
+  },
+  {
+    "operation": "shape.set_params",
+    "parameters": {
+      "target": "$60.definition",
+      "values": {
+        "layout": 1,
+        "stairUp": 1,
+        "stairDown": 0
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.delete",
+    "parameters": {
+      "target": "$41.id"
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$58.id",
+      "name": "L31",
+      "at": [
+        0,
+        0,
+        3500
+      ]
+    }
+  },
+  {
+    "operation": "assembly.instance.make_unique",
+    "parameters": {
+      "target": "$64.id",
+      "name": "L31 · Residence L30–L32"
+    }
+  },
+  {
+    "operation": "shape.update",
+    "parameters": {
+      "target": "$65.definition",
+      "description": "L31 of the three-storey home: stair down from L30 and up to L32."
+    }
+  },
+  {
+    "operation": "shape.set_params",
+    "parameters": {
+      "target": "$65.definition",
+      "values": {
+        "layout": 1,
+        "stairUp": 1,
+        "stairDown": 1
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.delete",
+    "parameters": {
+      "target": "$42.id"
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$9.id",
+      "parent": "$58.id",
+      "name": "L32",
+      "at": [
+        0,
+        0,
+        7000
+      ]
+    }
+  },
+  {
+    "operation": "assembly.instance.make_unique",
+    "parameters": {
+      "target": "$69.id",
+      "name": "L32 · Residence L30–L32"
+    }
+  },
+  {
+    "operation": "shape.update",
+    "parameters": {
+      "target": "$70.definition",
+      "description": "L32 of the three-storey home: opening for the stair from L31."
+    }
+  },
+  {
+    "operation": "shape.set_params",
+    "parameters": {
+      "target": "$70.definition",
+      "values": {
+        "layout": 1,
+        "stairUp": 0,
+        "stairDown": 1
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.delete",
+    "parameters": {
+      "target": "$43.id"
+    }
+  },
+  {
+    "operation": "assembly.instance.create",
+    "parameters": {
+      "of": "$58.id",
+      "parent": "$11.id",
+      "name": "L30–L32",
+      "at": [
+        0,
+        0,
+        101900
+      ],
+      "properties": {
+        "status": "Sold",
+        "owner": "Buyer B",
+        "use": "Three-storey residence"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.make_unique",
+    "parameters": {
+      "target": "$47.id",
+      "name": "L36 · serviced suites"
+    }
+  },
+  {
+    "operation": "shape.update",
+    "parameters": {
+      "target": "$75.definition",
+      "description": "A residential floor fitted out as 12 serviced suites around a corridor, run by the hotel operator."
+    }
+  },
+  {
+    "operation": "shape.set_params",
+    "parameters": {
+      "target": "$75.definition",
+      "values": {
+        "layout": 2
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.update",
+    "parameters": {
+      "target": "$47.id",
+      "properties": {
+        "status": "Reserved",
+        "owner": "Hotel operator",
+        "use": "Serviced suites"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.update",
+    "parameters": {
+      "target": "$32.id",
+      "properties": {
+        "status": "Sold",
+        "owner": "Buyer C"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.update",
+    "parameters": {
+      "target": "$38.id",
+      "properties": {
+        "status": "Reserved",
+        "owner": "Buyer D"
+      }
+    }
+  },
+  {
+    "operation": "assembly.instance.update",
+    "parameters": {
+      "target": "$49.id",
+      "properties": {
+        "status": "Reserved",
+        "owner": "Buyer E"
+      }
+    }
+  },
+  {
+    "operation": "intent.requirement.create",
+    "parameters": {
+      "name": "Within the site and the height limit",
+      "rule": {
+        "kind": "fits_within",
+        "parts": [
+          "$53.id"
+        ],
+        "width": {
+          "value": 80,
+          "unit": "m"
+        },
+        "depth": {
+          "value": 60,
+          "unit": "m"
+        },
+        "height": {
+          "value": 160,
+          "unit": "m"
+        }
+      }
+    }
+  },
+  {
+    "operation": "intent.requirement.create",
+    "parameters": {
+      "name": "No clashes anywhere in the building",
+      "rule": {
+        "kind": "no_collisions",
+        "parts": [
+          "$53.id"
+        ]
+      }
+    }
+  }
+]

@@ -1,0 +1,30 @@
+[
+  { "operation": "solid.material.create", "parameters": { "name": "Birch ply", "density": { "value": 680, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Powder-coated steel", "density": { "value": 7850, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Rubber", "density": { "value": 1200, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "PLA", "density": { "value": 1240, "unit": "kg/m3" } } },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Work desk",
+      "description": "1600 × 800 desk at 740 mm. 24 mm birch ply top (rounded corners, Ø60 grommet, pockets for M6 threaded inserts machined from below) on two welded 50 mm square-tube leg frames, a bolted 40 × 20 stretcher, a slotted 18 mm ply modesty panel, a folded 1.5 mm steel cable tray and four rubber glides.",
+      "source": { "$file": "desk.js" },
+      "params": [
+        { "key": "width", "label": "Width", "value": 1600, "unit": "mm", "min": 900, "max": 2400 },
+        { "key": "depth", "label": "Depth", "value": 800, "unit": "mm", "min": 500, "max": 1200 },
+        { "key": "height", "label": "Height", "value": 740, "unit": "mm", "min": 600, "max": 1200 },
+        { "key": "top", "label": "Top thickness", "value": 24, "unit": "mm", "min": 12, "max": 50 },
+        { "key": "corner", "label": "Corner radius", "value": 12, "unit": "mm", "min": 1, "max": 200 },
+        { "key": "tube", "label": "Leg tube", "value": 50, "unit": "mm", "min": 25, "max": 100 },
+        { "key": "tubeWall", "label": "Tube wall", "value": 2, "unit": "mm", "min": 1, "max": 6, "step": 0.5 },
+        { "key": "legInset", "label": "Legs in from the ends", "value": 120, "unit": "mm", "min": 40, "max": 400 },
+        { "key": "armInset", "label": "Arms in from front and back", "value": 40, "unit": "mm", "min": 0, "max": 200 },
+        { "key": "modesty", "label": "Modesty panel height", "value": 320, "unit": "mm", "min": 100, "max": 600 }
+      ],
+      "display_tolerance": 0.1,
+      "materials": { "Birch ply": "$0.id", "Powder-coated steel": "$1.id", "Rubber": "$2.id", "PLA": "$3.id" }
+    }
+  },
+  { "operation": "intent.requirement.create", "parameters": { "name": "No clashes between desk parts", "rule": { "kind": "no_collisions", "parts": ["$4.id"] } } },
+  { "operation": "intent.requirement.create", "parameters": { "name": "Ships flat under 45 kg", "rule": { "kind": "max_mass", "parts": ["$4.id"], "limit": { "value": 45, "unit": "kg" } } } }
+]

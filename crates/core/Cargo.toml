@@ -1,0 +1,16 @@
+[package]
+name = "de-core"
+description = "Shared project space, journal, commands and incremental recompute"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy_ecs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+uuid.workspace = true
+rayon.workspace = true
+rustc-hash.workspace = true
+smallvec.workspace = true

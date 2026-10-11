@@ -1,0 +1,474 @@
+[
+  {
+    "operation": "solid.material.create",
+    "parameters": {
+      "name": "Concrete",
+      "density": {
+        "value": 2400,
+        "unit": "kg/m3"
+      }
+    }
+  },
+  {
+    "operation": "solid.material.create",
+    "parameters": {
+      "name": "Glass",
+      "density": {
+        "value": 2500,
+        "unit": "kg/m3"
+      }
+    }
+  },
+  {
+    "operation": "solid.material.create",
+    "parameters": {
+      "name": "Pool water",
+      "density": {
+        "value": 1000,
+        "unit": "kg/m3"
+      }
+    }
+  },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Miami condo + hotel tower",
+      "description": "40-storey mixed-use tower: double-height lobby, 4 parking floors in the podium, an amenity deck with pool on the podium roof, 12 hotel floors and 22 residential floors with deep balconies and glass balustrades at 42″. Concrete flat-plate floors on perimeter columns and a central core with an elevator bank between two stairs; unitized curtain wall. Every storey's slab, columns, core lift and glazing is a separate part.",
+      "source": {
+        "$file": [
+          "common.js",
+          "tower.js"
+        ]
+      },
+      "params": [
+        {
+          "unit": "mm",
+          "key": "lobbyHeight",
+          "label": "Lobby height",
+          "value": 6000,
+          "min": 4000,
+          "max": 12000
+        },
+        {
+          "unit": "count",
+          "key": "podiumFloors",
+          "label": "Podium floors (lobby + parking)",
+          "value": 5,
+          "min": 1,
+          "max": 10,
+          "step": 1
+        },
+        {
+          "unit": "mm",
+          "key": "podiumFloorHeight",
+          "label": "Parking floor height",
+          "value": 3200,
+          "min": 2800,
+          "max": 4500
+        },
+        {
+          "unit": "mm",
+          "key": "amenityHeight",
+          "label": "Amenity deck storey",
+          "value": 5000,
+          "min": 3500,
+          "max": 9000
+        },
+        {
+          "unit": "count",
+          "key": "hotelFloors",
+          "label": "Hotel floors",
+          "value": 12,
+          "min": 0,
+          "max": 40,
+          "step": 1
+        },
+        {
+          "unit": "mm",
+          "key": "hotelFloorHeight",
+          "label": "Hotel floor height",
+          "value": 3300,
+          "min": 3000,
+          "max": 4500
+        },
+        {
+          "unit": "count",
+          "key": "condoFloors",
+          "label": "Residential floors",
+          "value": 22,
+          "min": 0,
+          "max": 60,
+          "step": 1
+        },
+        {
+          "unit": "mm",
+          "key": "condoFloorHeight",
+          "label": "Residential floor height",
+          "value": 3500,
+          "min": 3000,
+          "max": 5000
+        },
+        {
+          "unit": "mm",
+          "key": "towerWidth",
+          "label": "Tower width",
+          "value": 52000,
+          "min": 20000,
+          "max": 90000
+        },
+        {
+          "unit": "mm",
+          "key": "towerDepth",
+          "label": "Tower depth",
+          "value": 26000,
+          "min": 14000,
+          "max": 50000
+        },
+        {
+          "unit": "mm",
+          "key": "cornerRadius",
+          "label": "Corner radius",
+          "value": 4000,
+          "min": 500,
+          "max": 10000
+        },
+        {
+          "unit": "mm",
+          "key": "balconyDepth",
+          "label": "Balcony depth",
+          "value": 2400,
+          "min": 0,
+          "max": 4000
+        },
+        {
+          "unit": "mm",
+          "key": "podiumWidth",
+          "label": "Podium width",
+          "value": 76000,
+          "min": 30000,
+          "max": 150000
+        },
+        {
+          "unit": "mm",
+          "key": "podiumDepth",
+          "label": "Podium depth",
+          "value": 56000,
+          "min": 20000,
+          "max": 120000
+        },
+        {
+          "unit": "mm",
+          "key": "towerSetback",
+          "label": "Tower setback from podium back",
+          "value": 4000,
+          "min": 0,
+          "max": 20000
+        },
+        {
+          "unit": "mm",
+          "key": "coreWidth",
+          "label": "Core width",
+          "value": 18000,
+          "min": 8000,
+          "max": 30000
+        },
+        {
+          "unit": "mm",
+          "key": "coreDepth",
+          "label": "Core depth",
+          "value": 9000,
+          "min": 5000,
+          "max": 16000
+        },
+        {
+          "unit": "mm",
+          "key": "coreWall",
+          "label": "Core wall",
+          "value": 400,
+          "min": 200,
+          "max": 1000
+        },
+        {
+          "unit": "mm",
+          "key": "columnSize",
+          "label": "Column size",
+          "value": 900,
+          "min": 400,
+          "max": 1800
+        },
+        {
+          "unit": "mm",
+          "key": "bay",
+          "label": "Column bay",
+          "value": 8800,
+          "min": 6000,
+          "max": 12000
+        },
+        {
+          "unit": "mm",
+          "key": "slab",
+          "label": "Slab thickness",
+          "value": 250,
+          "min": 180,
+          "max": 450
+        },
+        {
+          "unit": "mm",
+          "key": "glassInset",
+          "label": "Glass line inset",
+          "value": 150,
+          "min": 50,
+          "max": 600
+        },
+        {
+          "unit": "mm",
+          "key": "glassThickness",
+          "label": "Glass unit thickness",
+          "value": 32,
+          "min": 10,
+          "max": 60
+        },
+        {
+          "unit": "mm",
+          "key": "crownHeight",
+          "label": "Crown height",
+          "value": 6000,
+          "min": 1000,
+          "max": 20000
+        },
+        {
+          "unit": "mm",
+          "key": "crownThickness",
+          "label": "Crown thickness",
+          "value": 400,
+          "min": 200,
+          "max": 1500
+        },
+        {
+          "unit": "mm",
+          "key": "poolLength",
+          "label": "Pool length",
+          "value": 25000,
+          "min": 8000,
+          "max": 50000
+        },
+        {
+          "unit": "mm",
+          "key": "poolDepth",
+          "label": "Pool width",
+          "value": 8000,
+          "min": 4000,
+          "max": 20000
+        }
+      ],
+      "display_tolerance": 5,
+      "levels": [
+        {
+          "name": "L01 · Lobby",
+          "elevation": 250
+        },
+        {
+          "name": "L02 · Parking",
+          "elevation": 6250
+        },
+        {
+          "name": "L03 · Parking",
+          "elevation": 9450
+        },
+        {
+          "name": "L04 · Parking",
+          "elevation": 12650
+        },
+        {
+          "name": "L05 · Parking",
+          "elevation": 15850
+        },
+        {
+          "name": "L06 · Amenity deck",
+          "elevation": 19050
+        },
+        {
+          "name": "L07 · Hotel",
+          "elevation": 24050
+        },
+        {
+          "name": "L08 · Hotel",
+          "elevation": 27350
+        },
+        {
+          "name": "L09 · Hotel",
+          "elevation": 30650
+        },
+        {
+          "name": "L10 · Hotel",
+          "elevation": 33950
+        },
+        {
+          "name": "L11 · Hotel",
+          "elevation": 37250
+        },
+        {
+          "name": "L12 · Hotel",
+          "elevation": 40550
+        },
+        {
+          "name": "L13 · Hotel",
+          "elevation": 43850
+        },
+        {
+          "name": "L14 · Hotel",
+          "elevation": 47150
+        },
+        {
+          "name": "L15 · Hotel",
+          "elevation": 50450
+        },
+        {
+          "name": "L16 · Hotel",
+          "elevation": 53750
+        },
+        {
+          "name": "L17 · Hotel",
+          "elevation": 57050
+        },
+        {
+          "name": "L18 · Hotel",
+          "elevation": 60350
+        },
+        {
+          "name": "L19 · Residences",
+          "elevation": 63650
+        },
+        {
+          "name": "L20 · Residences",
+          "elevation": 67150
+        },
+        {
+          "name": "L21 · Residences",
+          "elevation": 70650
+        },
+        {
+          "name": "L22 · Residences",
+          "elevation": 74150
+        },
+        {
+          "name": "L23 · Residences",
+          "elevation": 77650
+        },
+        {
+          "name": "L24 · Residences",
+          "elevation": 81150
+        },
+        {
+          "name": "L25 · Residences",
+          "elevation": 84650
+        },
+        {
+          "name": "L26 · Residences",
+          "elevation": 88150
+        },
+        {
+          "name": "L27 · Residences",
+          "elevation": 91650
+        },
+        {
+          "name": "L28 · Residences",
+          "elevation": 95150
+        },
+        {
+          "name": "L29 · Residences",
+          "elevation": 98650
+        },
+        {
+          "name": "L30 · Residences",
+          "elevation": 102150
+        },
+        {
+          "name": "L31 · Residences",
+          "elevation": 105650
+        },
+        {
+          "name": "L32 · Residences",
+          "elevation": 109150
+        },
+        {
+          "name": "L33 · Residences",
+          "elevation": 112650
+        },
+        {
+          "name": "L34 · Residences",
+          "elevation": 116150
+        },
+        {
+          "name": "L35 · Residences",
+          "elevation": 119650
+        },
+        {
+          "name": "L36 · Residences",
+          "elevation": 123150
+        },
+        {
+          "name": "L37 · Residences",
+          "elevation": 126650
+        },
+        {
+          "name": "L38 · Residences",
+          "elevation": 130150
+        },
+        {
+          "name": "L39 · Residences",
+          "elevation": 133650
+        },
+        {
+          "name": "L40 · Residences",
+          "elevation": 137150
+        },
+        {
+          "name": "Roof",
+          "elevation": 140650
+        }
+      ],
+      "materials": {
+        "Concrete": "$0.id",
+        "Glass": "$1.id",
+        "Pool water": "$2.id"
+      }
+    }
+  },
+  {
+    "operation": "intent.requirement.create",
+    "parameters": {
+      "name": "Within the site and the height limit",
+      "rule": {
+        "kind": "fits_within",
+        "parts": [
+          "$3.id"
+        ],
+        "width": {
+          "value": 80,
+          "unit": "m"
+        },
+        "depth": {
+          "value": 60,
+          "unit": "m"
+        },
+        "height": {
+          "value": 160,
+          "unit": "m"
+        }
+      }
+    }
+  },
+  {
+    "operation": "intent.requirement.create",
+    "parameters": {
+      "name": "No clashes between building parts",
+      "rule": {
+        "kind": "no_collisions",
+        "parts": [
+          "$3.id"
+        ]
+      }
+    }
+  }
+]

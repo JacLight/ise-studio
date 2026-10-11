@@ -1,0 +1,9 @@
+[package]
+name = "de-occt"
+description = "Exact B-rep geometry through OpenCascade: the same shape vocabulary, evaluated exactly, plus STEP import and export"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[build-dependencies]
+cc = "1"

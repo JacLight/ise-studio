@@ -1,0 +1,1142 @@
+//! Shape programs: geometry written by the AI, not picked from a feature list.
+//!
+//! A shape is a small JavaScript program plus named parameters, stored in the
+//! journal like any other design data. The engine evaluates it in a sandbox
+//! over native Manifold (see `runtime`) and derives the solid, its display
+//! mesh and its mass. Humans change parameters (dragging, typing); the AI
+//! writes and rewrites programs. Nothing about the shape is predefined.
+
+pub mod assets;
+pub mod cam;
+pub mod drawing;
+pub mod exact;
+pub mod fea;
+pub mod fabricate;
+pub mod gears;
+pub mod mechanism;
+pub mod params;
+pub mod pathfinder;
+pub mod runtime;
+pub mod sketch;
+
+pub use params::{ParameterSet, ResolvedParams, resolved_program};
+
+use de_core::{
+    Command, CommandError, Derived, ErrorCode, IdIndex, Persist, Plugin, Registry, StableId, Tx, Value,
+    bevy_ecs::{self, component::Component, entity::Entity, world::World},
+    json, schemars,
+};
+use de_solid::{DisplayMesh, MassProperties, Material, MaterialRef, Placement};
+use manifold_csg::Manifold;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+pub struct ShapePlugin;
+
+impl Plugin for ShapePlugin {
+    fn name(&self) -> &'static str {
+        "shape"
+    }
+
+    fn register(&self, r: &mut Registry) {
+        r.component::<ShapeProgram>()
+            .component::<PartMaterials>()
+            .component::<ParameterSet>()
+            .component::<sketch::Sketch>()
+            .command::<sketch::CreateSketch>()
+            .command::<sketch::UpdateSketch>()
+            .command::<pathfinder::CombineSketch>()
+            .command::<pathfinder::OffsetSketch>()
+            .command::<CreateParameterSet>()
+            .command::<SetParameters>()
+            .command::<LinkParam>()
+            .command::<CreateShape>()
+            .command::<SetShapeParams>()
+            .command::<UpdateShape>()
+            // Formulas first: geometry is evaluated from the resolved values, and
+            // re-evaluated when anything a formula reads changes.
+            .derived(Derived {
+                name: "shape.params",
+                inputs: &[ShapeProgram::KIND, ParameterSet::KIND, sketch::Sketch::KIND],
+                reads_dependencies: true,
+                compute: params::resolved_params,
+            })
+            // Sketches solve from their worked-out dimensions, before the shapes that read them.
+            .derived(Derived {
+                name: "sketch.solve",
+                inputs: &[sketch::Sketch::KIND],
+                reads_dependencies: true,
+                compute: sketch::solve_sketch,
+            })
+            .derived(Derived {
+                name: "shape.evaluate",
+                inputs: &[ShapeProgram::KIND],
+                reads_dependencies: true,
+                compute: evaluate_program,
+            })
+            .derived(Derived {
+                name: "shape.display_mesh",
+                inputs: &[ShapeProgram::KIND],
+                reads_dependencies: true,
+                compute: display_mesh,
+            })
+            .derived(Derived {
+                name: "shape.mass_properties",
+                inputs: &[ShapeProgram::KIND, MaterialRef::KIND, PartMaterials::KIND],
+                reads_dependencies: true,
+                compute: mass_properties,
+            });
+    }
+}
+
+/// A parameter humans can change without rewriting the program.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Param {
+    /// Name used in the program as `p.<key>`.
+    pub key: String,
+    pub label: String,
+    pub value: f64,
+    /// "mm", "deg", "count" or "" (plain number).
+    #[serde(default = "default_unit")]
+    pub unit: String,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub step: Option<f64>,
+    /// A formula that drives the value (stored with references by id, see
+    /// `params`). `value` then holds the last value it was set to by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expr: Option<String>,
+}
+
+fn default_unit() -> String {
+    "mm".into()
+}
+
+/// A named height, e.g. a building storey, in the shape's own coordinates (mm).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Level {
+    pub name: String,
+    pub elevation: f64,
+}
+
+/// The source of truth for an AI-made shape.
+#[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ShapeProgram {
+    pub name: String,
+    /// What the shape is for, in the author's words.
+    #[serde(default)]
+    pub description: String,
+    /// JavaScript function body: reads `p.<key>` (mm, degrees) and returns a Solid.
+    pub source: String,
+    pub params: Vec<Param>,
+    /// How closely the viewport follows the formula (mm). A bolt wants 0.01,
+    /// a tower 5: the same relative quality at very different scales.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_tolerance: Option<f64>,
+    /// Storeys or other named heights, used for plan views.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub levels: Vec<Level>,
+    /// Sketches the program reads (`sketch("Name")`), by the name it uses.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub uses: std::collections::BTreeMap<String, StableId>,
+    /// Edges rounded or bevelled after the program runs, picked in the view.
+    /// Each is sized by one of `params`, so its size can be linked like any other.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub finishes: Vec<EdgeFinish>,
+    /// What those sketches hold right now (JSON for the runtime). Filled when
+    /// the program is resolved for evaluation; never stored.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub inputs: String,
+}
+
+/// Rounded or bevelled edges, picked in the view.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EdgeFinish {
+    pub kind: FinishKind,
+    /// The parameter giving the radius (fillet) or distance (chamfer), mm.
+    pub key: String,
+    /// For programs returning parts: the part whose edges these are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<String>,
+    pub edges: Vec<EdgePick>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FinishKind {
+    Fillet,
+    Chamfer,
+    /// A flat face pushed out (positive) or pulled in (negative) along its normal.
+    Push,
+}
+
+/// An edge as picked: found again on the shape as it is now by kind,
+/// direction and where it sits relative to the part's bounds, so it follows
+/// when the part is resized.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EdgePick {
+    /// Where the edge was (its middle; a circle's center), as fractions of
+    /// the part's bounds on x, y and z.
+    pub at: [f64; 3],
+    /// "line", "circle" or "curve" for an edge; "face" for a pushed face.
+    pub kind: String,
+    /// A line's direction, or a circle's axis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<[f64; 3]>,
+    /// A circle's radius (mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius: Option<f64>,
+}
+
+/// What a program reads besides its parameters, as JSON for the runtime:
+/// its sketches, solved, and its edge finishes.
+pub fn program_inputs(world: &World, program: &ShapeProgram) -> Result<String, String> {
+    let sketches = sketch::inputs(world, &program.uses)?;
+    Ok(format!(r#"{{"sketches":{sketches},"finishes":{}}}"#, serde_json::to_string(&program.finishes).unwrap()))
+}
+
+/// Resolved inputs with other edge finishes (for previews).
+pub fn with_finishes(inputs: &str, finishes: &[EdgeFinish]) -> String {
+    let mut v: serde_json::Value = serde_json::from_str(inputs).unwrap_or_else(|_| json!({}));
+    v["finishes"] = serde_json::to_value(finishes).unwrap();
+    v.to_string()
+}
+
+impl Persist for ShapeProgram {
+    const KIND: &'static str = "shape.program";
+}
+
+impl ShapeProgram {
+    fn values(&self) -> Vec<(String, f64)> {
+        self.params.iter().map(|p| (p.key.clone(), p.value)).collect()
+    }
+
+    pub fn display_tolerance(&self) -> f64 {
+        self.display_tolerance.filter(|t| t.is_finite() && *t > 0.0).unwrap_or(runtime::DISPLAY_TOLERANCE)
+    }
+}
+
+/// The materials an assembly's parts name, mapped to material entities. A
+/// part without a material uses the shape's own material.
+#[derive(Component, Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PartMaterials(pub std::collections::BTreeMap<String, StableId>);
+
+impl Persist for PartMaterials {
+    const KIND: &'static str = "shape.materials";
+}
+
+/// Derived: the evaluated solid (millimeters, program coordinates).
+#[derive(Component, Clone)]
+pub struct ShapeSolid {
+    pub solid: Arc<Manifold>,
+    pub stats: ShapeStats,
+    positions: Arc<Vec<f32>>,
+    normals: Arc<Vec<f32>>,
+    indices: Arc<Vec<u32>>,
+}
+
+/// Measured facts about an evaluated shape, in millimeters.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct ShapeStats {
+    pub volume_mm3: f64,
+    pub area_mm2: f64,
+    pub bounds_min: [f64; 3],
+    pub bounds_max: [f64; 3],
+    pub centroid: [f64; 3],
+    pub genus: i32,
+    pub triangles: usize,
+    /// For assemblies, every part; empty for a single solid.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<PartStats>,
+    /// Facts the program reported with metric().
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub metrics: std::collections::BTreeMap<String, runtime::Metric>,
+    /// The program declares how its parts move (hinges, gear meshes).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub moves: bool,
+    /// How its parts turn, for showing the motion: each hinged body and how
+    /// fast it turns for one turn of the driving body.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub motion: Option<gears::Motion>,
+    /// The program joins its parts with joint(): its motion is solved as a linkage.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub linkage: bool,
+}
+
+/// One part of an assembly, in millimeters (program coordinates).
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct PartStats {
+    pub name: String,
+    pub material: Option<String>,
+    pub process: Option<String>,
+    pub volume_mm3: f64,
+    pub bounds_min: [f64; 3],
+    pub bounds_max: [f64; 3],
+    pub centroid: [f64; 3],
+    /// Range of the display mesh's index buffer that draws this part.
+    pub index_start: usize,
+    pub index_count: usize,
+}
+
+/// The program evaluated at a chosen accuracy (mm), cached: requirement
+/// checks and exports re-derive the formula as finely as they need.
+pub fn evaluated_at(program: &ShapeProgram, tolerance: f64) -> Result<Arc<runtime::Evaluated>, String> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<Vec<(u64, Arc<runtime::Evaluated>)>>> = OnceLock::new();
+    const CAPACITY: usize = 8;
+
+    let mut h = DefaultHasher::new();
+    program.source.hash(&mut h);
+    for p in &program.params {
+        p.key.hash(&mut h);
+        p.value.to_bits().hash(&mut h);
+    }
+    tolerance.to_bits().hash(&mut h);
+    program.inputs.hash(&mut h);
+    let key = h.finish();
+    let cache = CACHE.get_or_init(|| Mutex::new(Vec::new()));
+    if let Some((_, solid)) = cache.lock().unwrap().iter().find(|(k, _)| *k == key) {
+        return Ok(solid.clone());
+    }
+    let solid = Arc::new(runtime::evaluate_in(&program.source, &program.values(), tolerance, &program.inputs)?);
+    let mut entries = cache.lock().unwrap();
+    if entries.len() >= CAPACITY {
+        entries.remove(0);
+    }
+    entries.push((key, solid.clone()));
+    Ok(solid)
+}
+
+/// The program's whole solid at a chosen accuracy (mm).
+pub fn solid_at(program: &ShapeProgram, tolerance: f64) -> Result<Manifold, String> {
+    Ok(evaluated_at(program, tolerance)?.solid.translate(0.0, 0.0, 0.0))
+}
+
+/// Binary STL of a program's solid at a chosen accuracy, in millimeters.
+pub fn stl(program: &ShapeProgram, tolerance: f64, offset: [f64; 3]) -> Result<Vec<u8>, String> {
+    Ok(stl_of(&solid_at(program, tolerance)?, &format!("Forma {} (+/-{tolerance} mm)", program.name), offset))
+}
+
+/// Binary STL of any solid, translated by `offset` (mm).
+pub fn stl_of(solid: &Manifold, title: &str, offset: [f64; 3]) -> Vec<u8> {
+    let (positions, n_props, indices) = solid.to_mesh_f32();
+    let n_props = n_props.max(3);
+    let v = |i: u32| {
+        let i = i as usize * n_props;
+        [positions[i] as f64 + offset[0], positions[i + 1] as f64 + offset[1], positions[i + 2] as f64 + offset[2]]
+    };
+    let triangles = indices.len() / 3;
+    let mut out = Vec::with_capacity(84 + triangles * 50);
+    let mut header = [0u8; 80];
+    let bytes = title.as_bytes();
+    header[..bytes.len().min(80)].copy_from_slice(&bytes[..bytes.len().min(80)]);
+    out.extend_from_slice(&header);
+    out.extend_from_slice(&(triangles as u32).to_le_bytes());
+    for t in indices.chunks_exact(3) {
+        let (a, b, c) = (v(t[0]), v(t[1]), v(t[2]));
+        let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-30);
+        let normal = n.map(|x| x / len);
+        for x in normal.iter().chain(&a).chain(&b).chain(&c) {
+            out.extend_from_slice(&(*x as f32).to_le_bytes());
+        }
+        out.extend_from_slice(&0u16.to_le_bytes());
+    }
+    out
+}
+
+/// Cut outlines of a solid at height `z` (its own coordinates, mm): closed
+/// polygons, outer boundaries counter-clockwise and holes clockwise.
+pub fn slice(solid: &Manifold, z: f64) -> Vec<Vec<[f64; 2]>> {
+    solid.slice_at_z(z)
+}
+
+/// A parameter that moves a face: dragging the face by d changes it by d / rate.
+#[derive(Clone, Debug, Serialize)]
+pub struct FaceDriver {
+    pub key: String,
+    pub label: String,
+    pub value: f64,
+    /// How far the face moves along its normal per unit of the parameter.
+    pub rate: f64,
+}
+
+/// Which parameter drives a flat face, if one does: each plain length
+/// parameter is nudged and the face watched. The one that moves it most
+/// (rather than resizing it sideways) is its driver; None means the face is
+/// not any parameter's, and pushing it is a finish of its own.
+pub fn face_driver(program: &ShapeProgram, part: Option<&str>, point: [f64; 3], normal: [f64; 3]) -> Option<FaceDriver> {
+    let tol = program.display_tolerance() * 4.0;
+    let n = {
+        let l = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+        if l < 1e-9 {
+            return None;
+        }
+        normal.map(|c| c / l)
+    };
+    let eval = |params: &[(String, f64)]| runtime::evaluate_in(&program.source, params, tol, &program.inputs).ok();
+    let values = program.values();
+    let base = eval(&values)?;
+    let c0 = face_offset(&base, part, point, n)?;
+    // A parameter drives this face only if it moves nothing else: the volume
+    // then changes by the face's area times how far it moved. (One depth
+    // under two outlines extruded together moves both; push this one alone.)
+    let (area, v0) = (face_area(&base, part, point, n)?, part_volume(&base, part));
+    let mut best: Option<FaceDriver> = None;
+    for p in program.params.iter().filter(|p| p.expr.is_none() && p.unit == "mm") {
+        let mut d = (p.value.abs() * 0.02).max(1.0);
+        if p.max.is_some_and(|m| p.value + d > m) {
+            d = -d;
+        }
+        if p.min.is_some_and(|m| p.value + d < m) {
+            continue;
+        }
+        let nudged: Vec<(String, f64)> = values.iter().map(|(k, v)| (k.clone(), if *k == p.key { v + d } else { *v })).collect();
+        let Some(e) = eval(&nudged) else { continue };
+        let Some(c1) = face_offset(&e, part, point, n) else { continue };
+        let rate = (c1 - c0) / d;
+        if rate.abs() < 0.2 {
+            continue;
+        }
+        let (grew, moved) = (part_volume(&e, part) - v0, area * (c1 - c0));
+        if (grew - moved).abs() > 0.1 * moved.abs() + 1e-6 {
+            continue;
+        }
+        let better = match &best {
+            None => true,
+            Some(b) => rate.abs() > b.rate.abs() + 1e-6 || ((rate.abs() - b.rate.abs()).abs() < 1e-6 && (rate.abs() - 1.0).abs() < (b.rate.abs() - 1.0).abs()),
+        };
+        if better {
+            best = Some(FaceDriver { key: p.key.clone(), label: p.label.clone(), value: p.value, rate });
+        }
+    }
+    best
+}
+
+/// The triangles of one part of an evaluated shape (or all of it).
+fn part_triangles<'a>(e: &'a runtime::Evaluated, part: Option<&str>) -> impl Iterator<Item = [[f64; 3]; 3]> + 'a {
+    let (start, count) = match part.and_then(|name| e.parts.iter().find(|p| p.name == name)) {
+        Some(p) => (p.index_start, p.index_count),
+        None => (0, e.indices.len()),
+    };
+    let v = |i: u32| {
+        let i = i as usize * 3;
+        [e.positions[i] as f64, e.positions[i + 1] as f64, e.positions[i + 2] as f64]
+    };
+    e.indices[start..start + count].chunks_exact(3).map(move |t| [v(t[0]), v(t[1]), v(t[2])])
+}
+
+fn part_volume(e: &runtime::Evaluated, part: Option<&str>) -> f64 {
+    part_triangles(e, part).map(|[a, b, c]| (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6.0).sum()
+}
+
+/// The area of the whole flat face facing `n` under `point`: every triangle
+/// connected to the one under the point and lying in its plane.
+fn face_area(e: &runtime::Evaluated, part: Option<&str>, point: [f64; 3], n: [f64; 3]) -> Option<f64> {
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let sub = |a: [f64; 3], b: [f64; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let cross = |a: [f64; 3], b: [f64; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    let offset = face_offset(e, part, point, n)?;
+    let tris: Vec<[[f64; 3]; 3]> = part_triangles(e, part).collect();
+    let flat = |t: &[[f64; 3]; 3]| {
+        let tn = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+        let len = dot(tn, tn).sqrt();
+        (len > 1e-12 && dot(tn, n) / len > 0.9999 && t.iter().all(|p| (dot(n, *p) - offset).abs() < 1e-4)).then_some(len / 2.0)
+    };
+    let key = |p: [f64; 3]| p.map(|c| (c * 1e4).round() as i64);
+    let mut around: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
+    let mut areas = vec![None; tris.len()];
+    for (i, t) in tris.iter().enumerate() {
+        areas[i] = flat(t);
+        if areas[i].is_some() {
+            for p in t {
+                around.entry(key(*p)).or_default().push(i);
+            }
+        }
+    }
+    // The flat triangle under the point starts the walk.
+    let here = dot(n, point);
+    let start = (0..tris.len()).find(|&i| {
+        let t = tris[i];
+        areas[i].is_some() && {
+            let tn = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+            let q = sub(point, n.map(|k| k * (here - offset)));
+            [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])].iter().all(|(p0, p1)| dot(cross(sub(*p1, *p0), sub(q, *p0)), tn) >= -1e-6 * dot(tn, tn).sqrt())
+        }
+    })?;
+    let mut seen = vec![false; tris.len()];
+    seen[start] = true;
+    let (mut queue, mut area) = (vec![start], 0.0);
+    while let Some(i) = queue.pop() {
+        area += areas[i].unwrap_or(0.0);
+        for p in tris[i] {
+            for &j in around.get(&key(p)).into_iter().flatten() {
+                if !seen[j] {
+                    seen[j] = true;
+                    queue.push(j);
+                }
+            }
+        }
+    }
+    Some(area)
+}
+
+/// Where the flat face facing `n` under `point` sits along `n` (its plane's
+/// offset), in an evaluated shape (one part, or all of it).
+fn face_offset(e: &runtime::Evaluated, part: Option<&str>, point: [f64; 3], n: [f64; 3]) -> Option<f64> {
+    let (start, count) = match part.and_then(|name| e.parts.iter().find(|p| p.name == name)) {
+        Some(p) => (p.index_start, p.index_count),
+        None => (0, e.indices.len()),
+    };
+    let v = |i: u32| {
+        let i = i as usize * 3;
+        [e.positions[i] as f64, e.positions[i + 1] as f64, e.positions[i + 2] as f64]
+    };
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let sub = |a: [f64; 3], b: [f64; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let cross = |a: [f64; 3], b: [f64; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    let here = dot(n, point);
+    let mut best: Option<f64> = None;
+    for t in e.indices[start..start + count].chunks_exact(3) {
+        let (a, b, c) = (v(t[0]), v(t[1]), v(t[2]));
+        let tn = cross(sub(b, a), sub(c, a));
+        let len = dot(tn, tn).sqrt();
+        if len < 1e-12 || dot(tn, n) / len < 0.999 {
+            continue;
+        }
+        // Is the point, moved onto this triangle's plane along n, inside it?
+        let off = dot(n, a);
+        let q = sub(point, n.map(|k| k * (here - off)));
+        let inside = [(a, b), (b, c), (c, a)].iter().all(|(p0, p1)| dot(cross(sub(*p1, *p0), sub(q, *p0)), tn) >= -1e-6 * len);
+        if inside && best.is_none_or(|o| (off - here).abs() < (o - here).abs()) {
+            best = Some(off);
+        }
+    }
+    best
+}
+
+/// The gear check of a program (see `gears`), at its display accuracy and, for
+/// pairs that seem to touch, twenty times finer. `load` is input torque (N·m) and speed (rpm).
+pub fn gear_check(program: &ShapeProgram, load: Option<(f64, f64)>) -> Result<gears::Check, String> {
+    let tol = program.display_tolerance();
+    let e = evaluated_at(program, tol)?;
+    let fine = (tol / 20.0).max(0.0005);
+    let finer = || runtime::evaluate_in(&program.source, &program.values(), fine, &program.inputs);
+    gears::check_at(&e, load, Some(&finer), (tol, fine))
+}
+
+/// A linkage's motion through its drive's range (the program declared joints).
+pub fn motion_sweep(program: &ShapeProgram, steps: usize) -> Result<mechanism::Sweep, String> {
+    motion_with_forces(program, steps, None, true)
+}
+
+/// The motion and, given each part's mass (kg, in the program's part order),
+/// the joint forces and drive effort at the drive's speed.
+pub fn motion_with_forces(program: &ShapeProgram, steps: usize, masses: Option<&[Option<f64>]>, gravity: bool) -> Result<mechanism::Sweep, String> {
+    let e = evaluated_at(program, program.display_tolerance())?;
+    let m = e.mechanism.as_ref().ok_or("the program declares no joints: add joint(…) for the parts that move")?;
+    let linkage = mechanism::Linkage::parse(m).ok_or("the program declares no joints: add joint(…) for the parts that move")??;
+    let size = (0..3).map(|k| e.bounds_max[k] - e.bounds_min[k]).fold(0.0, f64::max);
+    for b in &linkage.bodies {
+        for p in b {
+            if !e.parts.iter().any(|q| &q.name == p) {
+                return Err(format!("a joint names “{p}”, but the program has no part of that name"));
+            }
+        }
+    }
+    let mut sweep = linkage.sweep(steps.clamp(2, 3600), size);
+    linkage_gaps(&e, &linkage, &mut sweep, (size * 0.05).clamp(2.0, 20.0));
+    if let Some(masses) = masses {
+        // Each moving body's mass properties from its parts' meshes and masses.
+        let mut bodies = vec![];
+        let mut missing = vec![];
+        for body in &linkage.bodies {
+            let mut props = vec![];
+            for name in body {
+                let Some(k) = e.parts.iter().position(|p| &p.name == name) else { continue };
+                let part = &e.parts[k];
+                let tris = &e.indices[part.index_start..part.index_start + part.index_count];
+                let unit = mechanism::mesh_mass(&e.positions, tris, 1.0);
+                match masses.get(k).copied().flatten() {
+                    Some(m) if unit.mass > 0.0 => props.push(mechanism::mesh_mass(&e.positions, tris, m / unit.mass)),
+                    _ => missing.push(name.clone()),
+                }
+            }
+            bodies.push(mechanism::MassProps::combine(&props));
+        }
+        if missing.is_empty() {
+            sweep.forces = linkage.forces(&sweep, &bodies, size, gravity);
+        } else {
+            sweep.notes.push(format!("Forces need every moving part's material: {} has none.", missing.join(", ")));
+        }
+    }
+    Ok(sweep)
+}
+
+/// Watches every pair of parts that move relative to each other through the
+/// motion (up to 180 of its positions) and keeps their closest approach.
+fn linkage_gaps(e: &runtime::Evaluated, l: &mechanism::Linkage, sweep: &mut mechanism::Sweep, search: f64) {
+    let body: Vec<Option<usize>> = e.parts.iter().map(|p| l.body_of(&p.name)).collect();
+    let mut pairs = vec![];
+    for i in 0..e.parts.len() {
+        for j in i + 1..e.parts.len() {
+            if body[i] != body[j] {
+                pairs.push((i, j));
+            }
+        }
+    }
+    let frames = &sweep.frames;
+    if frames.is_empty() || pairs.is_empty() {
+        return;
+    }
+    let every = frames.len().div_ceil(180).max(1);
+    let mut closest = vec![(f64::INFINITY, 0.0); pairs.len()];
+    for f in frames.iter().step_by(every) {
+        let posed: Vec<Manifold> = (0..e.parts.len())
+            .map(|k| match body[k] {
+                Some(b) => e.parts[k].solid.transform(&mechanism::pose_matrix(f.bodies[b].0, f.bodies[b].1)),
+                None => e.parts[k].solid.translate(0.0, 0.0, 0.0),
+            })
+            .collect();
+        for (n, (i, j)) in pairs.iter().enumerate() {
+            let g = posed[*i].min_gap(&posed[*j], search);
+            if g < closest[n].0 {
+                closest[n] = (g, f.drive);
+            }
+        }
+    }
+    let mut out: Vec<mechanism::PairGap> = pairs
+        .iter()
+        .zip(&closest)
+        .filter(|(_, (g, _))| *g < search)
+        .map(|((i, j), (g, at))| mechanism::PairGap { a: e.parts[*i].name.clone(), b: e.parts[*j].name.clone(), gap: (g * 1e4).round() / 1e4, at: (at * 100.0).round() / 100.0, joined: l.joined(body[*i], body[*j]) })
+        .collect();
+    out.sort_by(|a, b| a.gap.total_cmp(&b.gap));
+    sweep.clashes = out.iter().filter(|p| p.gap < 1e-4).cloned().collect();
+    sweep.pairs = out;
+}
+
+/// A stress study on a program's solid (or one part of it), in a material
+/// given by name (typical properties; see `fea::elastic`).
+pub fn stress_study(program: &ShapeProgram, part: Option<&str>, material: &str, study: &fea::Study) -> Result<fea::Result_, String> {
+    let props = fea::elastic(material).ok_or_else(|| format!("no stiffness figures for “{material}”: use steel, aluminium, titanium, brass, copper, PLA, PETG, ABS, nylon, acetal, oak, plywood, MDF, glass or concrete"))?;
+    let e = evaluated_at(program, program.display_tolerance())?;
+    let (start, count) = match part {
+        Some(name) => {
+            let p = e.parts.iter().find(|p| p.name == name).ok_or_else(|| format!("no part called “{name}”"))?;
+            (p.index_start, p.index_count)
+        }
+        None if e.parts.len() > 1 => return Err("pick one part of the assembly to study".into()),
+        None => (0, e.indices.len()),
+    };
+    fea::solve(&e.positions, &e.indices[start..start + count], &props, study)
+}
+
+/// Natural frequencies of a program's solid (or one part), held at `supports`.
+pub fn vibration_study(program: &ShapeProgram, part: Option<&str>, material: &str, density: f64, supports: &[fea::Face], count: usize, resolution: usize) -> Result<fea::Modes, String> {
+    let props = fea::elastic(material).ok_or_else(|| format!("no stiffness figures for “{material}”"))?;
+    let e = evaluated_at(program, program.display_tolerance())?;
+    let (start, count_idx) = match part {
+        Some(name) => {
+            let p = e.parts.iter().find(|p| p.name == name).ok_or_else(|| format!("no part called “{name}”"))?;
+            (p.index_start, p.index_count)
+        }
+        None if e.parts.len() > 1 => return Err("pick one part of the assembly to study".into()),
+        None => (0, e.indices.len()),
+    };
+    fea::modes(&e.positions, &e.indices[start..start + count_idx], &props, density, supports, count, resolution)
+}
+
+/// Evaluates a program without storing anything: for previews while dragging.
+pub fn preview(program: &ShapeProgram) -> Result<(ShapeStats, DisplayMesh), String> {
+    let e = runtime::evaluate_in(&program.source, &program.values(), program.display_tolerance(), &program.inputs)?;
+    let stats = stats_of(&e);
+    Ok((stats, mesh_of(&e.positions, &e.normals, &e.indices)))
+}
+
+fn stats_of(e: &runtime::Evaluated) -> ShapeStats {
+    ShapeStats {
+        volume_mm3: e.volume,
+        area_mm2: e.area,
+        bounds_min: e.bounds_min,
+        bounds_max: e.bounds_max,
+        centroid: e.centroid,
+        genus: e.genus,
+        triangles: e.triangles,
+        parts: e
+            .parts
+            .iter()
+            .map(|p| PartStats {
+                name: p.name.clone(),
+                material: p.material.clone(),
+                process: p.process.clone(),
+                volume_mm3: p.volume,
+                bounds_min: p.bounds_min,
+                bounds_max: p.bounds_max,
+                centroid: p.centroid,
+                index_start: p.index_start,
+                index_count: p.index_count,
+            })
+            .collect(),
+        metrics: e.metrics.clone(),
+        moves: e.mechanism.is_some(),
+        motion: e.mechanism.as_ref().and_then(|m| gears::Mechanism::parse(m).ok()).and_then(|m| m.motion().ok()),
+        linkage: e.mechanism.as_ref().is_some_and(|m| m.get("joints").and_then(serde_json::Value::as_array).is_some_and(|j| !j.is_empty())),
+    }
+}
+
+fn mesh_of(positions: &[f32], normals: &[f32], indices: &[u32]) -> DisplayMesh {
+    DisplayMesh {
+        positions: positions.iter().map(|v| v / 1000.0).collect(),
+        normals: normals.to_vec(),
+        indices: indices.to_vec(),
+    }
+}
+
+fn evaluate_program(world: &World, entity: Entity) -> Option<Result<ShapeSolid, String>> {
+    let program = resolved_program(world, entity)?;
+    Some(runtime::evaluate_in(&program.source, &program.values(), program.display_tolerance(), &program.inputs).map(|e| ShapeSolid {
+        stats: stats_of(&e),
+        positions: Arc::new(e.positions),
+        normals: Arc::new(e.normals),
+        indices: Arc::new(e.indices),
+        solid: Arc::new(e.solid),
+    }))
+}
+
+fn display_mesh(world: &World, entity: Entity) -> Option<Result<DisplayMesh, String>> {
+    world.get::<ShapeProgram>(entity)?;
+    let s = world.get::<ShapeSolid>(entity)?;
+    Some(Ok(mesh_of(&s.positions, &s.normals, &s.indices)))
+}
+
+/// Density (kg/m³) of a material entity.
+fn density(world: &World, id: StableId) -> Result<f64, String> {
+    world
+        .resource::<IdIndex>()
+        .get(id)
+        .and_then(|e| world.get::<Material>(e))
+        .map(|m| m.density.canonical())
+        .ok_or_else(|| format!("material {id} not found"))
+}
+
+/// Mass (kg) of every part of an assembly, or of the single solid, by its
+/// material; `None` where no material applies.
+pub fn part_masses(world: &World, entity: Entity) -> Result<Vec<Option<f64>>, String> {
+    let Some(s) = world.get::<ShapeSolid>(entity) else { return Ok(Vec::new()) };
+    let default = world.get::<MaterialRef>(entity).map(|m| m.0);
+    let table = world.get::<PartMaterials>(entity);
+    if s.stats.parts.is_empty() {
+        return Ok(vec![default.map(|id| density(world, id)).transpose()?.map(|d| s.stats.volume_mm3 / 1e9 * d)]);
+    }
+    s.stats
+        .parts
+        .iter()
+        .map(|p| {
+            let id = match &p.material {
+                Some(name) => Some(table.and_then(|t| t.0.get(name)).copied().ok_or_else(|| format!("{}: material “{name}” is not in the shape's material table", p.name))?),
+                None => default,
+            };
+            Ok(id.map(|id| density(world, id)).transpose()?.map(|d| p.volume_mm3 / 1e9 * d))
+        })
+        .collect()
+}
+
+fn mass_properties(world: &World, entity: Entity) -> Option<Result<MassProperties, String>> {
+    world.get::<ShapeProgram>(entity)?;
+    let s = world.get::<ShapeSolid>(entity)?;
+    let volume_m3 = s.stats.volume_mm3 / 1e9;
+    let masses = match part_masses(world, entity) {
+        Ok(m) => m,
+        Err(e) => return Some(Err(e)),
+    };
+    let mass_kg = masses.iter().copied().sum::<Option<f64>>();
+    // With per-part densities the center of mass weights each part by its mass.
+    let center = match (&mass_kg, s.stats.parts.is_empty()) {
+        (Some(total), false) if *total > 0.0 => {
+            let mut c = [0.0; 3];
+            for (p, m) in s.stats.parts.iter().zip(&masses) {
+                for k in 0..3 {
+                    c[k] += p.centroid[k] * m.unwrap_or(0.0) / total;
+                }
+            }
+            c
+        }
+        _ => s.stats.centroid,
+    };
+    Some(Ok(MassProperties { volume_m3, mass_kg, center_of_mass_m: center.map(|c| c / 1000.0) }))
+}
+
+// ---- Commands --------------------------------------------------------------
+
+pub(crate) fn check_params(params: &[Param]) -> Result<(), CommandError> {
+    let bad = |m: String| Err(CommandError::new(ErrorCode::InvalidParameters, m));
+    let mut seen = std::collections::HashSet::new();
+    for p in params {
+        if p.key.is_empty() || !p.key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || p.key.starts_with(|c: char| c.is_ascii_digit()) {
+            return bad(format!("parameter key “{}” must be a plain identifier", p.key));
+        }
+        if !seen.insert(&p.key) {
+            return bad(format!("parameter “{}” is declared twice", p.key));
+        }
+        if !p.value.is_finite() {
+            return bad(format!("parameter “{}” must be a finite number", p.key));
+        }
+        if p.min.is_some_and(|m| p.value < m) || p.max.is_some_and(|m| p.value > m) {
+            return bad(format!("{} must be between {} and {}", p.label, p.min.unwrap_or(f64::NEG_INFINITY), p.max.unwrap_or(f64::INFINITY)));
+        }
+    }
+    Ok(())
+}
+
+/// Rejects programs that do not produce a valid solid, before anything is stored.
+/// Linked parameters are evaluated with their formulas worked out.
+fn validate(world: &World, program: &ShapeProgram, materials: &PartMaterials) -> Result<(), CommandError> {
+    check_params(&program.params)?;
+    if program.display_tolerance.is_some_and(|t| !(t.is_finite() && t > 0.0 && t <= 100.0)) {
+        return Err(CommandError::new(ErrorCode::InvalidParameters, "display tolerance must be between 0 and 100 mm"));
+    }
+    let values: Vec<(String, f64)> = params::resolve(world, &program.params)
+        .map_err(|e| CommandError::new(ErrorCode::InvalidParameters, e))?
+        .into_iter()
+        .collect();
+    for f in &program.finishes {
+        let size = values.iter().find(|(k, _)| *k == f.key).map(|(_, v)| *v);
+        let ok = match f.kind {
+            FinishKind::Push => size.is_some(),
+            _ => size.is_some_and(|s| s > 0.0),
+        };
+        if !ok {
+            return Err(CommandError::new(ErrorCode::InvalidParameters, format!("a finish is sized by “{}”, which must be a parameter of the shape (positive for fillets and chamfers)", f.key)));
+        }
+        if f.edges.is_empty() {
+            return Err(CommandError::new(ErrorCode::InvalidParameters, "an edge finish needs at least one edge"));
+        }
+    }
+    let inputs = program_inputs(world, program).map_err(|e| CommandError::new(ErrorCode::UnresolvedReference, e))?;
+    let e = runtime::evaluate_in(&program.source, &values, program.display_tolerance(), &inputs)
+        .map_err(|e| CommandError::new(ErrorCode::InvalidGeometry, e))?;
+    for p in &e.parts {
+        if let Some(m) = &p.material
+            && !materials.0.contains_key(m)
+        {
+            return Err(CommandError::new(
+                ErrorCode::UnresolvedReference,
+                format!("part “{}” is made of “{m}”, which the shape's materials do not define", p.name),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Replaces a shape's material table, keeping its dependencies in step.
+fn set_materials(tx: &mut Tx, id: StableId, table: PartMaterials) -> Result<(), CommandError> {
+    let keep = tx.get::<MaterialRef>(id).map(|m| m.0);
+    if let Some(old) = tx.get::<PartMaterials>(id).cloned() {
+        for m in old.0.values() {
+            if Some(*m) != keep && !table.0.values().any(|n| n == m) {
+                tx.remove_dependency(id, *m)?;
+            }
+        }
+    }
+    for m in table.0.values() {
+        if tx.get::<Material>(*m).is_none() {
+            return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{m} is not a material")));
+        }
+        tx.add_dependency(id, *m)?;
+    }
+    if table.0.is_empty() { tx.remove::<PartMaterials>(id) } else { tx.set(id, table) }
+}
+
+/// `shape.create`: a new part from an AI-written program.
+#[derive(Deserialize, JsonSchema)]
+pub struct CreateShape {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub source: String,
+    pub params: Vec<Param>,
+    pub display_tolerance: Option<f64>,
+    #[serde(default)]
+    pub levels: Vec<Level>,
+    pub placement: Option<Placement>,
+    pub material: Option<StableId>,
+    /// For assemblies: material names used by `part(…, { material })`.
+    #[serde(default)]
+    pub materials: std::collections::BTreeMap<String, StableId>,
+    /// A component only placed through instances: it has no placement of its own.
+    #[serde(default)]
+    pub definition: bool,
+}
+
+impl Command for CreateShape {
+    const NAME: &'static str = "shape.create";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        let program = ShapeProgram {
+            name: self.name,
+            description: self.description,
+            source: self.source,
+            params: self.params,
+            display_tolerance: self.display_tolerance,
+            levels: self.levels,
+            uses: Default::default(),
+            finishes: Vec::new(),
+            inputs: String::new(),
+        };
+        let mut program = program;
+        let table = PartMaterials(self.materials);
+        let id = tx.create();
+        params::link(tx, id, &[], &mut program.params)?;
+        program.uses = sketch::resolve_uses(tx, &program.source, &Default::default())?;
+        for s in program.uses.values() {
+            tx.add_dependency(id, *s)?;
+        }
+        validate(tx.world(), &program, &table)?;
+        tx.set(id, program)?;
+        set_materials(tx, id, table)?;
+        if !self.definition {
+            tx.set(id, self.placement.unwrap_or_default())?;
+        }
+        if let Some(material) = self.material {
+            if tx.get::<Material>(material).is_none() {
+                return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{material} is not a material")));
+            }
+            tx.set(id, MaterialRef(material))?;
+            tx.add_dependency(id, material)?;
+        }
+        Ok(json!({ "id": id }))
+    }
+}
+
+/// `shape.set_params`: change parameter values (what humans drag and type).
+#[derive(Deserialize, JsonSchema)]
+pub struct SetShapeParams {
+    pub target: StableId,
+    pub values: std::collections::BTreeMap<String, f64>,
+}
+
+impl Command for SetShapeParams {
+    const NAME: &'static str = "shape.set_params";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        let mut program = tx
+            .get::<ShapeProgram>(self.target)
+            .cloned()
+            .ok_or_else(|| CommandError::new(ErrorCode::UnresolvedReference, format!("{} is not a shape", self.target)))?;
+        for (key, value) in &self.values {
+            let param = program
+                .params
+                .iter_mut()
+                .find(|p| &p.key == key)
+                .ok_or_else(|| CommandError::new(ErrorCode::InvalidParameters, format!("the shape has no parameter “{key}”")))?;
+            if let Some(f) = &param.expr {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidParameters,
+                    format!("{} follows {}: change that, or unlink it first (shape.link_param with no formula)", param.label, params::display(tx.world(), f)),
+                ));
+            }
+            param.value = *value;
+        }
+        validate(tx.world(), &program, &tx.get::<PartMaterials>(self.target).cloned().unwrap_or_default())?;
+        tx.set(self.target, program)?;
+        Ok(json!({ "id": self.target }))
+    }
+}
+
+/// `shape.update`: the AI rewrites a shape (source, parameters, name).
+#[derive(Deserialize, JsonSchema)]
+pub struct UpdateShape {
+    pub target: StableId,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub source: Option<String>,
+    pub params: Option<Vec<Param>>,
+    pub display_tolerance: Option<f64>,
+    pub levels: Option<Vec<Level>>,
+    pub materials: Option<std::collections::BTreeMap<String, StableId>>,
+    /// Replaces the edge finishes (rounded or bevelled edges picked in the view).
+    pub finishes: Option<Vec<EdgeFinish>>,
+}
+
+impl Command for UpdateShape {
+    const NAME: &'static str = "shape.update";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        let mut program = tx
+            .get::<ShapeProgram>(self.target)
+            .cloned()
+            .ok_or_else(|| CommandError::new(ErrorCode::UnresolvedReference, format!("{} is not a shape", self.target)))?;
+        if let Some(name) = self.name {
+            program.name = name;
+        }
+        if let Some(description) = self.description {
+            program.description = description;
+        }
+        if let Some(source) = self.source {
+            program.source = source;
+            let uses = sketch::resolve_uses(tx, &program.source, &program.uses)?;
+            for old in program.uses.values().filter(|id| !uses.values().any(|n| n == *id)) {
+                tx.remove_dependency(self.target, *old)?;
+            }
+            for new in uses.values() {
+                tx.add_dependency(self.target, *new)?;
+            }
+            program.uses = uses;
+        }
+        if let Some(mut params) = self.params {
+            let old = program.params.clone();
+            params::link(tx, self.target, &old, &mut params)?;
+            program.params = params;
+        }
+        if let Some(t) = self.display_tolerance {
+            program.display_tolerance = Some(t);
+        }
+        if let Some(levels) = self.levels {
+            program.levels = levels;
+        }
+        if let Some(finishes) = self.finishes {
+            program.finishes = finishes;
+        }
+        let table = match self.materials {
+            Some(m) => PartMaterials(m),
+            None => tx.get::<PartMaterials>(self.target).cloned().unwrap_or_default(),
+        };
+        validate(tx.world(), &program, &table)?;
+        tx.set(self.target, program)?;
+        set_materials(tx, self.target, table)?;
+        Ok(json!({ "id": self.target }))
+    }
+}
+
+// ---- Parameter sets and links ------------------------------------------------
+
+/// `parameters.create`: named values many shapes can derive from.
+#[derive(Deserialize, JsonSchema)]
+pub struct CreateParameterSet {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub params: Vec<Param>,
+}
+
+impl Command for CreateParameterSet {
+    const NAME: &'static str = "parameters.create";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        if self.name.trim().is_empty() || self.name.contains('.') {
+            return Err(CommandError::new(ErrorCode::InvalidParameters, "a parameter set needs a name without dots"));
+        }
+        check_params(&self.params)?;
+        let mut set = ParameterSet { name: self.name, description: self.description, params: self.params };
+        let id = tx.create();
+        params::link(tx, id, &[], &mut set.params)?;
+        params::resolve(tx.world(), &set.params).map_err(|e| CommandError::new(ErrorCode::InvalidParameters, e))?;
+        tx.set(id, set)?;
+        Ok(json!({ "id": id }))
+    }
+}
+
+/// `parameters.set`: change values in a parameter set; everything derived follows.
+#[derive(Deserialize, JsonSchema)]
+pub struct SetParameters {
+    pub target: StableId,
+    pub values: std::collections::BTreeMap<String, f64>,
+}
+
+impl Command for SetParameters {
+    const NAME: &'static str = "parameters.set";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        // A parameter set's values, or a sketch's dimensions.
+        let (name, mut list) = match (tx.get::<ParameterSet>(self.target), tx.get::<sketch::Sketch>(self.target)) {
+            (Some(s), _) => (s.name.clone(), s.params.clone()),
+            (None, Some(s)) => (s.name.clone(), s.params.clone()),
+            _ => return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{} is not a parameter set or a sketch", self.target))),
+        };
+        for (key, value) in &self.values {
+            let p = list
+                .iter_mut()
+                .find(|p| &p.key == key)
+                .ok_or_else(|| CommandError::new(ErrorCode::InvalidParameters, format!("{name} has no parameter “{key}”")))?;
+            if p.expr.is_some() {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, format!("{} is a formula; change what it reads, or unlink it", p.label)));
+            }
+            p.value = *value;
+        }
+        check_params(&list)?;
+        store_params(tx, self.target, list)?;
+        Ok(json!({ "id": self.target }))
+    }
+}
+
+/// Stores a parameter list on whatever holds it, checking that it still works
+/// out (and, for shapes and sketches, that the geometry still solves).
+fn store_params(tx: &mut Tx, id: StableId, list: Vec<Param>) -> Result<(), CommandError> {
+    let invalid = |e: String| CommandError::new(ErrorCode::InvalidParameters, e);
+    if let Some(mut set) = tx.get::<ParameterSet>(id).cloned() {
+        params::resolve(tx.world(), &list).map_err(invalid)?;
+        set.params = list;
+        return tx.set(id, set);
+    }
+    if let Some(mut s) = tx.get::<sketch::Sketch>(id).cloned() {
+        let dims = params::resolve(tx.world(), &list).map_err(invalid)?;
+        sketch::solve(&s.geometry, &dims).map_err(|e| CommandError::new(ErrorCode::InvalidGeometry, e))?;
+        s.params = list;
+        return tx.set(id, s);
+    }
+    let mut program = tx.get::<ShapeProgram>(id).cloned().ok_or_else(|| CommandError::new(ErrorCode::UnresolvedReference, format!("{id} has no parameters")))?;
+    program.params = list;
+    validate(tx.world(), &program, &tx.get::<PartMaterials>(id).cloned().unwrap_or_default())?;
+    tx.set(id, program)
+}
+
+/// `shape.link_param`: drive a parameter (of a shape or a parameter set) by a
+/// formula such as `=Tower footprint.width - 600`, or unlink it (no formula),
+/// keeping the value it had.
+#[derive(Deserialize, JsonSchema)]
+pub struct LinkParam {
+    pub target: StableId,
+    pub key: String,
+    pub expr: Option<String>,
+}
+
+impl Command for LinkParam {
+    const NAME: &'static str = "shape.link_param";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        let not_found = || CommandError::new(ErrorCode::UnresolvedReference, format!("{} has no parameters", self.target));
+        let mut list = match (tx.get::<ShapeProgram>(self.target), tx.get::<ParameterSet>(self.target), tx.get::<sketch::Sketch>(self.target)) {
+            (Some(p), _, _) => p.params.clone(),
+            (None, Some(s), _) => s.params.clone(),
+            (None, None, Some(s)) => s.params.clone(),
+            _ => return Err(not_found()),
+        };
+        let old = list.clone();
+        let resolved = tx.world().resource::<IdIndex>().get(self.target).and_then(|e| tx.world().get::<ResolvedParams>(e)).cloned();
+        let p = list
+            .iter_mut()
+            .find(|p| p.key == self.key)
+            .ok_or_else(|| CommandError::new(ErrorCode::InvalidParameters, format!("no parameter “{}”", self.key)))?;
+        match self.expr.filter(|e| !e.trim().trim_start_matches('=').trim().is_empty()) {
+            Some(e) => p.expr = Some(e),
+            None => {
+                // Unlinking keeps the value the formula last gave.
+                if let Some(v) = resolved.and_then(|r| r.0.get(&self.key).copied()) {
+                    p.value = v;
+                }
+                p.expr = None;
+            }
+        }
+        params::link(tx, self.target, &old, &mut list)?;
+        store_params(tx, self.target, list)?;
+        Ok(json!({ "id": self.target }))
+    }
+}

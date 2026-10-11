@@ -1,0 +1,19 @@
+[package]
+name = "de-shape"
+description = "AI-written shape programs: sandboxed JavaScript over native Manifold geometry"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+de-core.workspace = true
+de-solid.workspace = true
+de-occt.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rayon.workspace = true
+manifold-csg = "0.4"
+rquickjs = "0.14"
+
+[dev-dependencies]
+de-occt.workspace = true

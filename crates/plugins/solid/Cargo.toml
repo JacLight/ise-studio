@@ -1,0 +1,11 @@
+[package]
+name = "de-solid"
+description = "Solid modeling plugin: parametric features, materials, mass properties, display meshes"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+de-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
