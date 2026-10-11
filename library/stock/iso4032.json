@@ -1,0 +1,140 @@
+{
+ "id": "iso4032",
+ "name": "Hex nut",
+ "standard": "ISO 4032",
+ "category": "Fasteners",
+ "summary": "Hexagon nut style 1, 30° chamfer both faces, stainless A2-70. Bottom face on z = 0, axis +Z.",
+ "keywords": [
+  "nut",
+  "hex nut",
+  "DIN 934",
+  "full nut"
+ ],
+ "source": [
+  "common.js",
+  "iso4032.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Stainless steel A2",
+ "materials": {
+  "Stainless steel A2": 7900
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Thread diameter",
+   "value": 3,
+   "unit": "mm",
+   "min": 2,
+   "max": 8,
+   "step": 0.5
+  },
+  {
+   "key": "threads",
+   "label": "True helical thread (1 = on)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "d"
+ ],
+ "rows": [
+  {
+   "name": "M2",
+   "values": {
+    "d": 2
+   }
+  },
+  {
+   "name": "M2.5",
+   "values": {
+    "d": 2.5
+   }
+  },
+  {
+   "name": "M3",
+   "values": {
+    "d": 3
+   }
+  },
+  {
+   "name": "M4",
+   "values": {
+    "d": 4
+   }
+  },
+  {
+   "name": "M5",
+   "values": {
+    "d": 5
+   }
+  },
+  {
+   "name": "M6",
+   "values": {
+    "d": 6
+   }
+  },
+  {
+   "name": "M8",
+   "values": {
+    "d": 8
+   }
+  }
+ ],
+ "default": "M3",
+ "checks": {
+  "M3": {
+   "size": [
+    5.5,
+    6.350852961085883,
+    2.4
+   ],
+   "tolerance": 0.06,
+   "metrics": {
+    "Across flats": 5.5,
+    "Height": 2.4
+   },
+   "connectors": [
+    "Bottom face",
+    "Top face",
+    "Axis"
+   ],
+   "connector_at": {
+    "Top face": [
+     0,
+     0,
+     2.4
+    ]
+   }
+  },
+  "M8": {
+   "size": [
+    13,
+    15.011106998930268,
+    6.8
+   ],
+   "tolerance": 0.06,
+   "metrics": {
+    "Across flats": 13,
+    "Height": 6.8
+   },
+   "connectors": [
+    "Bottom face",
+    "Top face",
+    "Axis"
+   ],
+   "connector_at": {
+    "Top face": [
+     0,
+     0,
+     6.8
+    ]
+   }
+  }
+ }
+}

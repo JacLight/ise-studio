@@ -1,0 +1,103 @@
+{
+ "id": "gt2_idler",
+ "name": "GT2 idler pulley",
+ "standard": "GT2 2 mm",
+ "category": "Bearings & motion",
+ "summary": "GT2 idler for 6 mm belt, toothed 20T or smooth, aluminium body on two shielded ball bearings, Ø18 flanges. Axis +Z from z = 0",
+ "keywords": [
+  "GT2",
+  "idler",
+  "belt idler",
+  "toothed idler",
+  "smooth idler",
+  "623",
+  "3D printer"
+ ],
+ "source": [
+  "common.js",
+  "gt2.js",
+  "gt2_idler.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Aluminium 6061": 2700,
+  "Bearing steel 52100": 7810
+ },
+ "params": [
+  {
+   "key": "bore",
+   "label": "Bore",
+   "value": 3,
+   "unit": "mm",
+   "min": 2,
+   "max": 10
+  },
+  {
+   "key": "toothed",
+   "label": "Toothed (1) or smooth (0)",
+   "value": 1,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "bore",
+  "toothed"
+ ],
+ "rows": [
+  {
+   "name": "20T toothed bore 3",
+   "values": {
+    "bore": 3,
+    "toothed": 1
+   }
+  },
+  {
+   "name": "20T toothed bore 5",
+   "values": {
+    "bore": 5,
+    "toothed": 1
+   }
+  },
+  {
+   "name": "Smooth bore 3",
+   "values": {
+    "bore": 3,
+    "toothed": 0
+   }
+  },
+  {
+   "name": "Smooth bore 5",
+   "values": {
+    "bore": 5,
+    "toothed": 0
+   }
+  }
+ ],
+ "default": "20T toothed bore 3",
+ "checks": {
+  "20T toothed bore 3": {
+   "size": [
+    18,
+    18,
+    8.5
+   ],
+   "connectors": [
+    "Bore",
+    "Face A",
+    "Face B",
+    "Belt plane"
+   ],
+   "partNumber": "GT2-20T-IDLER-T-B3-W6"
+  },
+  "Smooth bore 5": {
+   "size": [
+    18,
+    18,
+    8.5
+   ]
+  }
+ }
+}

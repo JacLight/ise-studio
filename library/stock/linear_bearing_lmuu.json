@@ -1,0 +1,113 @@
+{
+ "id": "linear_bearing_lmuu",
+ "name": "Linear ball bushing",
+ "standard": "LM…UU",
+ "category": "Bearings & motion",
+ "summary": "LM…UU linear ball bushing, sealed both ends: hardened sleeve with retaining-ring grooves, acetal retainer, recirculating balls. Axis +Z, end A on z = 0",
+ "keywords": [
+  "LM8UU",
+  "linear bearing",
+  "linear bushing",
+  "ball bushing",
+  "LMU",
+  "3D printer"
+ ],
+ "source": [
+  "common.js",
+  "linear_bearing_lmuu.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Bearing steel 52100": 7810,
+  "Acetal (POM)": 1410,
+  "Nitrile rubber (NBR)": 1300
+ },
+ "params": [
+  {
+   "key": "dr",
+   "label": "Shaft diameter",
+   "value": 8,
+   "unit": "mm",
+   "min": 3,
+   "max": 50
+  }
+ ],
+ "columns": [
+  "dr"
+ ],
+ "rows": [
+  {
+   "name": "LM6UU",
+   "values": {
+    "dr": 6
+   }
+  },
+  {
+   "name": "LM8UU",
+   "values": {
+    "dr": 8
+   }
+  },
+  {
+   "name": "LM10UU",
+   "values": {
+    "dr": 10
+   }
+  },
+  {
+   "name": "LM12UU",
+   "values": {
+    "dr": 12
+   }
+  }
+ ],
+ "default": "LM8UU",
+ "checks": {
+  "LM8UU": {
+   "size": [
+    15,
+    15,
+    24
+   ],
+   "connectors": [
+    "Bore",
+    "Outer seat",
+    "End A",
+    "End B"
+   ],
+   "connector_at": {
+    "End B": [
+     0,
+     0,
+     24
+    ]
+   },
+   "metrics": {
+    "Retaining ring groove spacing": 17.5
+   },
+   "partNumber": "LM8UU",
+   "massG": 15
+  },
+  "LM6UU": {
+   "size": [
+    12,
+    12,
+    19
+   ]
+  },
+  "LM10UU": {
+   "size": [
+    19,
+    19,
+    29
+   ]
+  },
+  "LM12UU": {
+   "size": [
+    21,
+    21,
+    30
+   ]
+  }
+ }
+}
