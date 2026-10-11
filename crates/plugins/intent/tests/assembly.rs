@@ -97,7 +97,7 @@ fn requirements_see_through_assemblies_and_rotations() {
     let pair = id(&run(&mut p, "assembly.create", json!({ "name": "Pair" })).unwrap(), "id");
     run(&mut p, "assembly.instance.create", json!({ "of": slab, "parent": pair, "name": "A", "at": [0, 0, 0] })).unwrap();
     // Rotated 90° about Z at x = 2000, y = 2000: it crosses A.
-    let b = id(&run(&mut p, "assembly.instance.create", json!({ "of": slab, "parent": pair, "name": "B", "at": [2500, -1000, 0], "rotation": 90 })).unwrap(), "id");
+    let b = id(&run(&mut p, "assembly.instance.create", json!({ "of": slab, "parent": pair, "name": "B", "at": [2500, -1000, 0], "rotation": [0, 0, 90] })).unwrap(), "id");
     let top = id(&run(&mut p, "assembly.instance.create", json!({ "of": pair, "name": "Pair 1" })).unwrap(), "id");
     let req = id(&run(&mut p, "intent.requirement.create", json!({ "name": "No clashes", "rule": { "kind": "no_collisions", "parts": [top] } })).unwrap(), "id");
     let r: RequirementResult = p.get::<RequirementResult>(req).unwrap().clone();

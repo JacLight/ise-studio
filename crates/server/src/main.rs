@@ -485,6 +485,9 @@ struct EntityView<'a> {
     sketch: Option<&'a de_shape::sketch::SolvedSketch>,
     /// Totals for an assembly definition or instance.
     assembly: Option<&'a de_assembly::AssemblyStats>,
+    /// An instance: where it is now (where its joints put it, if they hold it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    placed: Option<&'a de_assembly::joints::Placed>,
     /// An instance showing a configuration of its shape: that configuration's
     /// stats, mesh and mass.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -504,6 +507,7 @@ fn view(project: &Project, id: StableId) -> Option<EntityView<'_>> {
         result: project.get::<RequirementResult>(id),
         shape: project.get::<ShapeSolid>(id).map(|s| &s.stats),
         assembly: project.get::<de_assembly::AssemblyStats>(id),
+        placed: project.get::<de_assembly::joints::Placed>(id),
         configured: project.get::<de_assembly::InstanceConfigured>(id).and_then(|c| c.0.as_deref()),
         sketch: project.get::<de_shape::sketch::SolvedSketch>(id),
         params: project.get::<de_shape::ResolvedParams>(id),
@@ -916,8 +920,8 @@ async fn session(app: Arc<App>, socket: WebSocket, user_id: String) {
 struct Source {
     name: String,
     at: [f64; 3],
-    /// Rotation about Z (degrees) of an instance's shape, applied before `at`.
-    rotation: f64,
+    /// Rotation of an instance's shape, applied before `at`.
+    rotation: de_assembly::M3,
     program: Option<ShapeProgram>,
     boxed: Option<[f64; 3]>,
     /// Material name → (display name, density kg/m³) for parts; "" is the default.
@@ -994,10 +998,10 @@ fn source(project: &Project, id: StableId) -> Option<Source> {
             let mut s = shape_source(project, o.shape, o.config.as_deref(), &material)?;
             s.prefix = o.names[..o.names.len() - 1].join(" › ");
             s.at = o.transform.at;
-            s.rotation = o.transform.rotation;
+            s.rotation = o.transform.rot;
             members.push(s);
         }
-        return Some(Source { name, at: [0.0; 3], rotation: 0.0, program: None, boxed: None, materials: HashMap::new(), prefix: String::new(), members });
+        return Some(Source { name, at: [0.0; 3], rotation: de_assembly::Transform::IDENTITY.rot, program: None, boxed: None, materials: HashMap::new(), prefix: String::new(), members });
     }
     let program = project.get::<ShapeProgram>(id);
     if program.is_some() && project.get::<de_solid::Placement>(id).is_none() {
@@ -1030,7 +1034,7 @@ fn shape_source(project: &Project, id: StableId, config: Option<&str>, material:
         }
     }
     let name = program.as_ref().map(|p| p.name.clone()).unwrap_or_else(|| "Box".into());
-    Some(Source { name, at: [p.x, p.y, p.z].map(|l| l.canonical() * 1000.0), rotation: 0.0, program, boxed, materials, prefix: String::new(), members: Vec::new() })
+    Some(Source { name, at: [p.x, p.y, p.z].map(|l| l.canonical() * 1000.0), rotation: de_assembly::Transform::IDENTITY.rot, program, boxed, materials, prefix: String::new(), members: Vec::new() })
 }
 
 impl Source {
@@ -1061,7 +1065,8 @@ impl Source {
         }
         let place = |maker: &mut fabricate::StepMaker, s: de_occt::Shape| -> Result<de_occt::Shape, String> {
             let a = maker.arena();
-            let s = if self.rotation.abs() > 1e-12 { a.rotate(s, [0.0, 0.0, self.rotation])? } else { s };
+            let t = de_assembly::Transform { at: self.at, rot: self.rotation };
+            let s = if t.has_rotation() { a.rotate(s, t.euler())? } else { s };
             if self.at.iter().any(|v| v.abs() > 1e-12) { a.translate(s, self.at) } else { Ok(s) }
         };
         let label = |part: &str| {
@@ -1313,6 +1318,94 @@ async fn motion(State(server): State<Arc<Server>>, Path(id): Path<String>, Query
         Ok(Ok(s)) => axum::Json(s).into_response(),
         Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
         Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// `GET /assembly-motion/<joint id>?steps=..&key=..&from=..&to=..&set=<json>`:
+/// an assembly moving through one joint's range (default its limits, or a
+/// full turn): every instance's placement at each step and the closest
+/// approach of every pair of instances that move relative to each other,
+/// with the clashes. `set` poses other joints first: `{"<joint id or name>": value or [values]}`.
+async fn assembly_motion(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let fail = |code: StatusCode, message: String| (code, message).into_response();
+    let app = match server.project(query.get("project")) {
+        Ok(app) => app,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let num = |k: &str| query.get(k).and_then(|v| v.parse::<f64>().ok());
+    let steps = query.get("steps").and_then(|v| v.parse::<usize>().ok()).unwrap_or(120);
+    let key = query.get("key").cloned();
+    let (from, to) = (num("from"), num("to"));
+    let set: HashMap<String, Value> = match query.get("set").filter(|s| !s.is_empty()) {
+        Some(s) => match serde_json::from_str(s) {
+            Ok(v) => v,
+            Err(e) => return fail(StatusCode::BAD_REQUEST, format!("set: {e}")),
+        },
+        None => HashMap::new(),
+    };
+    let app = app.clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<de_assembly::motion::AssemblySweep, String> {
+        let project = app.project.lock().unwrap();
+        let world = project.world();
+        let joint_by = |name: &str| -> Option<StableId> {
+            if let Ok(id) = serde_json::from_value::<StableId>(json!(name))
+                && project.get::<de_assembly::joints::Joint>(id).is_some()
+            {
+                return Some(id);
+            }
+            project.entity_ids().into_iter().find(|j| project.get::<de_assembly::joints::Joint>(*j).is_some() && de_assembly::joints::joint_name(world, *j) == name)
+        };
+        let joint = joint_by(&id).ok_or_else(|| format!("{id} is not an assembly joint"))?;
+        let mut values = HashMap::new();
+        for (name, v) in set {
+            let j = joint_by(&name).ok_or_else(|| format!("set: no joint “{name}”"))?;
+            let list: Vec<f64> = match v {
+                Value::Number(n) => vec![n.as_f64().unwrap_or(0.0)],
+                Value::Array(a) => a.iter().filter_map(Value::as_f64).collect(),
+                _ => return Err(format!("set: {name} takes a number or a list of numbers")),
+            };
+            let mut base = de_assembly::joints::link(world, j, None)?.values;
+            for (k, x) in list.into_iter().enumerate() {
+                if k < base.len() {
+                    base[k] = x;
+                }
+            }
+            values.insert(j, base);
+        }
+        de_assembly::motion::sweep(world, joint, key.as_deref(), from, to, steps, &values)
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()));
+    match result {
+        Ok(s) => axum::Json(s).into_response(),
+        Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+    }
+}
+
+/// `GET /connectors/<instance id>`: the connectors an instance offers, in
+/// its parent's coordinates (where it is now): name, point, axis and x.
+async fn connectors(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let fail = |code: StatusCode, message: String| (code, message).into_response();
+    let app = match server.project(query.get("project")) {
+        Ok(app) => app,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let project = app.project.lock().unwrap();
+    let Some(sid) = serde_json::from_value::<StableId>(json!(id)).ok().filter(|s| project.get::<de_assembly::Instance>(*s).is_some()) else {
+        return fail(StatusCode::NOT_FOUND, format!("{id} is not an instance"));
+    };
+    let place = project.entity(sid).and_then(|e| de_assembly::placement(project.world(), e)).unwrap_or(de_assembly::Transform::IDENTITY);
+    match de_assembly::joints::connectors(project.world(), sid) {
+        Ok(list) => axum::Json(
+            list.into_iter()
+                .map(|(name, f)| {
+                    let w = place.then(&f);
+                    json!({ "name": name, "at": w.at, "axis": w.turn([0.0, 0.0, 1.0]), "x": w.turn([1.0, 0.0, 0.0]) })
+                })
+                .collect::<Vec<_>>(),
+        )
+        .into_response(),
+        Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
     }
 }
 
@@ -2146,6 +2239,8 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/gears/{id}", axum::routing::post(gear_check))
         .route("/drawing/{file}", get(drawing))
         .route("/motion/{id}", get(motion))
+        .route("/assembly-motion/{id}", get(assembly_motion))
+        .route("/connectors/{id}", get(connectors))
         .route("/stress/{id}", axum::routing::post(stress))
         .route("/modes/{id}", axum::routing::post(modes))
         .route("/study/{id}", get(study))

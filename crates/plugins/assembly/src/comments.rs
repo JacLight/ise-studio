@@ -105,63 +105,29 @@ impl Persist for CommentReply {
 
 // ---- Coordinates -----------------------------------------------------------
 
-/// How a part's own coordinates sit in the project: rotation about Z, then
+/// How a part's own coordinates sit in the project: a rotation, then a
 /// translation (mm).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Frame {
-    pub origin: [f64; 3],
-    pub rotation: f64,
-}
-
-impl Frame {
-    /// A point in the part's coordinates, in project coordinates.
-    pub fn to_world(&self, p: [f64; 3]) -> [f64; 3] {
-        let [x, y] = rotate([p[0], p[1]], self.rotation);
-        [x + self.origin[0], y + self.origin[1], p[2] + self.origin[2]]
-    }
-
-    /// A project point in the part's coordinates.
-    pub fn to_local(&self, p: [f64; 3]) -> [f64; 3] {
-        let [x, y] = rotate([p[0] - self.origin[0], p[1] - self.origin[1]], -self.rotation);
-        [x, y, p[2] - self.origin[2]]
-    }
-
-    /// A direction in the part's coordinates, in project coordinates.
-    pub fn dir_to_world(&self, d: [f64; 3]) -> [f64; 3] {
-        let [x, y] = rotate([d[0], d[1]], self.rotation);
-        [x, y, d[2]]
-    }
-
-    pub fn dir_to_local(&self, d: [f64; 3]) -> [f64; 3] {
-        let [x, y] = rotate([d[0], d[1]], -self.rotation);
-        [x, y, d[2]]
-    }
-}
-
-fn rotate([x, y]: [f64; 2], degrees: f64) -> [f64; 2] {
-    let (s, c) = degrees.to_radians().sin_cos();
-    [c * x - s * y, s * x + c * y]
-}
+pub type Frame = crate::Transform;
 
 /// Where a part's own coordinates are now, as the view draws it:
 /// - a box: its placement is its minimum corner, the origin of its coordinates;
 /// - a placed shape: its placement is the origin of its program's coordinates
 ///   (a definition, placed only through instances, has none);
-/// - a top-level instance: its position and rotation.
+/// - a top-level instance: its position and rotation (or where its joints put it).
 ///
 /// `None` for anything that is not placed in the project.
 pub fn frame(world: &World, id: StableId) -> Option<Frame> {
     let e = world.resource::<IdIndex>().get(id)?;
     let mm = |p: &Placement| [p.x.canonical() * 1000.0, p.y.canonical() * 1000.0, p.z.canonical() * 1000.0];
     if let Some(inst) = world.get::<Instance>(e) {
-        return inst.parent.is_none().then_some(Frame { origin: inst.at, rotation: inst.rotation });
+        return inst.parent.is_none().then(|| crate::placement(world, e).unwrap_or_else(|| inst.transform()));
     }
     let placement = world.get::<Placement>(e);
     if world.get::<ShapeProgram>(e).is_some() {
-        return Some(Frame { origin: mm(placement?), rotation: 0.0 });
+        return Some(Frame::translation(mm(placement?)));
     }
     if world.get::<BoxFeature>(e).is_some() {
-        return Some(Frame { origin: placement.map(mm).unwrap_or([0.0; 3]), rotation: 0.0 });
+        return Some(Frame::translation(placement.map(mm).unwrap_or([0.0; 3])));
     }
     None
 }
