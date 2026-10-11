@@ -686,7 +686,8 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
     let mut wires: Vec<WireView> = it.wires.iter().map(|(wid, w)| WireView { id: *wid, sheet: w.sheet.clone(), points: w.points.clone(), net: None }).collect();
     let mut labels: Vec<LabelView> = it.labels.iter().map(|(lid, l)| label_view(*lid, l)).collect();
     let sheet_name = |sid: &str| s.sheet(sid).map(|x| x.name.clone()).unwrap_or_else(|| sid.to_string());
-    let is_child = |sid: &str| s.sheet(sid).and_then(|x| x.parent.clone()).is_some();
+    // Local names are bare on the first sheet, `sheet/NAME` elsewhere.
+    let is_child = |sid: &str| s.sheets.first().is_some_and(|f| f.id != sid);
 
     // Nodes.
     let mut nodes: Vec<Node> = Vec::new();
@@ -812,7 +813,8 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
                 _ => {}
             }
         }
-        if pins.is_empty() {
+        // A lone pin is not a net.
+        if pins.is_empty() || members.len() == 1 {
             continue;
         }
         pins.sort_by(|a, b| natural(&symbols[a.0].reference, &symbols[b.0].reference).then(natural(&symbols[a.0].pins[a.1].number, &symbols[b.0].pins[b.1].number)));

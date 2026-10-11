@@ -38,7 +38,7 @@
 //!   and power ports join across every sheet by text; a hierarchical label
 //!   joins the same-named pin of its sheet's box on the parent sheet.
 //! - A net is named, in order, by a power port, a global label, a local label
-//!   (prefixed `sheet/` off the root sheet), a hierarchical label; else
+//!   (prefixed `sheet/` on every sheet but the first), a hierarchical label; else
 //!   `Net-(R1-Pad2)` after its first pin in natural order. Two names on one net
 //!   is a warning; the first by that order wins.
 //!
@@ -809,10 +809,8 @@ impl Command for PlaceSymbol {
         };
         check_reference(&sym.reference)?;
         if !sym.reference.contains('?') {
-            if let Some((other, o)) = it.symbols.iter().find(|(_, o)| o.reference.eq_ignore_ascii_case(&sym.reference)) {
-                if o.symbol != sym.symbol || o.unit == sym.unit {
-                    return Err(bad(format!("{} is already on the schematic ({other}); a part's other units share its reference", sym.reference)));
-                }
+            if let Some((other, _)) = it.symbols.iter().find(|(_, o)| o.reference.eq_ignore_ascii_case(&sym.reference) && (o.symbol != sym.symbol || o.unit == sym.unit)) {
+                return Err(bad(format!("{} is already on the schematic ({other}); a part's other units share its reference", sym.reference)));
             }
         }
         sym.value = clean(self.value).unwrap_or(def.value.clone());

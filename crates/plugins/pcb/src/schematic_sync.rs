@@ -280,9 +280,6 @@ fn plan(world: &World, id: StableId) -> Result<(SyncReport, Vec<Action>), Comman
                     let k = report.nets.iter().filter(|x| x.pad.starts_with(&format!("{}.", w.reference))).count();
                     changes.push(format!("{k} pad net{}", if k == 1 { "" } else { "s" }));
                 }
-                if c.pin_names.is_empty() && !w.pin_names.is_empty() {
-                    n.pin_names = w.pin_names.clone();
-                }
                 if changes.is_empty() && n == *c {
                     report.unchanged += 1;
                 } else {
@@ -370,6 +367,19 @@ pub struct UpdateBoardFromSchematic {
     pub schematic: StableId,
     #[serde(default)]
     pub dry_run: bool,
+    /// Where new parts go, by reference (otherwise in rows below the board).
+    #[serde(default)]
+    pub place: BTreeMap<String, Placement>,
+}
+
+/// A new part's place on the board.
+#[derive(Deserialize, JsonSchema, Clone, Debug)]
+pub struct Placement {
+    pub at: [f64; 2],
+    #[serde(default)]
+    pub rotation: f64,
+    #[serde(default)]
+    pub side: crate::Side,
 }
 
 impl Command for UpdateBoardFromSchematic {
@@ -407,9 +417,13 @@ impl Command for UpdateBoardFromSchematic {
                     link(tx, symbols, *id)?;
                 }
                 Action::Create(w, at) => {
+                    let pl = self.place.get(&w.reference).cloned().unwrap_or(Placement { at: *at, rotation: 0.0, side: crate::Side::Top });
+                    if let Some(a) = report.added.iter_mut().find(|a| a.reference == w.reference) {
+                        a.at = pl.at;
+                    }
                     let out = tx.run(
                         "pcb.component.create",
-                        json!({ "board": board, "reference": w.reference, "footprint": w.footprint, "value": w.value, "at": at, "mpn": w.mpn, "manufacturer": w.manufacturer, "lcsc": w.lcsc, "description": w.description, "dnp": w.dnp, "pins": w.pins, "pin_names": w.pin_names }),
+                        json!({ "board": board, "reference": w.reference, "footprint": w.footprint, "value": w.value, "at": pl.at, "rotation": pl.rotation, "side": pl.side, "mpn": w.mpn, "manufacturer": w.manufacturer, "lcsc": w.lcsc, "description": w.description, "dnp": w.dnp, "pins": w.pins, "pin_names": w.pin_names }),
                     )?;
                     let cid: StableId = serde_json::from_value(out["id"].clone()).map_err(|e| CommandError::new(ErrorCode::Internal, e.to_string()))?;
                     link(tx, &w.symbols, cid)?;

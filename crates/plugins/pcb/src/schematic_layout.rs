@@ -410,6 +410,10 @@ fn column(chain: &[(usize, String)], parts: &[Part], schematic: StableId) -> Ite
         }
         if let Some(pb) = prev_bottom {
             it.wires.push(vec![pb, t]);
+            // Keep the series net's name where it has one.
+            if let Some(net) = part.nets.get(top).filter(|n| !n.starts_with("Net-(")) {
+                it.labels.push((LabelKind::Local, net.clone(), [t[0], (pb[1] + t[1]) / 2.0], 0.0));
+            }
         }
         prev_bottom = Some(b);
         y = b[1] + 2.54;
