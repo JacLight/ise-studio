@@ -210,11 +210,12 @@ impl Ai {
         let repo = &self.config.repo;
         let brief = std::fs::read_to_string(repo.join("tools/forma-ai.md")).unwrap_or_default();
         format!(
-            "{brief}\n\n## This installation\n\n- Project: \"{p}\". Your folder: {folder}.\n- Shape vocabulary (read it before writing programs): {prelude}\n- Worked examples, one folder per design (programs and the steps.json that built them): {examples}\n",
+            "{brief}\n\n## This installation\n\n- Project: \"{p}\". Your folder: {folder}.\n- Shape vocabulary (read it before writing programs): {prelude}\n- Worked examples, one folder per design (programs and the steps.json that built them): {examples}\n- Stock library (bought parts as programs, one manifest + program per family; read them to model a new bought part the same way): {library}\n",
             p = self.project,
             folder = self.folder.display(),
             prelude = repo.join("crates/plugins/shape/src/prelude.js").display(),
             examples = repo.join("examples").display(),
+            library = repo.join("library/stock").display(),
         )
     }
 
@@ -234,6 +235,7 @@ impl Ai {
                 format!("Write({folder}/**)"),
                 format!("Edit({folder}/**)"),
                 format!("Read({}/**)", abs(&repo.join("examples"))),
+                format!("Read({}/**)", abs(&repo.join("library/stock"))),
                 format!("Read({})", abs(&repo.join("crates/plugins/shape/src/prelude.js"))),
             ])
             .args(["--setting-sources", "project", "--strict-mcp-config", "--mcp-config", r#"{"mcpServers":{}}"#])

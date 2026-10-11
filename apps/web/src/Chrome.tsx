@@ -73,6 +73,8 @@ export function ToolRail(props: {
   onPanel: (p: PanelKind) => void;
   onSelectTool: () => void;
   onAdd: () => void;
+  onStock: () => void;
+  stockOpen: boolean;
   onAi: () => void;
   onHide: () => void;
   sketching: boolean;
@@ -93,6 +95,7 @@ export function ToolRail(props: {
       <IconButton icon="dots" label="Project menu" className={active("project")} onClick={() => props.onPanel("project")} />
       <IconButton icon="cursor" label="Select" onClick={props.onSelectTool} />
       <IconButton icon="plus" label="Add box part" onClick={props.onAdd} disabled={!props.canEdit} />
+      <IconButton icon="package" label="Stock parts: screws, bearings, motors… (I)" className={props.stockOpen ? "active" : ""} onClick={props.onStock} disabled={!props.canEdit} />
       <IconButton icon="pencil" label="Sketch (K)" className={props.sketching ? "active" : ""} onClick={props.onSketch} disabled={!props.canEdit} />
       <IconButton
         icon="fillet"

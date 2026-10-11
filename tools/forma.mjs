@@ -5,6 +5,7 @@
 //   node tools/forma.mjs run steps.json [--project name] [--url ws://127.0.0.1:7420/ws]
 //   node tools/forma.mjs check
 //   node tools/forma.mjs gears <id> [torque N·m] [rpm]   turn a gear train through a full turn; tooth strength with a load
+//   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs list                 every entity, one line each
 //   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
 //   node tools/forma.mjs get <id>             one entity in full (program source, params, results)
@@ -137,6 +138,40 @@ if (command === "run") {
     }
     failed = s.clashes.length > 0;
   }
+} else if (command === "stock") {
+  // The stock library: families, or the sizes matching a search ("M3×12", "608", "servo").
+  const query = args.slice(1).join(" ");
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const res = await fetch(`${http}/stock${project ? `?project=${encodeURIComponent(project)}` : ""}`);
+  if (!res.ok) {
+    console.error(`✗ ${await res.text()}`);
+    failed = true;
+  } else {
+    const cat = await res.json();
+    const norm = (s) => String(s ?? "").toLowerCase().replace(/[×x*]/g, "x");
+    const words = norm(query).split(/\s+/).filter(Boolean);
+    let shown = 0;
+    for (const f of cat.families) {
+      const held = cat.inProject[f.id] ? `  [in project: ${cat.inProject[f.id]}]` : "";
+      if (!words.length) {
+        console.log(`${f.id.padEnd(22)} ${f.title} · ${f.sizes.length} sizes (${f.sizes[0].name} … ${f.sizes[f.sizes.length - 1].name}), default ${f.default}${held}`);
+        continue;
+      }
+      const ft = norm([f.id, f.name, f.standard, f.category, ...f.keywords].join(" "));
+      const rest = words.filter((w) => !ft.includes(w));
+      const sizes = f.sizes.filter((s) => rest.every((w) => norm([s.name, s.partNumber, s.mpn].join(" ")).includes(w)));
+      if (!sizes.length) continue;
+      const most = rest.length ? 40 : 12;
+      console.log(`${f.id}  ${f.title}${held}\n  ${f.summary}`);
+      for (const s of sizes.slice(0, most)) {
+        const m = Object.entries(s.metrics ?? {}).map(([k, v]) => `${k} ${+v.value.toFixed(3)}${v.unit ? ` ${v.unit}` : ""}`).join(", ");
+        console.log(`  ${s.name.padEnd(12)} ${String(s.partNumber).padEnd(34)} ${s.unitPrice != null ? `$${s.unitPrice}` : ""}${s.pack > 1 ? `/pc (pack ${s.pack})` : ""}  ${s.massG} g  ${s.size?.join("×")} mm${m ? `  ${m}` : ""}\n      connectors: ${(s.connectors ?? []).join(", ")}`);
+      }
+      if (sizes.length > most) console.log(`  … ${sizes.length - most} more sizes (narrow the search)`);
+      shown++;
+    }
+    if (words.length && !shown) console.log(`nothing in the stock library matches “${query}”`);
+  }
 } else if (command === "list") {
   const s = await engine.snapshot;
   for (const e of s.entities) {
@@ -241,7 +276,7 @@ if (command === "run") {
     }
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | get <id> | tree | list | check | ops | view <action> [what]  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | view <action> [what]  [--project name] [--url ws://…]");
   failed = true;
 }
 
