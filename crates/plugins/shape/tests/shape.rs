@@ -898,3 +898,39 @@ fn a_cantilever_rings_at_the_frequency_beam_theory_says() {
     assert_ne!(m.modes[0].direction, "x", "the first modes sway sideways, not along the beam");
     assert!(m.modes[2].frequency > f1 * 1.5, "the next mode is well above");
 }
+
+#[test]
+fn a_saved_study_finds_its_faces_again_after_the_part_changes() {
+    let mut p = project();
+    let part = id(run(&mut p, "shape.create", json!({
+        "name": "Beam", "source": "return box(p.l, 20, 20);",
+        "params": [{ "key": "l", "label": "Length", "value": 200 }]
+    })).unwrap());
+    // Held at the x = 0 end, loaded on the far end (fractions of the bounds; probe on the face).
+    let study = json!({
+        "part": null,
+        "supports": [{ "at": [0.0, 0.5, 0.5], "probe": [0.0, 0.3, 0.3], "normal": [-1.0, 0.0, 0.0] }],
+        "loads": [{ "face": { "at": [1.0, 0.5, 0.5], "probe": [1.0, 0.7, 0.3], "normal": [1.0, 0.0, 0.0] }, "magnitude": 1000.0, "direction": "-z" }],
+        "resolution": 48
+    });
+    run(&mut p, "shape.set_study", json!({ "target": part, "study": study })).unwrap();
+    let saved = p.get::<de_shape::ShapeStudies>(part).unwrap().0[0].clone();
+    assert_eq!(saved.loads[0].magnitude, 1000.0);
+    // Longer beam: the far face moves to x = 300 and is still found.
+    run(&mut p, "shape.set_params", json!({ "target": part, "values": { "l": 300 } })).unwrap();
+    let program = de_shape::resolved_program(p.world(), p.entity(part).unwrap()).unwrap();
+    let far = de_shape::resolve_face(&program, None, &saved.loads[0].face).expect("the far end is found");
+    assert!((far.point[0] - 300.0).abs() < 1e-6, "{:?}", far.point);
+    assert!(far.triangles.chunks_exact(3).all(|v| (v[0] - 300.0).abs() < 1e-6), "every triangle on the end face");
+    let area: f64 = far.triangles.chunks_exact(9).map(|t| {
+        let (a, b, c) = ([t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]);
+        let (u, v) = ([b[0] - a[0], b[1] - a[1], b[2] - a[2]], [c[0] - a[0], c[1] - a[1], c[2] - a[2]]);
+        let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt() / 2.0
+    }).sum();
+    assert!((area - 400.0).abs() < 1e-6, "the whole 20 × 20 face: {area}");
+    assert_eq!(saved.loads[0].force(far.normal), [0.0, 0.0, -1000.0]);
+    // Clearing both lists removes the study.
+    run(&mut p, "shape.set_study", json!({ "target": part, "study": { "part": null, "supports": [], "loads": [] } })).unwrap();
+    assert!(p.get::<de_shape::ShapeStudies>(part).is_none());
+}
