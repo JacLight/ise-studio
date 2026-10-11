@@ -544,6 +544,8 @@ export function App({ engine }: { engine: Engine }) {
     entities: state.entities,
     run,
     notify,
+    hidden: hiddenItems,
+    isolated,
     onFace: (plane, focus) => {
       if (plane) return viewport.current?.faceSketch(plane, focus);
       // Leaving a sketch: glide back to the usual 3D view, framed.

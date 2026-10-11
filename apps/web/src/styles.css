@@ -3896,6 +3896,148 @@ dialog p {
   background: #f3effa;
 }
 
+.sel-btn.on {
+  background: #fff;
+  color: #5b3fc4;
+  box-shadow: inset 0 0 0 1px #b9a6ee;
+}
+
+.sel-btn:disabled {
+  opacity: 0.35;
+  pointer-events: auto;
+  cursor: not-allowed;
+  box-shadow: none;
+  background: none;
+}
+
+/* Tool options (the fillet's round or chamfer and size) and the pattern / project panels. */
+.sketch-options,
+.sketch-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #4b4559;
+}
+
+.sketch-panel {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #ece8f2;
+}
+
+.sketch-panel strong {
+  font-size: 11px;
+  font-weight: 650;
+  color: #2c2638;
+}
+
+.sketch-panel label:not(.check) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #8a8398;
+}
+
+.sketch-panel label input:not([type="checkbox"]) {
+  width: 46px;
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid #ece8f2;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 11px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.sketch-panel label input:disabled {
+  color: #a39db0;
+  background: #f8f6fb;
+}
+
+.sketch-panel small,
+.sketch-options small {
+  color: #a39db0;
+}
+
+.sketch-panel .check,
+.sketch-parts .check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.sketch-panel-note {
+  font-size: 10.5px;
+  color: #8a8398;
+}
+
+.sketch-panel button.primary,
+.sketch-panel button.secondary {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.sketch-panel button.primary {
+  margin-left: auto;
+}
+
+.sketch-parts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  width: 100%;
+  max-height: 96px;
+  overflow: auto;
+}
+
+.seg-toggle {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: #f3f1f6;
+}
+
+.seg-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b6478;
+}
+
+.seg-toggle button .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.seg-toggle button.on {
+  background: #fff;
+  color: #5b3fc4;
+  box-shadow: 0 1px 3px rgb(40 30 70 / 0.12);
+}
+
+.sketch-options .sel-field {
+  gap: 4px;
+  font-weight: 650;
+}
+
+.sketch-actions button.on {
+  border-color: #b9a6ee;
+  color: #5b3fc4;
+  background: #f3effa;
+}
+
 .sketch-actions {
   display: flex;
   gap: 6px;

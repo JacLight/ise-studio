@@ -27,11 +27,12 @@ import {
   solvedOf,
   status,
 } from "./sketchModel";
+import { type CornerPick, type PatternSpec, chamferPreview, filletPreview, isCorner, mappedSegments, patternPreview, reflectAbout } from "./sketchOps";
 import { type Align, align, distribute, duplicate, extent, inBox, mapPoints, mirrorAbout, moveBy, movedPoints, objects, rewrite, rotateAbout, scaleAbout } from "./sketchTransform";
 import type { SketchPointer } from "./Viewport";
 
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
-export type Tool = "select" | "pen" | "line" | "rect" | "circle" | "arc" | "dimension" | "trim" | "extend";
+export type Tool = "select" | "pen" | "line" | "rect" | "circle" | "arc" | "dimension" | "trim" | "extend" | "fillet";
 
 const TOOLS: { tool: Tool; label: string; key: string; hint: string }[] = [
   { tool: "select", label: "Select", key: "S", hint: "Click to select · Shift adds · drag a box (right to left: touching) · drag to move · arrows nudge · ⌘D copies · Delete removes" },
@@ -43,6 +44,7 @@ const TOOLS: { tool: Tool; label: string; key: string; hint: string }[] = [
   { tool: "dimension", label: "Dimension", key: "D", hint: "Click a line, circle or arc, or two points, then type a value or =formula" },
   { tool: "trim", label: "Trim", key: "T", hint: "Click the piece of a curve to cut away, back to where other curves cross it" },
   { tool: "extend", label: "Extend", key: "E", hint: "Click near the end of a line or arc to carry it on to the next curve" },
+  { tool: "fillet", label: "Fillet", key: "F", hint: "Click a corner to round it · drag out from the corner to size it · or click two curves (the pieces to keep)" },
 ];
 
 type Draft =
@@ -73,6 +75,9 @@ export function useSketchEditor(props: {
   notify: (text: string) => void;
   onFace: (plane: SketchPicture["data"]["plane"] | null, focus?: { center: [number, number]; size: number }) => void;
   onMade: (id: string) => void;
+  /** Parts hidden in the view, and the one isolated (for projecting what is visible). */
+  hidden?: ReadonlySet<string>;
+  isolated?: string | null;
 }) {
   const { entities, run } = props;
   const [editing, setEditing] = useState<string | null>(null);
@@ -82,6 +87,19 @@ export function useSketchEditor(props: {
   const [selection, setSelection] = useState<ReadonlySet<number>>(new Set());
   const setSelected = useCallback((id: number | null) => setSelection(new Set(id === null ? [] : [id])), []);
   const [editDim, setEditDim] = useState<{ key: string; x: number; y: number; text: string } | null>(null);
+  // Fillet tool: round or chamfer, its size, the first of two curves picked, and a corner being dragged.
+  const [corner, setCorner] = useState<"round" | "chamfer">("round");
+  const [filletText, setFilletText] = useState("5");
+  const [filletFirst, setFilletFirst] = useState<{ curve: number; at: [number, number] } | null>(null);
+  const [filletDrag, setFilletDrag] = useState<{ point: number; size: number | null } | null>(null);
+  const filletDragging = useRef<{ point: number; size: number | null } | null>(null);
+  // Patterns and mirror: the open panel, its fields, and whether the mirror is being previewed.
+  const [patternOpen, setPatternOpen] = useState<"linear" | "circular" | null>(null);
+  const [pat, setPat] = useState({ count: "4", spacing: "20", direction: "0", angle: "90", full: true, linked: true });
+  const [mirrorHover, setMirrorHover] = useState(false);
+  // Projecting parts: the open panel and its choices.
+  const [projectOpen, setProjectOpen] = useState(false);
+  const [proj, setProj] = useState<{ picked: ReadonlySet<string>; mode: "outline" | "section"; construction: boolean; fixed: boolean; hidden: boolean }>({ picked: new Set(), mode: "outline", construction: false, fixed: true, hidden: false });
 
   const entity = editing ? entities.get(editing) : undefined;
   const data = sketchOf(entity);
@@ -206,6 +224,17 @@ export function useSketchEditor(props: {
     [data, solved, commit, props],
   );
 
+  /** Rounds (or bevels) a corner in the engine: exact, trimmed, its size a dimension. */
+  const roundCorner = useCallback(
+    (pick: CornerPick, size: number) => {
+      if (!editing || !(size > 0)) return;
+      const round = corner === "round";
+      void run(round ? "sketch.fillet" : "sketch.chamfer", { target: editing, ...pick, [round ? "radius" : "distance"]: size });
+    },
+    [editing, corner, run],
+  );
+  const filletSize = Number(filletText);
+
   /** Rotate, mirror or scale the selection about the middle of its box. */
   const transform = useCallback(
     (how: { rotate?: number; mirror?: "x" | "y"; scale?: number }) => {
@@ -307,6 +336,14 @@ export function useSketchEditor(props: {
         return;
       }
       if (e.type === "move") {
+        const fd = filletDragging.current;
+        if (fd) {
+          // Dragging out from a corner sizes the round: its distance from the corner.
+          const c = pos.get(fd.point);
+          const d = c ? Math.hypot(at[0] - c[0], at[1] - c[1]) : 0;
+          fd.size = d > Math.max(e.grid * 0.5, 1e-6) ? Math.round(d * 100) / 100 : null;
+          setFilletDrag({ ...fd });
+        }
         if (dragging.current) {
           dragging.current.at = at;
           setDraft({ kind: "drag", point: dragging.current.point, at });
@@ -337,6 +374,14 @@ export function useSketchEditor(props: {
         }
         return;
       }
+      if (e.type === "up" && filletDragging.current) {
+        const fd = filletDragging.current;
+        filletDragging.current = null;
+        setFilletDrag(null);
+        if (fd.size !== null) setFilletText(String(fd.size));
+        roundCorner({ point: fd.point }, fd.size ?? filletSize);
+        return;
+      }
       if (e.type === "up") {
         const d = dragging.current;
         dragging.current = null;
@@ -351,6 +396,21 @@ export function useSketchEditor(props: {
       }
       // A click ("down").
       switch (tool) {
+        case "fillet":
+          if (e.point !== null && isCorner(g, e.point)) {
+            // A corner: round it on release (at the size dragged out, else the size in the field).
+            filletDragging.current = { point: e.point, size: null };
+            setFilletDrag({ point: e.point, size: null });
+            setFilletFirst(null);
+          } else if (e.curve !== null) {
+            // Two curves, one click each, on the pieces to keep.
+            if (!filletFirst || filletFirst.curve === e.curve) setFilletFirst({ curve: e.curve, at });
+            else {
+              roundCorner({ curves: [filletFirst.curve, e.curve], picks: [filletFirst.at, at] }, filletSize);
+              setFilletFirst(null);
+            }
+          } else setFilletFirst(null);
+          break;
         case "trim":
         case "extend":
           if (e.curve !== null && editing) void run(tool === "trim" ? "sketch.trim" : "sketch.extend", { target: editing, curve: e.curve, at });
@@ -476,7 +536,7 @@ export function useSketchEditor(props: {
         }
       }
     },
-    [data, tool, draft, pos, commit, commitDrag, addDimension, solved, penPointer, selection, setSelected, applyMoves, editing, run],
+    [data, tool, draft, pos, commit, commitDrag, addDimension, solved, penPointer, selection, setSelected, applyMoves, editing, run, roundCorner, filletSize, filletFirst],
   );
 
   // Keys: tools, Escape, Delete.
@@ -488,13 +548,18 @@ export function useSketchEditor(props: {
       if (t && !e.metaKey && !e.ctrlKey) {
         setTool(t.tool);
         setDraft({ kind: "none" });
+        setFilletFirst(null);
         e.preventDefault();
       } else if (e.key === "Enter" && draft.kind === "pen") {
         e.preventDefault();
         setDraft({ kind: "none" });
       } else if (e.key === "Escape") {
         e.stopPropagation();
-        if (draft.kind !== "none") setDraft({ kind: "none" });
+        if (patternOpen || projectOpen) {
+          setPatternOpen(null);
+          setProjectOpen(false);
+        } else if (filletFirst) setFilletFirst(null);
+        else if (draft.kind !== "none") setDraft({ kind: "none" });
         else if (selection.size) setSelection(new Set());
         else finish();
       } else if ((e.key === "Delete" || e.key === "Backspace") && selection.size && data) {
@@ -522,10 +587,10 @@ export function useSketchEditor(props: {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [editing, draft, selection, data, solved, hover.grid, commit, finish, applyMoves]);
+  }, [editing, draft, selection, data, solved, hover.grid, commit, finish, applyMoves, patternOpen, projectOpen, filletFirst]);
 
   // What the current tool would add, drawn dashed.
-  const preview = useMemo((): Segment[] => {
+  const drawPreview = useMemo((): Segment[] => {
     const cur = hover.at;
     if (!cur) return [];
     const from = (d: { from: number | null; at: [number, number] }) => (d.from !== null && d.from >= 0 ? (pos.get(d.from) ?? d.at) : d.at);
@@ -610,12 +675,65 @@ export function useSketchEditor(props: {
     }
   }, [draft, hover.at, pos, data, selection, solved]);
 
+  // The selection's curves and lone points, for patterns and the mirror.
+  const selCurves = useMemo(() => (data ? data.geometry.curves.filter((c) => selection.has(c.id)).map((c) => c.id) : []), [data, selection]);
+  const lonePoint = useMemo(() => (data ? [...selection].find((id) => data.geometry.points.some((p) => p.id === id) && !data.geometry.curves.some((c) => c.id === id)) : undefined), [data, selection]);
+  const mirrorAxis = useMemo(() => {
+    if (!data) return null;
+    const lines = [...selection].filter((id) => data.geometry.curves.some((c) => c.id === id && c.kind === "line"));
+    const guides = lines.filter((id) => data.geometry.curves.find((c) => c.id === id)?.construction);
+    const axis = guides.length === 1 ? guides[0] : lines[lines.length - 1];
+    return axis !== undefined && selCurves.some((id) => id !== axis) ? axis : null;
+  }, [data, selection, selCurves]);
+  const patternSpec = useMemo((): PatternSpec | null => {
+    if (!patternOpen) return null;
+    const count = Math.round(Number(pat.count));
+    if (!(count >= 2 && count <= 200)) return null;
+    if (patternOpen === "linear") {
+      const spacing = Number(pat.spacing);
+      const direction = Number(pat.direction);
+      return Number.isFinite(spacing) && spacing !== 0 && Number.isFinite(direction) ? { kind: "linear", count, spacing, direction } : null;
+    }
+    const angle = pat.full ? 360 / count : Number(pat.angle);
+    const center: [number, number] = lonePoint !== undefined ? (pos.get(lonePoint) ?? [0, 0]) : [0, 0];
+    return Number.isFinite(angle) && angle !== 0 ? { kind: "circular", count, angle, center } : null;
+  }, [patternOpen, pat, lonePoint, pos]);
+
+  // Previews of the exact operations: the round at the corner, the copies, the reflection.
+  const preview = useMemo((): Segment[] => {
+    if (!data) return drawPreview;
+    const g = data.geometry;
+    const out = [...drawPreview];
+    if (tool === "fillet") {
+      const make = (pick: CornerPick, size: number) => (corner === "round" ? filletPreview(g, solved, pick, size) : chamferPreview(g, solved, pick, size));
+      if (filletDrag) out.push(...(make({ point: filletDrag.point }, filletDrag.size ?? filletSize) ?? []));
+      else if (filletFirst && hover.curve !== null && hover.curve !== filletFirst.curve && hover.at) out.push(...(make({ curves: [filletFirst.curve, hover.curve], picks: [filletFirst.at, hover.at] }, filletSize) ?? []));
+      else if (hover.point !== null && isCorner(g, hover.point)) out.push(...(make({ point: hover.point }, filletSize) ?? []));
+    }
+    if (patternSpec && selCurves.length) out.push(...patternPreview(g, solved, selCurves, patternSpec));
+    if (mirrorHover && mirrorAxis !== null) {
+      const axis = g.curves.find((c) => c.id === mirrorAxis);
+      if (axis?.kind === "line") out.push(...mappedSegments(g, solved, selCurves.filter((id) => id !== mirrorAxis), reflectAbout(pos.get(axis.a)!, pos.get(axis.b)!), true));
+    }
+    return out;
+  }, [data, drawPreview, tool, corner, filletDrag, filletFirst, filletSize, hover, solved, patternSpec, selCurves, mirrorHover, mirrorAxis, pos]);
+
   const picture: SketchPicture | null = useMemo(
     () =>
       data
-        ? { data, solved, hoverPoint: hover.point, hoverCurve: hover.curve, selected: [...selection], preview, cursor: tool === "select" ? null : hover.at, grid: hover.grid }
+        ? {
+            data,
+            solved,
+            hoverPoint: hover.point,
+            hoverCurve: hover.curve,
+            // The fillet tool keeps its first curve lit while the second is picked.
+            selected: tool === "fillet" && filletFirst ? [...selection, filletFirst.curve] : [...selection],
+            preview,
+            cursor: tool === "select" ? null : hover.at,
+            grid: hover.grid,
+          }
         : null,
-    [data, solved, hover, selection, preview, tool],
+    [data, solved, hover, selection, preview, tool, filletFirst],
   );
 
   const [angleText, setAngleText] = useState("45");
@@ -786,6 +904,33 @@ export function useSketchEditor(props: {
           <button type="submit" title="Add an outline this far outside (negative: inside)">mm</button>
         </form>
       </div>
+      {selCurves.length > 0 && (
+        <div className="sel-group">
+          <button type="button" className={`sel-btn ${patternOpen === "linear" ? "on" : ""}`} title="Linear pattern: copies in a row" aria-label="Linear pattern" aria-pressed={patternOpen === "linear"} onClick={() => setPatternOpen((v) => (v === "linear" ? null : "linear"))}>
+            <Icon name="patternLinear" />
+          </button>
+          <button type="button" className={`sel-btn ${patternOpen === "circular" ? "on" : ""}`} title="Circular pattern: copies round a centre (a selected point, else the origin)" aria-label="Circular pattern" aria-pressed={patternOpen === "circular"} onClick={() => setPatternOpen((v) => (v === "circular" ? null : "circular"))}>
+            <Icon name="patternCircular" />
+          </button>
+          <button
+            type="button"
+            className="sel-btn"
+            disabled={mirrorAxis === null}
+            title={mirrorAxis === null ? "Mirror: select the curves and a line to mirror them about" : "Mirror about the selected line (a construction line if one is selected): linked copies"}
+            aria-label="Mirror about a line"
+            onMouseEnter={() => setMirrorHover(true)}
+            onMouseLeave={() => setMirrorHover(false)}
+            onClick={async () => {
+              if (!editing || mirrorAxis === null) return;
+              const out = (await run("sketch.mirror", { target: editing, curves: selCurves.filter((id) => id !== mirrorAxis), line: mirrorAxis })) as { output?: { curves?: number[] } } | null;
+              setMirrorHover(false);
+              if (out?.output?.curves) setSelection(new Set(out.output.curves));
+            }}
+          >
+            <Icon name="mirror" />
+          </button>
+        </div>
+      )}
       {objectCount >= 2 && (
         <div className="sel-group">
           <IB icon="alignLeft" label="Align left edges" onClick={() => lineUp("left")} />
@@ -815,7 +960,77 @@ export function useSketchEditor(props: {
         />
         <IB icon="trash" label="Delete" onClick={removeSelection} />
       </div>
+      {patternOpen && selCurves.length > 0 && (
+        <form
+          className="sketch-panel"
+          aria-label={patternOpen === "linear" ? "Linear pattern" : "Circular pattern"}
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!editing || !patternSpec) return props.notify("Give a count of 2 or more and a spacing or angle other than zero.");
+            const base = { target: editing, curves: selCurves, kind: patternSpec.kind, count: patternSpec.count, linked: pat.linked };
+            const params =
+              patternSpec.kind === "linear"
+                ? { ...base, spacing: patternSpec.spacing, direction: [Math.cos((patternSpec.direction * Math.PI) / 180), Math.sin((patternSpec.direction * Math.PI) / 180)] }
+                : { ...base, angle: patternSpec.angle, center: lonePoint ?? [0, 0] };
+            const out = (await run("sketch.pattern", params)) as { output?: { curves?: number[] } } | null;
+            if (out?.output?.curves) {
+              setPatternOpen(null);
+              setSelection(new Set(out.output.curves));
+            }
+          }}
+        >
+          <strong>{patternOpen === "linear" ? "Linear pattern" : "Circular pattern"}</strong>
+          <label>
+            Count
+            <input value={pat.count} inputMode="numeric" onChange={(e) => setPat({ ...pat, count: e.target.value })} aria-label="How many in all, the original included" />
+          </label>
+          {patternOpen === "linear" ? (
+            <>
+              <label>
+                Spacing
+                <input value={pat.spacing} inputMode="decimal" onChange={(e) => setPat({ ...pat, spacing: e.target.value })} aria-label="Spacing in mm" />
+                <small>mm</small>
+              </label>
+              <label>
+                Direction
+                <input value={pat.direction} inputMode="decimal" onChange={(e) => setPat({ ...pat, direction: e.target.value })} aria-label="Direction in degrees from the x axis" />
+                <small>°</small>
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="check">
+                <input type="checkbox" checked={pat.full} onChange={(e) => setPat({ ...pat, full: e.target.checked })} />
+                Full circle
+              </label>
+              <label>
+                Step
+                <input value={pat.full ? String(Math.round((360 / Math.max(1, Number(pat.count) || 1)) * 1000) / 1000) : pat.angle} disabled={pat.full} inputMode="decimal" onChange={(e) => setPat({ ...pat, angle: e.target.value })} aria-label="Angle between copies in degrees" />
+                <small>°</small>
+              </label>
+              <span className="sketch-panel-note">about {lonePoint !== undefined ? "the selected point" : "the origin"}</span>
+            </>
+          )}
+          <label className="check" title="Linked copies follow the original; the spacing or angle becomes a dimension">
+            <input type="checkbox" checked={pat.linked} onChange={(e) => setPat({ ...pat, linked: e.target.checked })} />
+            Linked
+          </label>
+          <button type="submit" className="primary">
+            {patternSpec ? `Make ${patternSpec.count - 1} ${patternSpec.count === 2 ? "copy" : "copies"}` : "Make copies"}
+          </button>
+        </form>
+      )}
     </div>
+  );
+
+  // Parts a sketch can project: every program part, and whether the view shows it.
+  const parts = useMemo(
+    () =>
+      [...entities.values()]
+        .map((e) => ({ e, prog: e.components["shape.program"] as { name?: string } | undefined }))
+        .filter((x) => x.prog)
+        .map(({ e, prog }) => ({ id: e.id, name: prog?.name ?? e.id, visible: !props.hidden?.has(e.id) && (!props.isolated || props.isolated === e.id) })),
+    [entities, props.hidden, props.isolated],
   );
 
   const st = status(entity);
@@ -843,13 +1058,103 @@ export function useSketchEditor(props: {
         ))}
       </div>
       <p className="sketch-hint">{TOOLS.find((t) => t.tool === tool)?.hint} · Alt turns off grid snap</p>
+      {tool === "fillet" && (
+        <div className="sketch-options" role="group" aria-label="Fillet options">
+          <div className="seg-toggle">
+            <button type="button" className={corner === "round" ? "on" : ""} aria-pressed={corner === "round"} onClick={() => setCorner("round")}>
+              <Icon name="fillet" /> Round
+            </button>
+            <button type="button" className={corner === "chamfer" ? "on" : ""} aria-pressed={corner === "chamfer"} onClick={() => setCorner("chamfer")}>
+              <span aria-hidden="true">⌐</span> Chamfer
+            </button>
+          </div>
+          <label className="sel-field">
+            {corner === "round" ? "R" : "D"}
+            <input value={filletDrag?.size != null ? String(filletDrag.size) : filletText} inputMode="decimal" aria-label={corner === "round" ? "Fillet radius in mm" : "Chamfer distance in mm"} onChange={(e) => setFilletText(e.target.value)} />
+            <small>mm</small>
+          </label>
+          {filletFirst && <span className="sketch-panel-note">Now click the second curve</span>}
+        </div>
+      )}
       {selectionBar}
+      {projectOpen && (
+        <div className="sketch-panel" role="group" aria-label="Project parts onto the sketch">
+          <strong>Project onto the sketch</strong>
+          <div className="seg-toggle">
+            <button type="button" className={proj.mode === "outline" ? "on" : ""} aria-pressed={proj.mode === "outline"} onClick={() => setProj({ ...proj, mode: "outline" })} title="The outline the part shows looking straight at the sketch">
+              Outline
+            </button>
+            <button type="button" className={proj.mode === "section" ? "on" : ""} aria-pressed={proj.mode === "section"} onClick={() => setProj({ ...proj, mode: "section" })} title="Where the sketch plane cuts the part">
+              Section
+            </button>
+          </div>
+          <div className="sketch-parts">
+            {parts.length === 0 && <span className="sketch-panel-note">No parts to project yet</span>}
+            {parts.map((p) => (
+              <label key={p.id} className="check">
+                <input
+                  type="checkbox"
+                  checked={proj.picked.has(p.id)}
+                  onChange={(e) => {
+                    const next = new Set(proj.picked);
+                    if (e.target.checked) next.add(p.id);
+                    else next.delete(p.id);
+                    setProj({ ...proj, picked: next });
+                  }}
+                />
+                {p.name}
+                {!p.visible && <small> (hidden)</small>}
+              </label>
+            ))}
+          </div>
+          {parts.length > 1 && (
+            <button type="button" className="secondary" onClick={() => setProj({ ...proj, picked: new Set(parts.filter((p) => p.visible).map((p) => p.id)) })}>
+              All visible parts
+            </button>
+          )}
+          {proj.mode === "outline" && (
+            <label className="check" title="Also the edges behind the part">
+              <input type="checkbox" checked={proj.hidden} onChange={(e) => setProj({ ...proj, hidden: e.target.checked })} />
+              Hidden edges
+            </label>
+          )}
+          <label className="check" title="Pinned where the part put them, to draw against">
+            <input type="checkbox" checked={proj.fixed} onChange={(e) => setProj({ ...proj, fixed: e.target.checked })} />
+            Reference (pinned)
+          </label>
+          <label className="check" title="Guides that never make an outline">
+            <input type="checkbox" checked={proj.construction} onChange={(e) => setProj({ ...proj, construction: e.target.checked })} />
+            Construction
+          </label>
+          <button
+            type="button"
+            className="primary"
+            disabled={!proj.picked.size}
+            onClick={async () => {
+              if (!editing) return;
+              const from = parts.filter((p) => proj.picked.has(p.id)).map((p) => p.id);
+              const out = (await run("sketch.project", { target: editing, from, mode: proj.mode, hidden: proj.hidden, fixed: proj.fixed, construction: proj.construction })) as { output?: { curves?: number[] } } | null;
+              if (out?.output?.curves) {
+                setProjectOpen(false);
+                setTool("select");
+                setSelection(new Set(out.output.curves));
+                props.notify(`Projected ${out.output.curves.length} ${out.output.curves.length === 1 ? "curve" : "curves"}`);
+              }
+            }}
+          >
+            Project
+          </button>
+        </div>
+      )}
       <div className="sketch-actions">
         <button type="button" className="primary" onClick={() => make("extrude")} disabled={!solved?.loops.length}>
           <Icon name="cube" /> Extrude
         </button>
         <button type="button" className="secondary" onClick={() => make("revolve")} disabled={!solved?.loops.length}>
           <Icon name="rotate" /> Revolve
+        </button>
+        <button type="button" className={`secondary ${projectOpen ? "on" : ""}`} aria-pressed={projectOpen} title="Project parts' edges onto the sketch plane" onClick={() => setProjectOpen((v) => !v)}>
+          <Icon name="project" /> Project
         </button>
         <button type="button" className="secondary" onClick={finish}>
           Done

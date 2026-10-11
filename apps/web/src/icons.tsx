@@ -63,6 +63,10 @@ const PATHS = {
   subtract: "M4 4h10v6h-4v4H4z M13 13h7v7h-7z",
   intersect: "M10 10h4v4h-4z M4 14V4h10 M20 10v10H10",
   offset: "M8 8h8v8H8z M3 3h18v18H3z",
+  patternLinear: "M3 9h4v6H3z M10 9h4v6h-4z M17 9h4v6h-4z",
+  patternCircular: "M12 2.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M19.5 15a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M4.5 15a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M12 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z",
+  mirror: "M12 3v18 M9 6 3 18h6z M15 6v12h6z",
+  project: "M4 8l8-4 8 4-8 4z M12 12v3 M4 20h16 M7 17.5 12 15l5 2.5",
   // Sketch constraints.
   cHorizontal: "M4 12h16 M4 9v6 M20 9v6",
   cVertical: "M12 4v16 M9 4h6 M9 20h6",
