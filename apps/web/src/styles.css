@@ -7300,3 +7300,254 @@ button.download.drawing-open small {
     animation: none;
   }
 }
+
+/* ---- Configurations ---- */
+.config-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.config-modified {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #fff4e0;
+  color: #a5671a;
+  font-size: 9.5px;
+  font-weight: 650;
+}
+
+.config-switch {
+  margin-bottom: 8px;
+}
+
+.config-switch button {
+  min-width: 0;
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  transition: background 0.15s, color 0.15s;
+}
+
+.config-switch button:not(.active):hover {
+  color: var(--purple);
+  background: rgb(255 255 255 / 0.55);
+}
+
+.config-select {
+  margin-bottom: 8px;
+}
+
+.config-start {
+  width: 100%;
+}
+
+.config-start:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.config-modified-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.config-modified-row .secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.config-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 2px -2px 8px;
+  padding: 0 2px 2px;
+  border-radius: 10px;
+}
+
+.config-table {
+  border-collapse: separate;
+  border-spacing: 0 3px;
+  min-width: 100%;
+  font-size: 11px;
+}
+
+.config-table th {
+  padding: 0 3px 2px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 9.5px;
+  color: #8f88a0;
+  white-space: nowrap;
+}
+
+.config-name-head {
+  padding-left: 8px !important;
+}
+
+.config-col {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.config-col-label small {
+  margin-left: 3px;
+  font-weight: 500;
+  color: #b4aec0;
+}
+
+.config-col-label.finish {
+  color: #5b3fc4;
+}
+
+.config-table td {
+  padding: 0 2px;
+  background: #f7f5fb;
+}
+
+.config-table td:first-child {
+  border-radius: 8px 0 0 8px;
+  padding-left: 3px;
+}
+
+.config-table td:last-child {
+  border-radius: 0 8px 8px 0;
+}
+
+.config-table tr.active td {
+  background: #f1ebfc;
+}
+
+.config-cell {
+  width: 100%;
+  min-width: 52px;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  color: #2c2833;
+}
+
+.config-cell.name {
+  min-width: 72px;
+  font-weight: 600;
+}
+
+.config-cell.num {
+  width: 64px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.config-cell:hover {
+  background: rgb(255 255 255 / 0.7);
+}
+
+.config-cell:focus {
+  outline: none;
+  background: #fff;
+  border-color: #cdbdf0;
+  box-shadow: 0 0 0 3px #f1ebfd;
+}
+
+.config-cell.bad,
+.config-cell.bad:focus {
+  border-color: #e8a3b0;
+  box-shadow: 0 0 0 3px #fbe9ed;
+}
+
+.config-check {
+  text-align: center;
+}
+
+.config-check input {
+  accent-color: var(--purple);
+}
+
+.config-x {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  color: #b4aec0;
+  opacity: 0.7;
+}
+
+.config-x .icon {
+  width: 12px;
+  height: 12px;
+}
+
+.config-x:hover {
+  opacity: 1;
+  color: #b0485b;
+  background: #fbe9ed;
+}
+
+.config-row-actions {
+  width: 26px;
+}
+
+.config-add-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.config-add-row .pop-select {
+  height: 30px;
+  font-size: 11px;
+  color: #766b85;
+  background: #f4f2f7;
+  border-color: transparent;
+}
+
+.config-hint {
+  margin-top: 8px;
+}
+
+/* An instance's parameter set by its configuration. */
+.config-fixed {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 3px;
+  height: 32px;
+  line-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: #f7f5fb;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2c2833;
+  font-variant-numeric: tabular-nums;
+}
+
+.config-fixed small {
+  font-weight: 500;
+  color: #a39db0;
+}
+
+.config-fixed em {
+  margin-left: 6px;
+  font-style: normal;
+  font-size: 9.5px;
+  font-weight: 650;
+  color: var(--purple);
+}

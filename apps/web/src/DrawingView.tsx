@@ -190,10 +190,21 @@ const DATUM_LETTERS = "ABCDEFGHJKLMNPRSTUVWXYZ".split("");
 
 type Popover = { at: Pt } & ({ kind: "dimension"; index: number } | { kind: "hole"; diameter: number } | { kind: "frame"; view: ViewName; p: Pt } | { kind: "annotation"; mark: AnnotationMark });
 
-export function DrawingView(props: { id: string; name: string; parts: string[]; setups: DrawingSetup[]; onSave: (setup: DrawingSetup) => Promise<unknown>; onClose: () => void }) {
+export function DrawingView(props: {
+  id: string;
+  name: string;
+  parts: string[];
+  setups: DrawingSetup[];
+  /** The shape's configurations, and the one it shows: the drawing can be of any of them. */
+  configs?: string[];
+  activeConfig?: string | null;
+  onSave: (setup: DrawingSetup) => Promise<unknown>;
+  onClose: () => void;
+}) {
   const [sheet, setSheet] = useState<(typeof SHEETS)[number]>("A3");
   const [projection, setProjection] = useState<"first" | "third">("first");
   const [part, setPart] = useState("");
+  const [config, setConfig] = useState(props.activeConfig ?? "");
   const [drawing, setDrawing] = useState<Drawing | null>(null);
   const [status, setStatus] = useState<{ kind: "busy" } | { kind: "idle" } | { kind: "error"; text: string }>({ kind: "busy" });
   const [tool, setTool] = useState<Tool>("none");
@@ -213,7 +224,7 @@ export function DrawingView(props: { id: string; name: string; parts: string[]; 
   const holeFits = setup.hole_fits ?? [];
   const [depth, setDepth] = useState<number>(setup.section ?? 50);
   useEffect(() => setDepth(setup.section ?? 50), [setup.section]);
-  const query = `sheet=${sheet}&projection=${projection}${part ? `&part=${encodeURIComponent(part)}` : ""}`;
+  const query = `sheet=${sheet}&projection=${projection}${part ? `&part=${encodeURIComponent(part)}` : ""}${config ? `&config=${encodeURIComponent(config)}` : ""}`;
   const setupKey = JSON.stringify(setup);
 
   useEffect(() => {
@@ -516,10 +527,20 @@ export function DrawingView(props: { id: string; name: string; parts: string[]; 
       <header className="drawing-bar">
         <div className="drawing-title">
           <strong>Drawing</strong>
-          <span>{part || props.name}</span>
+          <span>{part || (config ? `${props.name} (${config})` : props.name)}</span>
           {d && <small>Scale {d.scale_text}</small>}
         </div>
         <div className="drawing-controls">
+          {(props.configs?.length ?? 0) > 0 && (
+            <select value={config} onChange={(e) => setConfig(e.target.value)} aria-label="Which configuration">
+              {!props.activeConfig && <option value="">As it is</option>}
+              {props.configs!.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          )}
           {props.parts.length > 0 && (
             <select value={part} onChange={(e) => setPart(e.target.value)} aria-label="Which part">
               <option value="">Whole assembly</option>

@@ -8,6 +8,7 @@
 
 pub mod assets;
 pub mod cam;
+pub mod configs;
 pub mod drawing;
 pub mod exact;
 pub mod fea;
@@ -20,6 +21,7 @@ pub mod runtime;
 pub mod sketch;
 pub mod trim;
 
+pub use configs::{ConfigRow, ShapeConfigurations};
 pub use params::{ParameterSet, ResolvedParams, resolved_program};
 
 use de_core::{
@@ -47,6 +49,7 @@ impl Plugin for ShapePlugin {
             .component::<ShapeStudies>()
             .component::<ShapeDrawings>()
             .component::<ParameterSet>()
+            .component::<ShapeConfigurations>()
             .component::<sketch::Sketch>()
             .command::<sketch::CreateSketch>()
             .command::<sketch::UpdateSketch>()
@@ -62,6 +65,7 @@ impl Plugin for ShapePlugin {
             .command::<UpdateShape>()
             .command::<SetStudy>()
             .command::<SetDrawing>()
+            .command::<configs::ActivateConfig>()
             // Formulas first: geometry is evaluated from the resolved values, and
             // re-evaluated when anything a formula reads changes.
             .derived(Derived {
@@ -79,19 +83,20 @@ impl Plugin for ShapePlugin {
             })
             .derived(Derived {
                 name: "shape.evaluate",
-                inputs: &[ShapeProgram::KIND],
+                // The active configuration can leave finishes off.
+                inputs: &[ShapeProgram::KIND, ShapeConfigurations::KIND],
                 reads_dependencies: true,
                 compute: evaluate_program,
             })
             .derived(Derived {
                 name: "shape.display_mesh",
-                inputs: &[ShapeProgram::KIND],
+                inputs: &[ShapeProgram::KIND, ShapeConfigurations::KIND],
                 reads_dependencies: true,
                 compute: display_mesh,
             })
             .derived(Derived {
                 name: "shape.mass_properties",
-                inputs: &[ShapeProgram::KIND, MaterialRef::KIND, PartMaterials::KIND],
+                inputs: &[ShapeProgram::KIND, ShapeConfigurations::KIND, MaterialRef::KIND, PartMaterials::KIND],
                 reads_dependencies: true,
                 compute: mass_properties,
             });
@@ -932,7 +937,7 @@ pub fn preview(program: &ShapeProgram) -> Result<(ShapeStats, DisplayMesh), Stri
     Ok((stats, mesh_of(&e.positions, &e.normals, &e.indices)))
 }
 
-fn stats_of(e: &runtime::Evaluated) -> ShapeStats {
+pub(crate) fn stats_of(e: &runtime::Evaluated) -> ShapeStats {
     ShapeStats {
         volume_mm3: e.volume,
         area_mm2: e.area,
@@ -963,7 +968,7 @@ fn stats_of(e: &runtime::Evaluated) -> ShapeStats {
     }
 }
 
-fn mesh_of(positions: &[f32], normals: &[f32], indices: &[u32]) -> DisplayMesh {
+pub(crate) fn mesh_of(positions: &[f32], normals: &[f32], indices: &[u32]) -> DisplayMesh {
     DisplayMesh {
         positions: positions.iter().map(|v| v / 1000.0).collect(),
         normals: normals.to_vec(),
@@ -1001,13 +1006,21 @@ fn density(world: &World, id: StableId) -> Result<f64, String> {
 /// Mass (kg) of every part of an assembly, or of the single solid, by its
 /// material; `None` where no material applies.
 pub fn part_masses(world: &World, entity: Entity) -> Result<Vec<Option<f64>>, String> {
-    let Some(s) = world.get::<ShapeSolid>(entity) else { return Ok(Vec::new()) };
+    match world.get::<ShapeSolid>(entity) {
+        Some(s) => masses_of(world, entity, &s.stats),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Mass (kg) of every part of `stats` (or of its single solid), made of shape
+/// `entity`'s materials.
+pub fn masses_of(world: &World, entity: Entity, stats: &ShapeStats) -> Result<Vec<Option<f64>>, String> {
     let default = world.get::<MaterialRef>(entity).map(|m| m.0);
     let table = world.get::<PartMaterials>(entity);
-    if s.stats.parts.is_empty() {
-        return Ok(vec![default.map(|id| density(world, id)).transpose()?.map(|d| s.stats.volume_mm3 / 1e9 * d)]);
+    if stats.parts.is_empty() {
+        return Ok(vec![default.map(|id| density(world, id)).transpose()?.map(|d| stats.volume_mm3 / 1e9 * d)]);
     }
-    s.stats
+    stats
         .parts
         .iter()
         .map(|p| {
@@ -1020,29 +1033,30 @@ pub fn part_masses(world: &World, entity: Entity) -> Result<Vec<Option<f64>>, St
         .collect()
 }
 
-fn mass_properties(world: &World, entity: Entity) -> Option<Result<MassProperties, String>> {
-    world.get::<ShapeProgram>(entity)?;
-    let s = world.get::<ShapeSolid>(entity)?;
-    let volume_m3 = s.stats.volume_mm3 / 1e9;
-    let masses = match part_masses(world, entity) {
-        Ok(m) => m,
-        Err(e) => return Some(Err(e)),
-    };
+/// Volume, mass and center of mass from measured stats and part masses.
+pub(crate) fn mass_of(stats: &ShapeStats, masses: &[Option<f64>]) -> MassProperties {
+    let volume_m3 = stats.volume_mm3 / 1e9;
     let mass_kg = masses.iter().copied().sum::<Option<f64>>();
     // With per-part densities the center of mass weights each part by its mass.
-    let center = match (&mass_kg, s.stats.parts.is_empty()) {
+    let center = match (&mass_kg, stats.parts.is_empty()) {
         (Some(total), false) if *total > 0.0 => {
             let mut c = [0.0; 3];
-            for (p, m) in s.stats.parts.iter().zip(&masses) {
+            for (p, m) in stats.parts.iter().zip(masses) {
                 for k in 0..3 {
                     c[k] += p.centroid[k] * m.unwrap_or(0.0) / total;
                 }
             }
             c
         }
-        _ => s.stats.centroid,
+        _ => stats.centroid,
     };
-    Some(Ok(MassProperties { volume_m3, mass_kg, center_of_mass_m: center.map(|c| c / 1000.0) }))
+    MassProperties { volume_m3, mass_kg, center_of_mass_m: center.map(|c| c / 1000.0) }
+}
+
+fn mass_properties(world: &World, entity: Entity) -> Option<Result<MassProperties, String>> {
+    world.get::<ShapeProgram>(entity)?;
+    let s = world.get::<ShapeSolid>(entity)?;
+    Some(masses_of(world, entity, &s.stats).map(|m| mass_of(&s.stats, &m)))
 }
 
 // ---- Commands --------------------------------------------------------------
@@ -1069,7 +1083,7 @@ pub(crate) fn check_params(params: &[Param]) -> Result<(), CommandError> {
 
 /// Rejects programs that do not produce a valid solid, before anything is stored.
 /// Linked parameters are evaluated with their formulas worked out.
-fn validate(world: &World, program: &ShapeProgram, materials: &PartMaterials) -> Result<(), CommandError> {
+pub(crate) fn validate(world: &World, program: &ShapeProgram, materials: &PartMaterials) -> Result<(), CommandError> {
     check_params(&program.params)?;
     if program.display_tolerance.is_some_and(|t| !(t.is_finite() && t > 0.0 && t <= 100.0)) {
         return Err(CommandError::new(ErrorCode::InvalidParameters, "display tolerance must be between 0 and 100 mm"));
@@ -1294,6 +1308,18 @@ impl Command for UpdateShape {
             None => tx.get::<PartMaterials>(self.target).cloned().unwrap_or_default(),
         };
         validate(tx.world(), &program, &table)?;
+        // The configuration table still fits: its columns are still plain
+        // parameters; a finish that is gone is no longer left off.
+        if let Some(mut configs) = tx.get::<ShapeConfigurations>(self.target).cloned() {
+            let before = configs.clone();
+            for row in &mut configs.rows {
+                row.suppress.retain(|k| program.finishes.iter().any(|f| &f.key == k));
+            }
+            configs::check_table(tx.world(), &program, &configs)?;
+            if configs != before {
+                tx.set(self.target, configs)?;
+            }
+        }
         tx.set(self.target, program)?;
         set_materials(tx, self.target, table)?;
         Ok(json!({ "id": self.target }))
@@ -1410,7 +1436,18 @@ impl Command for LinkParam {
             .find(|p| p.key == self.key)
             .ok_or_else(|| CommandError::new(ErrorCode::InvalidParameters, format!("no parameter “{}”", self.key)))?;
         match self.expr.filter(|e| !e.trim().trim_start_matches('=').trim().is_empty()) {
-            Some(e) => p.expr = Some(e),
+            Some(e) => {
+                // A configuration sets this parameter: it cannot follow a formula as well.
+                if let Some(t) = tx.get::<ShapeConfigurations>(self.target)
+                    && t.params.contains(&self.key)
+                {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidParameters,
+                        format!("{} is a column of the configuration table, so each configuration sets it: take it out of the table before linking it to a formula", p.label),
+                    ));
+                }
+                p.expr = Some(e)
+            }
             None => {
                 // Unlinking keeps the value the formula last gave.
                 if let Some(v) = resolved.and_then(|r| r.0.get(&self.key).copied()) {

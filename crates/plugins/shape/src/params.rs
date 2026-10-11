@@ -482,9 +482,15 @@ pub(crate) fn resolved_params(world: &World, e: Entity) -> Option<Result<Resolve
     Some(resolve(world, params).map(ResolvedParams))
 }
 
-/// A program with its parameters' formulas worked out, ready to evaluate.
+/// A program with its parameters' formulas worked out, ready to evaluate. In
+/// its active configuration, the finishes that configuration leaves off are
+/// left off and it is named for it (“Bolt (M8×30)”).
 pub fn resolved_program(world: &World, e: Entity) -> Option<ShapeProgram> {
     let mut program = world.get::<ShapeProgram>(e)?.clone();
+    if let Some(row) = world.get::<crate::ShapeConfigurations>(e).and_then(|t| t.active_row()) {
+        crate::configs::suppress_finishes(&mut program, row);
+        program.name = crate::configs::display_name(&program.name, Some(&row.name));
+    }
     // A sketch that cannot be read leaves the inputs empty; evaluation then says which.
     program.inputs = crate::program_inputs(world, &program).unwrap_or_else(|_| format!(r#"{{"finishes":{}}}"#, serde_json::to_string(&program.finishes).unwrap()));
     if let Some(r) = world.get::<ResolvedParams>(e) {

@@ -466,6 +466,10 @@ struct EntityView<'a> {
     sketch: Option<&'a de_shape::sketch::SolvedSketch>,
     /// Totals for an assembly definition or instance.
     assembly: Option<&'a de_assembly::AssemblyStats>,
+    /// An instance showing a configuration of its shape: that configuration's
+    /// stats, mesh and mass.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    configured: Option<&'a de_shape::configs::Configured>,
     /// Mass (kg) of each part of an assembly, in the order of `shape.parts`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     part_masses: Vec<Option<f64>>,
@@ -481,6 +485,7 @@ fn view(project: &Project, id: StableId) -> Option<EntityView<'_>> {
         result: project.get::<RequirementResult>(id),
         shape: project.get::<ShapeSolid>(id).map(|s| &s.stats),
         assembly: project.get::<de_assembly::AssemblyStats>(id),
+        configured: project.get::<de_assembly::InstanceConfigured>(id).and_then(|c| c.0.as_deref()),
         sketch: project.get::<de_shape::sketch::SolvedSketch>(id),
         params: project.get::<de_shape::ResolvedParams>(id),
         formulas: project
@@ -928,7 +933,7 @@ fn source(project: &Project, id: StableId) -> Option<Source> {
         let name = instance.map(|i| i.name.clone()).or_else(|| project.get::<de_assembly::AssemblyDef>(id).map(|a| a.name.clone())).unwrap_or_default();
         let mut members = Vec::new();
         for o in de_assembly::occurrences(project.world(), id) {
-            let mut s = shape_source(project, o.shape, &material)?;
+            let mut s = shape_source(project, o.shape, o.config.as_deref(), &material)?;
             s.prefix = o.names[..o.names.len() - 1].join(" › ");
             s.at = o.transform.at;
             s.rotation = o.transform.rotation;
@@ -940,13 +945,17 @@ fn source(project: &Project, id: StableId) -> Option<Source> {
     if program.is_some() && project.get::<de_solid::Placement>(id).is_none() {
         return None;
     }
-    shape_source(project, id, &material)
+    shape_source(project, id, None, &material)
 }
 
-fn shape_source(project: &Project, id: StableId, material: &dyn Fn(StableId) -> Option<(String, f64)>) -> Option<Source> {
+/// A shape to export, in a configuration (an instance's) or as it is.
+fn shape_source(project: &Project, id: StableId, config: Option<&str>, material: &dyn Fn(StableId) -> Option<(String, f64)>) -> Option<Source> {
     let p = project.get::<de_solid::Placement>(id).copied().unwrap_or_default();
-    // Evaluated with linked parameters worked out.
-    let program = project.entity(id).and_then(|e| de_shape::resolved_program(project.world(), e));
+    // Evaluated with linked parameters worked out (and named for its configuration).
+    let program = project.entity(id).and_then(|e| match config {
+        Some(c) => de_shape::configs::configured_program(project.world(), e, c).ok(),
+        None => de_shape::resolved_program(project.world(), e),
+    });
     let boxed = project.get::<de_solid::BoxFeature>(id).map(|b| [b.width, b.depth, b.height].map(|l| l.canonical() * 1000.0));
     if program.is_none() && boxed.is_none() {
         return None;
@@ -1548,13 +1557,31 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
     };
     let found = {
         let project = app.project.lock().unwrap();
-        serde_json::from_value::<StableId>(json!(id)).ok().and_then(|sid| {
+        serde_json::from_value::<StableId>(json!(id)).ok().and_then(|picked| {
+            // An instance of a shape draws that shape, in the configuration it shows.
+            let (sid, mut config) = match project.get::<de_assembly::Instance>(picked) {
+                Some(i) => (i.of, i.config.clone()),
+                None => (picked, None),
+            };
+            if let Some(c) = query.get("config").filter(|c| !c.is_empty()) {
+                config = Some(c.clone());
+            }
             let e = project.entity(sid)?;
-            let program = de_shape::resolved_program(project.world(), e)?;
-            let part_material = options.part.as_ref().and_then(|n| project.get::<ShapeSolid>(sid)?.stats.parts.iter().find(|p| &p.name == n)?.material.clone());
+            // The active configuration is what the shape already shows.
+            let active = project.get::<de_shape::ShapeConfigurations>(sid).and_then(|t| t.active.clone());
+            let configured = match config.filter(|c| Some(c) != active.as_ref()) {
+                Some(c) => Some(de_shape::configs::evaluate(project.world(), e, &c).map_err(|m| (c, m))),
+                None => None,
+            };
+            let (program, stats, masses) = match configured {
+                Some(Err((_, m))) => return Some(Err(m)),
+                Some(Ok(c)) => (de_shape::configs::configured_program(project.world(), e, &c.config).ok()?, c.stats.clone(), if c.part_masses.is_empty() { vec![c.mass.mass_kg] } else { c.part_masses.clone() }),
+                None => (de_shape::resolved_program(project.world(), e)?, project.get::<ShapeSolid>(sid)?.stats.clone(), de_shape::part_masses(project.world(), e).unwrap_or_default()),
+            };
+            let part_material = options.part.as_ref().and_then(|n| stats.parts.iter().find(|p| &p.name == n)?.material.clone());
             // The part's own material; else the whole thing's; else the one all parts share.
             let shared = || {
-                let parts = &project.get::<ShapeSolid>(sid)?.stats.parts;
+                let parts = &stats.parts;
                 let first = parts.first()?.material.clone()?;
                 parts.iter().all(|p| p.material.as_ref() == Some(&first)).then_some(first)
             };
@@ -1565,10 +1592,10 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
                 })
                 .or_else(|| if options.part.is_none() { shared() } else { None });
             let mass = match &options.part {
-                None => project.get::<MassProperties>(sid).and_then(|m| m.mass_kg),
+                None => masses.iter().copied().sum::<Option<f64>>(),
                 Some(n) => {
-                    let index = project.get::<ShapeSolid>(sid)?.stats.parts.iter().position(|p| &p.name == n)?;
-                    de_shape::part_masses(project.world(), e).ok()?.get(index).copied().flatten()
+                    let index = stats.parts.iter().position(|p| &p.name == n)?;
+                    masses.get(index).copied().flatten()
                 }
             };
             // The saved setup: section and the person's dimensions.
@@ -1576,9 +1603,7 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
             // The parts list: one row per distinct part, with how many there are.
             let mut parts: Vec<de_shape::drawing::PartRow> = vec![];
             if options.part.is_none() {
-                let stats = &project.get::<ShapeSolid>(sid)?.stats.parts;
-                let masses = de_shape::part_masses(project.world(), e).unwrap_or_default();
-                for (i, p) in stats.iter().enumerate() {
+                for (i, p) in stats.parts.iter().enumerate() {
                     if let Some(row) = parts.iter_mut().find(|r| r.name == p.name) {
                         row.quantity += 1;
                         continue;
@@ -1592,10 +1617,14 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
                     });
                 }
             }
-            Some((program, material, mass, sid, setup, parts))
+            Some(Ok((program, material, mass, sid, setup, parts)))
         })
     };
-    let Some((program, material, mass, sid, setup, parts)) = found else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
+    let (program, material, mass, sid, setup, parts) = match found {
+        Some(Ok(found)) => found,
+        Some(Err(e)) => return fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        None => return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")),
+    };
     options.section = setup.section;
     options.dimensions = setup.dimensions;
     options.details = setup.details;

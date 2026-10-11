@@ -98,6 +98,17 @@ Build like a designer: smallest components first, then assemblies of them.
 - `assembly.instance.delete` removes an instance.
 - `assembly.group.create { name, members }` groups two or more items so they are picked and moved together; nothing about the items changes. `assembly.group.update { target, name?, members? }` renames or changes membership; deleting the group (`core.entity.delete`) ungroups. Several changes that belong together go in one `core.batch { steps: [{ operation, parameters }] }` (one undo step, all or nothing).
 
+## Configurations
+
+One shape, several sizes or variants (a bolt in M6×20, M8×30, M10×40; a shelf in S, M, L): a table on the shape whose columns are parameters and whose rows are configurations. Prefer this to copies or `make_unique` when the variants differ only in values.
+
+- `shape.config.set_table { target, params: ["d", "len"], rows: [{ name: "M8×30", values: { d: 8, len: 30 }, description?, suppress?: ["fillet1"] }], active?, renamed?: { old: new } }` creates or replaces the table. Every row gives every column a value (within the parameter's min/max); `suppress` leaves off finishes by the parameter that sizes them. `active` ("" for none) is the configuration the shape shows; left out, the current one stays. Renaming a row, pass `renamed` so instances showing it follow. No rows and no params removes the table. Every row is evaluated before the table is accepted.
+- `shape.config.activate { target, name }` shows one configuration: its values are written into the shape's parameters (journaled, one undo). `name: null` leaves none active and keeps the values. A shape with an active configuration is named for it everywhere: “Bolt (M8×30)” in parts lists, drawings and exports.
+- A linked parameter (one with a formula) cannot be a column: it stays driven, and the table is refused with the reason. A formula that reads a configured parameter (`head = d * 1.6`) follows each configuration. While a parameter is a column it cannot be linked or dropped by `shape.update`; take it out of the table first.
+- Instances choose a configuration of their shape: `assembly.instance.create { …, config: "M8×30" }` or `assembly.instance.update { target, config }` ("" shows the definition as it is). One definition placed three times can show three sizes and still share every edit to its program; the assembly's totals, its exports and drawings use each instance's configuration. A configuration that instances show cannot be deleted (switch them first); `make_unique` keeps what the instance showed as the copy's active configuration.
+- `/drawing/<id>?config=<name>` draws a shape in any configuration; an instance's id draws its shape in the instance's configuration.
+- `./forma get <id>` shows a shape's `shape.configurations` and, on an instance, `configured` (that configuration's stats and mass).
+
 ## Comments on the model
 
 Design-review comments are pinned to a point on a part and sync to the team like any change. Sign them `"author": "Forma AI"`.

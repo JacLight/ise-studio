@@ -543,7 +543,8 @@ function instanceKey(e: EntityView, entities: ReadonlyMap<string, EntityView>) {
   return occurrences(e.id, entities)
     .map((o) => {
       const def = entities.get(o.shape);
-      return `${o.shape}@${def?.mesh ? meshId(def.mesh) : 0}:${def ? lookKey(def, entities) : ""}:${o.transform.at.join(",")},${o.transform.rotation}:${o.path.join("/")}`;
+      const mesh = o.configured?.mesh ?? def?.mesh;
+      return `${o.shape}@${mesh ? meshId(mesh) : 0}:${def ? lookKey(def, entities) : ""}:${o.transform.at.join(",")},${o.transform.rotation}:${o.path.join("/")}`;
     })
     .join("|");
 }
@@ -554,9 +555,11 @@ function buildInstance(e: EntityView, entities: ReadonlyMap<string, EntityView>,
   const meshes: THREE.Mesh[] = [];
   for (const o of occurrences(e.id, entities)) {
     const def = entities.get(o.shape);
-    if (!def?.mesh) continue;
-    const parts = assemblyParts(def);
-    const geometry = acquireGeometry(def.mesh, parts);
+    // An instance in a configuration draws that configuration's mesh.
+    const meshData = o.configured?.mesh ?? def?.mesh;
+    if (!def || !meshData) continue;
+    const parts = o.configured ? o.configured.stats.parts ?? [] : assemblyParts(def);
+    const geometry = acquireGeometry(meshData, parts);
     const materials = looksFor(def, entities).map((l) => surface(l, wireframe));
     const mesh = new THREE.Mesh(geometry, parts.length ? materials : materials[0]);
     mesh.position.set(...o.transform.at);

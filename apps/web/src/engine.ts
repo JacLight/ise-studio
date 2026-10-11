@@ -89,7 +89,12 @@ export type EntityView = {
   /** Parameter values after formulas, and the formulas (in names) that drive linked ones. */
   params?: Record<string, number>;
   formulas?: Record<string, string>;
+  /** An instance showing a configuration of its shape: that configuration evaluated. */
+  configured?: Configured;
 };
+
+/** A shape evaluated in one of its configurations (what an instance naming it shows). */
+export type Configured = { config: string; name: string; stats: ShapeStats; mesh: MeshData; mass: MassProperties; part_masses?: (number | null)[] };
 
 /** A parameter that moves a face: the face moves `rate` mm per unit of it. */
 export type FaceDriver = { key: string; label: string; value: number; rate: number };

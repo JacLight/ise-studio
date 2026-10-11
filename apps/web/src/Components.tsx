@@ -8,6 +8,7 @@ import { Icon } from "./icons";
 import {
   assemblyDef,
   childrenOf,
+  configurations,
   definitionName,
   fmt,
   formatMass,
@@ -20,6 +21,7 @@ import {
 import { AXIS_COLORS } from "./gizmo";
 import { ScrubField } from "./ScrubField";
 import { LinkNote } from "./Panels";
+import { ConfigSection, InstanceConfig } from "./Configurations";
 import { statusColor } from "./Viewport";
 
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
@@ -230,6 +232,9 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
     return run("assembly.instance.update", { target: entity.id, at });
   };
   const owner = inst.parent ? [...entities.values()].find((e) => instance(e)?.of === inst.parent) : undefined;
+  // In a configuration, the columns it sets show its values (edited in the definition's table).
+  const table = def ? configurations(def) : undefined;
+  const row = inst.config ? table?.rows.find((r) => r.name === inst.config) : undefined;
   return (
     <div className="props">
       <div className="props-head">
@@ -237,7 +242,7 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
         <div className="props-title">
           <strong>{inst.name}</strong>
           <small>
-            {assemblyDef(def) ? "Assembly" : "Component"} “{definitionName(inst.of, entities)}” · {uses > 1 ? `shared by ${uses}` : "unique"}
+            {assemblyDef(def) ? "Assembly" : "Component"} “{definitionName(inst.of, entities)}”{inst.config ? ` in ${inst.config}` : ""} · {uses > 1 ? `shared by ${uses}` : "unique"}
           </small>
         </div>
         {props_.status && <StatusChip status={props_.status} />}
@@ -305,6 +310,8 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
         </div>
       </section>
 
+      {prog && def && <InstanceConfig entity={entity} def={def} config={inst.config} run={run} />}
+
       {kids.length > 0 && (
         <section className="props-section">
           <header>
@@ -338,6 +345,13 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
                   {param.label}
                   {def.formulas?.[param.key] && <LinkNote formula={def.formulas[param.key]} onUnlink={() => run("shape.link_param", { target: def.id, key: param.key, expr: null })} />}
                 </span>
+                {row && param.key in row.values ? (
+                  <span className="config-fixed" title={`Set by ${row.name}: edit it in ${prog.name}'s configuration table`}>
+                    {fmt(row.values[param.key])}
+                    <small>{param.unit === "count" ? "×" : param.unit === "deg" ? "°" : param.unit}</small>
+                    <em>{row.name}</em>
+                  </span>
+                ) : (
                 <ScrubField
                   label={param.label}
                   chip={param.label.slice(0, 2).toUpperCase()}
@@ -350,10 +364,24 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
                   onLive={() => {}}
                   onCommit={(v) => run("shape.set_params", { target: def.id, values: { [param.key]: v } })}
                 />
+                )}
               </div>
             ))}
           </div>
         </section>
+      )}
+
+      {prog && def && (
+        <ConfigSection
+          key={def.id}
+          title="Component configurations"
+          entity={def}
+          run={run}
+          onPreview={() => {}}
+          users={Object.fromEntries(
+            [...entities.values()].flatMap((e) => (instance(e)?.of === def.id && instance(e)?.config ? [instance(e)!.config!] : [])).reduce((m, c) => m.set(c, (m.get(c) ?? 0) + 1), new Map<string, number>()),
+          )}
+        />
       )}
 
       <div className="row-buttons">
