@@ -453,6 +453,7 @@ const PROCESSES = [
   "cast", // casting, or concrete cast in place
   "extrusion", // cut-to-length profile (aluminium, steel section)
   "glazing", // glass units
+  "pcb_fab", // printed circuit board (Gerber files from the PCB workspace)
   "buy", // purchased off the shelf
 ];
 

@@ -57,7 +57,6 @@ fn program(tx: &Tx, id: StableId) -> Result<(String, Vec<(String, f64)>), Comman
         name
     };
     let board_mat = mat("Board", "");
-    let copper_mat = mat("Copper", "");
     let sketch_name = board.sketch.and_then(|s| tx.get::<de_shape::sketch::Sketch>(s)).map(|s| s.name.clone());
     let (outline, cutouts) = if sketch_name.is_some() {
         (vec![], vec![])
@@ -139,7 +138,6 @@ fn program(tx: &Tx, id: StableId) -> Result<(String, Vec<(String, f64)>), Comman
         "padsBottom": pads_bottom,
         "parts": parts,
         "board": board_mat,
-        "copper": copper_mat,
     });
     let outline_js = match &sketch_name {
         Some(n) => format!("sketch({}).profile", serde_json::to_string(n).unwrap_or_default()),
@@ -158,30 +156,25 @@ const drill = (h) => {
   return len < 1e-6 ? c : c.add(cylinder(t + 2, h.r).translate(h.b[0], h.b[1], -1)).hull();
 };
 if (B.holes.length) pcb = pcb.subtract(union(B.holes.map(drill)));
-const out = [part("PCB", pcb, { material: B.board })];
 const copper = [
   ...B.padsTop.map((o) => polygon(o).extrude(cu).translate(0, 0, t)),
   ...B.padsBottom.map((o) => polygon(o).extrude(cu).translate(0, 0, -cu)),
 ];
+// One part: the bare board as a fab makes it (copper included), a "pcb_fab" line in the BOM.
 if (copper.length) {
   let pads = union(copper);
   if (B.holes.length) pads = pads.subtract(union(B.holes.map(drill)));
-  out.push(part("Exposed copper", pads, { material: B.copper }));
+  pcb = pcb.add(pads);
 }
+const out = [part("PCB", pcb, { material: B.board, process: "pcb_fab" })];
+// Each populated component is one bought part, declared as stock (MPN, LCSC) for the BOM.
 for (const c of B.parts) {
-  const blocks = c.blocks.map((b) => {
+  const solids = c.blocks.map((b) => {
     const h = b.z[1] - b.z[0];
-    let s = b.cyl ? cylinder(h, b.w / 2) : box(b.w, b.l, h).translate(-b.w / 2, -b.l / 2, 0).rotate(0, 0, c.rot);
-    const z = c.bottom ? -b.z[1] : t + b.z[0];
-    return { s: s.translate(b.c[0], b.c[1], z), m: b.m };
+    const s = b.cyl ? cylinder(h, b.w / 2) : box(b.w, b.l, h).translate(-b.w / 2, -b.l / 2, 0).rotate(0, 0, c.rot);
+    return s.translate(b.c[0], b.c[1], c.bottom ? -b.z[1] : t + b.z[0]);
   });
-  const byMaterial = {};
-  for (const b of blocks) (byMaterial[b.m] ??= []).push(b.s);
-  const names = Object.keys(byMaterial);
-  names.forEach((m, i) => {
-    const name = names.length === 1 ? c.name : `${c.name} (${m})`;
-    out.push(part(name, union(byMaterial[m]), i === 0 ? { material: m, stock: c.stock } : { material: m, process: "buy" }));
-  });
+  out.push(part(c.name, union(solids), { material: c.blocks[0].m, stock: c.stock }));
 }
 return out;
 "#;

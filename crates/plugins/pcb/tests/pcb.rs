@@ -389,3 +389,21 @@ fn fabs_flag_what_they_cannot_make() {
     assert!(near(e.amount, area * 5.0 * 2.0, 1e-9), "5 boards = 2 sets: {e:?}");
     assert!(reports.iter().find(|r| r.fab.id == "jlcpcb").unwrap().estimate.is_none(), "no invented prices");
 }
+
+#[test]
+fn the_project_bom_lists_board_parts_to_buy_and_the_board_to_make() {
+    use de_sourcing::bom::{self, Options, Scope};
+    let mut p = project();
+    small_board(&mut p);
+    // A second board with no 3D part: its components come through the board's Buy source.
+    let b2 = id(&ok(&mut p, "pcb.board.create", json!({ "name": "Bare", "width": 20, "height": 20, "model": false })));
+    ok(&mut p, "pcb.component.create", json!({ "board": b2, "reference": "R9", "footprint": "R_0603", "value": "10k", "at": [5, 5], "mpn": "0603WAF1002T5E" }));
+    let b = bom::compute(p.world(), Scope::Project, &Options::default(), &[&sourcing::PcbBuySource]).unwrap();
+    let r = b.buy.iter().find(|l| l.stock.as_ref().is_some_and(|s| s.part_number == "0603WAF1002T5E")).unwrap_or_else(|| panic!("{:#?}", b.buy.iter().map(|l| &l.name).collect::<Vec<_>>()));
+    assert_eq!(r.qty, 3, "R1 and R2 on the placed board, R9 on the bare one, merged by MPN");
+    assert!(r.stock.as_ref().unwrap().sources.iter().any(|s| s.supplier == "LCSC" && s.sku.as_deref() == Some("C25804")) || r.origin == "stock");
+    let pcb = b.make.iter().find(|m| m.process.as_deref() == Some("pcb_fab")).expect("the bare board is a Make line");
+    assert!(pcb.material.as_deref().is_some_and(|m| m.starts_with("FR4")), "{:?}", pcb.material);
+    assert!(!b.make.iter().any(|m| m.name.contains("copper")), "copper is part of the board, not a line of its own");
+    assert!(b.buy.iter().all(|l| l.stock.is_some()), "every bought part has its part number");
+}

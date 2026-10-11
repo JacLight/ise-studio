@@ -267,3 +267,62 @@ pub fn totals(lines: &[BomLine], boards: u32) -> (BTreeMap<String, f64>, usize) 
     }
     (sums, missing)
 }
+
+/// Board components as Buy lines in the project BOM (`de_sourcing::bom`).
+///
+/// A board with its 3D part placed needs nothing from here: the part's
+/// program declares each component as stock (MPN, manufacturer, LCSC) and the
+/// bare board as a `pcb_fab` part, so the BOM walk finds them like any other
+/// part. A board without a 3D part is a root of its own, and this source
+/// lists its components, merged by MPN.
+pub struct PcbBuySource;
+
+fn stock_of(l: &BomLine) -> de_shape::stock::Stock {
+    let lcsc = l.lcsc.iter().map(|c| de_shape::stock::Source { supplier: "LCSC".into(), sku: Some(c.clone()), url: Some(format!("https://www.lcsc.com/product-detail/{c}.html")), unit_price: None, currency: None });
+    let chosen = l.choice.iter().filter_map(|c| c.supplier.clone().map(|s| de_shape::stock::Source { supplier: s, sku: c.sku.clone(), url: c.url.clone(), unit_price: c.unit_price, currency: c.currency.clone() }));
+    de_shape::stock::Stock {
+        standard: None,
+        part_number: l.mpn.clone().unwrap_or_else(|| format!("{} {}", l.value, l.footprint).trim().to_string()),
+        description: Some(if l.description.is_empty() { format!("{} {}", l.value, l.footprint) } else { l.description.clone() }),
+        manufacturer: l.manufacturer.clone(),
+        mpn: l.mpn.clone(),
+        unit_price: l.choice.as_ref().and_then(|c| c.unit_price),
+        currency: l.choice.as_ref().and_then(|c| c.currency.clone()),
+        pack: None,
+        mass_g: None,
+        sources: lcsc.chain(chosen).collect(),
+    }
+}
+
+/// The Buy items of one board (populated parts, per board).
+pub fn buy_items(view: &BoardView, board: &Board) -> Vec<de_sourcing::BuyItem> {
+    bom_lines(view, board)
+        .into_iter()
+        .filter(|l| !l.dnp)
+        .map(|l| de_sourcing::BuyItem { name: format!("{} ({})", if l.value.is_empty() { &l.footprint } else { &l.value }, l.references.join(", ")), stock: Some(stock_of(&l)), qty: l.quantity as u32, mass_kg: None })
+        .collect()
+}
+
+fn has_model(world: &de_core::bevy_ecs::world::World, board: &Board) -> bool {
+    board.model.is_some_and(|m| world.resource::<de_core::IdIndex>().contains(m))
+}
+
+impl de_sourcing::BuySource for PcbBuySource {
+    fn name(&self) -> &'static str {
+        "pcb"
+    }
+
+    fn items(&self, world: &de_core::bevy_ecs::world::World, entity: de_core::StableId, _config: Option<&str>) -> Option<Vec<de_sourcing::BuyItem>> {
+        let e = world.resource::<de_core::IdIndex>().get(entity)?;
+        let board = world.get::<Board>(e)?;
+        if has_model(world, board) {
+            return None; // its 3D part carries the lines
+        }
+        let view = crate::view(world, entity)?;
+        Some(buy_items(&view, board))
+    }
+
+    fn roots(&self, world: &de_core::bevy_ecs::world::World) -> Vec<de_core::StableId> {
+        crate::boards(world).into_iter().filter(|(_, b)| !has_model(world, b)).map(|(id, _)| id).collect()
+    }
+}

@@ -702,7 +702,7 @@ fn esp32_wroom_32() -> Footprint {
         pads,
         courtyard: None,
         silk: vec![],
-        body: vec![body([0.0, 0.0], [w, l], [0.0, 0.8], "FR4"), body([0.0, -2.9], [16.6, 17.6], [0.8, 3.1], "Steel")],
+        body: vec![body([0.0, -2.9], [16.6, 17.6], [0.8, 3.1], "Steel"), body([0.0, 0.0], [w, l], [0.0, 0.8], "FR4")],
         kind: "module".into(),
     };
     let mut f = with_courtyard(f, 0.25);
