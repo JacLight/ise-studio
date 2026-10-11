@@ -26,10 +26,13 @@ const xF = 22; // the body's back face, clear of the forearm's R16 end
 const xN = 64;
 const plan = rounded(rectP(xF, yLout, xN, yRout), 7);
 let body = xy(plan, zBot, zTop).fillet(3, onPlane(2, zTop));
-body = body.subtract(xy(plan.offset(-2.5), zBot - 1, zTop - caseAbove(s)));
+body = body.subtract(xy(plan.offset(-2), zBot - 1, zTop - caseAbove(s)));
 // Cheeks back to the wrist axis.
 const cheek = rounded(circle(18).add(rectP(0, -16, xF + 6, zTop)), 0, 0).intersect(rectP(-20, zBot, xF + 6, zTop));
-body = body.add(xz(cheek, yLout, yLin), xz(cheek, yRin, yRout));
+// Each cheek: a 3 mm plate, full thickness only round the horn / bearing (R11) and at its root.
+const root = rectP(16, zBot, xF + 6, zTop);
+body = body.add(xz(cheek, yLout, yLout + 3), xz(cheek, yRout - 3, yRout), xz(root, yLout, yLin), xz(root, yRin, yRout));
+body = body.add(rod([0, yLout + 0.01, 0], [0, yLin, 0], 11), rod([0, yRin, 0], [0, yRout - 0.01, 0], 11));
 // Corner columns for the cover's inserts, and a boss under the finger pivot's insert.
 const corners = [[xF + 5, yLout + 5], [xN - 5, yLout + 5], [xF + 5, yRout - 5], [xN - 5, yRout - 5]];
 for (const [x, y] of corners) body = body.add(cylinder(zTop - zBot - 1, 4.5).translate(x, y, zBot));

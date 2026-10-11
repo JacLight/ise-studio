@@ -18,18 +18,20 @@ const L = ARM.L1;
 const [R0, R1] = ARM.uaR;
 const H = ARM.uaHalf;
 const split = ARM.uaSplit;
-const wall = 2.5;
+const wall = 2;
 const bone = rounded(circle(R0).add(circle(R1).translate(0, L), polygon([[-15, 18], [15, 18], [13, L - 18], [-13, L - 18]])), 0, 45);
 const inner = bone.offset(-wall);
-const cols = [[15.5, 0], [-15.5, 0], [8, 65], [-8, 65], [14.5, L], [-14.5, L]];
+const cols = [[15.5, 0], [-15.5, 0], [8, L / 2], [-8, L / 2], [14.5, L], [-14.5, L]];
 const left = p.half < 0.5;
 
 let body;
 const cuts = [];
 if (left) {
   const yWall = -H + ARM.uaWall; // −15.1: the servos' mounting face
-  body = xz(bone, -H, split).chamfer(1.5, onPlane(1, -H)).subtract(xz(inner, yWall, split + 1));
-  for (const [x, z] of cols) body = body.add(rod([x, yWall - 0.01, z], [x, split, z], 4.5));
+  // A 2.5 mm skin, thickened to the servos' 6.9 mm mounting pads round each servo.
+  const pads = rounded(rectP(-15, -21, 15, s.L - s.off + 9).add(rectP(-15, L - (s.L - s.off + 9), 15, L + 21)), 4).intersect(inner);
+  body = xz(bone, -H, split).chamfer(1.5, onPlane(1, -H)).subtract(xz(inner, -H + wall, split + 1)).add(xz(pads, -H + wall - 0.01, yWall));
+  for (const [x, z] of cols) body = body.add(rod([x, -H + wall - 0.01, z], [x, split, z], 4.5));
   const shoulder = frame([0, yWall, 0], [0, 0, 1], [0, -1, 0]); // case up the arm, output −y
   const elbow = frame([0, yWall, L], [0, 0, -1], [0, -1, 0]); // case down the arm
   cuts.push(servoMount("MG996R", shoulder, ARM.uaWall, "M2 insert", "Shoulder servo", 5));

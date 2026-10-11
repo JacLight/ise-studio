@@ -22,10 +22,10 @@ const teethAt = driven ? -90 : 90 + 180 / zt;
 const sector = polygon([[0, 0], [40 * Math.cos(rad(k * 90 - 50)), 40 * Math.sin(rad(k * 90 - 50))], [40 * Math.cos(rad(k * 90)), 40 * Math.sin(rad(k * 90))], [40 * Math.cos(rad(k * 90 + 50)), 40 * Math.sin(rad(k * 90 + 50))]]);
 const teeth = gearOutline({ m, z: zt, backlash: 0.1 }).rotate(teethAt).intersect(sector);
 // The finger: hub, a tapered arm swept toward the centre line, the jaw's root.
-const arm = rounded(polygon([[-6, -k * 9], [12, -k * 11], [58, mid - k * 6.5], [74, mid - k * 6.5], [74, mid - k * 1.5], [58, mid - k * 1.5], [12, k * 6], [0, k * 9]]), 2, 25);
+const arm = rounded(polygon([[-6, -k * 9], [12, -k * 11], [50, mid - k * 6.5], [64, mid - k * 6.5], [64, mid - k * 1.5], [50, mid - k * 1.5], [12, k * 6], [0, k * 9]]), 2, 25);
 let body = xy(circle(11).add(arm), 0, t).fillet(1.2, onPlane(2, t)).add(xy(teeth, 0, t));
 // Jaw pad: drops 24 mm in front of the housing, its inner face on the centre line + 1.5.
-body = body.add(boxAt([58, Math.min(mid - k * 1.5, mid - k * 6.5), -24], [74, Math.max(mid - k * 1.5, mid - k * 6.5), t]).fillet(1.5, (e) => e.points.every((q) => q[2] < -23.9)));
+body = body.add(boxAt([50, Math.min(mid - k * 1.5, mid - k * 6.5), -24], [64, Math.max(mid - k * 1.5, mid - k * 6.5), t]).fillet(1.5, (e) => e.points.every((q) => q[2] < -23.9)));
 let cuts;
 if (driven) {
   // Horn's x: along the gripper servo's case, which runs toward −y in the housing.

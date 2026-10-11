@@ -40,8 +40,8 @@ const CBORE = { M3: 6.5, M2: 4.6 }; // counterbores for socket heads
 
 // Interfaces between components (mm), shared so mating parts agree.
 const ARM = {
-  L1: 130, // shoulder to elbow
-  L2: 120, // elbow to wrist
+  L1: 126, // shoulder to elbow (the two big servos' leads end to end inside)
+  L2: 100, // elbow to wrist
   uaHalf: 22, // upper arm: faces at y = ±22 (its mid-plane y = 0)
   uaSplit: -10, // upper arm halves meet at y = −10
   uaWall: 6.9, // the servos' wall (left), case tops flush with the left face

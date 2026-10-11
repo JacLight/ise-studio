@@ -14,13 +14,13 @@ const L = ARM.L2;
 const [yL, yR] = ARM.faFaces;
 const split = ARM.faSplit;
 const wallL = caseAbove(SERVO.MG90S); // 3.5: the wrist servo's case top flush with the left face
-const wall = 2.5;
+const wall = 2;
 const x0 = 26; // clear of the upper arm's R23 end
 const side = rounded(circle(16).translate(L, 0).add(polygon([[x0, -18], [L, -16], [L, 16], [x0, 18]])), 6, 30);
 const inner = side.offset(-wall);
 const left = p.half < 0.5;
 const lugCols = [[36, 9], [36, -9]]; // the elbow cheeks' screws
-const halfCols = [[62, 9], [62, -9], [92, 9], [92, -9]];
+const halfCols = [[56, 9], [56, -9], [L - 30, 9], [L - 30, -9]];
 
 let body;
 const cuts = [];
