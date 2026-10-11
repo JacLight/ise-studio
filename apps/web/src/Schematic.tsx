@@ -834,6 +834,7 @@ function SchematicCanvas(props: {
   const [prompt, setPrompt] = useState<{ at: P; pin: string | null; kind: "local" | "global" | "text"; text: string } | null>(null);
   const pan = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const fitted = useRef<string | null>(null);
+  const lastClick = useRef<{ p: P; t: number } | null>(null);
   const sh = v.sheets.find((s) => s.id === props.sheet) ?? v.sheets[0];
 
   useEffect(() => {
@@ -908,7 +909,12 @@ function SchematicCanvas(props: {
   };
 
   const onDown = async (e: ReactPointerEvent) => {
-    if (!view || prompt) return;
+    if (!view) return;
+    if (prompt) {
+      // A click elsewhere closes the open name box.
+      if (!(e.target as Element).closest(".sch-prompt")) setPrompt(null);
+      return;
+    }
     if (e.button !== 0) {
       (e.target as Element).setPointerCapture?.(e.pointerId);
       pan.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty };
@@ -920,12 +926,16 @@ function SchematicCanvas(props: {
     const pinRef = pin ? `${pin.s.reference}.${pin.p.number}` : null;
     if (mode.m === "wire") {
       if (!mode.pts.length) {
+        lastClick.current = { p, t: performance.now() };
         props.onMode({ m: "wire", pts: [p] });
         return;
       }
       const last = mode.pts[mode.pts.length - 1];
       const next = [...mode.pts, ...bend(last, p)];
-      if (e.detail >= 2 || (pin && mode.pts.length >= 1) || (wireEndAt(p) && !same(p, mode.pts[0]))) return finishWire(next);
+      // Pointer events carry no click count: a second click on the same point within 450 ms is a double-click.
+      const dbl = lastClick.current !== null && same(lastClick.current.p, p) && performance.now() - lastClick.current.t < 450;
+      lastClick.current = { p, t: performance.now() };
+      if (dbl || (pin && mode.pts.length >= 1) || (wireEndAt(p) && !same(p, mode.pts[0]))) return finishWire(dbl ? mode.pts : next);
       props.onMode({ m: "wire", pts: next });
       return;
     }
@@ -1253,7 +1263,6 @@ function SchematicCanvas(props: {
                 setPrompt(null);
               }
             }}
-            onBlur={() => setTimeout(() => setPrompt(null), 120)}
           />
           <datalist id="sch-net-names">
             {v.nets.filter((n) => n.named).map((n) => (
