@@ -13034,3 +13034,24 @@ a.button .icon {
     animation: none;
   }
 }
+
+/* ---- Electronics: dragged tracks, vias while routing, KiCad import ---------- */
+.pcb-reroute {
+  stroke: #ffb020;
+  stroke-opacity: 0.55;
+  stroke-dasharray: 0.5 0.35;
+  pointer-events: none;
+}
+.pcb-via-preview {
+  fill: #d8d2c0;
+  stroke: #1c1c1c;
+  stroke-width: 0.08;
+}
+.pcb-new-import {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  color: var(--muted, #8a8f98);
+  font-size: 12px;
+}

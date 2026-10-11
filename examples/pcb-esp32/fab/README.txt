@@ -4,7 +4,7 @@ Made with Forma. Gerber RS-274X with X2 attributes, Excellon drill, millimetres.
 Board: 54.00 × 40.00 mm, 2 copper layers, 1.6 mm FR4, 1 oz outer copper
 Finish: HASL lead-free   Solder mask: black   Silkscreen: white
 Smallest track 0.250 mm, smallest gap 0.200 mm, smallest plated hole 0.300 mm, smallest annular ring 0.150 mm
-25 components (21 top, 0 bottom), 43 holes, 13 vias; design-rule check: 0 errors
+25 components (21 top, 0 bottom), 40 holes, 10 vias; design-rule check: 0 errors
 Quantity: 5
 
 Files:

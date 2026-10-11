@@ -91,7 +91,7 @@ pub async fn show(State(server): State<Arc<Server>>, Path(id): Path<String>, Que
     };
     let lines = sourcing::bom_lines(&v, &b);
     let (totals, unpriced) = sourcing::totals(&lines, b.quantity);
-    let files: Vec<String> = de_pcb::gerber::files(&v).into_iter().map(|(n, _)| n).chain(["bom.csv".to_string(), "positions.csv".to_string(), "README.txt".to_string()]).collect();
+    let files: Vec<String> = de_pcb::gerber::files(&v).into_iter().map(|(n, _)| n).chain(["bom.csv".to_string(), "positions.csv".to_string(), "README.txt".to_string()]).chain(interop_names(&v)).collect();
     axum::Json(json!({
         "board": &*v,
         "size": v.size(),
@@ -104,6 +104,20 @@ pub async fn show(State(server): State<Arc<Server>>, Path(id): Path<String>, Que
         "sourcing": b.sourcing,
     }))
     .into_response()
+}
+
+/// `GET /pcb/<id>/3d`: what the 3D view draws (copper, mask openings, silk per side; holes; component solids).
+pub async fn scene3d(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let app = match server.project(query.get("project")) {
+        Ok(a) => a,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let project = app.project.lock().unwrap();
+    let Ok(id) = serde_json::from_value::<StableId>(json!(id)) else { return fail(StatusCode::NOT_FOUND, "not a board") };
+    match de_pcb::render3d::scene(project.world(), id) {
+        Some(v) => axum::Json(v).into_response(),
+        None => fail(StatusCode::NOT_FOUND, "the board is not worked out yet"),
+    }
 }
 
 pub async fn bom_json(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
@@ -119,6 +133,18 @@ pub async fn file(State(server): State<Arc<Server>>, Path((id, name)): Path<(Str
         Err(r) => return r,
     };
     let format = outputs::Format::parse(query.get("format").map(String::as_str).unwrap_or(""));
+    let stem = de_pcb::gerber::file_stem(&v.name);
+    if name == format!("{stem}.step") {
+        // The board's 3D part, exact (OpenCascade): the shape export does it.
+        let Some(model) = b.model else { return fail(StatusCode::NOT_FOUND, "the board has no 3D part") };
+        let project = query.get("project").map(|p| format!("&project={p}")).unwrap_or_default();
+        return axum::response::Redirect::temporary(&format!("/export/{model}.step?download=1{project}")).into_response();
+    }
+    let interop = if name == format!("{stem}.kicad_pcb") { Some(kicad_text(&server, &query, &id).unwrap_or_else(|| de_pcb::kicad::export(&v, &b))) } else { de_pcb::idf::files(&v, &b).into_iter().find(|(n, _)| *n == name).map(|(_, s)| s) };
+    if let Some(body) = interop {
+        let disposition = if query.contains_key("download") { format!("attachment; filename=\"{name}\"") } else { "inline".into() };
+        return ([(header::CONTENT_TYPE, "text/plain; charset=utf-8".to_string()), (header::CONTENT_DISPOSITION, disposition)], body).into_response();
+    }
     let body = match name.as_str() {
         "bom.csv" => outputs::bom(&v, &b, format),
         "positions.csv" => outputs::pick_and_place(&v, format),
@@ -149,6 +175,20 @@ pub async fn zip(State(server): State<Arc<Server>>, Path(id): Path<String>, Quer
         Ok((name, bytes)) => ([(header::CONTENT_TYPE, "application/zip".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}\""))], bytes).into_response(),
         Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
+}
+
+/// The board as KiCad text, with each pour's own settings (read from the project).
+fn kicad_text(server: &Server, query: &HashMap<String, String>, id: &str) -> Option<String> {
+    let app = server.project(query.get("project")).ok()?;
+    let project = app.project.lock().unwrap();
+    let id: StableId = serde_json::from_value(json!(id)).ok()?;
+    de_pcb::kicad::export_world(project.world(), id)
+}
+
+/// Files for other EDA and MCAD tools: KiCad board, IDF 3.0 board and library, the 3D board as STEP.
+fn interop_names(v: &BoardView) -> Vec<String> {
+    let stem = de_pcb::gerber::file_stem(&v.name);
+    vec![format!("{stem}.kicad_pcb"), format!("{stem}.emn"), format!("{stem}.emp"), format!("{stem}.step")]
 }
 
 /// API keys a person may add for live distributor prices. Only which are set is ever returned.

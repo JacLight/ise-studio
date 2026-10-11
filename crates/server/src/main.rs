@@ -2286,6 +2286,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/buy", get(pcb::buy))
         .route("/pcb/settings", get(pcb::settings_get).post(pcb::settings_post))
         .route("/pcb/{id}", get(pcb::show))
+        .route("/pcb/{id}/3d", get(pcb::scene3d))
         .route("/pcb/{id}/bom.json", get(pcb::bom_json))
         .route("/pcb/{id}/fab.zip", get(pcb::zip))
         .route("/pcb/{id}/file/{name}", get(pcb::file))

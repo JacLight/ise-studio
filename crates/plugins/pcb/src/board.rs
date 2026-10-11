@@ -5,7 +5,7 @@
 
 use crate::footprints::{BodyShape, PadKind, PadShape};
 use crate::geom::{self, P, Prim};
-use crate::{Board, BoardResult, PcbComponent, Rules, Side, Zone};
+use crate::{Board, BoardResult, PadConnection, PcbComponent, Rules, Side, Zone};
 use de_core::{IdIndex, StableId, bevy_ecs::{entity::Entity, world::World}};
 use manifold_csg::{CrossSection, JoinType};
 use serde::Serialize;
@@ -114,6 +114,9 @@ pub struct PadView {
     /// Paste openings (the pad itself unless the footprint gives windows).
     pub paste: Vec<Prim>,
     pub side: Side,
+    /// A custom pad's real outline on the board (`prim` is its convex hull).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub polygon: Option<Vec<P>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -124,6 +127,9 @@ pub struct TrackView {
     pub width: f64,
     pub points: Vec<P>,
     pub auto: bool,
+    /// Its end was dragged with a part: check it, or re-route it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub reroute: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -145,6 +151,18 @@ pub struct ZoneView {
     pub fill: Vec<Vec<Vec<P>>>,
     pub priority: i32,
     pub area: f64,
+    /// Pads of the zone's net joined through thermal reliefs, with how many spokes reached the pour.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reliefs: Vec<Relief>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Relief {
+    /// "J1.S1".
+    pub pad: String,
+    pub component: StableId,
+    pub at: P,
+    pub spokes: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -345,6 +363,7 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
                 drill: p.drill,
                 paste,
                 side: c.side,
+                polygon: Some(crate::footprints::pad_polygon(p, c.at, c.rotation, bottom)).filter(|v| !v.is_empty()),
             });
         }
         // Pads of one part that overlap are one piece of copper (USB-C's paired contacts, a switch's legs): one net.
@@ -388,7 +407,7 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
         cu.push(Cu { bbox: prim.bbox(), prim, layers: all_layers(nl), net: v.net.clone(), owner: Owner::Via(*vid) });
     }
 
-    let zones = fill_zones(board, &items.zones, &outline, &cutouts, &cu, &holes, &layers);
+    let zones = fill_zones(board, &items.zones, &outline, &cutouts, &cu, &holes, &layers, &pads);
 
     // Connectivity: union-find over copper of the same net that touches.
     let n = cu.len();
@@ -521,7 +540,7 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
     }
     nets.sort_by(|a, b| crate::natural(&a.name, &b.name));
 
-    let tracks: Vec<TrackView> = items.tracks.iter().map(|(id, t)| TrackView { id: *id, net: t.net.clone(), layer: t.layer.clone(), width: t.width, points: t.points.clone(), auto: t.auto }).collect();
+    let tracks: Vec<TrackView> = items.tracks.iter().map(|(id, t)| TrackView { id: *id, net: t.net.clone(), layer: t.layer.clone(), width: t.width, points: t.points.clone(), auto: t.auto, reroute: t.reroute }).collect();
     let vias: Vec<ViaView> = items.vias.iter().map(|(id, v)| ViaView { id: *id, net: v.net.clone(), at: v.at, drill: v.drill, diameter: v.diameter }).collect();
 
     let mut view = BoardView {
@@ -712,7 +731,8 @@ fn segs(r: f64) -> i32 {
 /// the edge), minus other nets' copper and every hole grown by the clearance,
 /// minus higher-priority pours of other nets; necks thinner than `min_width`
 /// removed; islands that join nothing of the net dropped.
-fn fill_zones(board: &Board, zones: &[(StableId, Zone)], outline: &[P], cutouts: &[Vec<P>], cu: &[Cu], holes: &[Hole], layers: &[String]) -> Vec<ZoneView> {
+#[allow(clippy::too_many_arguments)]
+fn fill_zones(board: &Board, zones: &[(StableId, Zone)], outline: &[P], cutouts: &[Vec<P>], cu: &[Cu], holes: &[Hole], layers: &[String], pads: &[PadView]) -> Vec<ZoneView> {
     let mut order: Vec<&(StableId, Zone)> = zones.iter().collect();
     order.sort_by(|a, b| b.1.priority.cmp(&a.1.priority).then(a.0.cmp(&b.0)));
     let edge = board.rules.edge_clearance;
@@ -764,9 +784,56 @@ fn fill_zones(board: &Board, zones: &[(StableId, Zone)], outline: &[P], cutouts:
         if !cut.is_empty() {
             shape = shape.difference(&CrossSection::batch_union(&cut));
         }
+        // Pads of the zone's own net: joined solid, through thermal reliefs (a gap
+        // ring crossed by four spokes along the pad's axes), or kept clear.
+        let relieved: Vec<usize> = cu
+            .iter()
+            .filter_map(|c| match c.owner {
+                Owner::Pad(i) if c.layers & (1 << li) != 0 && c.net.as_deref() == Some(z.net.as_str()) => Some(i),
+                _ => None,
+            })
+            .filter(|i| match z.connection {
+                PadConnection::Solid => false,
+                PadConnection::ThermalTht => pads[*i].kind == PadKind::Tht,
+                PadConnection::Thermal | PadConnection::None => true,
+            })
+            .collect();
+        let allowed = shape.clone();
+        let tgap = z.gap_thermal();
+        if !relieved.is_empty() {
+            let rings: Vec<CrossSection> = relieved.iter().map(|i| pads[*i].prim.section(tgap, TOL)).collect();
+            shape = shape.difference(&CrossSection::batch_union(&rings));
+        }
         let half = z.min_width / 2.0;
         if half > 0.0 {
             shape = shape.offset(-half, JoinType::Round, 2.0, segs(half)).offset(half, JoinType::Round, 2.0, segs(half));
+        }
+        let mut reliefs = Vec::new();
+        if z.connection != PadConnection::None && !relieved.is_empty() {
+            let sw = z.spoke_width();
+            let mut spokes = Vec::new();
+            for &i in &relieved {
+                let p = &pads[i];
+                let mut n = 0;
+                for k in 0..4 {
+                    let a = p.rotation + 90.0 * k as f64;
+                    let along = if k % 2 == 0 { p.size[0] } else { p.size[1] } / 2.0;
+                    let reach = along + tgap + sw;
+                    let dir = geom::rotate([1.0, 0.0], a);
+                    let end = geom::add(p.at, [dir[0] * reach, dir[1] * reach]);
+                    let spoke = Prim::rect([(p.at[0] + end[0]) / 2.0, (p.at[1] + end[1]) / 2.0], reach, sw, a, 0.0).section(0.0, TOL).intersection(&allowed);
+                    // Only a spoke that reaches the pour joins anything.
+                    let tip = Prim::rect(geom::add(p.at, [dir[0] * (along + tgap + sw * 0.5), dir[1] * (along + tgap + sw * 0.5)]), sw, sw, a, 0.0).section(0.0, TOL);
+                    if spoke.area() > 1e-6 && tip.intersection(&shape).area() > sw * sw * 0.2 && spoke.intersection(&tip).area() > sw * sw * 0.5 {
+                        spokes.push(spoke);
+                        n += 1;
+                    }
+                }
+                reliefs.push(Relief { pad: format!("{}.{}", p.reference, p.number), component: p.component, at: p.at, spokes: n });
+            }
+            if !spokes.is_empty() {
+                shape = shape.union(&CrossSection::batch_union(&spokes));
+            }
         }
         let mut islands: Vec<Vec<Vec<P>>> = Vec::new();
         let mut kept = Vec::new();
@@ -785,7 +852,7 @@ fn fill_zones(board: &Board, zones: &[(StableId, Zone)], outline: &[P], cutouts:
         let fill = if kept.is_empty() { CrossSection::empty() } else { CrossSection::batch_union(&kept) };
         let a = fill.area();
         done.push((z.net.clone(), z.layer.clone(), fill));
-        out.push(ZoneView { id: *zid, net: z.net.clone(), layer: z.layer.clone(), outline: if z.outline.len() >= 3 { z.outline.clone() } else { outline.to_vec() }, fill: islands, priority: z.priority, area: a });
+        out.push(ZoneView { id: *zid, net: z.net.clone(), layer: z.layer.clone(), outline: if z.outline.len() >= 3 { z.outline.clone() } else { outline.to_vec() }, fill: islands, priority: z.priority, area: a, reliefs });
     }
     out
 }
