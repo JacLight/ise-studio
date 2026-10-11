@@ -830,8 +830,13 @@ pub fn loops_of_curves(g: &Geometry, s: &Solved) -> (Vec<(Loop, Vec<u32>)>, usiz
             closed = at == first;
         }
         if closed {
-            found.push(merge_collinear(chain));
-            found_ids.push(ids);
+            // A loop of no width (curves drawn over each other and back) folds
+            // away to nothing: it encloses nothing, so it is no profile.
+            let merged = merge_collinear(chain);
+            if polygon(&merged, 0.01).len() >= 3 && area(&polygon(&merged, 0.01)).abs() > 1e-12 {
+                found.push(merged);
+                found_ids.push(ids);
+            }
         } else {
             open += 1
         }

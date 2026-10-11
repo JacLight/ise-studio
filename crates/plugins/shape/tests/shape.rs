@@ -2067,3 +2067,17 @@ fn projecting_a_box_and_a_cylinder_gives_their_outline_on_the_plane() {
     assert_eq!(sk.geometry.curves.iter().filter(|c| matches!(c, Curve::Circle { .. })).count(), 1, "{out}");
     assert!(sol.points.values().any(|q| near(*q, [45.0, 35.0])));
 }
+
+#[test]
+fn a_loop_of_no_width_is_no_profile_and_does_not_stop_the_sketch() {
+    // Two lines drawn over each other between the same points (as overlapping pattern copies make).
+    let g: de_shape::sketch::Geometry = serde_json::from_value(json!({
+        "points": [{ "id": 1, "x": 0, "y": 0 }, { "id": 2, "x": 40, "y": 0 }],
+        "curves": [{ "kind": "line", "id": 3, "a": 1, "b": 2 }, { "kind": "line", "id": 4, "a": 2, "b": 1 }],
+        "constraints": []
+    }))
+    .unwrap();
+    let solved = de_shape::sketch::solve(&g, &Default::default()).unwrap();
+    let (loops, _) = de_shape::sketch::loops(&g, &solved);
+    assert!(loops.is_empty());
+}

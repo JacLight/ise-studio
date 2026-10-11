@@ -150,8 +150,9 @@ impl Command for PatternSketch {
                     Some(PointRef::At(at)) => (None, *at),
                     None => (None, [0.0, 0.0]),
                 };
-                // A centre on an existing point is that point.
-                let cid = match cid.or_else(|| cx.at.iter().find(|(_, q)| dist(**q, c) < 1e-6).map(|(id, _)| *id)) {
+                // A centre on an existing point is that point (one of the copied curves' own first).
+                let on = |id: &u32| cx.at.get(id).is_some_and(|q| dist(*q, c) < 1e-6);
+                let cid = match cid.or_else(|| points.iter().copied().find(|id| on(id))).or_else(|| cx.at.keys().copied().find(|id| on(id))) {
                     Some(id) => id,
                     None => {
                         let id = cx.point(c);
@@ -197,7 +198,9 @@ impl Command for PatternSketch {
         let mut key = None;
         if self.linked {
             // The original's first point not at the centre carries the step's construction.
-            let base = *points.iter().find(|p| Some(**p) != fixed_point).ok_or_else(|| bad("nothing to pattern but the centre"))?;
+            // (Away from the centre, so the step's construction has a direction.)
+            let centre_at = center.map(|(_, c)| c);
+            let base = *points.iter().find(|p| Some(**p) != fixed_point && centre_at.is_none_or(|c| dist(cx.p(**p), c) > 1e-6)).ok_or_else(|| bad("nothing to pattern but the centre"))?;
             let first = copies[0][&base];
             let mut cons = vec![];
             let steps: Vec<Constraint>;
