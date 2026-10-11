@@ -13,7 +13,7 @@ use std::fmt::Write as _;
 
 mod annotate;
 pub mod fits;
-pub use annotate::{validate, AnnotationMark, DatumSpec, DetailSpec, FrameSpec, GdtSymbol, HoleFit, MarkKind, Modifier, Tolerance};
+pub use annotate::{rename_datum, validate, AnnotationMark, DatumSpec, DetailFrame, DetailSpec, FrameSpec, GdtSymbol, HoleFit, MarkKind, Modifier, Tolerance};
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq, Hash)]
 pub enum Sheet {
@@ -77,12 +77,29 @@ pub struct Options {
     /// Fits on holes, by diameter.
     #[serde(default)]
     pub hole_fits: Vec<HoleFit>,
+    /// Which views the sheet shows (all four when empty).
+    #[serde(default)]
+    pub views: Vec<ViewKind>,
+    /// The views' scale (snapped to a standard one); the largest that fits when absent.
+    #[serde(default)]
+    pub scale: Option<f64>,
+}
+
+/// A view a sheet can show: the three orthographic views and the isometric.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewKind {
+    Front,
+    Top,
+    Right,
+    Iso,
 }
 
 /// One of the three orthographic views.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ViewName {
+    #[default]
     Front,
     Top,
     Right,
@@ -113,7 +130,7 @@ pub enum DimKind {
 
 /// A dimension between two points of a view, kept in model millimetres so
 /// it stays on the part when the sheet or scale changes.
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
 pub struct DimSpec {
     pub view: ViewName,
     /// The two points, as model coordinates along the view's axes.
@@ -130,6 +147,11 @@ pub struct DimSpec {
     /// A diameter: the value is written ⌀25.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub diameter: bool,
+    /// Drawn in this detail view (its index in the details) instead of the
+    /// view itself: the points are still model mm along the view's axes, so
+    /// the value is the true size, whatever the detail's scale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<usize>,
 }
 
 fn default_offset() -> f64 {
@@ -168,6 +190,9 @@ pub struct Title {
     pub date: String,
     /// The parts list (shown when there are two or more parts).
     pub parts: Vec<PartRow>,
+    /// This sheet's number and how many sheets the drawing has (1 of 1 when 0).
+    pub page: usize,
+    pub pages: usize,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -246,8 +271,20 @@ pub struct Drawing {
     pub balloons: Vec<Balloon>,
     /// Where the details, frames, datums and hole callouts landed.
     pub annotations: Vec<AnnotationMark>,
+    /// Where the detail views landed, for picking points on them.
+    pub details: Vec<DetailFrame>,
+    /// This sheet's number and how many there are.
+    pub page: usize,
+    pub pages: usize,
     /// What could not go on the sheet.
     pub warnings: Vec<String>,
+}
+
+impl Drawing {
+    /// An empty sheet.
+    pub fn blank(width: f64, height: f64) -> Drawing {
+        Drawing { width, height, scale: 1.0, scale_text: String::new(), strokes: vec![], fills: vec![], texts: vec![], views: vec![], marks: vec![], iso: None, balloons: vec![], annotations: vec![], details: vec![], page: 1, pages: 1, warnings: vec![] }
+    }
 }
 
 /// Where the isometric view sits: a model point p shows at
@@ -331,18 +368,42 @@ pub fn length_text(v: f64) -> String {
 
 /// The drawing of a program (its exact solid), on a sheet.
 pub fn drawing(program: &ShapeProgram, options: &Options, title: &Title) -> Result<Drawing, String> {
+    let mut all = drawings(program, &[(options.clone(), title.clone())])?;
+    Ok(all.remove(0))
+}
+
+/// The sheets of a drawing, each with its own options and title block, from
+/// one evaluation of the program. A feature control frame may refer to a
+/// datum marked on any of the sheets of the same part.
+pub fn drawings(program: &ShapeProgram, sheets: &[(Options, Title)]) -> Result<Vec<Drawing>, String> {
     let values = program.values();
     let tolerance = program.display_tolerance();
     let (mut arena, exact) = crate::exact::evaluate_exact_in(Arena::new(), &program.name, &program.source, &values, tolerance, &program.inputs).map_err(|(_, e)| e)?;
-    let parts: Vec<(String, Shape)> = exact.parts.iter().filter(|p| options.part.as_ref().is_none_or(|n| &p.name == n)).map(|p| (p.name.clone(), p.shape)).collect();
-    if parts.is_empty() {
-        return Err(match &options.part {
-            Some(n) => format!("no part called “{n}”"),
-            None => "the program made nothing to draw".into(),
-        });
+    let mut out = vec![];
+    for (options, title) in sheets {
+        let letters: Vec<&str> = sheets.iter().filter(|(o, _)| o.part == options.part).flat_map(|(o, _)| o.datums.iter().map(|d| d.letter.as_str())).collect();
+        let parts: Vec<(String, Shape)> = exact.parts.iter().filter(|p| options.part.as_ref().is_none_or(|n| &p.name == n)).map(|p| (p.name.clone(), p.shape)).collect();
+        if parts.is_empty() {
+            return Err(match &options.part {
+                Some(n) => format!("no part called “{n}”"),
+                None => "the program made nothing to draw".into(),
+            });
+        }
+        let shape = if parts.len() == 1 { parts[0].1 } else { arena.compound(&parts.iter().map(|p| p.1).collect::<Vec<_>>())? };
+        let mut d = layout(&mut arena, shape, &parts, options, title)?;
+        for f in &options.frames {
+            for r in f.datums.iter().flat_map(|r| r.split('-')) {
+                if !letters.contains(&r) {
+                    let w = format!("the {} frame refers to datum {r}, which no datum symbol marks", format!("{:?}", f.symbol).to_lowercase());
+                    if !d.warnings.contains(&w) {
+                        d.warnings.push(w);
+                    }
+                }
+            }
+        }
+        out.push(d);
     }
-    let shape = if parts.len() == 1 { parts[0].1 } else { arena.compound(&parts.iter().map(|p| p.1).collect::<Vec<_>>())? };
-    layout(&mut arena, shape, &parts, options, title)
+    Ok(out)
 }
 
 /// The isometric view's direction and up (the view looks down at the front right).
@@ -384,11 +445,18 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
     let b = arena.bounds(shape)?;
     let size3 = [b[3] - b[0], b[4] - b[1], b[5] - b[2]];
     let deflection = (size3.iter().cloned().fold(0.0, f64::max) / 2000.0).clamp(0.005, 1.0);
-    let view = |arena: &mut Arena, dir: [f64; 3], up: [f64; 3]| arena.hlr_view(shape, dir, up, deflection).map(View::of);
+    let shown = |k: ViewKind| options.views.is_empty() || options.views.contains(&k);
+    let (has_f, has_t, has_r, has_i) = (shown(ViewKind::Front), shown(ViewKind::Top), shown(ViewKind::Right), shown(ViewKind::Iso));
+    let mut warnings = vec![];
+    // A view the sheet leaves out is an empty one: no size, nothing drawn.
+    let view = |arena: &mut Arena, dir: [f64; 3], up: [f64; 3], on: bool| if on { arena.hlr_view(shape, dir, up, deflection).map(View::of) } else { Ok(View::of(vec![])) };
     // Section A–A: the front view of what lies behind the cutting plane, no hidden lines.
-    let cut = options.section.map(|p| b[1] + size3[1] * (p / 100.0).clamp(0.01, 0.99));
+    let cut = options.section.filter(|_| has_f).map(|p| b[1] + size3[1] * (p / 100.0).clamp(0.01, 0.99));
+    if options.section.is_some() && !has_f {
+        warnings.push("section A–A is the front view, which this sheet leaves out".to_string());
+    }
     let front = match cut {
-        None => view(arena, [0.0, 1.0, 0.0], [0.0, 0.0, 1.0])?,
+        None => view(arena, [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], has_f)?,
         Some(y) => {
             let m = size3.iter().cloned().fold(0.0, f64::max) + 1.0;
             let keep = arena.cube(size3[0] + 2.0 * m, b[4] - y + m, size3[2] + 2.0 * m, false)?;
@@ -399,13 +467,17 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
             v
         }
     };
-    let top = view(arena, [0.0, 0.0, -1.0], [0.0, 1.0, 0.0])?;
-    let right = view(arena, [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0])?;
+    let top = view(arena, [0.0, 0.0, -1.0], [0.0, 1.0, 0.0], has_t)?;
+    let right = view(arena, [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0], has_r)?;
     let (iso_dir, iso_up) = iso_frame();
-    let iso = view(arena, iso_dir, iso_up)?;
+    let iso = view(arena, iso_dir, iso_up, has_i)?;
+    let has_ortho = has_f || has_t || has_r;
 
     let [w, h] = options.sheet.size();
-    let mut d = Drawing { width: w, height: h, scale: 1.0, scale_text: String::new(), strokes: vec![], fills: vec![], texts: vec![], views: vec![], marks: vec![], iso: None, balloons: vec![], annotations: vec![], warnings: vec![] };
+    let mut d = Drawing::blank(w, h);
+    d.page = title.page.max(1);
+    d.pages = title.pages.max(d.page);
+    d.warnings = warnings;
     // Frame: 20 mm binding margin on the left, 10 mm elsewhere (ISO 5457).
     let (fx0, fy0, fx1, fy1) = (20.0, 10.0, w - 10.0, h - 10.0);
     d.strokes.push(Stroke { pen: Pen::Frame, points: vec![[fx0, fy0], [fx1, fy0], [fx1, fy1], [fx0, fy1], [fx0, fy0]] });
@@ -422,41 +494,72 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
     let (tw, th) = (top.size()[0], top.size()[1]);
     let (rw, rh) = (right.size()[0], right.size()[1]);
     let (iw, ih) = (iso.size()[0], iso.size()[1]);
+    // Gaps between the columns and rows of views only where both sides have one.
+    let gx = if has_r && (has_f || has_t) { gap } else { 0.0 };
+    let gy = if has_t && (has_f || has_r) { gap } else { 0.0 };
     // The area above the title block, inside the frame, less a margin for dimensions.
     let area = [fx1 - fx0 - 2.0 * gap, fy1 - fy0 - block[1] - list_h - 2.0 * gap];
     // The main scale fits the three orthographic views; the isometric takes
-    // whatever scale fits the room left beside them (and says so).
-    let fits = |s: f64| (rw + fw.max(tw)) * s + gap <= area[0] - 40.0 && (fh.max(rh) + th) * s + gap <= area[1];
-    let (scale, scale_text) = SCALES.iter().find(|(s, _)| fits(*s)).copied().unwrap_or(SCALES[SCALES.len() - 1]);
+    // whatever scale fits the room left beside them (and says so). A sheet
+    // of the isometric alone draws it at the main scale.
+    let reserve = if has_i { 40.0 } else { 0.0 };
+    let fits = |s: f64| {
+        if has_ortho {
+            (rw + fw.max(tw)) * s + gx <= area[0] - reserve && (fh.max(rh) + th) * s + gy <= area[1]
+        } else {
+            iw * s <= area[0] + gap - 2.0 * room && ih * s <= area[1] + gap - 8.0 - 2.0 * room
+        }
+    };
+    let auto = SCALES.iter().find(|(s, _)| fits(*s)).copied().unwrap_or(SCALES[SCALES.len() - 1]);
+    let (scale, scale_text) = match options.scale {
+        None => auto,
+        Some(want) => {
+            let near = SCALES.iter().copied().min_by(|a, b| (a.0.ln() - want.ln()).abs().total_cmp(&(b.0.ln() - want.ln()).abs())).unwrap_or(auto);
+            if fits(near.0) {
+                near
+            } else {
+                d.warnings.push(format!("the views do not fit the sheet at {}: drawn at {}", near.1, auto.1));
+                auto
+            }
+        }
+    };
     d.scale = scale;
     d.scale_text = scale_text.to_string();
     let s = scale;
     // Columns: right view then front/top (first angle), or front/top then right view (third).
     let row_front = fh.max(rh) * s;
     let mid_w = fw.max(tw) * s;
-    let main_w = rw * s + mid_w + gap;
-    let total_h = row_front + th * s + gap;
+    let main_w = rw * s + mid_w + gx;
+    let total_h = row_front + th * s + gy;
     // The isometric goes where it comes out largest: the empty corner of the
     // grid (beside the top view, under or over the side view), or a column
     // right of the views. Its scale is the largest standard one that fits.
     let iso_fit = |w: f64, h: f64| SCALES.iter().find(|(k, _)| *k <= s && iw * k <= w - 2.0 * room && ih * k <= h - 8.0 - 2.0 * room).copied();
-    let corner = iso_fit(rw * s, th * s);
-    let column = iso_fit(area[0] - main_w - gap, area[1]);
+    let corner = if has_i && has_ortho { iso_fit(rw * s, th * s) } else { None };
+    let column = if !has_i {
+        None
+    } else if has_ortho {
+        iso_fit(area[0] - main_w - gap, area[1])
+    } else {
+        iso_fit(area[0] + gap, area[1] + gap)
+    };
     let in_corner = match (corner, column) {
         (Some(a), Some(b)) => a.0 >= b.0,
         (a, _) => a.is_some(),
     };
-    let x0 = if in_corner { fx0 + gap + (area[0] - main_w).max(0.0) / 2.0 } else { fx0 + gap };
+    // Centred across the sheet when nothing stands beside them.
+    let x0 = if in_corner || !has_i { fx0 + gap + (area[0] - main_w).max(0.0) / 2.0 } else { fx0 + gap };
     let y0 = fy0 + block[1] + list_h + gap + (area[1] - total_h).max(0.0) / 2.0;
     let (col_side, col_main) = match options.projection {
-        Projection::First => (x0, x0 + rw * s + gap),
-        Projection::Third => (x0 + mid_w + gap, x0),
+        Projection::First => (x0, x0 + rw * s + gx),
+        Projection::Third => (x0 + mid_w + gx, x0),
     };
     let (row_top, row_main) = match options.projection {
-        Projection::First => (y0, y0 + th * s + gap),
-        Projection::Third => (y0 + row_front + gap, y0),
+        Projection::First => (y0, y0 + th * s + gy),
+        Projection::Third => (y0 + row_front + gy, y0),
     };
-    let (iso_cell, iso_scale) = if in_corner { ([col_side, row_top, col_side + rw * s, row_top + th * s], corner) } else { ([x0 + main_w + gap, fy0 + block[1] + list_h + gap, fx1 - gap, fy1 - gap], column) };
+    let column_x = if has_ortho { x0 + main_w + gap } else { fx0 + gap };
+    let (iso_cell, iso_scale) = if in_corner { ([col_side, row_top, col_side + rw * s, row_top + th * s], corner) } else { ([column_x, fy0 + block[1] + list_h + gap, fx1 - gap, fy1 - gap], column) };
     // Where each view's lower left lands (sheet mm), the views centred in their cells.
     let place = |v: &View, cell: [f64; 2], cw: f64, ch: f64, k: f64| [cell[0] + (cw - v.size()[0] * k) / 2.0 - v.min[0] * k, cell[1] + (ch - v.size()[1] * k) / 2.0 - v.min[1] * k];
     let at_front = place(&front, [col_main, row_main], mid_w, row_front, s);
@@ -464,12 +567,14 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
     let at_right = place(&right, [col_side, row_main], rw * s, row_front, s);
     let geometry_start = d.strokes.len();
     let mut section_segments = vec![];
-    for (v, at) in [(&front, at_front), (&top, at_top), (&right, at_right)] {
+    let ortho = [(ViewName::Front, &front, at_front, has_f), (ViewName::Top, &top, at_top, has_t), (ViewName::Right, &right, at_right, has_r)];
+    for (_, v, at, _) in ortho.iter().filter(|o| o.3) {
         for l in &v.lines {
             d.strokes.push(Stroke { pen: if l.hidden { Pen::Hidden } else { Pen::Visible }, points: l.points.iter().map(|p| [at[0] + p[0] * s, at[1] + p[1] * s]).collect() });
         }
     }
-    for (name, v, at) in [(ViewName::Front, &front, at_front), (ViewName::Top, &top, at_top), (ViewName::Right, &right, at_right)] {
+    for (name, v, at, _) in ortho.iter().filter(|o| o.3) {
+        let (name, at) = (*name, *at);
         d.views.push(ViewFrame { view: name, at, scale: s, axes: name.axes(), bounds: [at[0] + v.min[0] * s, at[1] + v.min[1] * s, at[0] + v.max[0] * s, at[1] + v.max[1] * s] });
     }
     if let Some(y) = cut {
@@ -489,7 +594,8 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
             d.texts.push(Text { at: [x + inward * 1.5 - inward * 3.5, line_y + 3.0], size: 3.5, text: "A".into(), anchor: Anchor::Middle, angle: 0.0, bold: true });
         }
     }
-    holes(&mut d, arena, shape, deflection, s, [(at_front, 1), (at_top, 2), (at_right, 0)], &options.hole_fits);
+    let hole_views: Vec<([f64; 2], usize)> = [(at_front, 1, has_f), (at_top, 2, has_t), (at_right, 0, has_r)].into_iter().filter(|v| v.2).map(|v| (v.0, v.1)).collect();
+    holes(&mut d, arena, shape, deflection, s, hole_views, &options.hole_fits);
     let geometry_end = d.strokes.len();
     if let Some((k, k_text)) = iso_scale {
         let at = place(&iso, [iso_cell[0] + room, iso_cell[1] + 8.0 + room], iso_cell[2] - iso_cell[0] - 2.0 * room, iso_cell[3] - iso_cell[1] - 8.0 - 2.0 * room, k);
@@ -516,40 +622,44 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
         Projection::First => true,  // the top view is below
         Projection::Third => false, // the top view is above: dimension below instead
     };
-    if above_front {
-        dim_h(&mut d, f0[0], f1[0], f1[1], f1[1] + 9.0, size3[0]);
+    let (r0, r1) = box_of(&right, at_right);
+    if has_f {
+        if above_front {
+            dim_h(&mut d, f0[0], f1[0], f1[1], f1[1] + 9.0, size3[0]);
+        } else {
+            dim_h(&mut d, f0[0], f1[0], f0[1], f0[1] - 9.0, size3[0]);
+        }
+        dim_v(&mut d, f0[1], f1[1], f1[0], f1[0] + 9.0, size3[2]);
     } else {
-        dim_h(&mut d, f0[0], f1[0], f0[1], f0[1] - 9.0, size3[0]);
+        // Without the front view: the width over the top view, the height beside the side view.
+        if has_t {
+            dim_h(&mut d, t0[0], t1[0], t1[1], t1[1] + 9.0, size3[0]);
+        }
+        if has_r {
+            dim_v(&mut d, r0[1], r1[1], r1[0], r1[0] + 9.0, size3[2]);
+        }
     }
-    dim_v(&mut d, f0[1], f1[1], f1[0], f1[0] + 9.0, size3[2]);
-    // Clear of the cutting-plane arrows when there is a section.
-    dim_v(&mut d, t0[1], t1[1], t1[0], t1[0] + if cut.is_some() { 23.0 } else { 9.0 }, size3[1]);
+    if has_t {
+        // Clear of the cutting-plane arrows when there is a section.
+        dim_v(&mut d, t0[1], t1[1], t1[0], t1[0] + if cut.is_some() { 23.0 } else { 9.0 }, size3[1]);
+    } else if has_r {
+        dim_h(&mut d, r0[0], r1[0], r1[1], r1[1] + 9.0, size3[1]);
+    }
     if cut.is_some() {
         let y = if above_front { f0[1] - 7.0 } else { f0[1] - 16.0 };
         d.texts.push(Text { at: [(f0[0] + f1[0]) / 2.0, y], size: 3.5, text: "SECTION A–A".into(), anchor: Anchor::Middle, angle: 0.0, bold: true });
     }
     // The person's own dimensions.
     for (index, dim) in options.dimensions.iter().enumerate() {
-        let Some(frame) = d.views.iter().find(|v| v.view == dim.view).cloned() else { continue };
-        let on_sheet = |p: [f64; 2]| [frame.at[0] + p[0] * s, frame.at[1] + p[1] * s];
-        let value = match dim.kind {
-            DimKind::Horizontal => (dim.a[0] - dim.b[0]).abs(),
-            DimKind::Vertical => (dim.a[1] - dim.b[1]).abs(),
-            DimKind::Aligned => (dim.a[0] - dim.b[0]).hypot(dim.a[1] - dim.b[1]),
-        };
-        if value > 1e-9 {
-            let (strokes, texts) = (d.strokes.len(), d.texts.len());
-            dim_between(&mut d, on_sheet(dim.a), on_sheet(dim.b), dim.kind, dim.offset, &annotate::label(value, dim.diameter, dim.tolerance.as_ref()));
-            let mut b = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
-            for p in d.strokes[strokes..].iter().flat_map(|s| &s.points) {
-                b = [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])];
-            }
-            for t in &d.texts[texts..] {
-                let r = text_box(t);
-                b = [b[0].min(r[0]), b[1].min(r[1]), b[2].max(r[2]), b[3].max(r[3])];
-            }
-            d.marks.push(DimMark { dimension: index, bounds: b });
+        if dim.detail.is_some() {
+            continue; // drawn with its detail view
         }
+        let Some(frame) = d.views.iter().find(|v| v.view == dim.view).cloned() else {
+            d.warnings.push(format!("a dimension is on the {:?} view, which this sheet leaves out", dim.view).to_lowercase());
+            continue;
+        };
+        let on_sheet = |p: [f64; 2]| [frame.at[0] + p[0] * s, frame.at[1] + p[1] * s];
+        user_dim(&mut d, index, dim, on_sheet(dim.a), on_sheet(dim.b));
     }
 
     title_block(&mut d, [fx1 - block[0], fy0], block, title, options.projection);
@@ -567,6 +677,25 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
     let reserved = vec![[fx1 - block[0] - 2.0, fy0, fx1, fy0 + block[1] + list_h + 7.0]];
     annotate::annotate(&mut d, options, &annotate::Geometry { strokes: geometry_start..geometry_end, section: section_segments, frame: [fx0, fy0, fx1, fy1], reserved });
     Ok(d)
+}
+
+/// One of the person's dimensions, between two sheet points, and its mark.
+fn user_dim(d: &mut Drawing, index: usize, dim: &DimSpec, pa: [f64; 2], pb: [f64; 2]) {
+    let value = dim.value();
+    if value <= 1e-9 {
+        return;
+    }
+    let (strokes, texts, fills) = (d.strokes.len(), d.texts.len(), d.fills.len());
+    dim_between(d, pa, pb, dim.kind, dim.offset, &annotate::label(value, dim.diameter, dim.tolerance.as_ref()));
+    let mut b = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    for p in d.strokes[strokes..].iter().flat_map(|s| &s.points).chain(d.fills[fills..].iter().flatten()) {
+        b = [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])];
+    }
+    for t in &d.texts[texts..] {
+        let r = text_box(t);
+        b = [b[0].min(r[0]), b[1].min(r[1]), b[2].max(r[2]), b[3].max(r[3])];
+    }
+    d.marks.push(DimMark { dimension: index, bounds: b });
 }
 
 /// Balloon radius and how far balloon centres stand off the view (sheet mm).
@@ -819,7 +948,7 @@ pub fn segments_cross(p: [f64; 2], q: [f64; 2], r: [f64; 2], s: [f64; 2]) -> boo
 /// Holes and round bosses facing a view: centre marks in that view, and one
 /// ⌀ callout per size (in the plan view if they show there).
 /// `views` are each view's placement and the axis it looks along (0 x, 1 y, 2 z).
-fn holes(d: &mut Drawing, arena: &mut Arena, shape: Shape, deflection: f64, s: f64, views: [([f64; 2], usize); 3], fits: &[HoleFit]) {
+fn holes(d: &mut Drawing, arena: &mut Arena, shape: Shape, deflection: f64, s: f64, views: Vec<([f64; 2], usize)>, fits: &[HoleFit]) {
     let Ok(edges) = arena.edges(shape, deflection) else { return };
     // Full circles only (an arc is a rounded edge, not a hole).
     let circles: Vec<([f64; 3], [f64; 3], f64)> = edges
@@ -930,7 +1059,7 @@ fn holes(d: &mut Drawing, arena: &mut Arena, shape: Shape, deflection: f64, s: f
                         d.strokes.push(Stroke { pen: Pen::Thin, points: vec![tip, knee, end] });
                         arrow(d, tip, [-cs, -sn]);
                         annotate::place_label(d, &label, [knee[0] + if right { 1.0 } else { -1.0 }, knee[1] + 1.0], if right { Anchor::Start } else { Anchor::End }, 0.0, 3.5);
-                        d.annotations.push(AnnotationMark { kind: MarkKind::Hole, index: 0, diameter: Some((2.0 * r * 1000.0).round() / 1000.0), bounds: bx });
+                        d.annotations.push(AnnotationMark { kind: MarkKind::Hole, index: 0, diameter: Some((2.0 * r * 1000.0).round() / 1000.0), bounds: bx, origin: None, anchor: Some(c) });
                         placed = true;
                         break 'spot;
                     }
@@ -969,29 +1098,16 @@ fn arrow(d: &mut Drawing, tip: [f64; 2], dir: [f64; 2]) {
     d.fills.push(vec![tip, [back[0] + n[0] * half, back[1] + n[1] * half], [back[0] - n[0] * half, back[1] - n[1] * half]]);
 }
 
-/// A horizontal dimension from x0 to x1, measured at `from_y`, its line at `y`.
+/// A horizontal dimension from x0 to x1, measured at `from_y`, its line at `y`
+/// (a short one with its arrows and value outside, as any other).
 fn dim_h(d: &mut Drawing, x0: f64, x1: f64, from_y: f64, y: f64, value: f64) {
-    let up = if y > from_y { 1.0 } else { -1.0 };
-    for x in [x0, x1] {
-        d.strokes.push(Stroke { pen: Pen::Thin, points: vec![[x, from_y + up * 1.0], [x, y + up * 2.0]] });
-    }
-    d.strokes.push(Stroke { pen: Pen::Thin, points: vec![[x0, y], [x1, y]] });
-    arrow(d, [x0, y], [-1.0, 0.0]);
-    arrow(d, [x1, y], [1.0, 0.0]);
-    d.texts.push(Text { at: [(x0 + x1) / 2.0, y + 1.2], size: 3.5, text: length_text(value), anchor: Anchor::Middle, angle: 0.0, bold: false });
+    dim_between(d, [x0, from_y], [x1, from_y], DimKind::Horizontal, y - from_y, &annotate::label(value, false, None));
 }
 
-/// A vertical dimension from y0 to y1, measured at `from_x`, its line at `x`.
+/// A vertical dimension from y0 to y1, measured at `from_x`, its line at `x`;
+/// read from the right (ISO 129): the text runs up the page, left of the line.
 fn dim_v(d: &mut Drawing, y0: f64, y1: f64, from_x: f64, x: f64, value: f64) {
-    let right = if x > from_x { 1.0 } else { -1.0 };
-    for y in [y0, y1] {
-        d.strokes.push(Stroke { pen: Pen::Thin, points: vec![[from_x + right * 1.0, y], [x + right * 2.0, y]] });
-    }
-    d.strokes.push(Stroke { pen: Pen::Thin, points: vec![[x, y0], [x, y1]] });
-    arrow(d, [x, y0], [0.0, -1.0]);
-    arrow(d, [x, y1], [0.0, 1.0]);
-    // Read from the right (ISO 129): the text runs up the page, left of the line.
-    d.texts.push(Text { at: [x - 1.2, (y0 + y1) / 2.0], size: 3.5, text: length_text(value), anchor: Anchor::Middle, angle: 90.0, bold: false });
+    dim_between(d, [from_x, y0], [from_x, y1], DimKind::Vertical, from_x - x, &annotate::label(value, false, None));
 }
 
 /// Where a closed mesh crosses the plane y = `y`: segments in (x, z).
@@ -1184,7 +1300,7 @@ fn title_block(d: &mut Drawing, at: [f64; 2], size: [f64; 2], t: &Title, project
     }
     cell(d, tops[0], r2, "Drawn by", &t.drawn_by, 2.5, false);
     cell(d, tops[1], r2, "Date", &t.date, 2.5, false);
-    let sheet = format!("{:?} · 1 of 1", sheet_name(d.width));
+    let sheet = format!("{:?} · {} of {}", sheet_name(d.width), d.page.max(1), d.pages.max(d.page).max(1));
     cell(d, tops[2], r2, "Sheet", &sheet, 2.5, false);
 }
 
@@ -1276,6 +1392,41 @@ fn text_width(t: &Text) -> f64 {
 
 /// The drawing as a one-page vector PDF.
 pub fn pdf(d: &Drawing) -> Vec<u8> {
+    pdf_pages(std::slice::from_ref(d))
+}
+
+/// Sheets as one vector PDF, a page each (each page its sheet's size).
+pub fn pdf_pages(sheets: &[Drawing]) -> Vec<u8> {
+    // 1 catalogue, 2 page tree, 3 and 4 the fonts, then a page and its content per sheet.
+    let mut objects = vec![String::new(), String::new(), "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_string(), "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>".to_string()];
+    let mut kids = vec![];
+    for d in sheets {
+        let content = pdf_content(d);
+        let page = objects.len() + 1;
+        kids.push(format!("{page} 0 R"));
+        objects.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {:.2} {:.2}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {} 0 R >>", d.width * PT, d.height * PT, page + 1));
+        objects.push(format!("<< /Length {} >>\nstream\n{}endstream", content.len(), content));
+    }
+    objects[0] = "<< /Type /Catalog /Pages 2 0 R >>".to_string();
+    objects[1] = format!("<< /Type /Pages /Kids [{}] /Count {} >>", kids.join(" "), sheets.len());
+    let mut out = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n".to_vec();
+    let mut offsets = vec![];
+    for (i, o) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend(format!("{} 0 obj\n{}\nendobj\n", i + 1, o).as_bytes());
+    }
+    let xref = out.len();
+    let mut tail = format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1);
+    for o in offsets {
+        let _ = writeln!(tail, "{o:010} 00000 n ");
+    }
+    let _ = write!(tail, "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1);
+    out.extend(tail.as_bytes());
+    out
+}
+
+/// A sheet's page content: strokes, fills and text in PDF operators.
+fn pdf_content(d: &Drawing) -> String {
     let mut content = String::new();
     let _ = writeln!(content, "1 J 1 j");
     for st in &d.strokes {
@@ -1313,27 +1464,62 @@ pub fn pdf(d: &Drawing) -> Vec<u8> {
         let (x, y) = (t.at[0] + shift * cs, t.at[1] + shift * sn);
         let _ = writeln!(content, "BT /{} {:.2} Tf {:.4} {:.4} {:.4} {:.4} {:.3} {:.3} Tm ({}) Tj ET", if t.bold { "F2" } else { "F1" }, size, cs, sn, -sn, cs, x * PT, y * PT, pdf_text(&t.text));
     }
-    let objects = [
-        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
-        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
-        format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {:.2} {:.2}] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>", d.width * PT, d.height * PT),
-        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_string(),
-        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>".to_string(),
-        format!("<< /Length {} >>\nstream\n{}endstream", content.len(), content),
-    ];
-    let mut out = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n".to_vec();
-    let mut offsets = vec![];
-    for (i, o) in objects.iter().enumerate() {
-        offsets.push(out.len());
-        out.extend(format!("{} 0 obj\n{}\nendobj\n", i + 1, o).as_bytes());
+    content
+}
+
+/// Files in a zip archive, stored as they are (no compression): one DXF per sheet.
+pub fn zip(files: &[(String, Vec<u8>)]) -> Vec<u8> {
+    let crc_table: Vec<u32> = (0..256u32)
+        .map(|n| {
+            let mut c = n;
+            for _ in 0..8 {
+                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+            }
+            c
+        })
+        .collect();
+    let crc = |data: &[u8]| !data.iter().fold(!0u32, |c, &b| crc_table[((c ^ b as u32) & 0xFF) as usize] ^ (c >> 8));
+    let mut out = vec![];
+    let mut central = vec![];
+    let le16 = |v: &mut Vec<u8>, x: u16| v.extend(x.to_le_bytes());
+    let le32 = |v: &mut Vec<u8>, x: u32| v.extend(x.to_le_bytes());
+    for (name, data) in files {
+        let (c, size, offset) = (crc(data), data.len() as u32, out.len() as u32);
+        // Local header: version 2.0, UTF-8 names, stored, a fixed 1980 timestamp.
+        le32(&mut out, 0x0403_4B50);
+        for v in [20, 0x0800, 0, 0, 0x21] {
+            le16(&mut out, v);
+        }
+        for v in [c, size, size] {
+            le32(&mut out, v);
+        }
+        le16(&mut out, name.len() as u16);
+        le16(&mut out, 0);
+        out.extend(name.as_bytes());
+        out.extend(data);
+        le32(&mut central, 0x0201_4B50);
+        for v in [20, 20, 0x0800, 0, 0, 0x21] {
+            le16(&mut central, v);
+        }
+        for v in [c, size, size] {
+            le32(&mut central, v);
+        }
+        for v in [name.len() as u16, 0, 0, 0, 0] {
+            le16(&mut central, v);
+        }
+        le32(&mut central, 0);
+        le32(&mut central, offset);
+        central.extend(name.as_bytes());
     }
-    let xref = out.len();
-    let mut tail = format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1);
-    for o in offsets {
-        let _ = writeln!(tail, "{o:010} 00000 n ");
+    let (start, len) = (out.len() as u32, central.len() as u32);
+    out.extend(&central);
+    le32(&mut out, 0x0605_4B50);
+    for v in [0, 0, files.len() as u16, files.len() as u16] {
+        le16(&mut out, v);
     }
-    let _ = write!(tail, "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1);
-    out.extend(tail.as_bytes());
+    le32(&mut out, len);
+    le32(&mut out, start);
+    le16(&mut out, 0);
     out
 }
 
