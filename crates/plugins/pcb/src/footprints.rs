@@ -431,17 +431,17 @@ fn sot23() -> Footprint {
 
 fn sot223() -> Footprint {
     // JEDEC TO-261AA: HE 6.70–7.30, D 6.30–6.70, E 3.30–3.70, e 2.30, L 0.75–1.10 (foot), b 0.66–0.84, tab b1 2.90–3.10, A ≤ 1.80.
-    let land = land(Range(6.70, 7.30), Range(0.75, 1.10), Range(0.66, 0.84), goals::GULL);
+    let pl = land(Range(6.70, 7.30), Range(0.75, 1.10), Range(0.66, 0.84), goals::GULL);
     let tab = land(Range(6.70, 7.30), Range(0.75, 1.10), Range(2.90, 3.10), goals::GULL);
     let pads = vec![
-        smd("1", [-land.center, 2.3], [land.length, land.width]),
-        smd("2", [-land.center, 0.0], [land.length, land.width]),
-        smd("3", [-land.center, -2.3], [land.length, land.width]),
+        smd("1", [-pl.center, 2.3], [pl.length, pl.width]),
+        smd("2", [-pl.center, 0.0], [pl.length, pl.width]),
+        smd("3", [-pl.center, -2.3], [pl.length, pl.width]),
         smd("4", [tab.center, 0.0], [tab.length, tab.width]),
     ];
     let f = Footprint {
         name: "SOT-223".into(),
-        description: format!("SOT-223 (TO-261AA), 3 pins + tab (4, joined to pin 2 inside on regulators), pitch 2.30 mm; pads {:.3} × {:.2} mm, tab {:.2} mm wide", land.length, land.width, tab.width),
+        description: format!("SOT-223 (TO-261AA), 3 pins + tab (4, joined to pin 2 inside on regulators), pitch 2.30 mm; pads {:.3} × {:.2} mm, tab {:.2} mm wide", pl.length, pl.width, tab.width),
         source: "IPC-7351B land equations; package: JEDEC TO-261AA outline".into(),
         pads,
         courtyard: None,

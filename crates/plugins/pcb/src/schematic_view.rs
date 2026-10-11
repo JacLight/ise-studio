@@ -313,7 +313,7 @@ pub(crate) fn symbol_view(id: StableId, s: &schematic::SchSymbol) -> SymbolView 
             let at = s.place(p.at);
             let dir = s.dir(p.side);
             let pads = s.pads_of(p);
-            pins.push(PinView { number: p.number.clone(), name: p.name.clone(), etype: p.etype, at, dir, hidden: p.hidden, net: None, pads });
+            pins.push(PinView { number: p.number.clone(), name: p.name.clone(), etype: p.etype, at, dir, hidden: p.hidden, net: None, pads: pads.clone() });
             if p.hidden {
                 continue;
             }
@@ -647,7 +647,7 @@ enum Node {
     Pin(usize, usize),
     Wire(usize),
     Label(usize),
-    Junction(usize),
+    Junction,
     SheetPin(usize, usize),
 }
 
@@ -691,7 +691,7 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
     // Nodes.
     let mut nodes: Vec<Node> = Vec::new();
     let mut points: HashMap<(String, i64, i64), Vec<usize>> = HashMap::new();
-    let mut add_point = |nodes: &mut Vec<Node>, points: &mut HashMap<(String, i64, i64), Vec<usize>>, n: Node, sheet: &str, p: P| {
+    let add_point = |nodes: &mut Vec<Node>, points: &mut HashMap<(String, i64, i64), Vec<usize>>, n: Node, sheet: &str, p: P| {
         nodes.push(n);
         let i = nodes.len() - 1;
         points.entry(key(sheet, p)).or_default().push(i);
@@ -718,8 +718,8 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
     for (li, l) in labels.iter().enumerate() {
         label_node.push(add_point(&mut nodes, &mut points, Node::Label(li), &l.sheet, l.at));
     }
-    for (ji, j) in it.junctions.iter().enumerate() {
-        add_point(&mut nodes, &mut points, Node::Junction(ji), &j.1.sheet, j.1.at);
+    for j in it.junctions.iter() {
+        add_point(&mut nodes, &mut points, Node::Junction, &j.1.sheet, j.1.at);
     }
     let mut sheet_pin_nodes: Vec<(String, String, usize)> = Vec::new(); // (child sheet, name, node)
     for (shi, sh) in s.sheets.iter().enumerate() {
@@ -738,9 +738,9 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
         }
     }
     // Points on wires (ends on ends, Ts, pins and labels along a wire).
-    let mut by_sheet: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut by_sheet: HashMap<String, Vec<usize>> = HashMap::new();
     for (wi, w) in wires.iter().enumerate() {
-        by_sheet.entry(w.sheet.as_str()).or_default().push(wi);
+        by_sheet.entry(w.sheet.clone()).or_default().push(wi);
     }
     let mut point_list: Vec<(&(String, i64, i64), &Vec<usize>)> = points.iter().collect();
     point_list.sort_by(|a, b| a.0.cmp(b.0));
