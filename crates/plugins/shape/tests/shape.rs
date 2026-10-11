@@ -670,7 +670,7 @@ fn a_drawing_has_views_hidden_lines_dimensions_and_exports() {
         finishes: vec![],
         inputs: String::new(),
     };
-    let title = de_shape::drawing::Title { title: "Plate".into(), number: "P-001".into(), material: "Aluminium".into(), mass: "300 g".into(), drawn_by: "Forma".into(), date: "2026-10-10".into(), parts: vec![] };
+    let title = de_shape::drawing::Title { title: "Plate".into(), number: "P-001".into(), material: "Aluminium".into(), mass: "300 g".into(), drawn_by: "Forma".into(), date: "2026-10-10".into(), parts: vec![], ..Default::default() };
     for projection in [de_shape::drawing::Projection::First, de_shape::drawing::Projection::Third] {
         let d = de_shape::drawing::drawing(&program, &de_shape::drawing::Options { sheet: de_shape::drawing::Sheet::A4, projection, part: None, ..Default::default() }, &title).unwrap();
         assert_eq!(d.scale_text, "1:1", "100 mm fits an A4 at full size");
@@ -716,7 +716,7 @@ fn a_drawing_sections_dimensions_and_lists_parts() {
         finishes: vec![],
         inputs: String::new(),
     };
-    let title = |parts: Vec<PartRow>| Title { title: "Plate".into(), number: "P-1".into(), material: "Steel".into(), mass: "1 kg".into(), drawn_by: "F".into(), date: "2026-10-10".into(), parts };
+    let title = |parts: Vec<PartRow>| Title { title: "Plate".into(), number: "P-1".into(), material: "Steel".into(), mass: "1 kg".into(), drawn_by: "F".into(), date: "2026-10-10".into(), parts, ..Default::default() };
     let plain = de_shape::drawing::drawing(&program, &Options { sheet: Sheet::A4, ..Default::default() }, &title(vec![])).unwrap();
     // The view frames say where the model lands on the sheet: the front view's
     // outline is the part's x and z extent.
@@ -731,8 +731,8 @@ fn a_drawing_sections_dimensions_and_lists_parts() {
     // Section through the hole's centre (half way back): hatching on the
     // material either side of the hole, none across the hole.
     let dims = vec![
-        DimSpec { view: ViewName::Top, a: [50.0, 30.0], b: [100.0, 30.0], kind: DimKind::Horizontal, offset: 12.0, tolerance: None, diameter: false },
-        DimSpec { view: ViewName::Front, a: [0.0, 0.0], b: [100.0, 20.0], kind: DimKind::Aligned, offset: 8.0, tolerance: None, diameter: false },
+        DimSpec { view: ViewName::Top, a: [50.0, 30.0], b: [100.0, 30.0], kind: DimKind::Horizontal, offset: 12.0, tolerance: None, diameter: false, detail: None },
+        DimSpec { view: ViewName::Front, a: [0.0, 0.0], b: [100.0, 20.0], kind: DimKind::Aligned, offset: 8.0, tolerance: None, diameter: false, detail: None },
     ];
     let cut = de_shape::drawing::drawing(&program, &Options { sheet: Sheet::A4, section: Some(50.0), dimensions: dims, ..Default::default() }, &title(vec![])).unwrap();
     let f = cut.views.iter().find(|v| v.view == ViewName::Front).unwrap();
@@ -819,8 +819,8 @@ fn a_drawing_has_details_tolerances_and_gdt() {
         finishes: vec![],
         inputs: String::new(),
     };
-    let title = Title { title: "Plate".into(), number: "P-2".into(), material: "Steel".into(), mass: "0.9 kg".into(), drawn_by: "F".into(), date: "2026-10-11".into(), parts: vec![] };
-    let dim = |view, a, b, kind, offset, tolerance, diameter| DimSpec { view, a, b, kind, offset, tolerance, diameter };
+    let title = Title { title: "Plate".into(), number: "P-2".into(), material: "Steel".into(), mass: "0.9 kg".into(), drawn_by: "F".into(), date: "2026-10-11".into(), parts: vec![], ..Default::default() };
+    let dim = |view, a, b, kind, offset, tolerance, diameter| DimSpec { view, a, b, kind, offset, tolerance, diameter, detail: None };
     let options = Options {
         sheet: Sheet::A3,
         section: Some(50.0),
@@ -831,15 +831,15 @@ fn a_drawing_has_details_tolerances_and_gdt() {
         ],
         details: vec![
             // The slot's corner in the section, and the hole seen from above.
-            DetailSpec { view: ViewName::Front, center: [15.0, 18.0], radius: 6.0, scale: None },
-            DetailSpec { view: ViewName::Top, center: [50.0, 30.0], radius: 10.0, scale: Some(2.0) },
+            DetailSpec { view: ViewName::Front, center: [15.0, 18.0], radius: 6.0, scale: None, place: None },
+            DetailSpec { view: ViewName::Top, center: [50.0, 30.0], radius: 10.0, scale: Some(2.0), place: None },
         ],
         frames: vec![
-            FrameSpec { view: ViewName::Front, at: [70.0, 20.0], symbol: GdtSymbol::Flatness, tolerance: 0.05, diameter_zone: false, datums: vec![], modifier: None },
-            FrameSpec { view: ViewName::Top, at: [58.0, 30.0], symbol: GdtSymbol::Position, tolerance: 0.1, diameter_zone: true, datums: vec!["A".into(), "B".into(), "C".into()], modifier: Some(Modifier::Mmc) },
-            FrameSpec { view: ViewName::Right, at: [60.0, 10.0], symbol: GdtSymbol::Perpendicularity, tolerance: 0.02, diameter_zone: false, datums: vec!["A".into()], modifier: None },
+            FrameSpec { view: ViewName::Front, at: [70.0, 20.0], symbol: GdtSymbol::Flatness, tolerance: 0.05, diameter_zone: false, datums: vec![], modifier: None, place: None },
+            FrameSpec { view: ViewName::Top, at: [58.0, 30.0], symbol: GdtSymbol::Position, tolerance: 0.1, diameter_zone: true, datums: vec!["A".into(), "B".into(), "C".into()], modifier: Some(Modifier::Mmc), place: None },
+            FrameSpec { view: ViewName::Right, at: [60.0, 10.0], symbol: GdtSymbol::Perpendicularity, tolerance: 0.02, diameter_zone: false, datums: vec!["A".into()], modifier: None, place: None },
         ],
-        datums: vec![DatumSpec { view: ViewName::Front, at: [85.0, 0.0], letter: "A".into() }, DatumSpec { view: ViewName::Top, at: [0.0, 45.0], letter: "B".into() }, DatumSpec { view: ViewName::Top, at: [80.0, 0.0], letter: "C".into() }],
+        datums: vec![DatumSpec { view: ViewName::Front, at: [85.0, 0.0], letter: "A".into(), place: None }, DatumSpec { view: ViewName::Top, at: [0.0, 45.0], letter: "B".into(), place: None }, DatumSpec { view: ViewName::Top, at: [80.0, 0.0], letter: "C".into(), place: None }],
         hole_fits: vec![HoleFit { diameter: 16.0, fit: "H7".into() }],
         ..Default::default()
     };
@@ -1458,7 +1458,7 @@ fn an_assembly_drawing_balloons_every_listed_part() {
 
     let row = |name: &str, quantity| PartRow { name: name.into(), quantity, material: "Steel".into(), mass: "—".into() };
     let rows = vec![row("Base", 1), row("Housing", 1), row("Bolt 1", 1), row("Bolt 2", 1), row("Pin", 1)];
-    let title = Title { title: "Bracket".into(), number: "B-1".into(), material: "Steel".into(), mass: "1 kg".into(), drawn_by: "F".into(), date: "2026-10-11".into(), parts: rows.clone() };
+    let title = Title { title: "Bracket".into(), number: "B-1".into(), material: "Steel".into(), mass: "1 kg".into(), drawn_by: "F".into(), date: "2026-10-11".into(), parts: rows.clone(), ..Default::default() };
     for sheet in [Sheet::A3, Sheet::A4] {
         let d = de_shape::drawing::drawing(&program, &Options { sheet, ..Default::default() }, &title).unwrap();
         let iso = d.iso.clone().expect("an isometric view");
@@ -1763,4 +1763,269 @@ fn friction_grips_below_mu_n_and_slips_at_mu_n() {
     assert!((g.shear_force - 200.0).abs() < 200.0 * 0.01 && !grip.parts[1].floating, "grips the whole 200 N: {} N", g.shear_force);
     assert!((s.shear_force - 300.0).abs() < 300.0 * 0.01, "slides at μN = 300 N: {} N", s.shear_force);
     assert!(slip.parts[1].floating && (s.slipping - s.pressing).abs() < 1e-6, "slipping everywhere it presses");
+}
+
+fn plate_with_slot() -> de_shape::ShapeProgram {
+    de_shape::ShapeProgram {
+        name: "Plate".into(),
+        description: String::new(),
+        source: "return box(100, 60, 20).subtract(cylinder(30, 8).translate([50, 30, -5])).subtract(box(10, 70, 4).translate([10, -5, 16]));".into(),
+        params: vec![],
+        display_tolerance: None,
+        levels: vec![],
+        uses: Default::default(),
+        finishes: vec![],
+        inputs: String::new(),
+    }
+}
+
+/// Everything on the sheet: lines, fills and lettering inside the paper.
+fn on_sheet(d: &de_shape::drawing::Drawing) {
+    let inside = |p: &[f64; 2]| p[0] >= 0.0 && p[0] <= d.width && p[1] >= 0.0 && p[1] <= d.height;
+    assert!(d.strokes.iter().flat_map(|s| &s.points).chain(d.fills.iter().flatten()).all(inside), "a line runs off the sheet");
+    for t in &d.texts {
+        let w = t.text.chars().count() as f64 * t.size * 0.8;
+        let reach = if t.angle.abs() > 45.0 { [[t.at[0], t.at[1] - w], [t.at[0], t.at[1] + w]] } else { [[t.at[0] - w, t.at[1]], [t.at[0] + w, t.at[1]]] };
+        let r = match t.anchor {
+            de_shape::drawing::Anchor::Start if t.angle.abs() <= 45.0 => [t.at, reach[1]],
+            de_shape::drawing::Anchor::End if t.angle.abs() <= 45.0 => [reach[0], t.at],
+            _ => [t.at, t.at],
+        };
+        assert!(r.iter().all(inside), "“{}” runs off the sheet at {:?}", t.text, t.at);
+    }
+    for m in d.marks.iter().map(|m| m.bounds).chain(d.annotations.iter().map(|a| a.bounds)) {
+        assert!(m[0] >= 0.0 && m[1] >= 0.0 && m[2] <= d.width && m[3] <= d.height, "a mark off the sheet: {m:?}");
+    }
+}
+
+#[test]
+fn dimensions_in_a_detail_view_measure_true_size() {
+    use de_shape::drawing::{DetailSpec, DimKind, DimSpec, Options, Sheet, Title, ViewName};
+    let program = plate_with_slot();
+    let title = Title { title: "Plate".into(), number: "P-3".into(), material: "Steel".into(), mass: "1 kg".into(), drawn_by: "F".into(), date: "2026-10-11".into(), ..Default::default() };
+    // Detail B at 5:1 on the slot in the front view (x 10–20, 4 deep from z 20);
+    // the slot's width and depth dimensioned in the detail.
+    let details = vec![DetailSpec { view: ViewName::Front, center: [15.0, 18.0], radius: 7.0, scale: Some(5.0), place: None }];
+    let dims = vec![
+        DimSpec { view: ViewName::Front, a: [10.0, 20.0], b: [20.0, 20.0], kind: DimKind::Horizontal, offset: 8.0, detail: Some(0), ..Default::default() },
+        DimSpec { view: ViewName::Front, a: [20.0, 16.0], b: [20.0, 20.0], kind: DimKind::Vertical, offset: -8.0, detail: Some(0), ..Default::default() },
+        // And one on the view itself, for comparison.
+        DimSpec { view: ViewName::Front, a: [0.0, 0.0], b: [10.0, 0.0], kind: DimKind::Horizontal, offset: -8.0, ..Default::default() },
+    ];
+    de_shape::drawing::validate(&dims, &details, &[], &[], &[]).unwrap();
+    let options = Options { sheet: Sheet::A3, details, dimensions: dims.clone(), ..Default::default() };
+    let d = de_shape::drawing::drawing(&program, &options, &title).unwrap();
+    if let Ok(dir) = std::env::var("DRAWING_OUT") {
+        std::fs::write(format!("{dir}/detail-dims.pdf"), de_shape::drawing::pdf(&d)).unwrap();
+    }
+    assert!(d.warnings.is_empty(), "{:?}", d.warnings);
+    on_sheet(&d);
+    let detail = d.details.first().expect("the detail landed");
+    assert_eq!(detail.letter, "A", "no section: the first letter");
+    assert!((detail.scale - 5.0).abs() < 1e-9, "at 5:1");
+    // Its frame maps the model to where it is drawn: the circle's centre is the detail's centre point.
+    assert!((detail.at[0] + 15.0 * detail.scale - detail.centre[0]).abs() < 1e-9 && (detail.at[1] + 18.0 * detail.scale - detail.centre[1]).abs() < 1e-9);
+    assert!((detail.radius - 35.0).abs() < 1e-9);
+    // The values are the true sizes, 10 and 4, not the sheet's 50 and 20.
+    let mark = |i: usize| d.marks.iter().find(|m| m.dimension == i).unwrap_or_else(|| panic!("dimension {i} drawn")).bounds;
+    let width = mark(0);
+    assert!(d.texts.iter().any(|t| t.text == "10" && t.at[0] > width[0] && t.at[0] < width[2] && t.at[1] > width[1] && t.at[1] < width[3]), "10 in the detail");
+    let depth = mark(1);
+    assert!(d.texts.iter().any(|t| t.text == "4" && t.at[0] > depth[0] - 0.01 && t.at[0] < depth[2] + 0.01 && t.at[1] > depth[1] && t.at[1] < depth[3]), "4 in the detail");
+    assert!(!d.texts.iter().any(|t| t.text == "50"), "not the sheet length");
+    // Drawn at the detail's scale: the 10 spans 50 sheet mm, beside the enlarged slot.
+    assert!(width[2] - width[0] >= 50.0 - 0.01 && width[2] - width[0] < 60.0, "{width:?}");
+    let x0 = detail.at[0] + 10.0 * detail.scale;
+    assert!((width[0] - x0).abs() < 1.0, "starts at the slot's left edge in the detail: {} vs {x0}", width[0]);
+    // The one on the view spans 10 at the view's scale.
+    let front = d.views.iter().find(|v| v.view == ViewName::Front).unwrap();
+    let plain = mark(2);
+    assert!((plain[2] - plain[0] - 10.0 * front.scale).abs() < 4.0, "{plain:?}");
+    // The detail's dimensions sit clear of the views.
+    for v in &d.views {
+        let vb = v.bounds;
+        for b in [width, depth] {
+            assert!(!(b[0] < vb[2] && vb[0] < b[2] && b[1] < vb[3] && vb[1] < b[3]), "a detail dimension over the {:?} view", v.view);
+        }
+    }
+    // A detail that is not there is refused.
+    let bad = vec![DimSpec { detail: Some(3), ..dims[0].clone() }];
+    assert!(de_shape::drawing::validate(&bad, &options.details, &[], &[], &[]).is_err());
+}
+
+#[test]
+fn frames_and_datums_edit_in_place_and_keep_their_references() {
+    use de_shape::drawing::{DatumSpec, DetailSpec, DimKind, DimSpec, FrameSpec, GdtSymbol, MarkKind, Sheet, Title, ViewName};
+    let program = plate_with_slot();
+    let title = Title { title: "Plate".into(), number: "P-4".into(), material: "Steel".into(), mass: "1 kg".into(), drawn_by: "F".into(), date: "2026-10-11".into(), ..Default::default() };
+    let mut spec = de_shape::DrawingSpec {
+        datums: vec![DatumSpec { view: ViewName::Front, at: [85.0, 0.0], letter: "A".into(), place: None }, DatumSpec { view: ViewName::Top, at: [0.0, 45.0], letter: "B".into(), place: None }],
+        frames: vec![
+            FrameSpec { view: ViewName::Top, at: [58.0, 30.0], symbol: GdtSymbol::Position, tolerance: 0.1, diameter_zone: true, datums: vec!["A".into(), "B".into()], ..Default::default() },
+            FrameSpec { view: ViewName::Right, at: [60.0, 10.0], symbol: GdtSymbol::Perpendicularity, tolerance: 0.02, datums: vec!["A-B".into()], ..Default::default() },
+        ],
+        ..Default::default()
+    };
+    // Datum A becomes D: its symbol and every reference to it, inside A-B too.
+    let changed = spec.rename_datum(1, "A", "D");
+    assert_eq!(changed, 2);
+    assert_eq!(spec.datums[0].letter, "D");
+    assert_eq!(spec.frames[0].datums, vec!["D".to_string(), "B".to_string()]);
+    assert_eq!(spec.frames[1].datums, vec!["D-B".to_string()]);
+    // Edited in place: the frame keeps its point, its values change.
+    spec.frames[0].tolerance = 0.05;
+    spec.frames[0].symbol = GdtSymbol::Position;
+    let sheet = |spec: &de_shape::DrawingSpec| spec.sheet_options(&de_shape::drawing::Options { sheet: Sheet::A3, ..Default::default() }).remove(0);
+    let d = de_shape::drawing::drawing(&program, &sheet(&spec), &title).unwrap();
+    assert!(d.warnings.is_empty(), "every reference is marked: {:?}", d.warnings);
+    assert!(d.texts.iter().any(|t| t.text == "⌀0.05") && d.texts.iter().any(|t| t.text == "D-B"));
+    assert!(!d.texts.iter().any(|t| t.text == "A" || t.text == "A-B"), "no A left");
+    // A frame that refers to a datum nothing marks says so.
+    let mut stray = spec.clone();
+    stray.frames[1].datums = vec!["E".into()];
+    let d2 = de_shape::drawing::drawing(&program, &sheet(&stray), &title).unwrap();
+    assert!(d2.warnings.iter().any(|w| w.contains("datum E")), "{:?}", d2.warnings);
+
+    // Moved by hand: the frame, the datum's square and a detail go where they are put.
+    let frame_at = d.annotations.iter().find(|a| a.kind == MarkKind::Frame && a.index == 0).unwrap();
+    let (origin, anchor) = (frame_at.origin.unwrap(), frame_at.anchor.unwrap());
+    let mut moved = spec.clone();
+    moved.frames[0].place = Some([origin[0] - anchor[0] + 12.0, origin[1] - anchor[1] + 5.0]);
+    moved.datums[1].place = Some([-30.0, 8.0]);
+    moved.details = vec![DetailSpec { view: ViewName::Front, center: [15.0, 18.0], radius: 6.0, scale: Some(5.0), place: Some([300.0, 230.0]) }];
+    moved.dimensions = vec![DimSpec { view: ViewName::Top, a: [0.0, 0.0], b: [100.0, 0.0], kind: DimKind::Horizontal, offset: -20.0, ..Default::default() }];
+    let m = de_shape::drawing::drawing(&program, &sheet(&moved), &title).unwrap();
+    if let Ok(dir) = std::env::var("DRAWING_OUT") {
+        std::fs::write(format!("{dir}/moved.pdf"), de_shape::drawing::pdf(&m)).unwrap();
+    }
+    on_sheet(&m);
+    let f = m.annotations.iter().find(|a| a.kind == MarkKind::Frame && a.index == 0).unwrap();
+    assert!((f.origin.unwrap()[0] - origin[0] - 12.0).abs() < 1e-6 && (f.origin.unwrap()[1] - origin[1] - 5.0).abs() < 1e-6, "{:?} vs {origin:?}", f.origin);
+    let b = m.annotations.iter().find(|a| a.kind == MarkKind::Datum && a.index == 1).unwrap();
+    let (bo, ba) = (b.origin.unwrap(), b.anchor.unwrap());
+    assert!((bo[0] - ba[0] + 30.0).abs() < 1e-6 && (bo[1] - ba[1] - 8.0).abs() < 1e-6, "datum B's square where it was put");
+    let det = m.annotations.iter().find(|a| a.kind == MarkKind::Detail).unwrap();
+    assert_eq!(det.origin, Some([300.0, 230.0]), "the detail where it was put");
+    assert!(m.texts.iter().any(|t| t.text == "DETAIL A (5:1)"));
+    // A dimension dragged further out stands further off.
+    let mark = m.marks[0].bounds;
+    let top = m.views.iter().find(|v| v.view == ViewName::Top).unwrap();
+    assert!(mark[1] < top.bounds[1] - 19.0, "20 mm under the top view: {mark:?} vs {:?}", top.bounds);
+    // Put off the sheet (a sheet made smaller), they come back on it.
+    let mut off = moved.clone();
+    off.frames[0].place = Some([900.0, 900.0]);
+    off.datums[1].place = Some([-900.0, 0.0]);
+    off.details[0].place = Some([2000.0, -400.0]);
+    let small = de_shape::drawing::Options { sheet: Sheet::A4, ..sheet(&off) };
+    let o = de_shape::drawing::drawing(&program, &small, &title).unwrap();
+    on_sheet(&o);
+    assert!(o.annotations.iter().any(|a| a.kind == MarkKind::Detail), "{:?}", o.warnings);
+}
+
+#[test]
+fn a_drawing_has_several_sheets() {
+    use de_shape::drawing::{DimKind, DimSpec, PartRow, Sheet, Title, ViewKind, ViewName};
+    let source = r#"return [
+        part("Base", box(120, 80, 10)),
+        part("Pin", cylinder(40, 6).translate([60, 40, 10])),
+    ];"#;
+    let program = de_shape::ShapeProgram {
+        name: "Fixture".into(),
+        description: String::new(),
+        source: source.into(),
+        params: vec![],
+        display_tolerance: None,
+        levels: vec![],
+        uses: Default::default(),
+        finishes: vec![],
+        inputs: String::new(),
+    };
+    let spec = de_shape::DrawingSpec {
+        sheets: vec![
+            // The pin on its own, front and side views at 2:1, dimensioned.
+            de_shape::SheetSpec {
+                part: Some("Pin".into()),
+                views: vec![ViewKind::Front, ViewKind::Right],
+                scale: Some(2.0),
+                dimensions: vec![DimSpec { view: ViewName::Front, a: [54.0, 10.0], b: [66.0, 10.0], kind: DimKind::Horizontal, offset: -10.0, diameter: true, ..Default::default() }],
+                ..Default::default()
+            },
+            // The base, all its views, on an A4.
+            de_shape::SheetSpec { part: Some("Base".into()), size: Some(Sheet::A4), ..Default::default() },
+            // The assembly's isometric alone.
+            de_shape::SheetSpec { views: vec![ViewKind::Iso], ..Default::default() },
+        ],
+        ..Default::default()
+    };
+    let json = serde_json::to_value(&spec).unwrap();
+    assert_eq!(serde_json::from_value::<de_shape::DrawingSpec>(json).unwrap(), spec, "kept as it was set");
+    let sheets = spec.sheet_options(&de_shape::drawing::Options { sheet: Sheet::A3, ..Default::default() });
+    assert_eq!(sheets.len(), 4);
+    let rows = vec![PartRow { name: "Base".into(), quantity: 1, material: "Steel".into(), mass: "—".into() }, PartRow { name: "Pin".into(), quantity: 1, material: "Steel".into(), mass: "—".into() }];
+    let n = sheets.len();
+    let with_titles: Vec<_> = sheets
+        .into_iter()
+        .enumerate()
+        .map(|(i, o)| {
+            let name = o.part.clone().unwrap_or_else(|| "Fixture".into());
+            let parts = if o.part.is_none() { rows.clone() } else { vec![] };
+            (o, Title { title: name, number: "F-1".into(), material: "Steel".into(), mass: "—".into(), drawn_by: "F".into(), date: "2026-10-11".into(), parts, page: i + 1, pages: n })
+        })
+        .collect();
+    let all = de_shape::drawing::drawings(&program, &with_titles).unwrap();
+    assert_eq!(all.len(), 4);
+    for (i, d) in all.iter().enumerate() {
+        assert_eq!((d.page, d.pages), (i + 1, 4));
+        let size = if i == 2 { "A4" } else { "A3" };
+        assert!(d.texts.iter().any(|t| t.text == format!("{size} · {} of 4", i + 1)), "sheet {} says which it is: {:?}", i + 1, d.texts.iter().filter(|t| t.text.contains(" of ")).map(|t| &t.text).collect::<Vec<_>>());
+        assert!(d.warnings.is_empty(), "sheet {}: {:?}", i + 1, d.warnings);
+        on_sheet(d);
+    }
+    // Sheet 1 is the drawing as it always was.
+    let alone = de_shape::drawing::drawing(&program, &with_titles[0].0, &Title { page: 0, pages: 0, ..with_titles[0].1.clone() }).unwrap();
+    assert_eq!(alone.strokes.len(), all[0].strokes.len());
+    assert_eq!(all[0].views.len(), 3);
+    assert!(all[0].iso.is_some() && all[0].balloons.len() == 2);
+    // Sheet 2: the pin, front and side only, at 2:1, its title the part's.
+    let pin = &all[1];
+    assert_eq!(pin.views.iter().map(|v| v.view).collect::<Vec<_>>(), vec![ViewName::Front, ViewName::Right]);
+    assert!(pin.iso.is_none());
+    assert_eq!(pin.scale_text, "2:1");
+    assert!(pin.texts.iter().any(|t| t.text == "Pin" && t.bold));
+    assert!(pin.texts.iter().any(|t| t.text == "⌀12"), "its dimension");
+    assert!(pin.texts.iter().any(|t| t.text == "40"), "its height");
+    // Sheet 3: the base on its own A4.
+    assert_eq!(all[2].width, 297.0);
+    assert!(all[2].texts.iter().any(|t| t.text == "Base" && t.bold));
+    assert!(all[2].texts.iter().any(|t| t.text == "120") && !all[2].texts.iter().any(|t| t.text == "⌀12"));
+    // Sheet 4: only the isometric, at the sheet's scale.
+    assert!(all[3].views.is_empty() && all[3].iso.is_some());
+    assert!(all[3].texts.iter().any(|t| t.text == "ISOMETRIC"));
+    // One PDF, a page per sheet, each its own size.
+    let pdf = de_shape::drawing::pdf_pages(&all);
+    let text = String::from_utf8_lossy(&pdf);
+    assert_eq!(text.matches("/Type /Page ").count(), 4);
+    assert!(text.contains("/Count 4"));
+    assert_eq!(text.matches(&format!("/MediaBox [0 0 {:.2} {:.2}]", 297.0 * 72.0 / 25.4, 210.0 * 72.0 / 25.4)).count(), 1, "one A4 page");
+    for i in 1..=4 {
+        assert!(text.contains(&format!("A{} \\267 {i} of 4", if i == 3 { 4 } else { 3 })), "page {i}'s title block");
+    }
+    let xref: usize = text.rsplit("startxref\n").next().unwrap().lines().next().unwrap().parse().unwrap();
+    assert_eq!(&pdf[xref..xref + 4], b"xref");
+    // DXF, one file a sheet, in a zip.
+    let files: Vec<(String, Vec<u8>)> = all.iter().enumerate().map(|(i, d)| (format!("fixture-sheet{}.dxf", i + 1), de_shape::drawing::dxf(d).into_bytes())).collect();
+    let zip = de_shape::drawing::zip(&files);
+    assert_eq!(&zip[..4], b"PK\x03\x04");
+    assert_eq!(&zip[zip.len() - 22..zip.len() - 18], b"PK\x05\x06");
+    assert_eq!(u16::from_le_bytes([zip[zip.len() - 12], zip[zip.len() - 11]]), 4, "four entries");
+    if let Ok(dir) = std::env::var("DRAWING_OUT") {
+        std::fs::write(format!("{dir}/sheets.pdf"), &pdf).unwrap();
+        std::fs::write(format!("{dir}/sheets.zip"), &zip).unwrap();
+    }
+    // A sheet whose scale cannot fit says so and fits.
+    let mut big = with_titles[2].clone();
+    big.0.scale = Some(10.0);
+    let d = de_shape::drawing::drawings(&program, &[big]).unwrap().remove(0);
+    assert!(d.warnings.iter().any(|w| w.contains("10:1")), "{:?}", d.warnings);
+    on_sheet(&d);
 }

@@ -1537,21 +1537,29 @@ fn today() -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-/// A part's engineering drawing: `{id}` gives it as JSON (the app draws it),
-/// `{id}.pdf` and `{id}.dxf` as files. Query: sheet (A4–A0), projection
-/// (first, third), part (one part of an assembly).
+/// A part's engineering drawing: `{id}` gives a sheet as JSON (the app draws
+/// it), `{id}.pdf` every sheet as pages, `{id}.dxf` a sheet and `{id}.zip`
+/// every sheet's DXF. Query: sheet (A4–A0), projection (first, third), part
+/// (one part of an assembly), page (which sheet, from 1).
 async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
     use axum::http::header;
     let fail = |code: StatusCode, message: String| (code, message).into_response();
     let (id, format) = match file.rsplit_once('.') {
-        Some((id, f)) if f == "pdf" || f == "dxf" => (id.to_string(), f),
+        Some((id, f)) if f == "pdf" || f == "dxf" || f == "zip" => (id.to_string(), f),
         _ => (file.clone(), "json"),
+    };
+    let page: Option<usize> = match query.get("page").filter(|p| !p.is_empty()) {
+        None => None,
+        Some(p) => match p.parse::<usize>() {
+            Ok(n) if n >= 1 => Some(n),
+            _ => return fail(StatusCode::BAD_REQUEST, format!("page is a sheet number from 1, not “{p}”")),
+        },
     };
     let app = match server.project(query.get("project")) {
         Ok(app) => app,
         Err(e) => return fail(StatusCode::BAD_REQUEST, e),
     };
-    let mut options = de_shape::drawing::Options {
+    let base = de_shape::drawing::Options {
         sheet: match query.get("sheet").map(String::as_str) {
             Some("A4") => de_shape::drawing::Sheet::A4,
             Some("A2") => de_shape::drawing::Sheet::A2,
@@ -1563,6 +1571,7 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
         part: query.get("part").filter(|p| !p.is_empty()).cloned(),
         ..Default::default()
     };
+    let kg_text = |kg: f64| if kg < 1.0 { format!("{} g", de_shape::drawing::length_text(kg * 1000.0)) } else { format!("{} kg", de_shape::drawing::length_text(kg)) };
     let found = {
         let project = app.project.lock().unwrap();
         serde_json::from_value::<StableId>(json!(id)).ok().and_then(|picked| {
@@ -1575,108 +1584,139 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
                 config = Some(c.clone());
             }
             let e = project.entity(sid)?;
-            // The active configuration is what the shape already shows.
+            // The active configuration is what the shape already shows; another one is evaluated for the drawing.
             let active = project.get::<de_shape::ShapeConfigurations>(sid).and_then(|t| t.active.clone());
             let configured = match config.filter(|c| Some(c) != active.as_ref()) {
                 Some(c) => Some(de_shape::configs::evaluate(project.world(), e, &c).map_err(|m| (c, m))),
                 None => None,
             };
-            let (program, stats, masses) = match configured {
+            let (program, all_stats, masses) = match configured {
                 Some(Err((_, m))) => return Some(Err(m)),
                 Some(Ok(c)) => (de_shape::configs::configured_program(project.world(), e, &c.config).ok()?, c.stats.clone(), if c.part_masses.is_empty() { vec![c.mass.mass_kg] } else { c.part_masses.clone() }),
                 None => (de_shape::resolved_program(project.world(), e)?, project.get::<ShapeSolid>(sid)?.stats.clone(), de_shape::part_masses(project.world(), e).unwrap_or_default()),
             };
-            let part_material = options.part.as_ref().and_then(|n| stats.parts.iter().find(|p| &p.name == n)?.material.clone());
-            // The part's own material; else the whole thing's; else the one all parts share.
-            let shared = || {
-                let parts = &stats.parts;
-                let first = parts.first()?.material.clone()?;
-                parts.iter().all(|p| p.material.as_ref() == Some(&first)).then_some(first)
-            };
-            let material = part_material
-                .or_else(|| {
-                    let m = project.get::<de_solid::MaterialRef>(sid)?;
-                    project.get::<de_solid::Material>(m.0).map(|m| m.name.clone())
-                })
-                .or_else(|| if options.part.is_none() { shared() } else { None });
-            let mass = match &options.part {
-                None => masses.iter().copied().sum::<Option<f64>>(),
-                Some(n) => {
-                    let index = stats.parts.iter().position(|p| &p.name == n)?;
-                    masses.get(index).copied().flatten()
-                }
-            };
-            // The saved setup: section and the person's dimensions.
-            let setup = project.get::<de_shape::ShapeDrawings>(sid).and_then(|all| all.0.iter().find(|d| d.part == options.part).cloned()).unwrap_or_default();
-            // The parts list: one row per distinct part, with how many there are.
-            let mut parts: Vec<de_shape::drawing::PartRow> = vec![];
-            if options.part.is_none() {
-                for (i, p) in stats.parts.iter().enumerate() {
-                    if let Some(row) = parts.iter_mut().find(|r| r.name == p.name) {
-                        row.quantity += 1;
-                        continue;
+            let stats = &all_stats.parts;
+            // The saved setup: its sheets, sections, dimensions and annotations.
+            let setup = project.get::<de_shape::ShapeDrawings>(sid).and_then(|all| all.0.iter().find(|d| d.part == base.part).cloned()).unwrap_or_default();
+            // What a sheet's title block says of the part it draws.
+            let about = |part: &Option<String>| {
+                let part_material = part.as_ref().and_then(|n| stats.iter().find(|p| &p.name == n)?.material.clone());
+                // The part's own material; else the whole thing's; else the one all parts share.
+                let shared = || {
+                    let first = stats.first()?.material.clone()?;
+                    stats.iter().all(|p| p.material.as_ref() == Some(&first)).then_some(first)
+                };
+                let material = part_material
+                    .or_else(|| {
+                        let m = project.get::<de_solid::MaterialRef>(sid)?;
+                        project.get::<de_solid::Material>(m.0).map(|m| m.name.clone())
+                    })
+                    .or_else(|| if part.is_none() { shared() } else { None });
+                let mass = match part {
+                    None => masses.iter().copied().sum::<Option<f64>>(),
+                    Some(n) => stats.iter().position(|p| &p.name == n).and_then(|i| masses.get(i).copied().flatten()),
+                };
+                // The parts list: one row per distinct part, with how many there are.
+                let mut parts: Vec<de_shape::drawing::PartRow> = vec![];
+                if part.is_none() {
+                    for (i, p) in stats.iter().enumerate() {
+                        if let Some(row) = parts.iter_mut().find(|r| r.name == p.name) {
+                            row.quantity += 1;
+                            continue;
+                        }
+                        let kg = masses.get(i).copied().flatten();
+                        parts.push(de_shape::drawing::PartRow { name: p.name.clone(), quantity: 1, material: p.material.clone().unwrap_or_else(|| "—".into()), mass: kg.map(kg_text).unwrap_or_else(|| "—".into()) });
                     }
-                    let kg = masses.get(i).copied().flatten();
-                    parts.push(de_shape::drawing::PartRow {
-                        name: p.name.clone(),
-                        quantity: 1,
-                        material: p.material.clone().unwrap_or_else(|| "—".into()),
-                        mass: kg.map(|kg| if kg < 1.0 { format!("{} g", de_shape::drawing::length_text(kg * 1000.0)) } else { format!("{} kg", de_shape::drawing::length_text(kg)) }).unwrap_or_else(|| "—".into()),
-                    });
                 }
-            }
-            Some(Ok((program, material, mass, sid, setup, parts)))
+                (material, mass, parts)
+            };
+            let sheets = setup.sheet_options(&base);
+            let pages = sheets.len();
+            let number = format!("{}-{}", query.get("project").unwrap_or(&server.default).to_uppercase(), &sid.to_string().replace('-', "")[..6].to_uppercase());
+            let drawn_by = std::env::var("USER").map(|u| u[..1].to_uppercase() + &u[1..]).unwrap_or_else(|_| "Forma".into());
+            let sheets: Vec<(de_shape::drawing::Options, de_shape::drawing::Title)> = sheets
+                .into_iter()
+                .enumerate()
+                .map(|(i, options)| {
+                    let (material, mass, parts) = about(&options.part);
+                    let title = de_shape::drawing::Title {
+                        title: options.part.clone().unwrap_or_else(|| program.name.clone()),
+                        number: number.clone(),
+                        material: material.unwrap_or_else(|| "—".into()),
+                        mass: mass.map(kg_text).unwrap_or_else(|| "—".into()),
+                        parts,
+                        drawn_by: drawn_by.clone(),
+                        date: today(),
+                        page: i + 1,
+                        pages,
+                    };
+                    (options, title)
+                })
+                .collect();
+            Some(Ok((program, sheets)))
         })
     };
-    let (program, material, mass, sid, setup, parts) = match found {
+    let (program, sheets) = match found {
         Some(Ok(found)) => found,
         Some(Err(e)) => return fail(StatusCode::UNPROCESSABLE_ENTITY, e),
         None => return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")),
     };
-    options.section = setup.section;
-    options.dimensions = setup.dimensions;
-    options.details = setup.details;
-    options.frames = setup.frames;
-    options.datums = setup.datums;
-    options.hole_fits = setup.hole_fits;
-    let title = de_shape::drawing::Title {
-        title: options.part.clone().unwrap_or_else(|| program.name.clone()),
-        number: format!("{}-{}", query.get("project").unwrap_or(&server.default).to_uppercase(), &sid.to_string().replace('-', "")[..6].to_uppercase()),
-        material: material.unwrap_or_else(|| "—".into()),
-        mass: mass.map(|kg| if kg < 1.0 { format!("{} g", de_shape::drawing::length_text(kg * 1000.0)) } else { format!("{} kg", de_shape::drawing::length_text(kg)) }).unwrap_or_else(|| "—".into()),
-        parts,
-        drawn_by: std::env::var("USER").map(|u| u[..1].to_uppercase() + &u[1..]).unwrap_or_else(|_| "Forma".into()),
-        date: today(),
+    let pages = sheets.len();
+    if page.is_some_and(|p| p > pages) {
+        return fail(StatusCode::NOT_FOUND, format!("the drawing has {pages} sheet{}", if pages == 1 { "" } else { "s" }));
+    }
+    // One sheet for the app and a DXF; every sheet for the PDF and the zip, unless one is asked for.
+    let wanted: Vec<usize> = match (format, page) {
+        ("json" | "dxf", p) => vec![p.unwrap_or(1) - 1],
+        (_, Some(p)) => vec![p - 1],
+        _ => (0..pages).collect(),
     };
-    let key = {
+    let key = |(options, title): &(de_shape::drawing::Options, de_shape::drawing::Title)| {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (&program.source, &program.inputs, format!("{:?}", program.params), format!("{options:?}"), &title.title, &title.material, &title.mass, &title.date, format!("{:?}", title.parts)).hash(&mut h);
+        (&program.source, &program.inputs, format!("{:?}", program.params), format!("{options:?}"), format!("{title:?}")).hash(&mut h);
         h.finish()
     };
-    let cached = server.drawings.lock().unwrap().get(&key).cloned();
-    let d = match cached {
-        Some(d) => d,
-        None => match tokio::task::spawn_blocking(move || de_shape::drawing::drawing(&program, &options, &title)).await {
-            Ok(Ok(d)) => {
-                let d = Arc::new(d);
+    let keys: Vec<u64> = wanted.iter().map(|&i| key(&sheets[i])).collect();
+    let mut have: Vec<Option<Arc<de_shape::drawing::Drawing>>> = {
+        let cache = server.drawings.lock().unwrap();
+        keys.iter().map(|k| cache.get(k).cloned()).collect()
+    };
+    let missing: Vec<usize> = (0..wanted.len()).filter(|&j| have[j].is_none()).collect();
+    if !missing.is_empty() {
+        let todo: Vec<(de_shape::drawing::Options, de_shape::drawing::Title)> = missing.iter().map(|&j| sheets[wanted[j]].clone()).collect();
+        match tokio::task::spawn_blocking(move || de_shape::drawing::drawings(&program, &todo)).await {
+            Ok(Ok(made)) => {
                 let mut cache = server.drawings.lock().unwrap();
-                if cache.len() > 32 {
+                if cache.len() + made.len() > 48 {
                     cache.clear();
                 }
-                cache.insert(key, d.clone());
-                d
+                for (&j, d) in missing.iter().zip(made) {
+                    let d = Arc::new(d);
+                    cache.insert(keys[j], d.clone());
+                    have[j] = Some(d);
+                }
             }
             Ok(Err(e)) => return fail(StatusCode::UNPROCESSABLE_ENTITY, e),
             Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-        },
-    };
-    let name = d.texts.iter().find(|t| t.bold).map(|t| t.text.clone()).unwrap_or_else(|| "drawing".into());
+        }
+    }
+    let made: Vec<Arc<de_shape::drawing::Drawing>> = have.into_iter().flatten().collect();
+    let name = sheets[wanted[0]].1.title.clone();
     let safe: String = name.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' }).collect();
+    let suffix = |i: usize| if pages > 1 { format!("-sheet{}", i + 1) } else { String::new() };
     match format {
-        "pdf" => ([(header::CONTENT_TYPE, "application/pdf".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{safe}.pdf\""))], de_shape::drawing::pdf(&d)).into_response(),
-        "dxf" => ([(header::CONTENT_TYPE, "application/dxf".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{safe}.dxf\""))], de_shape::drawing::dxf(&d)).into_response(),
-        _ => axum::Json(&*d).into_response(),
+        "pdf" => {
+            let all: Vec<de_shape::drawing::Drawing> = made.iter().map(|d| (**d).clone()).collect();
+            let file = if wanted.len() == 1 && pages > 1 { format!("{safe}{}", suffix(wanted[0])) } else { safe.clone() };
+            ([(header::CONTENT_TYPE, "application/pdf".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{file}.pdf\""))], de_shape::drawing::pdf_pages(&all)).into_response()
+        }
+        "dxf" => ([(header::CONTENT_TYPE, "application/dxf".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{safe}{}.dxf\"", suffix(wanted[0])))], de_shape::drawing::dxf(&made[0])).into_response(),
+        "zip" => {
+            let files: Vec<(String, Vec<u8>)> = wanted.iter().zip(&made).map(|(&i, d)| (format!("{safe}{}.dxf", suffix(i)), de_shape::drawing::dxf(d).into_bytes())).collect();
+            ([(header::CONTENT_TYPE, "application/zip".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{safe}-dxf.zip\""))], de_shape::drawing::zip(&files)).into_response()
+        }
+        _ => axum::Json(&*made[0]).into_response(),
     }
 }
 

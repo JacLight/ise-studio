@@ -4855,7 +4855,7 @@ button.download.drawing-open small {
   inset: 0;
   z-index: 200;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   background: #e9e6ef;
 }
 
@@ -4955,8 +4955,8 @@ button.download.drawing-open small {
 .drawing-sheet {
   width: 100%;
   height: 100%;
-  max-width: calc((100vh - 110px) * 1.414);
-  max-height: calc(100vh - 110px);
+  max-width: calc((100vh - 150px) * 1.414);
+  max-height: calc(100vh - 150px);
   background: #fff;
   box-shadow: 0 1px 2px rgb(30 20 60 / 0.08), 0 12px 40px rgb(30 20 60 / 0.16);
 }
@@ -5243,6 +5243,175 @@ button.download.drawing-open small {
 }
 
 .pop-danger .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.pop-plain {
+  height: 30px;
+  margin-left: auto;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: #5b5368;
+  font-size: 11.5px;
+  font-weight: 550;
+}
+
+.pop-plain:hover {
+  background: #f3effa;
+}
+
+.pop-warn {
+  font-size: 11px;
+  color: #a06200;
+}
+
+.drawing-mark.movable {
+  cursor: move;
+}
+
+.drawing-desk.moving .drawing-sheet {
+  cursor: grabbing;
+}
+
+/* Sheets: a tab per sheet, and what the sheet on show draws. */
+.drawing-sheets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 16px;
+  background: #f7f5fb;
+  border-bottom: 1px solid #e4e0ec;
+}
+
+.sheet-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.sheet-tab {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  max-width: 240px;
+  height: 28px;
+  padding: 0 10px 0 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #5b5368;
+  font-size: 11.5px;
+}
+
+.sheet-tab b {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: #ebe7f3;
+  color: #4b4559;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet-tab span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-tab:hover {
+  background: #fff;
+}
+
+.sheet-tab.active {
+  border-color: #d9d0f5;
+  background: #fff;
+  color: #2a2633;
+  box-shadow: 0 1px 2px rgb(30 20 60 / 0.06);
+}
+
+.sheet-tab.active b {
+  background: #6d4ae0;
+  color: #fff;
+}
+
+.sheet-add {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px dashed #cfc5ef;
+  border-radius: 8px;
+  color: #5b3fc4;
+  font-size: 11.5px;
+  font-weight: 550;
+}
+
+.sheet-add .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.sheet-add:hover {
+  background: #f3effe;
+}
+
+.sheet-setup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.sheet-setup select {
+  width: auto;
+  max-width: 200px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid #e4e0ec;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 11px;
+}
+
+.sheet-order {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.sheet-order button {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: #5b5368;
+  font-size: 15px;
+}
+
+.sheet-order button:hover:not(:disabled) {
+  background: #fff;
+}
+
+.sheet-order button:disabled {
+  opacity: 0.35;
+}
+
+.sheet-order button.danger {
+  color: #c4453c;
+}
+
+.sheet-order .icon {
   width: 14px;
   height: 14px;
 }

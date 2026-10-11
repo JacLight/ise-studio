@@ -3,8 +3,11 @@
 // SVG, with the sheet size, projection and part to choose, and PDF and DXF
 // downloads of exactly what is shown. The front view can be cut through
 // (section A–A); dimensions (with tolerances and ISO 286 fits), detail
-// views, datums and feature control frames are added on the views. All of
-// it is kept with the part.
+// views, datums and feature control frames are added on the views, and
+// dimensions on the detail views too. What was added is edited in place and
+// dragged where it reads best. A drawing can have several sheets (a part of
+// the assembly each, chosen views at a chosen scale), one PDF page each.
+// All of it is kept with the part.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -18,7 +21,10 @@ type Pt = [number, number];
 type Box = [number, number, number, number];
 type ViewFrame = { view: ViewName; at: Pt; scale: number; axes: [number, number]; bounds: Box };
 type MarkKind = "detail" | "frame" | "datum" | "hole";
-type AnnotationMark = { kind: MarkKind; index: number; diameter?: number; bounds: Box };
+type AnnotationMark = { kind: MarkKind; index: number; diameter?: number; bounds: Box; origin?: Pt; anchor?: Pt };
+type DetailFrame = { index: number; letter: string; view: ViewName; at: Pt; scale: number; axes: [number, number]; centre: Pt; radius: number };
+/** Somewhere points can be picked: one of the views, or a detail view (drawn larger, same model mm). */
+type Frame = { key: string; view: ViewName; at: Pt; scale: number; bounds: Box; detail?: number; circle?: { c: Pt; r: number }; letter?: string };
 type Drawing = {
   width: number;
   height: number;
@@ -30,16 +36,24 @@ type Drawing = {
   views: ViewFrame[];
   marks: { dimension: number; bounds: Box }[];
   annotations?: AnnotationMark[];
+  details?: DetailFrame[];
+  page?: number;
+  pages?: number;
   warnings?: string[];
 };
 export type Tolerance = { type: "symmetric"; value: number } | { type: "limits"; upper: number; lower: number } | { type: "fit"; fit: string };
-export type DimSpec = { view: ViewName; a: Pt; b: Pt; kind: DimKind; offset: number; tolerance?: Tolerance; diameter?: boolean };
-export type DetailSpec = { view: ViewName; center: Pt; radius: number; scale?: number | null };
+export type DimSpec = { view: ViewName; a: Pt; b: Pt; kind: DimKind; offset: number; tolerance?: Tolerance; diameter?: boolean; detail?: number };
+export type DetailSpec = { view: ViewName; center: Pt; radius: number; scale?: number | null; place?: Pt | null };
 type GdtSymbol = "straightness" | "flatness" | "circularity" | "cylindricity" | "line_profile" | "surface_profile" | "parallelism" | "perpendicularity" | "angularity" | "position" | "concentricity" | "symmetry" | "circular_runout" | "total_runout";
-export type FrameSpec = { view: ViewName; at: Pt; symbol: GdtSymbol; tolerance: number; diameter_zone?: boolean; datums?: string[]; modifier?: "mmc" | "lmc" | null };
-export type DatumSpec = { view: ViewName; at: Pt; letter: string };
+export type FrameSpec = { view: ViewName; at: Pt; symbol: GdtSymbol; tolerance: number; diameter_zone?: boolean; datums?: string[]; modifier?: "mmc" | "lmc" | null; place?: Pt | null };
+export type DatumSpec = { view: ViewName; at: Pt; letter: string; place?: Pt | null };
 export type HoleFit = { diameter: number; fit: string };
-export type DrawingSetup = { part: string | null; section: number | null; dimensions: DimSpec[]; details?: DetailSpec[]; frames?: FrameSpec[]; datums?: DatumSpec[]; hole_fits?: HoleFit[] };
+type ViewKind = "front" | "top" | "right" | "iso";
+type SheetSize = (typeof SHEETS)[number];
+/** What one sheet carries: its section and everything added on it. */
+type SheetFields = { section?: number | null; dimensions?: DimSpec[]; details?: DetailSpec[]; frames?: FrameSpec[]; datums?: DatumSpec[]; hole_fits?: HoleFit[] };
+export type SheetSpec = SheetFields & { part?: string | null; views?: ViewKind[]; scale?: number | null; size?: SheetSize | null };
+export type DrawingSetup = { part: string | null; section: number | null; dimensions: DimSpec[]; details?: DetailSpec[]; frames?: FrameSpec[]; datums?: DatumSpec[]; hole_fits?: HoleFit[]; sheets?: SheetSpec[] };
 
 type Tool = "none" | "dimension" | "detail" | "datum" | "frame";
 
@@ -49,6 +63,21 @@ const DASH: Partial<Record<Pen, string>> = { hidden: "3 1.5", center: "8 1.5 0.5
 const ACCENT = "#6a4cdb";
 const HOLE_FITS = ["H6", "H7", "H8", "H9", "H10", "H11", "G7", "F8", "JS7", "K7", "M7", "N7", "P7"];
 const SHAFT_FITS = ["h6", "h7", "h8", "h9", "h11", "g6", "f7", "e8", "d9", "js6", "k6", "m6", "n6", "p6"];
+const VIEW_KINDS: { id: ViewKind; label: string }[] = [
+  { id: "front", label: "Front" },
+  { id: "top", label: "Top" },
+  { id: "right", label: "Right" },
+  { id: "iso", label: "Iso" },
+];
+const SHEET_SCALES: { label: string; value: number | null }[] = [
+  { label: "Auto", value: null },
+  { label: "5:1", value: 5 },
+  { label: "2:1", value: 2 },
+  { label: "1:1", value: 1 },
+  { label: "1:2", value: 0.5 },
+  { label: "1:5", value: 0.2 },
+  { label: "1:10", value: 0.1 },
+];
 const DETAIL_SCALES: { label: string; value: number | null }[] = [
   { label: "Auto", value: null },
   { label: "2:1", value: 2 },
@@ -101,12 +130,30 @@ const lengthText = (v: number) => {
   return Number.isInteger(r) ? String(r) : Math.abs(r * 10 - Math.round(r * 10)) < 1e-9 ? r.toFixed(1) : r.toFixed(2);
 };
 
-/** Points worth snapping to on each view: line ends and corners, and hole centres (where centre marks cross). */
-function snapPoints(d: Drawing) {
-  const out: { view: ViewFrame; p: Pt }[] = [];
-  for (const v of d.views) {
-    const [x0, y0, x1, y1] = v.bounds;
-    const inside = (p: Pt) => p[0] >= x0 - 0.05 && p[0] <= x1 + 0.05 && p[1] >= y0 - 0.05 && p[1] <= y1 + 0.05;
+/** Where points can be picked: the views, and the detail views (their own scale, the same model mm). */
+function framesOf(d: Drawing): Frame[] {
+  const views: Frame[] = d.views.map((v) => ({ key: v.view, view: v.view, at: v.at, scale: v.scale, bounds: v.bounds }));
+  const details: Frame[] = (d.details ?? []).map((x) => ({
+    key: `detail:${x.index}`,
+    view: x.view,
+    at: x.at,
+    scale: x.scale,
+    bounds: [x.centre[0] - x.radius, x.centre[1] - x.radius, x.centre[0] + x.radius, x.centre[1] + x.radius],
+    detail: x.index,
+    circle: { c: x.centre, r: x.radius },
+    letter: x.letter,
+  }));
+  return [...views, ...details];
+}
+
+/** Whether a sheet point is on a frame: inside a view's outline, or well inside a detail's circle (its cut ends on the circle are not corners). */
+const onFrame = (f: Frame, p: Pt) => (f.circle ? Math.hypot(p[0] - f.circle.c[0], p[1] - f.circle.c[1]) < f.circle.r - 0.05 : p[0] >= f.bounds[0] - 0.05 && p[0] <= f.bounds[2] + 0.05 && p[1] >= f.bounds[1] - 0.05 && p[1] <= f.bounds[3] + 0.05);
+
+/** Points worth snapping to on each view and detail: line ends and corners, and hole centres (where centre marks cross). */
+function snapPoints(d: Drawing, frames: Frame[]) {
+  const out: { view: Frame; p: Pt }[] = [];
+  for (const v of frames) {
+    const inside = (p: Pt) => onFrame(v, p);
     const seen = new Set<string>();
     const add = (p: Pt) => {
       const k = `${p[0].toFixed(2)},${p[1].toFixed(2)}`;
@@ -118,8 +165,8 @@ function snapPoints(d: Drawing) {
     const centres: Pt[][] = [];
     for (const s of d.strokes) {
       if (s.pen === "visible" || s.pen === "hidden") {
-        if (!s.points.every(inside)) continue;
-        // Polylines along curves: their ends (and a straight line's ends) are the corners.
+        // A detail's lines are cut at its circle: their ends on the circle are left out by `inside`.
+        if (!v.circle && !s.points.every(inside)) continue;
         add(s.points[0]!);
         add(s.points[s.points.length - 1]!);
       } else if (s.pen === "center" && s.points.length === 2) centres.push(s.points);
@@ -135,14 +182,12 @@ function snapPoints(d: Drawing) {
   return out;
 }
 
-/** The view's edges (visible and hidden line segments), for pointing at an edge anywhere along it. */
-function viewEdges(d: Drawing) {
-  const out: { view: ViewFrame; a: Pt; b: Pt }[] = [];
-  for (const v of d.views) {
-    const [x0, y0, x1, y1] = v.bounds;
-    const inside = (p: Pt) => p[0] >= x0 - 0.05 && p[0] <= x1 + 0.05 && p[1] >= y0 - 0.05 && p[1] <= y1 + 0.05;
+/** The views' edges (visible and hidden line segments), for pointing at an edge anywhere along it. */
+function viewEdges(d: Drawing, frames: Frame[]) {
+  const out: { view: Frame; a: Pt; b: Pt }[] = [];
+  for (const v of frames.filter((f) => f.detail == null)) {
     for (const s of d.strokes) {
-      if ((s.pen !== "visible" && s.pen !== "hidden") || !s.points.every(inside)) continue;
+      if ((s.pen !== "visible" && s.pen !== "hidden") || !s.points.every((p) => onFrame(v, p))) continue;
       for (let i = 1; i < s.points.length; i++) out.push({ view: v, a: s.points[i - 1]!, b: s.points[i]! });
     }
   }
@@ -167,28 +212,69 @@ function placement(pa: Pt, pb: Pt, m: Pt): { kind: DimKind; offset: number } {
   return { kind: "aligned", offset: (m[0] - pa[0]) * n[0] + (m[1] - pa[1]) * n[1] };
 }
 
+/** The direction a dimension's offset is measured along (as the engine has it). */
+function dimNormal(pa: Pt, pb: Pt, kind: DimKind): Pt {
+  if (kind === "horizontal") return [0, 1];
+  if (kind === "vertical") return [-1, 0];
+  const l = Math.hypot(pb[0] - pa[0], pb[1] - pa[1]) || 1;
+  return [-(pb[1] - pa[1]) / l, (pb[0] - pa[0]) / l];
+}
+
 /** The dimension line's two ends on the sheet (as the engine draws it). */
 function dimLine(pa: Pt, pb: Pt, kind: DimKind, offset: number): [Pt, Pt] {
-  let n: Pt;
-  if (kind === "horizontal") n = [0, 1];
-  else if (kind === "vertical") n = [-1, 0];
-  else {
-    const l = Math.hypot(pb[0] - pa[0], pb[1] - pa[1]) || 1;
-    n = [-(pb[1] - pa[1]) / l, (pb[0] - pa[0]) / l];
-  }
+  const n = dimNormal(pa, pb, kind);
   const dot = (p: Pt) => p[0] * n[0] + p[1] * n[1];
   const level = offset >= 0 ? Math.max(dot(pa), dot(pb)) + offset : Math.min(dot(pa), dot(pb)) + offset;
   const foot = (p: Pt): Pt => [p[0] + n[0] * (level - dot(p)), p[1] + n[1] * (level - dot(p))];
   return [foot(pa), foot(pb)];
 }
 
-const toModel = (v: ViewFrame, p: Pt): Pt => [(p[0] - v.at[0]) / v.scale, (p[1] - v.at[1]) / v.scale];
+/** The offset that puts a dimension's line `shift` further along its normal (crossing to the other side when dragged past its points). */
+function movedOffset(pa: Pt, pb: Pt, kind: DimKind, offset: number, shift: number) {
+  const n = dimNormal(pa, pb, kind);
+  const [da, db] = [pa[0] * n[0] + pa[1] * n[1], pb[0] * n[0] + pb[1] * n[1]];
+  const [lo, hi] = [Math.min(da, db), Math.max(da, db)];
+  const level = (offset >= 0 ? hi : lo) + offset + shift;
+  const next = level >= hi ? level - hi : level <= lo ? level - lo : level - hi > lo - level ? 0.5 : -0.5;
+  return Math.round(next * 10) / 10;
+}
+
+const toModel = (v: { at: Pt; scale: number }, p: Pt): Pt => [(p[0] - v.at[0]) / v.scale, (p[1] - v.at[1]) / v.scale];
+const toSheet = (v: { at: Pt; scale: number }, p: Pt): Pt => [v.at[0] + p[0] * v.scale, v.at[1] + p[1] * v.scale];
 const measure = (a: Pt, b: Pt, kind: DimKind) => (kind === "horizontal" ? Math.abs(a[0] - b[0]) : kind === "vertical" ? Math.abs(a[1] - b[1]) : Math.hypot(a[0] - b[0], a[1] - b[1]));
 const round3 = (p: Pt): Pt => [Math.round(p[0] * 1000) / 1000, Math.round(p[1] * 1000) / 1000];
+const round1 = (p: Pt): Pt => [Math.round(p[0] * 10) / 10, Math.round(p[1] * 10) / 10];
 /** Letters for datums: A, B, C… leaving out I, O and Q (ISO 5459). */
 const DATUM_LETTERS = "ABCDEFGHJKLMNPRSTUVWXYZ".split("");
 
+/** Gives datum `from` the letter `to` on the sheets that draw the same part (letters belong to a part), and every frame's reference to it (inside A-B too). */
+function renameDatum(setup: DrawingSetup, page: number, from: string, to: string): DrawingSetup {
+  const parts = sheetParts(setup);
+  const part = parts[page - 1] ?? null;
+  const fix = <T extends SheetFields>(s: T): T => ({
+    ...s,
+    datums: s.datums?.map((d) => (d.letter === from ? { ...d, letter: to } : d)),
+    frames: s.frames?.map((f) => ({ ...f, datums: f.datums?.map((r) => r.split("-").map((x) => (x === from ? to : x)).join("-")) })),
+  });
+  const first = parts[0] === part ? fix(setup) : setup;
+  return { ...first, sheets: setup.sheets?.map((s, i) => (parts[i + 1] === part ? fix(s) : s)) };
+}
+
+/** The part each sheet draws (null: the whole assembly), first sheet first. */
+const sheetParts = (setup: DrawingSetup) => [setup.part ?? null, ...(setup.sheets ?? []).map((s) => s.part ?? setup.part ?? null)];
+
+/** What a sheet's tab says. */
+function sheetLabel(setup: DrawingSetup, page: number, whole: string) {
+  if (page === 1) return setup.part ?? whole;
+  const s = setup.sheets?.[page - 2];
+  const name = s?.part ?? setup.part ?? whole;
+  const views = s?.views?.length ? s.views.map((v) => VIEW_KINDS.find((k) => k.id === v)?.label ?? v).join(" · ") : null;
+  return views ? `${name} — ${views}` : name;
+}
+
 type Popover = { at: Pt } & ({ kind: "dimension"; index: number } | { kind: "hole"; diameter: number } | { kind: "frame"; view: ViewName; p: Pt } | { kind: "annotation"; mark: AnnotationMark });
+/** Something added being dragged: where it was grabbed and where the pointer is now (sheet mm). */
+type Move = { kind: "dimension" | "frame" | "datum" | "detail"; index: number; bounds: Box; start: Pt; now: Pt; mark?: AnnotationMark; desk: Pt };
 
 export function DrawingView(props: {
   id: string;
@@ -201,31 +287,54 @@ export function DrawingView(props: {
   onSave: (setup: DrawingSetup) => Promise<unknown>;
   onClose: () => void;
 }) {
-  const [sheet, setSheet] = useState<(typeof SHEETS)[number]>("A3");
+  const [sheet, setSheet] = useState<SheetSize>("A3");
   const [projection, setProjection] = useState<"first" | "third">("first");
   const [part, setPart] = useState("");
   const [config, setConfig] = useState(props.activeConfig ?? "");
+  const [page, setPage] = useState(1);
   const [drawing, setDrawing] = useState<Drawing | null>(null);
   const [status, setStatus] = useState<{ kind: "busy" } | { kind: "idle" } | { kind: "error"; text: string }>({ kind: "busy" });
   const [tool, setTool] = useState<Tool>("none");
-  const [pending, setPending] = useState<{ view: ViewFrame; a: Pt; b: Pt | null } | null>(null);
-  const [drag, setDrag] = useState<{ view: ViewFrame; c: Pt; r: number } | null>(null);
+  const [pending, setPending] = useState<{ view: Frame; a: Pt; b: Pt | null } | null>(null);
+  const [drag, setDrag] = useState<{ view: Frame; c: Pt; r: number } | null>(null);
+  const [move, setMove] = useState<Move | null>(null);
   const [detailScale, setDetailScale] = useState<number | null>(null);
   const [pointer, setPointer] = useState<Pt | null>(null);
   const [hover, setHover] = useState<string | null>(null);
   const [popover, setPopover] = useState<Popover | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const deskRef = useRef<HTMLDivElement>(null);
+  const swallowClick = useRef(false);
 
   const setup: DrawingSetup = useMemo(() => props.setups.find((s) => (s.part ?? "") === part) ?? { part: part || null, section: null, dimensions: [] }, [props.setups, part]);
-  const details = setup.details ?? [];
-  const frames = setup.frames ?? [];
-  const datums = setup.datums ?? [];
-  const holeFits = setup.hole_fits ?? [];
-  const [depth, setDepth] = useState<number>(setup.section ?? 50);
-  useEffect(() => setDepth(setup.section ?? 50), [setup.section]);
-  const query = `sheet=${sheet}&projection=${projection}${part ? `&part=${encodeURIComponent(part)}` : ""}${config ? `&config=${encodeURIComponent(config)}` : ""}`;
+  const extra = setup.sheets ?? [];
+  const pages = 1 + extra.length;
+  useEffect(() => {
+    if (page > pages) setPage(pages);
+  }, [page, pages]);
+  useEffect(() => setPage(1), [part]);
+  const onPage = Math.min(page, pages);
+  const extraSheet: SheetSpec | null = onPage > 1 ? (extra[onPage - 2] ?? null) : null;
+  // What this sheet carries: the first sheet's fields are the setup's own.
+  const cur: SheetFields = extraSheet ?? setup;
+  const dimensions = cur.dimensions ?? [];
+  const details = cur.details ?? [];
+  const frames = cur.frames ?? [];
+  const datums = cur.datums ?? [];
+  const holeFits = cur.hole_fits ?? [];
+  const section = cur.section ?? null;
+  // Datum letters belong to a part: those on every sheet of this one.
+  const partLetters = useMemo(() => {
+    const parts = sheetParts(setup);
+    const all = [setup as SheetFields, ...extra];
+    return [...new Set(all.flatMap((s, i) => (parts[i] === parts[onPage - 1] ? (s.datums ?? []).map((d) => d.letter) : [])))].sort();
+  }, [setup, extra, onPage]);
+  const [depth, setDepth] = useState<number>(section ?? 50);
+  useEffect(() => setDepth(section ?? 50), [section]);
+  const base = `sheet=${sheet}&projection=${projection}${part ? `&part=${encodeURIComponent(part)}` : ""}${config ? `&config=${encodeURIComponent(config)}` : ""}`;
+  const query = `${base}&page=${onPage}`;
   const setupKey = JSON.stringify(setup);
+  const sheetSize: SheetSize = extraSheet?.size ?? sheet;
 
   useEffect(() => {
     let live = true;
@@ -244,13 +353,24 @@ export function DrawingView(props: {
     };
   }, [props.id, query, setupKey]);
 
-  const save = useCallback((next: Partial<DrawingSetup>) => props.onSave({ ...setup, part: part || null, ...next }), [props, setup, part]);
+  const saveSetup = useCallback((next: DrawingSetup) => props.onSave({ ...next, part: part || null }), [props, part]);
+  /** Saves fields of the sheet on show. */
+  const save = useCallback(
+    (next: Partial<SheetFields>) => {
+      if (onPage === 1) return saveSetup({ ...setup, ...next, section: next.section !== undefined ? (next.section ?? null) : setup.section });
+      return saveSetup({ ...setup, sheets: extra.map((s, i) => (i === onPage - 2 ? { ...s, ...next } : s)) });
+    },
+    [saveSetup, setup, extra, onPage],
+  );
+  const saveSheets = (sheets: SheetSpec[]) => saveSetup({ ...setup, sheets });
+  const setSheetSpec = (next: Partial<SheetSpec>) => saveSheets(extra.map((s, i) => (i === onPage - 2 ? { ...s, ...next } : s)));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.stopPropagation();
-      if (popover) setPopover(null);
+      if (move) setMove(null);
+      else if (popover) setPopover(null);
       else if (pending) setPending(null);
       else if (drag) setDrag(null);
       else if (tool !== "none") setTool("none");
@@ -258,11 +378,14 @@ export function DrawingView(props: {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [props, pending, drag, tool, popover]);
+  }, [props, pending, drag, tool, popover, move]);
 
   const d = drawing;
-  const snaps = useMemo(() => (d ? snapPoints(d) : []), [d]);
-  const edges = useMemo(() => (d ? viewEdges(d) : []), [d]);
+  const frameList = useMemo(() => (d ? framesOf(d) : []), [d]);
+  const snaps = useMemo(() => (d ? snapPoints(d, frameList) : []), [d, frameList]);
+  const edges = useMemo(() => (d ? viewEdges(d, frameList) : []), [d, frameList]);
+  /** The frame a dimension is drawn in: its detail, or its view. */
+  const frameOf = (dim: DimSpec) => frameList.find((f) => (dim.detail != null ? f.detail === dim.detail : f.detail == null && f.view === dim.view));
   /** The pointer on the sheet (mm, y up). */
   const sheetPoint = (e: React.MouseEvent): Pt | null => {
     const svg = svgRef.current;
@@ -277,12 +400,13 @@ export function DrawingView(props: {
     return r ? [e.clientX - r.left, e.clientY - r.top] : [e.clientX, e.clientY];
   };
   const mmPerPx = d && svgRef.current ? d.width / svgRef.current.getBoundingClientRect().width : 0.3;
-  const snapNear = (p: Pt | null, view?: ViewFrame) => {
+  /** A corner or hole centre near the pointer; on one frame, or on the views only (details too when `details`). */
+  const snapNear = (p: Pt | null, view?: Frame, details = false) => {
     if (!p) return null;
-    let best: { view: ViewFrame; p: Pt } | null = null;
+    let best: { view: Frame; p: Pt } | null = null;
     let dist = 10 * mmPerPx;
     for (const s of snaps) {
-      if (view && s.view.view !== view.view) continue;
+      if (view ? s.view.key !== view.key : !details && s.view.detail != null) continue;
       const k = Math.hypot(s.p[0] - p[0], s.p[1] - p[1]);
       if (k < dist) [best, dist] = [s, k];
     }
@@ -293,7 +417,7 @@ export function DrawingView(props: {
     if (!p) return null;
     const corner = snapNear(p);
     if (corner) return corner;
-    let best: { view: ViewFrame; p: Pt } | null = null;
+    let best: { view: Frame; p: Pt } | null = null;
     let dist = 8 * mmPerPx;
     for (const e of edges) {
       const ab: Pt = [e.b[0] - e.a[0], e.b[1] - e.a[1]];
@@ -305,10 +429,14 @@ export function DrawingView(props: {
     }
     return best;
   };
-  const viewAt = (p: Pt) => d?.views.find((v) => p[0] >= v.bounds[0] - 4 && p[0] <= v.bounds[2] + 4 && p[1] >= v.bounds[1] - 4 && p[1] <= v.bounds[3] + 4) ?? null;
-  const snapped = tool === "dimension" && !pending?.b ? snapNear(pointer, pending?.view) : tool === "datum" || tool === "frame" ? snapEdge(pointer) : tool === "detail" && !drag && pointer ? snapNear(pointer) : null;
+  const viewAt = (p: Pt) => frameList.find((v) => v.detail == null && p[0] >= v.bounds[0] - 4 && p[0] <= v.bounds[2] + 4 && p[1] >= v.bounds[1] - 4 && p[1] <= v.bounds[3] + 4) ?? null;
+  const snapped = move ? null : tool === "dimension" && !pending?.b ? snapNear(pointer, pending?.view, true) : tool === "datum" || tool === "frame" ? snapEdge(pointer) : tool === "detail" && !drag && pointer ? snapNear(pointer) : null;
 
   const onClick = (e: React.MouseEvent) => {
+    if (swallowClick.current) {
+      swallowClick.current = false;
+      return;
+    }
     if (!d || popover) {
       setPopover(null);
       return;
@@ -318,7 +446,7 @@ export function DrawingView(props: {
     if (tool === "datum") {
       const s = snapEdge(p);
       if (!s) return;
-      const used = new Set(datums.map((x) => x.letter));
+      const used = new Set(partLetters);
       const letter = DATUM_LETTERS.find((l) => !used.has(l)) ?? "Z";
       void save({ datums: [...datums, { view: s.view.view, at: round3(toModel(s.view, s.p)), letter }] });
       return;
@@ -330,16 +458,17 @@ export function DrawingView(props: {
     }
     if (tool !== "dimension") return;
     if (!pending) {
-      const s = snapNear(p);
+      const s = snapNear(p, undefined, true);
       if (s) setPending({ view: s.view, a: s.p, b: null });
     } else if (!pending.b) {
       const s = snapNear(p, pending.view);
       if (s && Math.hypot(s.p[0] - pending.a[0], s.p[1] - pending.a[1]) > 1e-6) setPending({ ...pending, b: s.p });
     } else {
       const { kind, offset } = placement(pending.a, pending.b, p);
-      const spec: DimSpec = { view: pending.view.view, a: toModel(pending.view, pending.a), b: toModel(pending.view, pending.b), kind, offset: Math.round(offset * 10) / 10 };
+      const spec: DimSpec = { view: pending.view.view, a: round3(toModel(pending.view, pending.a)), b: round3(toModel(pending.view, pending.b)), kind, offset: Math.round(offset * 10) / 10 };
+      if (pending.view.detail != null) spec.detail = pending.view.detail;
       setPending(null);
-      void save({ dimensions: [...setup.dimensions, spec] });
+      void save({ dimensions: [...dimensions, spec] });
     }
   };
 
@@ -352,7 +481,43 @@ export function DrawingView(props: {
     const view = s?.view ?? viewAt(p);
     if (view) setDrag({ view, c: s?.p ?? p, r: 0 });
   };
+  /** Ends a drag of something added: a click opens it, a move puts it where it was dropped. */
+  const endMove = (m: Move) => {
+    setMove(null);
+    swallowClick.current = true;
+    const delta: Pt = [m.now[0] - m.start[0], m.now[1] - m.start[1]];
+    if (Math.hypot(delta[0], delta[1]) < 0.8) {
+      if (m.kind === "dimension") setPopover({ kind: "dimension", index: m.index, at: m.desk });
+      else if (m.mark) setPopover({ kind: "annotation", mark: m.mark, at: m.desk });
+      return;
+    }
+    if (m.kind === "dimension") {
+      const dim = dimensions[m.index];
+      const f = dim && frameOf(dim);
+      if (!dim || !f) return;
+      const [pa, pb] = [toSheet(f, dim.a), toSheet(f, dim.b)];
+      const n = dimNormal(pa, pb, dim.kind);
+      const offset = movedOffset(pa, pb, dim.kind, dim.offset, delta[0] * n[0] + delta[1] * n[1]);
+      void save({ dimensions: dimensions.map((x, i) => (i === m.index ? { ...x, offset } : x)) });
+      return;
+    }
+    const origin = m.mark?.origin;
+    if (!origin) return;
+    const to: Pt = [origin[0] + delta[0], origin[1] + delta[1]];
+    const anchor = m.mark?.anchor ?? [0, 0];
+    if (m.kind === "frame") void save({ frames: frames.map((x, i) => (i === m.index ? { ...x, place: round1([to[0] - anchor[0], to[1] - anchor[1]]) } : x)) });
+    else if (m.kind === "datum") void save({ datums: datums.map((x, i) => (i === m.index ? { ...x, place: round1([to[0] - anchor[0], to[1] - anchor[1]]) } : x)) });
+    else {
+      // The detail keeps the scale it shows at, wherever it goes.
+      const k = d?.details?.find((x) => x.index === m.index)?.scale ?? null;
+      void save({ details: details.map((x, i) => (i === m.index ? { ...x, place: round1(to), scale: x.scale ?? k } : x)) });
+    }
+  };
   const onMouseUp = () => {
+    if (move) {
+      endMove(move);
+      return;
+    }
     if (!drag) return;
     const r = drag.r;
     setDrag(null);
@@ -365,7 +530,7 @@ export function DrawingView(props: {
     if (!d) return null;
     const flip = (p: Pt) => `${p[0].toFixed(3)},${(d.height - p[1]).toFixed(3)}`;
     return (
-      <g>
+      <g id="drawing-ink">
         <rect width={d.width} height={d.height} fill="#fff" />
         {d.strokes.map((s, i) => (
           <polyline key={i} points={s.points.map(flip).join(" ")} fill="none" stroke="#1d1a24" strokeWidth={WIDTH[s.pen]} strokeDasharray={DASH[s.pen]} strokeLinecap="round" strokeLinejoin="round" />
@@ -393,14 +558,14 @@ export function DrawingView(props: {
   }, [d]);
 
   const busyGesture = !!pending || !!drag;
-  // Hit boxes over what the person added: click to edit or remove.
-  const markBox = (key: string, b: Box, title: string, open: (e: React.MouseEvent) => void) => {
+  // Hit boxes over what the person added: click to edit, drag to move.
+  const markBox = (key: string, b: Box, title: string, grab: (e: React.MouseEvent, p: Pt) => void) => {
     if (!d) return null;
     const on = hover === key;
     return (
       <rect
         key={key}
-        className="drawing-mark"
+        className={`drawing-mark ${tool === "none" ? "movable" : ""}`}
         x={b[0] - 1}
         y={d.height - b[3] - 1}
         width={b[2] - b[0] + 2}
@@ -409,15 +574,20 @@ export function DrawingView(props: {
         fill={on ? "rgb(106 76 219 / 0.08)" : "transparent"}
         stroke={on ? ACCENT : "none"}
         strokeWidth={0.3}
-        onMouseEnter={() => !busyGesture && setHover(key)}
+        // A corner to snap to under the pointer wins over what is drawn there.
+        pointerEvents={tool === "dimension" && snapped ? "none" : undefined}
+        onMouseEnter={() => !busyGesture && !move && setHover(key)}
         onMouseLeave={() => setHover(null)}
-        onMouseDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          if (busyGesture) return;
+        onMouseDown={(e) => {
           e.stopPropagation();
+          if (busyGesture || e.button !== 0) return;
+          const p = sheetPoint(e);
+          if (!p) return;
           setHover(null);
-          open(e);
+          setPopover(null);
+          grab(e, p);
         }}
+        onClick={(e) => e.stopPropagation()}
       >
         <title>{title}</title>
       </rect>
@@ -429,18 +599,76 @@ export function DrawingView(props: {
     const y = (p: Pt) => d.height - p[1];
     const parts: React.ReactNode[] = [];
     if (tool !== "none") {
-      for (const v of d.views) {
+      for (const v of frameList) {
+        if (v.detail != null && tool !== "dimension") continue;
+        const active = (!pending || pending.view.key === v.key) && (!drag || drag.view.key === v.key);
         const [x0, y0, x1, y1] = v.bounds;
-        const active = (!pending || pending.view.view === v.view) && (!drag || drag.view.view === v.view);
-        parts.push(<rect key={`v-${v.view}`} x={x0 - 2} y={d.height - y1 - 2} width={x1 - x0 + 4} height={y1 - y0 + 4} rx={1.5} fill="none" stroke={ACCENT} strokeOpacity={active ? 0.35 : 0.1} strokeWidth={0.3} strokeDasharray="1.5 1" pointerEvents="none" />);
+        parts.push(
+          v.circle ? (
+            <circle key={`v-${v.key}`} cx={v.circle.c[0]} cy={y(v.circle.c)} r={v.circle.r + 2} fill="none" stroke={ACCENT} strokeOpacity={active ? 0.35 : 0.1} strokeWidth={0.3} strokeDasharray="1.5 1" pointerEvents="none" />
+          ) : (
+            <rect key={`v-${v.key}`} x={x0 - 2} y={d.height - y1 - 2} width={x1 - x0 + 4} height={y1 - y0 + 4} rx={1.5} fill="none" stroke={ACCENT} strokeOpacity={active ? 0.35 : 0.1} strokeWidth={0.3} strokeDasharray="1.5 1" pointerEvents="none" />
+          ),
+        );
       }
     }
-    if (!busyGesture) {
-      for (const m of d.marks) parts.push(markBox(`d-${m.dimension}`, m.bounds, "Tolerance, or remove this dimension", (e) => setPopover({ kind: "dimension", index: m.dimension, at: deskPoint(e) })));
+    if (!busyGesture && !move) {
+      for (const m of d.marks)
+        parts.push(markBox(`d-${m.dimension}`, m.bounds, "Click for its tolerance · drag to move it in or out", (e, p) => setMove({ kind: "dimension", index: m.dimension, bounds: m.bounds, start: p, now: p, desk: deskPoint(e) })));
       for (const a of d.annotations ?? []) {
         const key = `${a.kind}-${a.index}-${a.diameter ?? ""}`;
+        // With the Dimension tool on, a detail view is for picking points on.
+        if (a.kind === "detail" && tool === "dimension") continue;
         if (a.kind === "hole") parts.push(markBox(key, a.bounds, "Set a fit on these holes", (e) => setPopover({ kind: "hole", diameter: a.diameter ?? 0, at: deskPoint(e) })));
-        else parts.push(markBox(key, a.bounds, a.kind === "detail" ? "Detail view: change its scale or remove it" : `Remove this ${a.kind === "frame" ? "feature control frame" : "datum"}`, (e) => setPopover({ kind: "annotation", mark: a, at: deskPoint(e) })));
+        else {
+          const what = a.kind === "detail" ? "Detail view: click to change its scale · drag to move it" : a.kind === "frame" ? "Feature control frame: click to edit · drag to move it" : "Datum: click to change its letter · drag to move it";
+          const kind = a.kind;
+          parts.push(markBox(key, a.bounds, what, (e, p) => setMove({ kind, index: a.index, bounds: a.bounds, start: p, now: p, mark: a, desk: deskPoint(e) })));
+        }
+      }
+    }
+    if (move) {
+      const delta: Pt = [move.now[0] - move.start[0], move.now[1] - move.start[1]];
+      const b = move.bounds;
+      const moved = Math.hypot(delta[0], delta[1]) >= 0.8;
+      if (moved && move.kind === "dimension") {
+        const dim = dimensions[move.index];
+        const f = dim && frameOf(dim);
+        if (dim && f) {
+          const [pa, pb] = [toSheet(f, dim.a), toSheet(f, dim.b)];
+          const n = dimNormal(pa, pb, dim.kind);
+          const offset = movedOffset(pa, pb, dim.kind, dim.offset, delta[0] * n[0] + delta[1] * n[1]);
+          const [ea, eb] = dimLine(pa, pb, dim.kind, offset);
+          parts.push(
+            <g key="move" pointerEvents="none">
+              <rect x={b[0] - 1} y={d.height - b[3] - 1} width={b[2] - b[0] + 2} height={b[3] - b[1] + 2} fill="#fff" opacity={0.8} />
+              <g stroke={ACCENT} strokeWidth={0.3} fill="none">
+                <line x1={pa[0]} y1={y(pa)} x2={ea[0]} y2={y(ea)} strokeDasharray="1 0.8" />
+                <line x1={pb[0]} y1={y(pb)} x2={eb[0]} y2={y(eb)} strokeDasharray="1 0.8" />
+                <line x1={ea[0]} y1={y(ea)} x2={eb[0]} y2={y(eb)} strokeWidth={0.4} />
+              </g>
+            </g>,
+          );
+        }
+      } else if (moved) {
+        // The ink in its box lifted off the sheet and carried with the pointer.
+        parts.push(
+          <g key="move" pointerEvents="none">
+            <rect x={b[0] - 1} y={d.height - b[3] - 1} width={b[2] - b[0] + 2} height={b[3] - b[1] + 2} fill="#fff" opacity={0.75} />
+            <defs>
+              <clipPath id="drawing-move-clip">
+                <rect x={b[0] - 1} y={d.height - b[3] - 1} width={b[2] - b[0] + 2} height={b[3] - b[1] + 2} />
+              </clipPath>
+            </defs>
+            {move.mark?.anchor && move.kind !== "detail" && move.mark.origin && <line x1={move.mark.anchor[0]} y1={y(move.mark.anchor)} x2={move.mark.origin[0] + delta[0]} y2={y([0, move.mark.origin[1] + delta[1]])} stroke={ACCENT} strokeWidth={0.3} strokeDasharray="1 0.8" />}
+            <g transform={`translate(${delta[0]} ${-delta[1]})`}>
+              <g clipPath="url(#drawing-move-clip)">
+                <use href="#drawing-ink" />
+              </g>
+              <rect x={b[0] - 1} y={d.height - b[3] - 1} width={b[2] - b[0] + 2} height={b[3] - b[1] + 2} rx={1} fill="rgb(106 76 219 / 0.05)" stroke={ACCENT} strokeWidth={0.3} strokeDasharray="1.5 1" />
+            </g>
+          </g>,
+        );
       }
     }
     if (pending) {
@@ -489,20 +717,21 @@ export function DrawingView(props: {
     if (popover?.kind === "frame") {
       const v = d.views.find((x) => x.view === popover.view);
       if (v) {
-        const q: Pt = [v.at[0] + popover.p[0] * v.scale, v.at[1] + popover.p[1] * v.scale];
+        const q = toSheet(v, popover.p);
         parts.push(<circle key="frame-at" cx={q[0]} cy={y(q)} r={1.1} fill={ACCENT} pointerEvents="none" />);
       }
     }
     return <g>{parts}</g>;
   })();
 
-  const nextDatum = DATUM_LETTERS.find((l) => !datums.some((x) => x.letter === l)) ?? "Z";
-  const hint =
-    tool === "dimension"
+  const nextDatum = DATUM_LETTERS.find((l) => !partLetters.includes(l)) ?? "Z";
+  const hint = move
+    ? "Drop it where it reads best · Esc to leave it"
+    : tool === "dimension"
       ? !pending
-        ? "Click a corner or a hole centre on any view · click a dimension to give it a tolerance or remove it · Esc to finish"
+        ? "Click a corner or a hole centre on a view or a detail view · drag a dimension to move it · Esc to finish"
         : !pending.b
-          ? "Click the second point on the same view · Esc to cancel"
+          ? `Click the second point on the same ${pending.view.detail != null ? `detail (${pending.view.letter})` : "view"} · Esc to cancel`
           : "Move to choose across, up or along, and how far out · click to place"
       : tool === "detail"
         ? drag
@@ -521,6 +750,28 @@ export function DrawingView(props: {
     setPopover(null);
   };
   const warnings = d?.warnings ?? [];
+  const addSheet = () => {
+    // The next part of the assembly without a sheet of its own, else the whole thing's views again.
+    const drawn = new Set(sheetParts(setup).filter(Boolean));
+    const next = !setup.part ? props.parts.find((p) => !drawn.has(p)) : undefined;
+    void saveSheets([...extra, next ? { part: next } : { views: ["iso"] }]);
+    setPage(pages + 1);
+    pickTool("none");
+  };
+  const moveSheet = (by: number) => {
+    const i = onPage - 2;
+    const j = i + by;
+    if (j < 0 || j >= extra.length) return;
+    const next = [...extra];
+    [next[i], next[j]] = [next[j]!, next[i]!];
+    void saveSheets(next);
+    setPage(j + 2);
+  };
+  const removeSheet = () => {
+    void saveSheets(extra.filter((_, i) => i !== onPage - 2));
+    setPage(Math.max(1, onPage - 1));
+  };
+  const whole = props.parts.length > 0 ? "Whole assembly" : props.name;
 
   return createPortal(
     <div className="drawing-view" role="dialog" aria-label="Engineering drawing">
@@ -552,19 +803,19 @@ export function DrawingView(props: {
             </select>
           )}
           <div className="drawing-section">
-            <button type="button" className={`chip-toggle ${setup.section != null ? "active" : ""}`} aria-pressed={setup.section != null} onClick={() => void save({ section: setup.section != null ? null : depth })} title="Show the front view cut through, with the cut faces hatched">
+            <button type="button" className={`chip-toggle ${section != null ? "active" : ""}`} aria-pressed={section != null} onClick={() => void save({ section: section != null ? null : depth })} title="Show the front view cut through, with the cut faces hatched">
               <Icon name="layers" /> Section A–A
             </button>
-            {setup.section != null && (
+            {section != null && (
               <label className="drawing-depth" title="How far back the cut is, through the part's depth">
-                <input type="range" min={5} max={95} step={1} value={depth} onChange={(e) => setDepth(Number(e.target.value))} onPointerUp={() => depth !== setup.section && void save({ section: depth })} onKeyUp={() => depth !== setup.section && void save({ section: depth })} aria-label="Section depth" />
+                <input type="range" min={5} max={95} step={1} value={depth} onChange={(e) => setDepth(Number(e.target.value))} onPointerUp={() => depth !== section && void save({ section: depth })} onKeyUp={() => depth !== section && void save({ section: depth })} aria-label="Section depth" />
                 <span>{depth}%</span>
               </label>
             )}
           </div>
           <div className="drawing-tools" role="group" aria-label="Annotate">
-            <button type="button" className={`chip-toggle ${tool === "dimension" ? "active" : ""}`} aria-pressed={tool === "dimension"} onClick={() => pickTool("dimension")} title="Add dimensions by clicking points on the views; click one to give it a tolerance or fit">
-              <Icon name="ruler" /> Dimension{setup.dimensions.length ? ` · ${setup.dimensions.length}` : ""}
+            <button type="button" className={`chip-toggle ${tool === "dimension" ? "active" : ""}`} aria-pressed={tool === "dimension"} onClick={() => pickTool("dimension")} title="Add dimensions by clicking points on the views or detail views; click one to give it a tolerance or fit, drag it to move it">
+              <Icon name="ruler" /> Dimension{dimensions.length ? ` · ${dimensions.length}` : ""}
             </button>
             <button type="button" className={`chip-toggle ${tool === "detail" ? "active" : ""}`} aria-pressed={tool === "detail"} onClick={() => pickTool("detail")} title="Drag a circle on a view to show it enlarged in a detail view">
               <svg className="chip-glyph" viewBox="0 0 16 16" aria-hidden>
@@ -600,7 +851,7 @@ export function DrawingView(props: {
           </div>
           <div className="segmented" role="group" aria-label="Sheet size">
             {SHEETS.map((s) => (
-              <button key={s} type="button" className={s === sheet ? "active" : ""} aria-pressed={s === sheet} onClick={() => setSheet(s)}>
+              <button key={s} type="button" className={s === sheetSize ? "active" : ""} aria-pressed={s === sheetSize} onClick={() => (extraSheet ? void setSheetSpec({ size: s }) : setSheet(s))} title={extraSheet ? `This sheet on ${s}` : `Sheet 1 (and sheets without their own size) on ${s}`}>
                 {s}
               </button>
             ))}
@@ -613,18 +864,83 @@ export function DrawingView(props: {
               Third angle
             </button>
           </div>
-          <a className={`download primary ${d ? "" : "disabled"}`} href={projectUrl(`/drawing/${props.id}.pdf?${query}`)} download aria-disabled={!d}>
-            <Icon name="download" /> PDF
+          <a className={`download primary ${d ? "" : "disabled"}`} href={projectUrl(`/drawing/${props.id}.pdf?${base}`)} download aria-disabled={!d} title={pages > 1 ? `All ${pages} sheets, a page each` : undefined}>
+            <Icon name="download" /> PDF{pages > 1 ? ` · ${pages} pages` : ""}
           </a>
-          <a className={`download ${d ? "" : "disabled"}`} href={projectUrl(`/drawing/${props.id}.dxf?${query}`)} download aria-disabled={!d} title="Lines on layers VISIBLE, HIDDEN, CENTER, DIMENSIONS, FRAME and TEXT">
-            <Icon name="download" /> DXF
+          <a className={`download ${d ? "" : "disabled"}`} href={projectUrl(pages > 1 ? `/drawing/${props.id}.zip?${base}` : `/drawing/${props.id}.dxf?${base}`)} download aria-disabled={!d} title={`${pages > 1 ? `A DXF per sheet, in a zip. ` : ""}Lines on layers VISIBLE, HIDDEN, CENTER, DIMENSIONS, FRAME and TEXT`}>
+            <Icon name="download" /> DXF{pages > 1 ? " · zip" : ""}
           </a>
           <button type="button" className="drawing-close" onClick={props.onClose} aria-label="Close the drawing">
             <Icon name="close" />
           </button>
         </div>
       </header>
-      <div ref={deskRef} className={`drawing-desk ${tool !== "none" ? "measuring" : ""}`}>
+      <nav className="drawing-sheets" aria-label="Sheets">
+        <div className="sheet-tabs" role="tablist">
+          {Array.from({ length: pages }, (_, i) => i + 1).map((n) => (
+            <button key={n} type="button" role="tab" aria-selected={n === onPage} className={`sheet-tab ${n === onPage ? "active" : ""}`} onClick={() => (setPage(n), pickTool("none"))} title={n === 1 ? "Sheet 1: the standard views" : `Sheet ${n}`}>
+              <b>{n}</b>
+              <span>{n === 1 && pages === 1 ? `Sheet 1 · ${sheetLabel(setup, n, whole)}` : sheetLabel(setup, n, whole)}</span>
+            </button>
+          ))}
+          <button type="button" className="sheet-add" onClick={addSheet} title={!setup.part && props.parts.length ? "Add a sheet for the next part of the assembly" : "Add a sheet"}>
+            <Icon name="plus" /> Sheet
+          </button>
+        </div>
+        {extraSheet && (
+          <div className="sheet-setup">
+            <select value={extraSheet.part ?? ""} onChange={(e) => void setSheetSpec({ part: e.target.value || null })} aria-label="What this sheet draws" disabled={!!setup.part}>
+              <option value="">{setup.part ?? "Whole assembly"}</option>
+              {!setup.part &&
+                props.parts.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+            </select>
+            <div className="segmented small" role="group" aria-label="Views on this sheet">
+              {VIEW_KINDS.map((v) => {
+                const views = extraSheet.views?.length ? extraSheet.views : VIEW_KINDS.map((k) => k.id);
+                const on = views.includes(v.id);
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    className={on ? "active" : ""}
+                    aria-pressed={on}
+                    onClick={() => {
+                      const next = on ? views.filter((x) => x !== v.id) : VIEW_KINDS.map((k) => k.id).filter((k) => k === v.id || views.includes(k));
+                      if (next.length) void setSheetSpec({ views: next.length === VIEW_KINDS.length ? [] : next });
+                    }}
+                    title={`${on ? "Leave out" : "Show"} the ${v.label.toLowerCase()} view`}
+                  >
+                    {v.label}
+                  </button>
+                );
+              })}
+            </div>
+            <select value={extraSheet.scale ?? ""} onChange={(e) => void setSheetSpec({ scale: e.target.value ? Number(e.target.value) : null })} aria-label="This sheet's scale">
+              {SHEET_SCALES.map((s) => (
+                <option key={s.label} value={s.value ?? ""}>
+                  {s.value ? `Scale ${s.label}` : "Scale: largest that fits"}
+                </option>
+              ))}
+            </select>
+            <div className="sheet-order">
+              <button type="button" onClick={() => moveSheet(-1)} disabled={onPage <= 2} aria-label="Move this sheet earlier" title="Earlier">
+                ‹
+              </button>
+              <button type="button" onClick={() => moveSheet(1)} disabled={onPage >= pages} aria-label="Move this sheet later" title="Later">
+                ›
+              </button>
+              <button type="button" className="danger" onClick={removeSheet} aria-label="Remove this sheet" title="Remove this sheet">
+                <Icon name="trash" />
+              </button>
+            </div>
+          </div>
+        )}
+      </nav>
+      <div ref={deskRef} className={`drawing-desk ${tool !== "none" ? "measuring" : ""} ${move ? "moving" : ""}`}>
         {status.kind === "busy" && !d && (
           <div className="drawing-wait">
             <span className="spinner" aria-hidden />
@@ -637,9 +953,15 @@ export function DrawingView(props: {
             ref={svgRef}
             className={`drawing-sheet ${status.kind === "busy" ? "updating" : ""}`}
             viewBox={`0 0 ${d.width} ${d.height}`}
+            style={{ aspectRatio: `${d.width} / ${d.height}` }}
             role="img"
-            aria-label={`Drawing of ${part || props.name}`}
+            aria-label={`Drawing of ${part || props.name}, sheet ${onPage} of ${pages}`}
             onMouseMove={(e) => {
+              if (move) {
+                const p = sheetPoint(e);
+                if (p) setMove({ ...move, now: p });
+                return;
+              }
               if (tool === "none") return;
               const p = sheetPoint(e);
               setPointer(p);
@@ -666,16 +988,16 @@ export function DrawingView(props: {
         )}
         {popover && (
           <div className="drawing-pop" style={popoverPlace(popover.at, deskRef.current)} onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
-            {popover.kind === "dimension" && setup.dimensions[popover.index] && (
+            {popover.kind === "dimension" && dimensions[popover.index] && (
               <ToleranceForm
-                dim={setup.dimensions[popover.index]!}
+                dim={dimensions[popover.index]!}
                 onApply={(dim) => {
                   setPopover(null);
-                  void save({ dimensions: setup.dimensions.map((x, i) => (i === popover.index ? dim : x)) });
+                  void save({ dimensions: dimensions.map((x, i) => (i === popover.index ? dim : x)) });
                 }}
                 onRemove={() => {
                   setPopover(null);
-                  void save({ dimensions: setup.dimensions.filter((_, i) => i !== popover.index) });
+                  void save({ dimensions: dimensions.filter((_, i) => i !== popover.index) });
                 }}
               />
             )}
@@ -692,29 +1014,86 @@ export function DrawingView(props: {
             )}
             {popover.kind === "frame" && (
               <FrameForm
-                datums={[...new Set(datums.map((x) => x.letter))]}
+                datums={partLetters}
                 onApply={(f) => {
                   setPopover(null);
                   void save({ frames: [...frames, { ...f, view: popover.view, at: popover.p }] });
                 }}
               />
             )}
-            {popover.kind === "annotation" && (
-              <AnnotationForm
-                mark={popover.mark}
-                detail={popover.mark.kind === "detail" ? details[popover.mark.index] : undefined}
-                frame={popover.mark.kind === "frame" ? frames[popover.mark.index] : undefined}
-                datum={popover.mark.kind === "datum" ? datums[popover.mark.index] : undefined}
+            {popover.kind === "annotation" && popover.mark.kind === "frame" && frames[popover.mark.index] && (
+              <FrameForm
+                key={`frame-${popover.mark.index}`}
+                datums={partLetters}
+                initial={frames[popover.mark.index]}
+                onApply={(f) => {
+                  setPopover(null);
+                  const i = popover.mark.index;
+                  void save({ frames: frames.map((x, k) => (k === i ? { ...x, ...f } : x)) });
+                }}
+                onReset={
+                  frames[popover.mark.index]!.place
+                    ? () => {
+                        setPopover(null);
+                        const i = popover.mark.index;
+                        void save({ frames: frames.map((x, k) => (k === i ? { ...x, place: null } : x)) });
+                      }
+                    : undefined
+                }
+                onRemove={() => {
+                  setPopover(null);
+                  void save({ frames: frames.filter((_, k) => k !== popover.mark.index) });
+                }}
+              />
+            )}
+            {popover.kind === "annotation" && popover.mark.kind === "datum" && datums[popover.mark.index] && (
+              <DatumForm
+                datum={datums[popover.mark.index]!}
+                taken={partLetters}
+                references={[setup as SheetFields, ...extra].filter((_, i) => sheetParts(setup)[i] === sheetParts(setup)[onPage - 1]).flatMap((s) => s.frames ?? []).filter((f) => f.datums?.some((r) => r.split("-").includes(datums[popover.mark.index]!.letter))).length}
+                onLetter={(to) => {
+                  setPopover(null);
+                  void saveSetup(renameDatum(setup, onPage, datums[popover.mark.index]!.letter, to));
+                }}
+                onReset={
+                  datums[popover.mark.index]!.place
+                    ? () => {
+                        setPopover(null);
+                        const i = popover.mark.index;
+                        void save({ datums: datums.map((x, k) => (k === i ? { ...x, place: null } : x)) });
+                      }
+                    : undefined
+                }
+                onRemove={() => {
+                  setPopover(null);
+                  void save({ datums: datums.filter((_, k) => k !== popover.mark.index) });
+                }}
+              />
+            )}
+            {popover.kind === "annotation" && popover.mark.kind === "detail" && details[popover.mark.index] && (
+              <DetailForm
+                detail={details[popover.mark.index]!}
+                letter={d?.details?.find((x) => x.index === popover.mark.index)?.letter}
+                dims={dimensions.filter((x) => x.detail === popover.mark.index).length}
                 onScale={(scale) => {
                   setPopover(null);
                   void save({ details: details.map((x, i) => (i === popover.mark.index ? { ...x, scale } : x)) });
                 }}
+                onReset={
+                  details[popover.mark.index]!.place
+                    ? () => {
+                        setPopover(null);
+                        const i = popover.mark.index;
+                        void save({ details: details.map((x, k) => (k === i ? { ...x, place: null } : x)) });
+                      }
+                    : undefined
+                }
                 onRemove={() => {
                   setPopover(null);
                   const i = popover.mark.index;
-                  if (popover.mark.kind === "detail") void save({ details: details.filter((_, k) => k !== i) });
-                  else if (popover.mark.kind === "frame") void save({ frames: frames.filter((_, k) => k !== i) });
-                  else void save({ datums: datums.filter((_, k) => k !== i) });
+                  // Its own dimensions go with it; those of later details keep pointing at theirs.
+                  const kept = dimensions.filter((x) => x.detail !== i).map((x) => (x.detail != null && x.detail > i ? { ...x, detail: x.detail - 1 } : x));
+                  void save({ details: details.filter((_, k) => k !== i), dimensions: kept });
                 }}
               />
             )}
@@ -883,15 +1262,18 @@ function HoleFitForm(props: { diameter: number; fit: string; onApply: (fit: stri
   );
 }
 
-function FrameForm(props: { datums: string[]; onApply: (f: Omit<FrameSpec, "view" | "at">) => void }) {
-  const [symbol, setSymbol] = useState<GdtSymbol>("flatness");
-  const [tolerance, setTolerance] = useState(0.05);
-  const [zone, setZone] = useState(false);
-  const [modifier, setModifier] = useState<"" | "mmc" | "lmc">("");
-  const [refs, setRefs] = useState<string[]>([]);
-  const choices = [...new Set([...props.datums, "A", "B", "C"])].sort();
+function FrameForm(props: { datums: string[]; initial?: FrameSpec; onApply: (f: Omit<FrameSpec, "view" | "at" | "place">) => void; onRemove?: () => void; onReset?: () => void }) {
+  const init = props.initial;
+  const [symbol, setSymbol] = useState<GdtSymbol>(init?.symbol ?? "flatness");
+  const [tolerance, setTolerance] = useState(init?.tolerance ?? 0.05);
+  const [zone, setZone] = useState(!!init?.diameter_zone);
+  const [modifier, setModifier] = useState<"" | "mmc" | "lmc">(init?.modifier ?? "");
+  const [refs, setRefs] = useState<string[]>(init?.datums ?? []);
+  // The letters marked on this part, and any the frame already refers to (marked or not, so it can be put right).
+  const choices = [...new Set([...props.datums, ...refs, ...(props.datums.length ? [] : ["A", "B", "C"])])].sort();
   const needs = NEEDS_DATUM.has(symbol) && refs.length === 0;
   const form = ["flatness", "straightness", "circularity", "cylindricity"].includes(symbol);
+  const unmarked = refs.flatMap((r) => r.split("-")).filter((r) => !props.datums.includes(r));
   return (
     <form
       className="pop-body wide"
@@ -902,7 +1284,7 @@ function FrameForm(props: { datums: string[]; onApply: (f: Omit<FrameSpec, "view
       }}
     >
       <div className="pop-head">
-        <strong>Geometrical tolerance</strong>
+        <strong>{init ? "Edit geometrical tolerance" : "Geometrical tolerance"}</strong>
         <span>ISO 1101</span>
       </div>
       <div className="gdt-grid" role="radiogroup" aria-label="Characteristic">
@@ -944,47 +1326,105 @@ function FrameForm(props: { datums: string[]; onApply: (f: Omit<FrameSpec, "view
               </select>
             ))}
           </div>
+          {!form && unmarked.length > 0 && <span className="pop-warn">No datum symbol marks {unmarked.join(", ")} yet</span>}
         </div>
       )}
       <div className="pop-actions">
-        <span />
+        {props.onRemove ? (
+          <button type="button" className="pop-danger" onClick={props.onRemove}>
+            <Icon name="trash" /> Remove
+          </button>
+        ) : (
+          <span />
+        )}
+        {props.onReset && (
+          <button type="button" className="pop-plain" onClick={props.onReset} title="Let the drawing find it a place again">
+            Auto place
+          </button>
+        )}
         <button type="submit" className="pop-primary" disabled={!(tolerance > 0) || needs}>
-          Add frame
+          {init ? "Update" : "Add frame"}
         </button>
       </div>
     </form>
   );
 }
 
-function AnnotationForm(props: { mark: AnnotationMark; detail?: DetailSpec; frame?: FrameSpec; datum?: DatumSpec; onScale: (s: number | null) => void; onRemove: () => void }) {
-  const title = props.detail ? "Detail view" : props.frame ? (SYMBOLS.find((s) => s.id === props.frame!.symbol)?.name ?? "Frame") : props.datum ? `Datum ${props.datum.letter}` : "";
+function DatumForm(props: { datum: DatumSpec; taken: string[]; references: number; onLetter: (l: string) => void; onReset?: () => void; onRemove: () => void }) {
+  const [letter, setLetter] = useState(props.datum.letter);
+  const free = DATUM_LETTERS.filter((l) => l === props.datum.letter || !props.taken.includes(l));
   return (
-    <div className="pop-body">
+    <form
+      className="pop-body"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (letter !== props.datum.letter) props.onLetter(letter);
+      }}
+    >
       <div className="pop-head">
-        <strong>{title}</strong>
-        {props.detail && <span>R{lengthText(props.detail.radius)} on the {props.detail.view} view</span>}
-        {props.frame && (
-          <span>
-            {props.frame.diameter_zone ? "⌀" : ""}
-            {props.frame.tolerance}
-            {props.frame.datums?.length ? ` · ${props.frame.datums.join(" ")}` : ""}
-          </span>
-        )}
+        <strong>Datum {props.datum.letter}</strong>
+        <span>on the {props.datum.view} view</span>
       </div>
-      {props.detail && (
-        <div className="segmented small" role="group" aria-label="Detail scale">
-          {DETAIL_SCALES.map((s) => (
-            <button key={s.label} type="button" className={(props.detail!.scale ?? null) === s.value ? "active" : ""} onClick={() => props.onScale(s.value)}>
-              {s.label}
-            </button>
+      <label className="pop-field">
+        <span>Letter</span>
+        <select className="pop-select" value={letter} onChange={(e) => setLetter(e.target.value)} aria-label="Datum letter" autoFocus>
+          {free.map((l) => (
+            <option key={l} value={l}>
+              {l}
+            </option>
           ))}
+        </select>
+      </label>
+      {props.references > 0 && (
+        <div className="pop-sub">
+          {letter !== props.datum.letter ? `${props.references} frame${props.references === 1 ? "" : "s"} referring to ${props.datum.letter} will refer to ${letter}` : `${props.references} frame${props.references === 1 ? " refers" : "s refer"} to it`}
         </div>
       )}
       <div className="pop-actions">
         <button type="button" className="pop-danger" onClick={props.onRemove}>
           <Icon name="trash" /> Remove
         </button>
-        <span />
+        {props.onReset && (
+          <button type="button" className="pop-plain" onClick={props.onReset} title="Straight out from the feature again">
+            Auto place
+          </button>
+        )}
+        <button type="submit" className="pop-primary" disabled={letter === props.datum.letter}>
+          Rename
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function DetailForm(props: { detail: DetailSpec; letter?: string; dims: number; onScale: (s: number | null) => void; onReset?: () => void; onRemove: () => void }) {
+  return (
+    <div className="pop-body">
+      <div className="pop-head">
+        <strong>Detail {props.letter ?? ""}</strong>
+        <span>
+          R{lengthText(props.detail.radius)} on the {props.detail.view} view{props.dims ? ` · ${props.dims} dimension${props.dims === 1 ? "" : "s"}` : ""}
+        </span>
+      </div>
+      <div className="segmented small" role="group" aria-label="Detail scale">
+        {DETAIL_SCALES.map((s) => (
+          <button key={s.label} type="button" className={(props.detail.scale ?? null) === s.value ? "active" : ""} onClick={() => props.onScale(s.value)}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+      <div className="pop-sub">Dimension it with the Dimension tool: values are true size.</div>
+      <div className="pop-actions">
+        <button type="button" className="pop-danger" onClick={props.onRemove}>
+          <Icon name="trash" /> Remove
+        </button>
+        {props.onReset ? (
+          <button type="button" className="pop-plain" onClick={props.onReset} title="Let the drawing find it a place again">
+            Auto place
+          </button>
+        ) : (
+          <span />
+        )}
       </div>
     </div>
   );

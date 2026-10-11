@@ -66,6 +66,7 @@ impl Plugin for ShapePlugin {
             .command::<SetStudy>()
             .command::<SetDrawing>()
             .command::<configs::ActivateConfig>()
+            .command::<RenameDatum>()
             // Formulas first: geometry is evaluated from the resolved values, and
             // re-evaluated when anything a formula reads changes.
             .derived(Derived {
@@ -316,12 +317,119 @@ pub struct DrawingSpec {
     /// ISO 286 fits on hole callouts, by diameter.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hole_fits: Vec<drawing::HoleFit>,
+    /// Sheets after the first (which shows the standard views set up above):
+    /// each its own part, views, scale and annotations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sheets: Vec<SheetSpec>,
+}
+
+/// A further sheet of a drawing: one part of the assembly (or the whole
+/// thing), the views it shows at a scale, and its own annotations.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SheetSpec {
+    /// The part it draws (the drawing's own part, or the whole assembly, when absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<String>,
+    /// The views it shows: front, top, right, iso (all of them when empty).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub views: Vec<drawing::ViewKind>,
+    /// Its scale (2 for 2:1, 0.5 for 1:2); the largest standard one that fits when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<f64>,
+    /// Its sheet size (the first sheet's when absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<drawing::Sheet>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dimensions: Vec<drawing::DimSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub details: Vec<drawing::DetailSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames: Vec<drawing::FrameSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub datums: Vec<drawing::DatumSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hole_fits: Vec<drawing::HoleFit>,
 }
 
 impl DrawingSpec {
     /// Nothing set: the default drawing.
     pub fn is_empty(&self) -> bool {
-        self.section.is_none() && self.dimensions.is_empty() && self.details.is_empty() && self.frames.is_empty() && self.datums.is_empty() && self.hole_fits.is_empty()
+        self.section.is_none() && self.dimensions.is_empty() && self.details.is_empty() && self.frames.is_empty() && self.datums.is_empty() && self.hole_fits.is_empty() && self.sheets.is_empty()
+    }
+
+    /// Each sheet's options and the part it draws, first sheet first; `base`
+    /// carries the sheet size and projection asked for.
+    pub fn sheet_options(&self, base: &drawing::Options) -> Vec<drawing::Options> {
+        let first = drawing::Options { part: self.part.clone().or(base.part.clone()), section: self.section, dimensions: self.dimensions.clone(), details: self.details.clone(), frames: self.frames.clone(), datums: self.datums.clone(), hole_fits: self.hole_fits.clone(), ..base.clone() };
+        let first_part = first.part.clone();
+        let rest = self.sheets.iter().map(|s| drawing::Options {
+            sheet: s.size.unwrap_or(base.sheet),
+            projection: base.projection,
+            part: s.part.clone().or(first_part.clone()),
+            section: s.section,
+            dimensions: s.dimensions.clone(),
+            details: s.details.clone(),
+            frames: s.frames.clone(),
+            datums: s.datums.clone(),
+            hole_fits: s.hole_fits.clone(),
+            views: s.views.clone(),
+            scale: s.scale,
+        });
+        std::iter::once(first).chain(rest).collect()
+    }
+
+    /// The part each sheet draws (None: the whole assembly), first sheet first.
+    pub fn sheet_parts(&self) -> Vec<Option<String>> {
+        std::iter::once(self.part.clone()).chain(self.sheets.iter().map(|s| s.part.clone().or(self.part.clone()))).collect()
+    }
+
+    /// Gives datum `from` the letter `to` on sheet `sheet` (1 the first) and
+    /// every other sheet of the same part (datum letters belong to a part),
+    /// frames' references with it. How many references changed.
+    pub fn rename_datum(&mut self, sheet: usize, from: &str, to: &str) -> usize {
+        let parts = self.sheet_parts();
+        let Some(part) = parts.get(sheet.max(1) - 1).cloned() else { return 0 };
+        let mut n = 0;
+        if parts[0] == part {
+            n += drawing::rename_datum(&mut self.frames, &mut self.datums, from, to);
+        }
+        for (s, p) in self.sheets.iter_mut().zip(&parts[1..]) {
+            if *p == part {
+                n += drawing::rename_datum(&mut s.frames, &mut s.datums, from, to);
+            }
+        }
+        n
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let check = |section: Option<f64>, dims: &[drawing::DimSpec], details: &[drawing::DetailSpec], frames: &[drawing::FrameSpec], datums: &[drawing::DatumSpec], fits: &[drawing::HoleFit]| {
+            if section.is_some_and(|p| !(0.0..=100.0).contains(&p)) {
+                return Err("section is a percentage of the depth, 0 to 100".to_string());
+            }
+            drawing::validate(dims, details, frames, datums, fits)
+        };
+        check(self.section, &self.dimensions, &self.details, &self.frames, &self.datums, &self.hole_fits)?;
+        for (i, s) in self.sheets.iter().enumerate() {
+            check(s.section, &s.dimensions, &s.details, &s.frames, &s.datums, &s.hole_fits).map_err(|e| format!("sheet {}: {e}", i + 2))?;
+            if s.scale.is_some_and(|k| !(k.is_finite() && k > 0.0)) {
+                return Err(format!("sheet {}: a scale is a positive number (2 for 2:1, 0.5 for 1:2)", i + 2));
+            }
+        }
+        // A datum letter marks one feature of a part.
+        let parts = self.sheet_parts();
+        let datums: Vec<&[drawing::DatumSpec]> = std::iter::once(self.datums.as_slice()).chain(self.sheets.iter().map(|s| s.datums.as_slice())).collect();
+        let mut seen: Vec<(&Option<String>, &str)> = vec![];
+        for (part, list) in parts.iter().zip(datums) {
+            for d in list {
+                if seen.contains(&(part, d.letter.as_str())) {
+                    return Err(format!("datum {} is marked twice", d.letter));
+                }
+                seen.push((part, &d.letter));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -346,13 +454,10 @@ impl Command for SetDrawing {
         if tx.get::<ShapeProgram>(self.target).is_none() {
             return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{} is not a shape", self.target)));
         }
-        if let Some(p) = self.drawing.section {
-            if !(0.0..=100.0).contains(&p) {
-                return Err(CommandError::new(ErrorCode::InvalidParameters, "section is a percentage of the depth, 0 to 100"));
-            }
+        self.drawing.validate().map_err(|e| CommandError::new(ErrorCode::InvalidParameters, e))?;
+        if let Some(s) = self.drawing.sheets.iter().position(|s| s.part.is_some() && self.drawing.part.is_some() && s.part != self.drawing.part) {
+            return Err(CommandError::new(ErrorCode::InvalidParameters, format!("sheet {} draws another part than the drawing of {}", s + 2, self.drawing.part.as_deref().unwrap_or_default())));
         }
-        let dw = &self.drawing;
-        drawing::validate(&dw.dimensions, &dw.details, &dw.frames, &dw.datums, &dw.hole_fits).map_err(|e| CommandError::new(ErrorCode::InvalidParameters, e))?;
         let mut all = tx.get::<ShapeDrawings>(self.target).cloned().unwrap_or_default();
         all.0.retain(|d| d.part != self.drawing.part);
         if !self.drawing.is_empty() {
@@ -364,6 +469,42 @@ impl Command for SetDrawing {
             tx.set(self.target, all)?;
         }
         Ok(json!({ "id": self.target }))
+    }
+}
+
+/// Gives a datum another letter on a drawing (every sheet), and every
+/// feature control frame that refers to it the new letter too.
+#[derive(Deserialize, JsonSchema)]
+pub struct RenameDatum {
+    pub target: StableId,
+    /// The drawing's part (the whole shape's drawing when absent).
+    #[serde(default)]
+    pub part: Option<String>,
+    /// The sheet the datum is on (1, the first, when absent); the letter
+    /// changes on every sheet of the same part.
+    #[serde(default)]
+    pub sheet: Option<usize>,
+    pub from: String,
+    pub to: String,
+}
+
+impl Command for RenameDatum {
+    const NAME: &'static str = "shape.rename_datum";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        let mut all = tx.get::<ShapeDrawings>(self.target).cloned().unwrap_or_default();
+        let Some(dw) = all.0.iter_mut().find(|d| d.part == self.part) else {
+            return Err(CommandError::new(ErrorCode::UnresolvedReference, "that drawing has no datums"));
+        };
+        let sheet = self.sheet.unwrap_or(1);
+        let on_sheet = if sheet <= 1 { Some(&dw.datums) } else { dw.sheets.get(sheet - 2).map(|s| &s.datums) };
+        if !on_sheet.is_some_and(|l| l.iter().any(|d| d.letter == self.from)) {
+            return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("no datum {} on sheet {sheet}", self.from)));
+        }
+        let references = dw.rename_datum(sheet, &self.from, &self.to);
+        dw.validate().map_err(|e| CommandError::new(ErrorCode::InvalidParameters, e))?;
+        tx.set(self.target, all)?;
+        Ok(json!({ "id": self.target, "references": references }))
     }
 }
 

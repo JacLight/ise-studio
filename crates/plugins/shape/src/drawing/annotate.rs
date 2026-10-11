@@ -20,7 +20,7 @@ pub enum Tolerance {
 
 /// A detail view: the circle of radius `radius` about `center` (model mm
 /// along the view's axes) drawn again larger, labelled DETAIL B (5:1).
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
 pub struct DetailSpec {
     pub view: ViewName,
     pub center: [f64; 2],
@@ -28,13 +28,18 @@ pub struct DetailSpec {
     /// The detail's own scale (5 for 5:1); a standard one that fits is chosen when absent.
     #[serde(default)]
     pub scale: Option<f64>,
+    /// Where the person put the enlarged view: its centre on the sheet (sheet
+    /// mm); it is found free space when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<[f64; 2]>,
 }
 
 /// Geometrical characteristics (ISO 1101).
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GdtSymbol {
     Straightness,
+    #[default]
     Flatness,
     Circularity,
     Cylindricity,
@@ -62,7 +67,7 @@ pub enum Modifier {
 }
 
 /// A feature control frame pointing at a point of a view (model mm along its axes).
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
 pub struct FrameSpec {
     pub view: ViewName,
     pub at: [f64; 2],
@@ -77,14 +82,37 @@ pub struct FrameSpec {
     pub datums: Vec<String>,
     #[serde(default)]
     pub modifier: Option<Modifier>,
+    /// Where the person put the frame: its lower left corner from the point
+    /// it applies to (sheet mm); it is found free space when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<[f64; 2]>,
 }
 
 /// A datum feature symbol (ISO 5459) on a point of a view.
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
 pub struct DatumSpec {
     pub view: ViewName,
     pub at: [f64; 2],
     pub letter: String,
+    /// Where the person put the lettered square: its centre from the point
+    /// on the feature (sheet mm); straight out from the feature when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<[f64; 2]>,
+}
+
+/// Where a detail view landed: a model point p (mm along its view's axes)
+/// shows at `at + p · scale`, inside the circle of `radius` about `centre`.
+#[derive(Clone, Debug, Serialize)]
+pub struct DetailFrame {
+    /// Its index in the details.
+    pub index: usize,
+    pub letter: String,
+    pub view: ViewName,
+    pub at: [f64; 2],
+    pub scale: f64,
+    pub axes: [usize; 2],
+    pub centre: [f64; 2],
+    pub radius: f64,
 }
 
 /// A fit on holes of one diameter: their callout reads ⌀16 H7 with its deviations.
@@ -112,6 +140,13 @@ pub struct AnnotationMark {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diameter: Option<f64>,
     pub bounds: [f64; 4],
+    /// What moves when it is dragged (sheet mm): a frame's lower left corner,
+    /// a datum's square's centre, a detail view's centre.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<[f64; 2]>,
+    /// The point on the view it belongs to (sheet mm).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<[f64; 2]>,
 }
 
 impl DimSpec {
@@ -129,9 +164,39 @@ fn letter_ok(s: &str) -> bool {
     !s.is_empty() && s.len() <= 5 && s.split('-').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_uppercase()))
 }
 
+/// Gives datum `from` the letter `to`: its symbols and every frame's
+/// references to it (also inside a common datum, A-B). How many references changed.
+pub fn rename_datum(frames: &mut [FrameSpec], datums: &mut [DatumSpec], from: &str, to: &str) -> usize {
+    for d in datums.iter_mut().filter(|d| d.letter == from) {
+        d.letter = to.to_string();
+    }
+    let mut changed = 0;
+    for f in frames.iter_mut() {
+        for r in f.datums.iter_mut() {
+            let parts: Vec<&str> = r.split('-').collect();
+            if parts.contains(&from) {
+                *r = parts.iter().map(|p| if *p == from { to } else { p }).collect::<Vec<_>>().join("-");
+                changed += 1;
+            }
+        }
+    }
+    changed
+}
+
 /// Checks a drawing setup's annotations before it is kept.
 pub fn validate(dimensions: &[DimSpec], details: &[DetailSpec], frames: &[FrameSpec], datums: &[DatumSpec], hole_fits: &[HoleFit]) -> Result<(), String> {
+    let finite = |p: Option<[f64; 2]>| p.is_none_or(|p| p.iter().all(|v| v.is_finite()));
+    if !(details.iter().all(|d| finite(d.place)) && frames.iter().all(|f| finite(f.place)) && datums.iter().all(|d| finite(d.place))) {
+        return Err("a placement is two numbers of sheet mm".into());
+    }
     for d in dimensions {
+        if let Some(i) = d.detail {
+            match details.get(i) {
+                None => return Err(format!("a dimension is in detail {}, and there are {} details", i, details.len())),
+                Some(s) if s.view != d.view => return Err("a dimension in a detail view is on the detail's view".into()),
+                _ => {}
+            }
+        }
         match &d.tolerance {
             Some(Tolerance::Symmetric { value }) if !(value.is_finite() && *value > 0.0) => return Err("a ± tolerance is a positive number of mm".into()),
             Some(Tolerance::Limits { upper, lower }) if !(upper.is_finite() && lower.is_finite() && upper > lower) => return Err("limit deviations need the upper above the lower".into()),
@@ -607,12 +672,33 @@ fn frame_leader(at: [f64; 2], w: f64, p: [f64; 2]) -> Vec<[f64; 2]> {
     }
 }
 
+/// Moves a box (x0, y0, x1, y1) the least that puts it inside `f`: how far, or None when it is too big.
+fn keep_inside(r: [f64; 4], f: [f64; 4]) -> Option<[f64; 2]> {
+    if r[2] - r[0] > f[2] - f[0] || r[3] - r[1] > f[3] - f[1] {
+        return None;
+    }
+    Some([(f[0] - r[0]).max(0.0) + (f[2] - r[2]).min(0.0), (f[1] - r[1]).max(0.0) + (f[3] - r[3]).min(0.0)])
+}
+
 fn place_frame(d: &mut Drawing, grid: &mut Grid, words: &mut Grid, g: &Geometry, f: &FrameSpec, index: usize) -> bool {
     let Some(v) = d.views.iter().find(|v| v.view == f.view).cloned() else { return false };
     let p = [v.at[0] + f.at[0] * v.scale, v.at[1] + f.at[1] * v.scale];
     let (_, widths) = frame_cells(f);
     let w: f64 = widths.iter().sum();
     let vb = v.bounds;
+    // Where the person put it (kept on the sheet), else the best free spot.
+    let placed = f.place.and_then(|o| {
+        let at = [p[0] + o[0], p[1] + o[1]];
+        let shift = keep_inside([at[0], at[1], at[0] + w, at[1] + CELL_H], grow(g.frame, -1.5))?;
+        Some(([at[0] + shift[0], at[1] + shift[1]], 0.0))
+    });
+    if let Some((at, _)) = placed {
+        if !grid.free(grow([at[0], at[1], at[0] + w, at[1] + CELL_H], 0.5)) {
+            d.warnings.push(format!("the {} frame where it was put covers other lines", format!("{:?}", f.symbol).to_lowercase()));
+        }
+        draw_placed_frame(d, grid, words, f, index, at, w, p);
+        return true;
+    }
     // Of the free spots whose leader crosses no lettering, the one with the
     // shortest leader (the nearest side of the view a little preferred).
     let mut spot: Option<([f64; 2], f64)> = None;
@@ -646,19 +732,27 @@ fn place_frame(d: &mut Drawing, grid: &mut Grid, words: &mut Grid, g: &Geometry,
         }
     }
     let Some((at, _)) = spot else { return false };
+    draw_placed_frame(d, grid, words, f, index, at, w, p);
+    true
+}
+
+/// Draws a frame with its lower left at `at`, its leader to `p`, and marks it.
+#[allow(clippy::too_many_arguments)]
+fn draw_placed_frame(d: &mut Drawing, grid: &mut Grid, words: &mut Grid, f: &FrameSpec, index: usize, at: [f64; 2], w: f64, p: [f64; 2]) {
     let (s0, t0, f0) = (d.strokes.len(), d.texts.len(), d.fills.len());
     draw_frame(d, f, at);
     let leader = frame_leader(at, w, p);
     let n = leader.len();
     let (a, b) = (leader[n - 2], leader[n - 1]);
-    let l = (b[0] - a[0]).hypot(b[1] - a[1]).max(1e-9);
-    d.strokes.push(Stroke { pen: Pen::Thin, points: leader.clone() });
-    arrow(d, b, [(b[0] - a[0]) / l, (b[1] - a[1]) / l]);
+    let l = (b[0] - a[0]).hypot(b[1] - a[1]);
+    if l > 1e-6 {
+        d.strokes.push(Stroke { pen: Pen::Thin, points: leader.clone() });
+        arrow(d, b, [(b[0] - a[0]) / l, (b[1] - a[1]) / l]);
+    }
     grid.mark_drawn(d, s0..d.strokes.len(), t0..d.texts.len());
     words.mark_drawn(d, s0..s0, t0..d.texts.len());
     let bounds = bounds_of(d, s0..d.strokes.len(), t0..d.texts.len(), f0..d.fills.len());
-    d.annotations.push(AnnotationMark { kind: MarkKind::Frame, index, diameter: None, bounds });
-    true
+    d.annotations.push(AnnotationMark { kind: MarkKind::Frame, index, diameter: None, bounds, origin: Some(at), anchor: Some(p) });
 }
 
 fn place_datum(d: &mut Drawing, grid: &mut Grid, words: &mut Grid, g: &Geometry, s: &DatumSpec, index: usize) -> bool {
@@ -669,7 +763,22 @@ fn place_datum(d: &mut Drawing, grid: &mut Grid, words: &mut Grid, g: &Geometry,
     let around = sides(p, v.bounds);
     let on_outline = around.iter().any(|(_, on)| *on);
     let mut spot = None;
-    'search: for (o, on) in around {
+    // Where the person put the square (kept on the sheet): the leader leaves
+    // the feature square to the way it mostly lies.
+    if let Some(off) = s.place {
+        let c = [p[0] + off[0], p[1] + off[1]];
+        if let Some(shift) = keep_inside([c[0] - side / 2.0, c[1] - CELL_H / 2.0, c[0] + side / 2.0, c[1] + CELL_H / 2.0], grow(g.frame, -1.5)) {
+            let c = [c[0] + shift[0], c[1] + shift[1]];
+            let (dx, dy) = (c[0] - p[0], c[1] - p[1]);
+            let o = if dx.abs() < 1e-9 && dy.abs() < 1e-9 { [0.0, 1.0] } else if dx.abs() > dy.abs() { [dx.signum(), 0.0] } else { [0.0, dy.signum()] };
+            let r = [c[0] - side / 2.0, c[1] - CELL_H / 2.0, c[0] + side / 2.0, c[1] + CELL_H / 2.0];
+            if !grid.free(grow(r, 0.5)) {
+                d.warnings.push(format!("datum {} where it was put covers other lines", s.letter));
+            }
+            spot = Some((o, c, r));
+        }
+    }
+    'search: for (o, on) in around.into_iter().filter(|_| spot.is_none()) {
         if on_outline && !on {
             continue;
         }
@@ -696,7 +805,7 @@ fn place_datum(d: &mut Drawing, grid: &mut Grid, words: &mut Grid, g: &Geometry,
     grid.mark_drawn(d, s0..d.strokes.len(), t0..d.texts.len());
     words.mark_drawn(d, s0..s0, t0..d.texts.len());
     let bounds = bounds_of(d, s0..d.strokes.len(), t0..d.texts.len(), f0..d.fills.len());
-    d.annotations.push(AnnotationMark { kind: MarkKind::Datum, index, diameter: None, bounds });
+    d.annotations.push(AnnotationMark { kind: MarkKind::Datum, index, diameter: None, bounds, origin: Some(c), anchor: Some(p) });
     true
 }
 
@@ -772,12 +881,16 @@ pub(super) fn annotate(d: &mut Drawing, options: &Options, g: &Geometry) {
         grid.mark(*r);
     }
 
+
     // The detail circles on their views first (they belong to the view).
     let section = options.section.is_some();
     let mut letters = view_letters(section);
     let mut sources = vec![];
     for (index, spec) in options.details.iter().enumerate() {
-        let Some(v) = d.views.iter().find(|v| v.view == spec.view).cloned() else { continue };
+        let Some(v) = d.views.iter().find(|v| v.view == spec.view).cloned() else {
+            d.warnings.push(format!("a detail is on the {:?} view, which this sheet leaves out", spec.view).to_lowercase());
+            continue;
+        };
         let Some(letter) = letters.next() else { break };
         let c = [v.at[0] + spec.center[0] * v.scale, v.at[1] + spec.center[1] * v.scale];
         let r = spec.radius * v.scale;
@@ -806,96 +919,164 @@ pub(super) fn annotate(d: &mut Drawing, options: &Options, g: &Geometry) {
         grid.mark_drawn(d, s0..d.strokes.len(), t0..d.texts.len());
         ink.mark_drawn(d, s0..d.strokes.len(), t0..d.texts.len());
         words.mark_drawn(d, s0..s0, t0..d.texts.len());
-        sources.push((index, spec.clone(), v, letter, c, r));
+        sources.push(Source { index, spec: spec.clone(), v, letter, c, r });
+    }
+    for dim in &options.dimensions {
+        if let Some(i) = dim.detail {
+            let w = format!("a dimension is in detail {}, which is not on this sheet", i + 1);
+            if !sources.iter().any(|s| s.index == i) && !d.warnings.contains(&w) {
+                d.warnings.push(w);
+            }
+        }
     }
 
+    // Details the person put somewhere go there before anything finds its own room.
+    let (placed, free): (Vec<Source>, Vec<Source>) = sources.into_iter().partition(|s| s.spec.place.is_some());
+    for src in &placed {
+        if !place_detail(d, &mut grid, g, options, src) {
+            d.warnings.push(format!("no room on the sheet for detail {}: try a smaller circle or a larger sheet", src.letter));
+        }
+    }
     for (index, s) in options.datums.iter().enumerate() {
         if !place_datum(d, &mut grid, &mut words, g, s, index) {
-            d.warnings.push(format!("no room for datum {} beside the {:?} view", s.letter, s.view).to_lowercase());
+            let view = format!("{:?}", s.view).to_lowercase();
+            d.warnings.push(if d.views.iter().any(|v| v.view == s.view) { format!("no room for datum {} beside the {view} view", s.letter) } else { format!("datum {} is on the {view} view, which this sheet leaves out", s.letter) });
         }
     }
     for (index, f) in options.frames.iter().enumerate() {
         if !place_frame(d, &mut grid, &mut words, g, f, index) {
-            d.warnings.push(format!("no room for the {:?} frame beside the {:?} view", f.symbol, f.view).to_lowercase());
+            let symbol = format!("{:?}", f.symbol).to_lowercase();
+            let view = format!("{:?}", f.view).to_lowercase();
+            d.warnings.push(if d.views.iter().any(|v| v.view == f.view) { format!("no room for the {symbol} frame beside the {view} view") } else { format!("the {symbol} frame is on the {view} view, which this sheet leaves out") });
         }
     }
+    // Then the other details, each at the largest scale that finds room.
+    for src in &free {
+        if !place_detail(d, &mut grid, g, options, src) {
+            d.warnings.push(format!("no room on the sheet for detail {}: try a smaller circle or a larger sheet", src.letter));
+        }
+    }
+}
 
-    // Then the details themselves, each at the largest scale that finds room.
-    let max_d = d.height * 0.3;
-    for (index, spec, v, letter, c, r) in sources {
-        let s = v.scale;
-        let snapped = spec.scale.map(|k| DETAIL_SCALES.iter().copied().min_by(|a, b| (a.0.ln() - k.ln()).abs().total_cmp(&(b.0.ln() - k.ln()).abs())).unwrap());
-        // Larger than the view and no larger than reads well on this sheet,
-        // from the person's scale down, or from 10× the view down.
-        let larger = DETAIL_SCALES.iter().copied().filter(|(k, _)| *k > s * 1.01);
-        let from = snapped.map_or(s * 10.0, |w| w.0);
-        let mut scales: Vec<(f64, &str)> = larger.clone().filter(|(k, _)| *k <= from + 1e-12 && 2.0 * spec.radius * k <= max_d).collect();
-        if scales.is_empty() {
-            // A big circle: the least enlargement there is, if the sheet can hold it at all.
-            scales.extend(larger.filter(|(k, _)| 2.0 * spec.radius * k + 12.0 <= (g.frame[3] - g.frame[1]).min(g.frame[2] - g.frame[0])).last());
-        }
-        let mut placed = false;
-        for (k, k_text) in scales {
-            let big = spec.radius * k;
-            let label = format!("DETAIL {letter} ({k_text})");
-            let lw = plain_width(&label, 3.5) * 1.05;
-            let half = big.max(lw / 2.0) + 1.5;
-            // The box: the circle, and its label under it.
-            let fits = |grid: &mut Grid, x: f64, y: f64| {
-                let r = [x - half, y - big - 10.0, x + half, y + big + 1.5];
-                within(r, grow(g.frame, -2.0)) && grid.free(r)
-            };
-            let mut best: Option<([f64; 2], f64)> = None;
-            let mut y = g.frame[1] + big + 10.0;
-            while y <= g.frame[3] - big {
-                let mut x = g.frame[0] + half;
-                while x <= g.frame[2] - half {
-                    if fits(&mut grid, x, y) {
-                        let dist = (x - c[0]).hypot(y - c[1]);
-                        if best.is_none_or(|(_, b)| dist < b) {
-                            best = Some(([x, y], dist));
-                        }
-                    }
-                    x += 2.0;
-                }
-                y += 2.0;
-            }
-            let Some((dc, _)) = best else { continue };
-            let (s0, t0, f0) = (d.strokes.len(), d.texts.len(), d.fills.len());
-            let m = k / s;
-            let map = |p: [f64; 2]| [dc[0] + (p[0] - c[0]) * m, dc[1] + (p[1] - c[1]) * m];
-            // The view's lines and centre lines inside the circle, enlarged.
-            let vb = grow(v.bounds, 2.6);
-            let inside = |p: &[f64; 2]| p[0] >= vb[0] && p[0] <= vb[2] && p[1] >= vb[1] && p[1] <= vb[3];
-            let mut lines = vec![];
-            for st in &d.strokes[g.strokes.clone()] {
-                if !matches!(st.pen, Pen::Visible | Pen::Hidden | Pen::Center) || !st.points.iter().all(inside) {
-                    continue;
-                }
-                for part in clip_to_circle(&st.points, c, r) {
-                    lines.push(Stroke { pen: st.pen, points: part.into_iter().map(map).collect() });
-                }
-            }
-            d.strokes.extend(lines);
-            // The section's hatching, at the sheet's spacing, inside the circle.
-            if v.view == ViewName::Front && !g.section.is_empty() {
-                let segs: Vec<[[f64; 2]; 2]> = g.section.iter().map(|[p, q]| [map(*p), map(*q)]).collect();
-                for [a, b] in hatch_lines(&segs, 2.5) {
-                    for part in clip_to_circle(&[a, b], dc, big) {
-                        d.strokes.push(Stroke { pen: Pen::Thin, points: part });
-                    }
-                }
-            }
-            d.strokes.push(Stroke { pen: Pen::Thin, points: circle(dc, big) });
-            d.texts.push(Text { at: [dc[0], dc[1] - big - 7.0], size: 3.5, text: label, anchor: Anchor::Middle, angle: 0.0, bold: true });
-            grid.mark(grow([dc[0] - half, dc[1] - big - 10.0, dc[0] + half, dc[1] + big + 1.5], 0.5));
-            let bounds = bounds_of(d, s0..d.strokes.len(), t0..d.texts.len(), f0..d.fills.len());
-            d.annotations.push(AnnotationMark { kind: MarkKind::Detail, index, diameter: None, bounds });
-            placed = true;
-            break;
-        }
-        if !placed {
-            d.warnings.push(format!("no room on the sheet for detail {letter}: try a smaller circle or a larger sheet"));
-        }
+/// A detail's circle on its view, before the enlarged view is placed.
+struct Source {
+    index: usize,
+    spec: DetailSpec,
+    v: ViewFrame,
+    letter: char,
+    /// The circle on the view (sheet mm).
+    c: [f64; 2],
+    r: f64,
+}
+
+/// The box the detail's own dimensions take at scale `k`, about the enlarged
+/// view's centre (sheet mm), when it has any.
+fn detail_dims_box(d: &Drawing, options: &Options, index: usize, center: [f64; 2], k: f64) -> Option<[f64; 4]> {
+    let mut scratch = Drawing::blank(d.width, d.height);
+    let m = |p: [f64; 2]| [(p[0] - center[0]) * k, (p[1] - center[1]) * k];
+    for dim in options.dimensions.iter().filter(|x| x.detail == Some(index)) {
+        user_dim(&mut scratch, 0, dim, m(dim.a), m(dim.b));
     }
+    scratch.marks.iter().map(|m| m.bounds).reduce(union)
+}
+
+/// Draws a detail view where the person put it or in the free space nearest
+/// its circle, at the largest scale that finds room; with its dimensions.
+fn place_detail(d: &mut Drawing, grid: &mut Grid, g: &Geometry, options: &Options, src: &Source) -> bool {
+    let Source { index, spec, v, letter, c, r } = src;
+    let (index, c, r) = (*index, *c, *r);
+    let max_d = d.height * 0.3;
+    let s = v.scale;
+    let snapped = spec.scale.map(|k| DETAIL_SCALES.iter().copied().min_by(|a, b| (a.0.ln() - k.ln()).abs().total_cmp(&(b.0.ln() - k.ln()).abs())).unwrap());
+    // Larger than the view and no larger than reads well on this sheet,
+    // from the person's scale down, or from 10× the view down.
+    let larger = DETAIL_SCALES.iter().copied().filter(|(k, _)| *k > s * 1.01);
+    let from = snapped.map_or(s * 10.0, |w| w.0);
+    let mut scales: Vec<(f64, &str)> = larger.clone().filter(|(k, _)| *k <= from + 1e-12 && 2.0 * spec.radius * k <= max_d).collect();
+    if scales.is_empty() {
+        // A big circle: the least enlargement there is, if the sheet can hold it at all.
+        scales.extend(larger.filter(|(k, _)| 2.0 * spec.radius * k + 12.0 <= (g.frame[3] - g.frame[1]).min(g.frame[2] - g.frame[0])).last());
+    }
+    let inner = grow(g.frame, -2.0);
+    for (k, k_text) in scales {
+        let big = spec.radius * k;
+        let label = format!("DETAIL {letter} ({k_text})");
+        let lw = plain_width(&label, 3.5) * 1.05;
+        let half = big.max(lw / 2.0) + 1.5;
+        let dims = detail_dims_box(d, options, index, spec.center, k);
+        // The box: the circle, its label under it, and its dimensions.
+        let area = |x: f64, y: f64| {
+            let r = [x - half, y - big - 10.0, x + half, y + big + 1.5];
+            match dims {
+                Some(b) => union(r, grow([x + b[0], y + b[1], x + b[2], y + b[3]], 1.0)),
+                None => r,
+            }
+        };
+        let best: Option<[f64; 2]> = match spec.place {
+            // Where the person put it, moved onto the sheet if it went off.
+            Some(p) => keep_inside(area(p[0], p[1]), inner).map(|m| [p[0] + m[0], p[1] + m[1]]),
+            None => {
+                let mut best: Option<([f64; 2], f64)> = None;
+                let mut y = g.frame[1] + big + 10.0;
+                while y <= g.frame[3] - big {
+                    let mut x = g.frame[0] + half;
+                    while x <= g.frame[2] - half {
+                        let r = area(x, y);
+                        if within(r, inner) && grid.free(r) {
+                            let dist = (x - c[0]).hypot(y - c[1]);
+                            if best.is_none_or(|(_, b)| dist < b) {
+                                best = Some(([x, y], dist));
+                            }
+                        }
+                        x += 2.0;
+                    }
+                    y += 2.0;
+                }
+                best.map(|b| b.0)
+            }
+        };
+        let Some(dc) = best else { continue };
+        if spec.place.is_some() && !grid.free(area(dc[0], dc[1])) {
+            d.warnings.push(format!("detail {letter} where it was put covers other lines"));
+        }
+        let (s0, t0, f0) = (d.strokes.len(), d.texts.len(), d.fills.len());
+        let m = k / s;
+        let map = |p: [f64; 2]| [dc[0] + (p[0] - c[0]) * m, dc[1] + (p[1] - c[1]) * m];
+        // The view's lines and centre lines inside the circle, enlarged.
+        let vb = grow(v.bounds, 2.6);
+        let inside = |p: &[f64; 2]| p[0] >= vb[0] && p[0] <= vb[2] && p[1] >= vb[1] && p[1] <= vb[3];
+        let mut lines = vec![];
+        for st in &d.strokes[g.strokes.clone()] {
+            if !matches!(st.pen, Pen::Visible | Pen::Hidden | Pen::Center) || !st.points.iter().all(inside) {
+                continue;
+            }
+            for part in clip_to_circle(&st.points, c, r) {
+                lines.push(Stroke { pen: st.pen, points: part.into_iter().map(map).collect() });
+            }
+        }
+        d.strokes.extend(lines);
+        // The section's hatching, at the sheet's spacing, inside the circle.
+        if v.view == ViewName::Front && !g.section.is_empty() {
+            let segs: Vec<[[f64; 2]; 2]> = g.section.iter().map(|[p, q]| [map(*p), map(*q)]).collect();
+            for [a, b] in hatch_lines(&segs, 2.5) {
+                for part in clip_to_circle(&[a, b], dc, big) {
+                    d.strokes.push(Stroke { pen: Pen::Thin, points: part });
+                }
+            }
+        }
+        d.strokes.push(Stroke { pen: Pen::Thin, points: circle(dc, big) });
+        d.texts.push(Text { at: [dc[0], dc[1] - big - 7.0], size: 3.5, text: label, anchor: Anchor::Middle, angle: 0.0, bold: true });
+        let bounds = bounds_of(d, s0..d.strokes.len(), t0..d.texts.len(), f0..d.fills.len());
+        d.annotations.push(AnnotationMark { kind: MarkKind::Detail, index, diameter: None, bounds, origin: Some(dc), anchor: Some(c) });
+        // Its own dimensions, true sizes at the detail's scale.
+        let at = [dc[0] - spec.center[0] * k, dc[1] - spec.center[1] * k];
+        for (i, dim) in options.dimensions.iter().enumerate().filter(|(_, x)| x.detail == Some(index)) {
+            let on = |p: [f64; 2]| [at[0] + p[0] * k, at[1] + p[1] * k];
+            user_dim(d, i, dim, on(dim.a), on(dim.b));
+        }
+        grid.mark(grow(area(dc[0], dc[1]), 0.5));
+        d.details.push(DetailFrame { index, letter: letter.to_string(), view: v.view, at, scale: k, axes: v.axes, centre: dc, radius: big });
+        return true;
+    }
+    false
 }
