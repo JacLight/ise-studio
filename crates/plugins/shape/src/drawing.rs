@@ -11,6 +11,10 @@ use de_occt::{Arena, Bool, Shape, ViewLine};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 
+mod annotate;
+pub mod fits;
+pub use annotate::{validate, AnnotationMark, DatumSpec, DetailSpec, FrameSpec, GdtSymbol, HoleFit, MarkKind, Modifier, Tolerance};
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq, Hash)]
 pub enum Sheet {
     A4,
@@ -61,6 +65,18 @@ pub struct Options {
     /// Dimensions the person added.
     #[serde(default)]
     pub dimensions: Vec<DimSpec>,
+    /// Detail views: circles of a view drawn again larger.
+    #[serde(default)]
+    pub details: Vec<DetailSpec>,
+    /// Geometrical tolerances (feature control frames).
+    #[serde(default)]
+    pub frames: Vec<FrameSpec>,
+    /// Datum feature symbols.
+    #[serde(default)]
+    pub datums: Vec<DatumSpec>,
+    /// Fits on holes, by diameter.
+    #[serde(default)]
+    pub hole_fits: Vec<HoleFit>,
 }
 
 /// One of the three orthographic views.
@@ -108,6 +124,12 @@ pub struct DimSpec {
     /// How far the dimension line stands off the points (sheet mm; negative: the other side).
     #[serde(default = "default_offset")]
     pub offset: f64,
+    /// Its tolerance: ±, limit deviations, or an ISO 286 fit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerance: Option<Tolerance>,
+    /// A diameter: the value is written ⌀25.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub diameter: bool,
 }
 
 fn default_offset() -> f64 {
@@ -222,6 +244,10 @@ pub struct Drawing {
     pub iso: Option<IsoFrame>,
     /// The item balloons on the isometric view, one per row of the parts list.
     pub balloons: Vec<Balloon>,
+    /// Where the details, frames, datums and hole callouts landed.
+    pub annotations: Vec<AnnotationMark>,
+    /// What could not go on the sheet.
+    pub warnings: Vec<String>,
 }
 
 /// Where the isometric view sits: a model point p shows at
@@ -379,7 +405,7 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
     let iso = view(arena, iso_dir, iso_up)?;
 
     let [w, h] = options.sheet.size();
-    let mut d = Drawing { width: w, height: h, scale: 1.0, scale_text: String::new(), strokes: vec![], fills: vec![], texts: vec![], views: vec![], marks: vec![], iso: None, balloons: vec![] };
+    let mut d = Drawing { width: w, height: h, scale: 1.0, scale_text: String::new(), strokes: vec![], fills: vec![], texts: vec![], views: vec![], marks: vec![], iso: None, balloons: vec![], annotations: vec![], warnings: vec![] };
     // Frame: 20 mm binding margin on the left, 10 mm elsewhere (ISO 5457).
     let (fx0, fy0, fx1, fy1) = (20.0, 10.0, w - 10.0, h - 10.0);
     d.strokes.push(Stroke { pen: Pen::Frame, points: vec![[fx0, fy0], [fx1, fy0], [fx1, fy1], [fx0, fy1], [fx0, fy0]] });
@@ -436,6 +462,8 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
     let at_front = place(&front, [col_main, row_main], mid_w, row_front, s);
     let at_top = place(&top, [col_main, row_top], mid_w, th * s, s);
     let at_right = place(&right, [col_side, row_main], rw * s, row_front, s);
+    let geometry_start = d.strokes.len();
+    let mut section_segments = vec![];
     for (v, at) in [(&front, at_front), (&top, at_top), (&right, at_right)] {
         for l in &v.lines {
             d.strokes.push(Stroke { pen: if l.hidden { Pen::Hidden } else { Pen::Visible }, points: l.points.iter().map(|p| [at[0] + p[0] * s, at[1] + p[1] * s]).collect() });
@@ -449,6 +477,7 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
         let mesh = arena.mesh(shape, deflection)?;
         let segments: Vec<[[f64; 2]; 2]> = slice(&mesh.positions, &mesh.triangles, y + size3[1] * 1e-7).into_iter().map(|[p, q]| [[at_front[0] + p[0] * s, at_front[1] + p[1] * s], [at_front[0] + q[0] * s, at_front[1] + q[1] * s]]).collect();
         hatch(&mut d, &segments, 2.5);
+        section_segments = segments;
         let line_y = at_top[1] + y * s;
         let (xa, xb) = (at_top[0] + b[0] * s - 8.0, at_top[0] + b[3] * s + 8.0);
         d.strokes.push(Stroke { pen: Pen::Center, points: vec![[xa + 5.0, line_y], [xb - 5.0, line_y]] });
@@ -460,7 +489,8 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
             d.texts.push(Text { at: [x + inward * 1.5 - inward * 3.5, line_y + 3.0], size: 3.5, text: "A".into(), anchor: Anchor::Middle, angle: 0.0, bold: true });
         }
     }
-    holes(&mut d, arena, shape, deflection, s, [(at_front, 1), (at_top, 2), (at_right, 0)]);
+    holes(&mut d, arena, shape, deflection, s, [(at_front, 1), (at_top, 2), (at_right, 0)], &options.hole_fits);
+    let geometry_end = d.strokes.len();
     if let Some((k, k_text)) = iso_scale {
         let at = place(&iso, [iso_cell[0] + room, iso_cell[1] + 8.0 + room], iso_cell[2] - iso_cell[0] - 2.0 * room, iso_cell[3] - iso_cell[1] - 8.0 - 2.0 * room, k);
         // Hidden lines are left out of the isometric.
@@ -509,7 +539,7 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
         };
         if value > 1e-9 {
             let (strokes, texts) = (d.strokes.len(), d.texts.len());
-            dim_between(&mut d, on_sheet(dim.a), on_sheet(dim.b), dim.kind, dim.offset, value);
+            dim_between(&mut d, on_sheet(dim.a), on_sheet(dim.b), dim.kind, dim.offset, &annotate::label(value, dim.diameter, dim.tolerance.as_ref()));
             let mut b = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
             for p in d.strokes[strokes..].iter().flat_map(|s| &s.points) {
                 b = [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])];
@@ -534,6 +564,8 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
         angle: 0.0,
         bold: false,
     });
+    let reserved = vec![[fx1 - block[0] - 2.0, fy0, fx1, fy0 + block[1] + list_h + 7.0]];
+    annotate::annotate(&mut d, options, &annotate::Geometry { strokes: geometry_start..geometry_end, section: section_segments, frame: [fx0, fy0, fx1, fy1], reserved });
     Ok(d)
 }
 
@@ -787,7 +819,7 @@ pub fn segments_cross(p: [f64; 2], q: [f64; 2], r: [f64; 2], s: [f64; 2]) -> boo
 /// Holes and round bosses facing a view: centre marks in that view, and one
 /// ⌀ callout per size (in the plan view if they show there).
 /// `views` are each view's placement and the axis it looks along (0 x, 1 y, 2 z).
-fn holes(d: &mut Drawing, arena: &mut Arena, shape: Shape, deflection: f64, s: f64, views: [([f64; 2], usize); 3]) {
+fn holes(d: &mut Drawing, arena: &mut Arena, shape: Shape, deflection: f64, s: f64, views: [([f64; 2], usize); 3], fits: &[HoleFit]) {
     let Ok(edges) = arena.edges(shape, deflection) else { return };
     // Full circles only (an arc is a rounded edge, not a hole).
     let circles: Vec<([f64; 3], [f64; 3], f64)> = edges
@@ -872,7 +904,12 @@ fn holes(d: &mut Drawing, arena: &mut Arena, shape: Shape, deflection: f64, s: f
             }
             called.push(r);
             let same: Vec<&([f64; 2], f64)> = seen.iter().filter(|(_, q)| (q - r).abs() < 1e-3).collect();
-            let text = if same.len() > 1 { format!("{}× ⌀{}", same.len(), length_text(2.0 * r)) } else { format!("⌀{}", length_text(2.0 * r)) };
+            let fit = fits.iter().find(|f| (f.diameter - 2.0 * r).abs() < 1e-3).map(|f| Tolerance::Fit { fit: f.fit.clone() });
+            let mut label = annotate::label(2.0 * r, true, fit.as_ref());
+            if same.len() > 1 {
+                label.main = format!("{}× {}", same.len(), label.main);
+            }
+            let tall = if fit.is_some() { 7.0 } else { 5.0 };
             // Try each hole of this size, leaders at several angles and lengths;
             // take the first spot whose label overlaps no other text.
             let mut placed = false;
@@ -884,17 +921,16 @@ fn holes(d: &mut Drawing, arena: &mut Arena, shape: Shape, deflection: f64, s: f
                         let tip = [c[0] + r * s * cs, c[1] + r * s * sn];
                         let knee = [tip[0] + reach * cs, tip[1] + reach * sn];
                         let right = cs >= 0.0;
-                        let mut t = Text { at: [0.0, knee[1] + 1.0], size: 3.5, text: text.clone(), anchor: if right { Anchor::Start } else { Anchor::End }, angle: 0.0, bold: false };
-                        let width = text_width(&t);
+                        let width = annotate::label_width(&label, 3.5);
                         let end = [knee[0] + if right { width + 2.0 } else { -(width + 2.0) }, knee[1]];
-                        t.at[0] = knee[0] + if right { 1.0 } else { -1.0 };
-                        let bx = [knee[0].min(end[0]) - 0.5, knee[1] - 0.5, knee[0].max(end[0]) + 0.5, knee[1] + 5.0];
+                        let bx = [knee[0].min(end[0]) - 0.5, knee[1] - 0.5, knee[0].max(end[0]) + 0.5, knee[1] + tall];
                         if bx[0] < 0.0 || bx[2] > d.width || bx[1] < 0.0 || bx[3] > d.height || d.texts.iter().any(|o| overlaps(bx, text_box(o))) {
                             continue;
                         }
                         d.strokes.push(Stroke { pen: Pen::Thin, points: vec![tip, knee, end] });
                         arrow(d, tip, [-cs, -sn]);
-                        d.texts.push(t);
+                        annotate::place_label(d, &label, [knee[0] + if right { 1.0 } else { -1.0 }, knee[1] + 1.0], if right { Anchor::Start } else { Anchor::End }, 0.0, 3.5);
+                        d.annotations.push(AnnotationMark { kind: MarkKind::Hole, index: 0, diameter: Some((2.0 * r * 1000.0).round() / 1000.0), bounds: bx });
                         placed = true;
                         break 'spot;
                     }
@@ -984,8 +1020,15 @@ fn slice(positions: &[f64], triangles: &[u32], y: f64) -> Vec<[[f64; 2]; 2]> {
 
 /// 45° hatching inside the region the segments bound (even–odd), `spacing` mm apart.
 fn hatch(d: &mut Drawing, segments: &[[[f64; 2]; 2]], spacing: f64) {
+    for [a, b] in hatch_lines(segments, spacing) {
+        d.strokes.push(Stroke { pen: Pen::Thin, points: vec![a, b] });
+    }
+}
+
+fn hatch_lines(segments: &[[[f64; 2]; 2]], spacing: f64) -> Vec<[[f64; 2]; 2]> {
+    let mut out = vec![];
     if segments.is_empty() {
-        return;
+        return out;
     }
     let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
     for p in segments.iter().flatten() {
@@ -1009,14 +1052,15 @@ fn hatch(d: &mut Drawing, segments: &[[[f64; 2]; 2]], spacing: f64) {
             .collect();
         cross.sort_by(|a, b| (a[0] + a[1]).total_cmp(&(b[0] + b[1])));
         for pair in cross.chunks_exact(2) {
-            d.strokes.push(Stroke { pen: Pen::Thin, points: vec![pair[0], pair[1]] });
+            out.push([pair[0], pair[1]]);
         }
         c += step;
     }
+    out
 }
 
 /// A dimension between two sheet points, its line `offset` mm off them.
-fn dim_between(d: &mut Drawing, pa: [f64; 2], pb: [f64; 2], kind: DimKind, offset: f64, value: f64) {
+fn dim_between(d: &mut Drawing, pa: [f64; 2], pb: [f64; 2], kind: DimKind, offset: f64, label: &annotate::Label) {
     let (u, n) = match kind {
         DimKind::Horizontal => ([1.0, 0.0], [0.0, 1.0]),
         DimKind::Vertical => ([0.0, 1.0], [-1.0, 0.0]),
@@ -1040,10 +1084,18 @@ fn dim_between(d: &mut Drawing, pa: [f64; 2], pb: [f64; 2], kind: DimKind, offse
             d.strokes.push(Stroke { pen: Pen::Thin, points: vec![[p[0] + n[0] * side, p[1] + n[1] * side], [e[0] + n[0] * side * 2.0, e[1] + n[1] * side * 2.0]] });
         }
     }
-    d.strokes.push(Stroke { pen: Pen::Thin, points: vec![ea, eb] });
     let along = if dot(eb, u) >= dot(ea, u) { u } else { [-u[0], -u[1]] };
-    arrow(d, ea, [-along[0], -along[1]]);
-    arrow(d, eb, along);
+    let length = (eb[0] - ea[0]).hypot(eb[1] - ea[1]);
+    if length >= 7.0 {
+        d.strokes.push(Stroke { pen: Pen::Thin, points: vec![ea, eb] });
+        arrow(d, ea, [-along[0], -along[1]]);
+        arrow(d, eb, along);
+    } else {
+        // Too short for arrows inside: they point in from outside (ISO 129-1).
+        d.strokes.push(Stroke { pen: Pen::Thin, points: vec![[ea[0] - along[0] * 5.0, ea[1] - along[1] * 5.0], [eb[0] + along[0] * 5.0, eb[1] + along[1] * 5.0]] });
+        arrow(d, ea, along);
+        arrow(d, eb, [-along[0], -along[1]]);
+    }
     // Text above the line, upright or reading from the right (ISO 129).
     let mut angle = along[1].atan2(along[0]).to_degrees();
     if angle > 90.0 + 1e-6 {
@@ -1053,7 +1105,20 @@ fn dim_between(d: &mut Drawing, pa: [f64; 2], pb: [f64; 2], kind: DimKind, offse
     }
     let up = [-(angle.to_radians().sin()), angle.to_radians().cos()];
     let mid = [(ea[0] + eb[0]) / 2.0 + up[0] * 1.2, (ea[1] + eb[1]) / 2.0 + up[1] * 1.2];
-    d.texts.push(Text { at: mid, size: 3.5, text: length_text(value), anchor: Anchor::Middle, angle, bold: false });
+    let width = annotate::label_width(label, 3.5);
+    if width + 2.0 <= length {
+        annotate::place_label(d, label, mid, Anchor::Middle, angle, 3.5);
+    } else {
+        // No room between the extension lines: the value goes beyond the
+        // end it reads towards, over the dimension line drawn on under it.
+        let read = [angle.to_radians().cos(), angle.to_radians().sin()];
+        let end = if dot(eb, read) >= dot(ea, read) { eb } else { ea };
+        let reach = if length >= 7.0 { 1.5 } else { 5.0 };
+        let start = [end[0] + read[0] * reach, end[1] + read[1] * reach];
+        let tail = [start[0] + read[0] * (width + 1.0), start[1] + read[1] * (width + 1.0)];
+        d.strokes.push(Stroke { pen: Pen::Thin, points: vec![end, tail] });
+        annotate::place_label(d, label, [start[0] + up[0] * 1.2, start[1] + up[1] * 1.2], Anchor::Start, angle, 3.5);
+    }
 }
 
 /// The parts list on top of the title block, numbered from the bottom up (ISO 7573).
@@ -1163,7 +1228,7 @@ fn pdf_text(s: &str) -> String {
             '×' => 0xD7,
             '±' => 0xB1,
             'Ø' | '⌀' => 0xD8,
-            '–' => 0x96,
+            '–' | '−' => 0x96,
             '—' => 0x97,
             '“' => 0x93,
             '”' => 0x94,
@@ -1180,9 +1245,33 @@ fn pdf_text(s: &str) -> String {
     out
 }
 
-/// Approximate width of Helvetica text (mm), for anchoring.
+/// Helvetica and Helvetica-Bold advance widths (1/1000 em) for ' ' to '~' (the AFM metrics).
+const HELVETICA: [u16; 95] = [
+    278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556, 333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584,
+];
+const HELVETICA_BOLD: [u16; 95] = [
+    278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584, 584, 611, 975, 722, 722, 722, 722, 667, 611, 778, 722, 278, 556, 722, 611, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 333, 278, 333, 584, 556, 333, 556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556, 278, 889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584,
+];
+
+/// Width of Helvetica text (mm), for anchoring and keeping labels apart.
 fn text_width(t: &Text) -> f64 {
-    t.text.chars().map(|c| if c.is_ascii_uppercase() || c.is_ascii_digit() { 0.72 } else if c == ' ' || c == '.' || c == '·' { 0.3 } else { 0.6 }).sum::<f64>() * t.size * if t.bold { 1.05 } else { 1.0 }
+    let table = if t.bold { &HELVETICA_BOLD } else { &HELVETICA };
+    let em: u32 = t
+        .text
+        .chars()
+        .map(|c| match c {
+            ' '..='~' => table[c as usize - 32] as u32,
+            '·' | '’' => 278,
+            '°' => 400,
+            '×' | '±' => 584,
+            'Ø' | '⌀' => 778,
+            '–' | '−' => 556,
+            '—' => 1000,
+            _ => 556,
+        })
+        .sum();
+    // The size is the cap height; Helvetica's caps are 0.718 em.
+    em as f64 / 1000.0 * t.size / 0.718
 }
 
 /// The drawing as a one-page vector PDF.
@@ -1335,7 +1424,7 @@ pub fn dxf(d: &Drawing) -> String {
         pair(10, &format!("{:.4}", t.at[0]));
         pair(20, &format!("{:.4}", t.at[1]));
         pair(40, &format!("{:.3}", t.size));
-        pair(1, &t.text.replace('·', "-").replace('⌀', "%%c").replace('°', "%%d"));
+        pair(1, &t.text.replace('·', "-").replace('−', "-").replace('⌀', "%%c").replace('°', "%%d").replace('±', "%%p"));
         if t.angle != 0.0 {
             pair(50, &format!("{:.3}", t.angle));
         }

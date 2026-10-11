@@ -731,8 +731,8 @@ fn a_drawing_sections_dimensions_and_lists_parts() {
     // Section through the hole's centre (half way back): hatching on the
     // material either side of the hole, none across the hole.
     let dims = vec![
-        DimSpec { view: ViewName::Top, a: [50.0, 30.0], b: [100.0, 30.0], kind: DimKind::Horizontal, offset: 12.0 },
-        DimSpec { view: ViewName::Front, a: [0.0, 0.0], b: [100.0, 20.0], kind: DimKind::Aligned, offset: 8.0 },
+        DimSpec { view: ViewName::Top, a: [50.0, 30.0], b: [100.0, 30.0], kind: DimKind::Horizontal, offset: 12.0, tolerance: None, diameter: false },
+        DimSpec { view: ViewName::Front, a: [0.0, 0.0], b: [100.0, 20.0], kind: DimKind::Aligned, offset: 8.0, tolerance: None, diameter: false },
     ];
     let cut = de_shape::drawing::drawing(&program, &Options { sheet: Sheet::A4, section: Some(50.0), dimensions: dims, ..Default::default() }, &title(vec![])).unwrap();
     let f = cut.views.iter().find(|v| v.view == ViewName::Front).unwrap();
@@ -766,20 +766,52 @@ fn a_drawing_sections_dimensions_and_lists_parts() {
 }
 
 #[test]
-fn an_assembly_drawing_balloons_every_listed_part() {
-    use de_shape::drawing::{iso_point, segments_cross, Options, PartRow, Pen, Sheet, Title};
-    // A base, a housing on it, two bolts at opposite corners and a pin on top.
-    let source = r#"return [
-        part("Base", box(120, 80, 10)),
-        part("Housing", box(40, 40, 30).translate([40, 20, 10])),
-        part("Bolt 1", cylinder(20, 4).translate([12, 12, 10])),
-        part("Bolt 2", cylinder(20, 4).translate([108, 68, 10])),
-        part("Pin", cylinder(40, 3).translate([60, 40, 40])),
-    ];"#;
+fn iso_286_fits_match_the_tables() {
+    use de_shape::drawing::fits::deviations;
+    // (class, nominal, upper µm, lower µm) from ISO 286-2.
+    let known: [(&str, f64, f64, f64); 24] = [
+        ("H7", 25.0, 21.0, 0.0),
+        ("g6", 25.0, -7.0, -20.0),
+        ("H6", 10.0, 9.0, 0.0),
+        ("H8", 50.0, 39.0, 0.0),
+        ("H9", 100.0, 87.0, 0.0),
+        ("H11", 6.0, 75.0, 0.0),
+        ("H7", 3.0, 10.0, 0.0),
+        ("H7", 500.0, 63.0, 0.0),
+        ("f7", 10.0, -13.0, -28.0),
+        ("f7", 40.0, -25.0, -50.0),
+        ("h6", 100.0, 0.0, -22.0),
+        ("h11", 200.0, 0.0, -290.0),
+        ("k6", 25.0, 15.0, 2.0),
+        ("k6", 40.0, 18.0, 2.0),
+        ("n6", 6.0, 16.0, 8.0),
+        ("n6", 25.0, 28.0, 15.0),
+        ("p6", 25.0, 35.0, 22.0),
+        ("p6", 200.0, 79.0, 50.0),
+        ("js6", 25.0, 6.5, -6.5),
+        ("js7", 25.0, 10.0, -10.0),
+        ("G7", 25.0, 28.0, 7.0),
+        ("K7", 25.0, 6.0, -15.0),
+        ("N7", 25.0, -7.0, -28.0),
+        ("P7", 25.0, -14.0, -35.0),
+    ];
+    for (class, n, up, lo) in known {
+        let (u, l) = deviations(class, n).unwrap();
+        assert!((u * 1000.0 - up).abs() < 1e-9 && (l * 1000.0 - lo).abs() < 1e-9, "⌀{n} {class}: {:.1}/{:.1} µm, want {up}/{lo}", u * 1000.0, l * 1000.0);
+    }
+    assert!(deviations("H7", 600.0).is_err(), "beyond the tables");
+    assert!(deviations("X7", 25.0).is_err(), "no such class");
+    assert!(deviations("H", 25.0).is_err(), "no grade");
+}
+
+#[test]
+fn a_drawing_has_details_tolerances_and_gdt() {
+    use de_shape::drawing::{DatumSpec, DetailSpec, DimKind, DimSpec, FrameSpec, GdtSymbol, HoleFit, MarkKind, Modifier, Options, Pen, Sheet, Title, Tolerance, ViewName};
+    // A plate with a ⌀16 hole and a slot across its top.
     let program = de_shape::ShapeProgram {
-        name: "Bracket".into(),
+        name: "Plate".into(),
         description: String::new(),
-        source: source.into(),
+        source: "return box(100, 60, 20).subtract(cylinder(30, 8).translate([50, 30, -5])).subtract(box(10, 70, 4).translate([10, -5, 16]));".into(),
         params: vec![],
         display_tolerance: None,
         levels: vec![],
@@ -787,93 +819,112 @@ fn an_assembly_drawing_balloons_every_listed_part() {
         finishes: vec![],
         inputs: String::new(),
     };
-    // The isometric projection the balloons use is the one the view is drawn
-    // in: the base's eight corners land exactly on the view's outline.
-    let (mut arena, exact) = de_shape::exact::evaluate_exact_in(de_occt::Arena::new(), "Bracket", source, &[], 0.01, "").map_err(|(_, e)| e).unwrap();
-    let k = 1.0 / 3f64.sqrt();
-    let lines = arena.hlr_view(exact.parts[0].shape, [-k, k, -k], [0.0, 0.0, 1.0], 0.01).unwrap();
-    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
-    for p in lines.iter().flat_map(|l| &l.points) {
-        (lo, hi) = ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]);
+    let title = Title { title: "Plate".into(), number: "P-2".into(), material: "Steel".into(), mass: "0.9 kg".into(), drawn_by: "F".into(), date: "2026-10-11".into(), parts: vec![] };
+    let dim = |view, a, b, kind, offset, tolerance, diameter| DimSpec { view, a, b, kind, offset, tolerance, diameter };
+    let options = Options {
+        sheet: Sheet::A3,
+        section: Some(50.0),
+        dimensions: vec![
+            dim(ViewName::Top, [42.0, 30.0], [58.0, 30.0], DimKind::Horizontal, 22.0, Some(Tolerance::Fit { fit: "H7".into() }), true),
+            dim(ViewName::Front, [0.0, 0.0], [0.0, 16.0], DimKind::Vertical, 14.0, Some(Tolerance::Limits { upper: 0.1, lower: -0.05 }), false),
+            dim(ViewName::Top, [10.0, 0.0], [20.0, 0.0], DimKind::Horizontal, -8.0, Some(Tolerance::Symmetric { value: 0.2 }), false),
+        ],
+        details: vec![
+            // The slot's corner in the section, and the hole seen from above.
+            DetailSpec { view: ViewName::Front, center: [15.0, 18.0], radius: 6.0, scale: None },
+            DetailSpec { view: ViewName::Top, center: [50.0, 30.0], radius: 10.0, scale: Some(2.0) },
+        ],
+        frames: vec![
+            FrameSpec { view: ViewName::Front, at: [70.0, 20.0], symbol: GdtSymbol::Flatness, tolerance: 0.05, diameter_zone: false, datums: vec![], modifier: None },
+            FrameSpec { view: ViewName::Top, at: [58.0, 30.0], symbol: GdtSymbol::Position, tolerance: 0.1, diameter_zone: true, datums: vec!["A".into(), "B".into(), "C".into()], modifier: Some(Modifier::Mmc) },
+            FrameSpec { view: ViewName::Right, at: [60.0, 10.0], symbol: GdtSymbol::Perpendicularity, tolerance: 0.02, diameter_zone: false, datums: vec!["A".into()], modifier: None },
+        ],
+        datums: vec![DatumSpec { view: ViewName::Front, at: [85.0, 0.0], letter: "A".into() }, DatumSpec { view: ViewName::Top, at: [0.0, 45.0], letter: "B".into() }, DatumSpec { view: ViewName::Top, at: [80.0, 0.0], letter: "C".into() }],
+        hole_fits: vec![HoleFit { diameter: 16.0, fit: "H7".into() }],
+        ..Default::default()
+    };
+    de_shape::drawing::validate(&options.dimensions, &options.details, &options.frames, &options.datums, &options.hole_fits).unwrap();
+    let d = de_shape::drawing::drawing(&program, &options, &title).unwrap();
+    if let Ok(dir) = std::env::var("DRAWING_OUT") {
+        std::fs::write(format!("{dir}/plate-gdt.pdf"), de_shape::drawing::pdf(&d)).unwrap();
+        std::fs::write(format!("{dir}/plate-gdt.dxf"), de_shape::drawing::dxf(&d)).unwrap();
     }
-    let (mut plo, mut phi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
-    for c in 0..8 {
-        let q = iso_point([if c & 1 > 0 { 120.0 } else { 0.0 }, if c & 2 > 0 { 80.0 } else { 0.0 }, if c & 4 > 0 { 10.0 } else { 0.0 }]);
-        (plo, phi) = ([plo[0].min(q[0]), plo[1].min(q[1])], [phi[0].max(q[0]), phi[1].max(q[1])]);
+    assert!(d.warnings.is_empty(), "{:?}", d.warnings);
+    let has = |s: &str| d.texts.iter().any(|t| t.text == s);
+    // Tolerances, ISO 129: ⌀16 H7 (+0.018 / 0); 16 +0.10/−0.05; 10 ±0.2.
+    for s in ["⌀16 H7", "+0.018", "0", "+0.10", "−0.05", "10 ±0.2"] {
+        assert!(has(s), "shows {s}: {:?}", d.texts.iter().map(|t| &t.text).collect::<Vec<_>>());
     }
-    for i in 0..2 {
-        assert!((lo[i] - plo[i]).abs() < 1e-6 && (hi[i] - phi[i]).abs() < 1e-6, "iso outline {lo:?}–{hi:?} vs projected {plo:?}–{phi:?}");
+    assert!(d.annotations.iter().any(|a| a.kind == MarkKind::Hole && a.diameter == Some(16.0)), "the hole callout is marked");
+    // Datums and frames.
+    assert_eq!(d.annotations.iter().filter(|a| a.kind == MarkKind::Datum).count(), 3);
+    assert_eq!(d.annotations.iter().filter(|a| a.kind == MarkKind::Frame).count(), 3);
+    assert!(has("⌀0.1") && has("0.05") && has("0.02") && has("M"), "frame values");
+    for l in ["A", "B", "C"] {
+        assert!(d.texts.iter().filter(|t| t.text == l && !t.bold).count() >= 2, "datum {l} in a symbol and a frame");
     }
-    // Isometric foreshortening: each axis shows at √(2/3) of its length, 30°
-    // off the horizontal, so the 120 × 80 base spans (120 + 80)·√(2/3)·cos 30° across.
-    assert!(((hi[0] - lo[0]) - 200.0 * (2.0f64 / 3.0).sqrt() * 30f64.to_radians().cos()).abs() < 1e-6, "{} across", hi[0] - lo[0]);
-
-    let row = |name: &str, quantity| PartRow { name: name.into(), quantity, material: "Steel".into(), mass: "—".into() };
-    let rows = vec![row("Base", 1), row("Housing", 1), row("Bolt 1", 1), row("Bolt 2", 1), row("Pin", 1)];
-    let title = Title { title: "Bracket".into(), number: "B-1".into(), material: "Steel".into(), mass: "1 kg".into(), drawn_by: "F".into(), date: "2026-10-11".into(), parts: rows.clone() };
-    for sheet in [Sheet::A3, Sheet::A4] {
-        let d = de_shape::drawing::drawing(&program, &Options { sheet, ..Default::default() }, &title).unwrap();
-        let iso = d.iso.clone().expect("an isometric view");
-        // One balloon per row of the parts list, numbered as it is.
-        let mut items: Vec<usize> = d.balloons.iter().map(|b| b.item).collect();
-        items.sort();
-        assert_eq!(items, vec![1, 2, 3, 4, 5], "{sheet:?}: balloons {items:?}");
-        for b in &d.balloons {
-            assert!(d.texts.iter().any(|t| t.text == b.item.to_string() && (t.at[0] - b.centre[0]).abs() < 1e-9), "balloon {} is numbered", b.item);
-            // Inside the frame (20 mm binding margin, 10 elsewhere).
-            assert!(b.centre[0] - b.radius >= 20.0 && b.centre[0] + b.radius <= d.width - 10.0 && b.centre[1] - b.radius >= 10.0 && b.centre[1] + b.radius <= d.height - 10.0, "{sheet:?}: balloon {} off the sheet at {:?}", b.item, b.centre);
-            // Clear of every view: no visible edge comes within its circle.
-            for s in d.strokes.iter().filter(|s| s.pen == Pen::Visible) {
-                for w in s.points.windows(2) {
-                    let (a, q, c) = (w[0], w[1], b.centre);
-                    let (dx, dy) = (q[0] - a[0], q[1] - a[1]);
-                    let t = (((c[0] - a[0]) * dx + (c[1] - a[1]) * dy) / (dx * dx + dy * dy).max(1e-12)).clamp(0.0, 1.0);
-                    let gap = (a[0] + t * dx - c[0]).hypot(a[1] + t * dy - c[1]);
-                    assert!(gap > b.radius, "{sheet:?}: balloon {} overlaps a view edge ({gap:.2} mm from its centre)", b.item);
+    // Details: lettered after the section (B, C), each one's lines inside its circle.
+    let details: Vec<_> = d.annotations.iter().filter(|a| a.kind == MarkKind::Detail).collect();
+    assert_eq!(details.len(), 2);
+    assert!(has("DETAIL C (2:1)"), "the scale asked for");
+    let b_label = d.texts.iter().find(|t| t.text.starts_with("DETAIL B (")).expect("detail B");
+    let front = d.views.iter().find(|v| v.view == ViewName::Front).unwrap();
+    let k_b: f64 = {
+        let r = b_label.text.trim_start_matches("DETAIL B (").trim_end_matches(')');
+        let (a, b) = r.split_once(':').unwrap();
+        a.parse::<f64>().unwrap() / b.parse::<f64>().unwrap()
+    };
+    assert_eq!(details[0].index, 0);
+    assert!(k_b >= 2.0 * front.scale, "enlarged at least twice: {}", b_label.text);
+    // Each detail: its lines inside its circle, over nothing else on the sheet.
+    let check = |d: &de_shape::drawing::Drawing, options: &Options| {
+        for a in d.annotations.iter().filter(|a| a.kind == MarkKind::Detail) {
+            let b = a.bounds;
+            let label = d.texts.iter().find(|t| t.text.starts_with("DETAIL") && t.at[0] > b[0] && t.at[0] < b[2] && t.at[1] > b[1] && t.at[1] < b[3]).expect("labelled");
+            let ratio = label.text.rsplit('(').next().unwrap().trim_end_matches(')');
+            let (x, y) = ratio.split_once(':').unwrap();
+            let big = options.details[a.index].radius * x.parse::<f64>().unwrap() / y.parse::<f64>().unwrap();
+            let c = [(b[0] + b[2]) / 2.0, b[3] - big];
+            let inside: Vec<_> = d.strokes.iter().filter(|s| s.points.iter().all(|p| p[0] >= b[0] - 1e-6 && p[0] <= b[2] + 1e-6 && p[1] >= b[1] - 1e-6 && p[1] <= b[3] + 1e-6)).collect();
+            assert!(inside.len() >= 4, "detail has lines: {}", inside.len());
+            for s in &inside {
+                for p in &s.points {
+                    assert!((p[0] - c[0]).hypot(p[1] - c[1]) <= big + 1e-6, "a detail line leaves its circle: {p:?} vs {c:?} r {big}");
                 }
             }
-            // Its leader ends on its own part: inside that part's isometric outline.
-            let name = &rows[b.item - 1].name;
-            let p = [(b.anchor[0] - iso.at[0]) / iso.scale, (b.anchor[1] - iso.at[1]) / iso.scale];
-            let on_part = exact.parts.iter().filter(|q| &q.name == name).any(|q| {
-                let bb = arena.bounds(q.shape).unwrap();
-                let corners: Vec<[f64; 2]> = (0..8).map(|c| iso_point([bb[if c & 1 > 0 { 3 } else { 0 }], bb[if c & 2 > 0 { 4 } else { 1 }], bb[if c & 4 > 0 { 5 } else { 2 }]])).collect();
-                let (x0, x1) = (corners.iter().map(|c| c[0]).fold(f64::INFINITY, f64::min), corners.iter().map(|c| c[0]).fold(f64::NEG_INFINITY, f64::max));
-                let (y0, y1) = (corners.iter().map(|c| c[1]).fold(f64::INFINITY, f64::min), corners.iter().map(|c| c[1]).fold(f64::NEG_INFINITY, f64::max));
-                p[0] > x0 && p[0] < x1 && p[1] > y0 && p[1] < y1
-            });
-            assert!(on_part, "{sheet:?}: balloon {}'s leader ends on the {name}", b.item);
-            // The anchor is on the view; the balloon outside it.
-            let o = iso.bounds;
-            assert!(b.anchor[0] > o[0] && b.anchor[0] < o[2] && b.anchor[1] > o[1] && b.anchor[1] < o[3]);
-            assert!(b.centre[0] + b.radius < o[0] || b.centre[0] - b.radius > o[2] || b.centre[1] + b.radius < o[1] || b.centre[1] - b.radius > o[3], "{sheet:?}: balloon {} sits on the view", b.item);
-        }
-        for (i, a) in d.balloons.iter().enumerate() {
-            for b in &d.balloons[i + 1..] {
-                let apart = (a.centre[0] - b.centre[0]).hypot(a.centre[1] - b.centre[1]);
-                assert!(apart >= a.radius + b.radius, "{sheet:?}: balloons {} and {} overlap ({apart:.1} mm apart)", a.item, b.item);
-                assert!(!segments_cross(a.anchor, a.centre, b.anchor, b.centre), "{sheet:?}: the leaders of {} and {} cross", a.item, b.item);
+            assert!(inside.iter().any(|s| s.pen == Pen::Visible), "visible edges in the detail");
+            for v in &d.views {
+                let vb = v.bounds;
+                assert!(!(b[0] < vb[2] && vb[0] < b[2] && b[1] < vb[3] && vb[1] < b[3]), "detail over the {:?} view", v.view);
             }
+            for o in d.annotations.iter().filter(|o| o.kind != MarkKind::Frame && !std::ptr::eq(*o, a)) {
+                let ob = o.bounds;
+                assert!(!(b[0] < ob[2] && ob[0] < b[2] && b[1] < ob[3] && ob[1] < b[3]), "detail over {:?}", o.kind);
+            }
+            // Nothing else reaches into it: no line ends there, no lettering but its own label.
+            assert!(d.strokes.iter().all(|s| s.points.iter().all(|p| !(p[0] > b[0] && p[0] < b[2] && p[1] > b[1] && p[1] < b[3])) || s.points.iter().all(|p| p[0] >= b[0] - 1e-6 && p[0] <= b[2] + 1e-6 && p[1] >= b[1] - 1e-6 && p[1] <= b[3] + 1e-6)), "a line runs into a detail");
+            assert_eq!(d.texts.iter().filter(|t| t.at[0] > b[0] && t.at[0] < b[2] && t.at[1] > b[1] && t.at[1] < b[3]).count(), 1, "only the detail's label in its box");
         }
-        // The isometric's caption stays clear of the balloons.
-        let caption = d.texts.iter().find(|t| t.text.starts_with("ISOMETRIC")).unwrap();
-        assert!(d.balloons.iter().all(|b| caption.at[1] + caption.size * 1.2 < b.centre[1] - b.radius), "{sheet:?}: caption under the balloons");
-        if let Ok(dir) = std::env::var("DRAWING_OUT") {
-            std::fs::write(format!("{dir}/bracket-{sheet:?}.pdf"), de_shape::drawing::pdf(&d)).unwrap();
-            std::fs::write(format!("{dir}/bracket-{sheet:?}.dxf"), de_shape::drawing::dxf(&d)).unwrap();
-        }
+        // Nothing off the sheet.
+        assert!(d.strokes.iter().flat_map(|s| &s.points).chain(d.fills.iter().flatten()).all(|p| p[0] >= 0.0 && p[0] <= d.width && p[1] >= 0.0 && p[1] <= d.height));
+        assert!(d.texts.iter().all(|t| t.at[0] >= 0.0 && t.at[0] <= d.width && t.at[1] >= 0.0 && t.at[1] <= d.height));
+    };
+    check(&d, &options);
+    // The section's detail is hatched.
+    let b0 = details[0].bounds;
+    assert!(d.strokes.iter().filter(|s| s.pen == Pen::Thin && s.points.len() == 2 && s.points.iter().all(|p| p[0] >= b0[0] && p[0] <= b0[2] && p[1] >= b0[1] && p[1] <= b0[3])).count() > 3, "hatching in detail B");
+    // A crowded A4 in third angle: whatever finds room is placed, the rest is said.
+    let small = Options { sheet: Sheet::A4, projection: de_shape::drawing::Projection::Third, ..options.clone() };
+    let d4 = de_shape::drawing::drawing(&program, &small, &title).unwrap();
+    check(&d4, &small);
+    let placed = d4.annotations.iter().filter(|a| a.kind == MarkKind::Detail).count();
+    assert_eq!(placed + d4.warnings.iter().filter(|w| w.contains("detail")).count(), 2, "{:?}", d4.warnings);
+    if let Ok(dir) = std::env::var("DRAWING_OUT") {
+        std::fs::write(format!("{dir}/plate-gdt-a4.pdf"), de_shape::drawing::pdf(&d4)).unwrap();
     }
-
-    // The ring on its own: a dozen anchors bunched in one corner still get
-    // balloons that neither overlap nor cross.
-    let anchors: Vec<[f64; 2]> = (0..12).map(|i| [10.0 + (i % 4) as f64 * 3.0, 10.0 + (i / 4) as f64 * 3.0]).collect();
-    let ring = de_shape::drawing::balloon_ring(&anchors, [0.0, 0.0, 100.0, 60.0], 4.0, 10.0);
-    for i in 0..12 {
-        for j in i + 1..12 {
-            assert!((ring[i][0] - ring[j][0]).hypot(ring[i][1] - ring[j][1]) >= 8.0, "ring balloons {i} and {j} overlap");
-            assert!(!segments_cross(anchors[i], ring[i], anchors[j], ring[j]), "ring leaders {i} and {j} cross");
-        }
-    }
+    // A fit that is not in the tables is refused when kept.
+    let bad = vec![dim(ViewName::Top, [42.0, 30.0], [58.0, 30.0], DimKind::Horizontal, 22.0, Some(Tolerance::Fit { fit: "Z9".into() }), true)];
+    assert!(de_shape::drawing::validate(&bad, &[], &[], &[], &[]).is_err());
 }
 
 #[test]
@@ -1359,3 +1410,115 @@ fn a_curved_face_pushes_and_pulls_exactly() {
     let got = volume_with(&finished, &[("push1".into(), 3.0)]);
     assert!((got - want).abs() < want * 1e-5, "finished {got} vs {want}");
 }
+
+#[test]
+fn an_assembly_drawing_balloons_every_listed_part() {
+    use de_shape::drawing::{iso_point, segments_cross, Options, PartRow, Pen, Sheet, Title};
+    // A base, a housing on it, two bolts at opposite corners and a pin on top.
+    let source = r#"return [
+        part("Base", box(120, 80, 10)),
+        part("Housing", box(40, 40, 30).translate([40, 20, 10])),
+        part("Bolt 1", cylinder(20, 4).translate([12, 12, 10])),
+        part("Bolt 2", cylinder(20, 4).translate([108, 68, 10])),
+        part("Pin", cylinder(40, 3).translate([60, 40, 40])),
+    ];"#;
+    let program = de_shape::ShapeProgram {
+        name: "Bracket".into(),
+        description: String::new(),
+        source: source.into(),
+        params: vec![],
+        display_tolerance: None,
+        levels: vec![],
+        uses: Default::default(),
+        finishes: vec![],
+        inputs: String::new(),
+    };
+    // The isometric projection the balloons use is the one the view is drawn
+    // in: the base's eight corners land exactly on the view's outline.
+    let (mut arena, exact) = de_shape::exact::evaluate_exact_in(de_occt::Arena::new(), "Bracket", source, &[], 0.01, "").map_err(|(_, e)| e).unwrap();
+    let k = 1.0 / 3f64.sqrt();
+    let lines = arena.hlr_view(exact.parts[0].shape, [-k, k, -k], [0.0, 0.0, 1.0], 0.01).unwrap();
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for p in lines.iter().flat_map(|l| &l.points) {
+        (lo, hi) = ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]);
+    }
+    let (mut plo, mut phi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for c in 0..8 {
+        let q = iso_point([if c & 1 > 0 { 120.0 } else { 0.0 }, if c & 2 > 0 { 80.0 } else { 0.0 }, if c & 4 > 0 { 10.0 } else { 0.0 }]);
+        (plo, phi) = ([plo[0].min(q[0]), plo[1].min(q[1])], [phi[0].max(q[0]), phi[1].max(q[1])]);
+    }
+    for i in 0..2 {
+        assert!((lo[i] - plo[i]).abs() < 1e-6 && (hi[i] - phi[i]).abs() < 1e-6, "iso outline {lo:?}–{hi:?} vs projected {plo:?}–{phi:?}");
+    }
+    // Isometric foreshortening: each axis shows at √(2/3) of its length, 30°
+    // off the horizontal, so the 120 × 80 base spans (120 + 80)·√(2/3)·cos 30° across.
+    assert!(((hi[0] - lo[0]) - 200.0 * (2.0f64 / 3.0).sqrt() * 30f64.to_radians().cos()).abs() < 1e-6, "{} across", hi[0] - lo[0]);
+
+    let row = |name: &str, quantity| PartRow { name: name.into(), quantity, material: "Steel".into(), mass: "—".into() };
+    let rows = vec![row("Base", 1), row("Housing", 1), row("Bolt 1", 1), row("Bolt 2", 1), row("Pin", 1)];
+    let title = Title { title: "Bracket".into(), number: "B-1".into(), material: "Steel".into(), mass: "1 kg".into(), drawn_by: "F".into(), date: "2026-10-11".into(), parts: rows.clone() };
+    for sheet in [Sheet::A3, Sheet::A4] {
+        let d = de_shape::drawing::drawing(&program, &Options { sheet, ..Default::default() }, &title).unwrap();
+        let iso = d.iso.clone().expect("an isometric view");
+        // One balloon per row of the parts list, numbered as it is.
+        let mut items: Vec<usize> = d.balloons.iter().map(|b| b.item).collect();
+        items.sort();
+        assert_eq!(items, vec![1, 2, 3, 4, 5], "{sheet:?}: balloons {items:?}");
+        for b in &d.balloons {
+            assert!(d.texts.iter().any(|t| t.text == b.item.to_string() && (t.at[0] - b.centre[0]).abs() < 1e-9), "balloon {} is numbered", b.item);
+            // Inside the frame (20 mm binding margin, 10 elsewhere).
+            assert!(b.centre[0] - b.radius >= 20.0 && b.centre[0] + b.radius <= d.width - 10.0 && b.centre[1] - b.radius >= 10.0 && b.centre[1] + b.radius <= d.height - 10.0, "{sheet:?}: balloon {} off the sheet at {:?}", b.item, b.centre);
+            // Clear of every view: no visible edge comes within its circle.
+            for s in d.strokes.iter().filter(|s| s.pen == Pen::Visible) {
+                for w in s.points.windows(2) {
+                    let (a, q, c) = (w[0], w[1], b.centre);
+                    let (dx, dy) = (q[0] - a[0], q[1] - a[1]);
+                    let t = (((c[0] - a[0]) * dx + (c[1] - a[1]) * dy) / (dx * dx + dy * dy).max(1e-12)).clamp(0.0, 1.0);
+                    let gap = (a[0] + t * dx - c[0]).hypot(a[1] + t * dy - c[1]);
+                    assert!(gap > b.radius, "{sheet:?}: balloon {} overlaps a view edge ({gap:.2} mm from its centre)", b.item);
+                }
+            }
+            // Its leader ends on its own part: inside that part's isometric outline.
+            let name = &rows[b.item - 1].name;
+            let p = [(b.anchor[0] - iso.at[0]) / iso.scale, (b.anchor[1] - iso.at[1]) / iso.scale];
+            let on_part = exact.parts.iter().filter(|q| &q.name == name).any(|q| {
+                let bb = arena.bounds(q.shape).unwrap();
+                let corners: Vec<[f64; 2]> = (0..8).map(|c| iso_point([bb[if c & 1 > 0 { 3 } else { 0 }], bb[if c & 2 > 0 { 4 } else { 1 }], bb[if c & 4 > 0 { 5 } else { 2 }]])).collect();
+                let (x0, x1) = (corners.iter().map(|c| c[0]).fold(f64::INFINITY, f64::min), corners.iter().map(|c| c[0]).fold(f64::NEG_INFINITY, f64::max));
+                let (y0, y1) = (corners.iter().map(|c| c[1]).fold(f64::INFINITY, f64::min), corners.iter().map(|c| c[1]).fold(f64::NEG_INFINITY, f64::max));
+                p[0] > x0 && p[0] < x1 && p[1] > y0 && p[1] < y1
+            });
+            assert!(on_part, "{sheet:?}: balloon {}'s leader ends on the {name}", b.item);
+            // The anchor is on the view; the balloon outside it.
+            let o = iso.bounds;
+            assert!(b.anchor[0] > o[0] && b.anchor[0] < o[2] && b.anchor[1] > o[1] && b.anchor[1] < o[3]);
+            assert!(b.centre[0] + b.radius < o[0] || b.centre[0] - b.radius > o[2] || b.centre[1] + b.radius < o[1] || b.centre[1] - b.radius > o[3], "{sheet:?}: balloon {} sits on the view", b.item);
+        }
+        for (i, a) in d.balloons.iter().enumerate() {
+            for b in &d.balloons[i + 1..] {
+                let apart = (a.centre[0] - b.centre[0]).hypot(a.centre[1] - b.centre[1]);
+                assert!(apart >= a.radius + b.radius, "{sheet:?}: balloons {} and {} overlap ({apart:.1} mm apart)", a.item, b.item);
+                assert!(!segments_cross(a.anchor, a.centre, b.anchor, b.centre), "{sheet:?}: the leaders of {} and {} cross", a.item, b.item);
+            }
+        }
+        // The isometric's caption stays clear of the balloons.
+        let caption = d.texts.iter().find(|t| t.text.starts_with("ISOMETRIC")).unwrap();
+        assert!(d.balloons.iter().all(|b| caption.at[1] + caption.size * 1.2 < b.centre[1] - b.radius), "{sheet:?}: caption under the balloons");
+        if let Ok(dir) = std::env::var("DRAWING_OUT") {
+            std::fs::write(format!("{dir}/bracket-{sheet:?}.pdf"), de_shape::drawing::pdf(&d)).unwrap();
+            std::fs::write(format!("{dir}/bracket-{sheet:?}.dxf"), de_shape::drawing::dxf(&d)).unwrap();
+        }
+    }
+
+    // The ring on its own: a dozen anchors bunched in one corner still get
+    // balloons that neither overlap nor cross.
+    let anchors: Vec<[f64; 2]> = (0..12).map(|i| [10.0 + (i % 4) as f64 * 3.0, 10.0 + (i / 4) as f64 * 3.0]).collect();
+    let ring = de_shape::drawing::balloon_ring(&anchors, [0.0, 0.0, 100.0, 60.0], 4.0, 10.0);
+    for i in 0..12 {
+        for j in i + 1..12 {
+            assert!((ring[i][0] - ring[j][0]).hypot(ring[i][1] - ring[j][1]) >= 8.0, "ring balloons {i} and {j} overlap");
+            assert!(!segments_cross(anchors[i], ring[i], anchors[j], ring[j]), "ring leaders {i} and {j} cross");
+        }
+    }
+}
+
