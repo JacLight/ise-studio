@@ -106,6 +106,20 @@ pub async fn show(State(server): State<Arc<Server>>, Path(id): Path<String>, Que
     .into_response()
 }
 
+/// `GET /pcb/<id>/3d`: what the 3D view draws (copper, mask openings, silk per side; holes; component solids).
+pub async fn scene3d(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let app = match server.project(query.get("project")) {
+        Ok(a) => a,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let project = app.project.lock().unwrap();
+    let Ok(id) = serde_json::from_value::<StableId>(json!(id)) else { return fail(StatusCode::NOT_FOUND, "not a board") };
+    match de_pcb::render3d::scene(project.world(), id) {
+        Some(v) => axum::Json(v).into_response(),
+        None => fail(StatusCode::NOT_FOUND, "the board is not worked out yet"),
+    }
+}
+
 pub async fn bom_json(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
     match board(&server, &query, &id) {
         Ok((b, v)) => axum::Json(json!({ "lines": sourcing::buy_lines(&v, &b) })).into_response(),

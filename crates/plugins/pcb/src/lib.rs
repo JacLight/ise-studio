@@ -29,6 +29,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub mod board;
+pub mod bodies;
 pub mod drag;
 pub mod drc;
 pub mod fabs;
@@ -41,6 +42,7 @@ pub mod kicad;
 pub mod model3d;
 pub mod outputs;
 pub mod reader;
+pub mod render3d;
 pub mod route;
 pub mod sexpr;
 pub mod sourcing;

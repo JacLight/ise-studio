@@ -8,11 +8,26 @@
 //! The program is regenerated whenever the board, its footprints or its
 //! components change; edit the board, not the program.
 
-use crate::footprints::{BodyShape, PadKind};
 use crate::geom::{self, P};
 use crate::{Board, Side};
 use de_core::{CommandError, ErrorCode, IdIndex, StableId, Tx, Value, json};
 use std::collections::BTreeMap;
+
+/// The material role of a body look.
+fn look_role(look: &str) -> &'static str {
+    match look {
+        "epoxy" | "res_top" | "mark" => "Epoxy",
+        "ceramic" | "ceramic_white" => "Ceramic",
+        "steel" | "steel_dark" => "Steel",
+        "nylon" => "Nylon",
+        "black" | "dark" => "Black plastic",
+        "gold" | "antenna" => "Gold",
+        "tin" => "Copper",
+        "module_pcb" => "FR4",
+        l if l.starts_with("led") => "LED",
+        _ => "Epoxy",
+    }
+}
 
 /// (material name, density kg/m³).
 fn material_for(role: &str, board: &Board, value: &str) -> (String, f64) {
@@ -75,8 +90,6 @@ fn program(tx: &Tx, id: StableId) -> Result<(String, Vec<(String, f64)>), Comman
         (o, cuts)
     };
     let mut holes = Vec::new();
-    let mut pads_top = Vec::new();
-    let mut pads_bottom = Vec::new();
     let mut parts = Vec::new();
     for (_, c) in &items.components {
         let Some(fp) = board.footprint(&c.footprint) else { continue };
@@ -86,47 +99,37 @@ fn program(tx: &Tx, id: StableId) -> Result<(String, Vec<(String, f64)>), Comman
             geom::add(c.at, geom::rotate(q, c.rotation))
         };
         for p in &fp.pads {
-            let prim = crate::footprints::pad_prim(p, c.at, c.rotation, bottom);
             if let Some(d) = p.drill {
                 let rot = if bottom { -p.rotation } else { p.rotation } + c.rotation;
                 let half = (d[0].max(d[1]) - d[0].min(d[1])) / 2.0;
                 let dir = geom::rotate(if d[0] > d[1] { [half, 0.0] } else { [0.0, half] }, rot);
                 let at = place(p.at);
-                holes.push(json!({ "a": pt(geom::sub(at, dir)), "b": pt(geom::add(at, dir)), "r": r4(d[0].min(d[1]) / 2.0) }));
-            }
-            if p.kind == PadKind::Npth {
-                continue;
-            }
-            let outline: Vec<Value> = prim.outline(0.05).into_iter().map(pt).collect();
-            if p.kind == PadKind::Tht || !bottom {
-                pads_top.push(Value::Array(outline.clone()));
-            }
-            if p.kind == PadKind::Tht || bottom {
-                pads_bottom.push(Value::Array(outline));
+                holes.push(json!({ "a": pt(geom::sub(at, dir)), "b": pt(geom::add(at, dir)), "r": r4(d[0].min(d[1]) / 2.0), "rot": r4(rot + if d[0] > d[1] { 0.0 } else { 90.0 }) }));
             }
         }
-        if c.dnp || fp.body.is_empty() {
+    }
+    for body in crate::bodies::bodies(&board, &items.components) {
+        let Some((_, c)) = items.components.iter().find(|(_, c)| c.reference == body.reference) else { continue };
+        if body.solids.is_empty() {
             continue;
         }
-        let mut blocks = Vec::new();
-        for b in &fp.body {
-            let center = place(b.at);
-            let m = mat(&b.material, &c.value);
-            blocks.push(json!({ "c": pt(center), "w": r4(b.size[0]), "l": r4(b.size[1]), "z": [r4(b.z[0]), r4(b.z[1])], "cyl": b.shape == BodyShape::Cylinder, "m": m }));
-        }
+        // The part is made of what most of it is.
+        let main = body.solids.iter().max_by(|a, b| (a.size[0] * a.size[1] * a.size[2]).total_cmp(&(b.size[0] * b.size[1] * b.size[2]))).unwrap();
+        let m = mat(look_role(&main.mat), &c.value);
+        let solids: Vec<Value> = body.solids.iter().map(|s| json!([s.shape, r4(s.at[0]), r4(s.at[1]), r4(s.at[2]), r4(s.size[0]), r4(s.size[1]), r4(s.size[2]), r4(s.rot)])).collect();
         let part_number = c.mpn.clone().unwrap_or_else(|| format!("{} {}", c.value, c.footprint).trim().to_string());
         let mut stock = json!({ "partNumber": part_number, "description": format!("{} {} ({})", c.reference, if c.value.is_empty() { &c.footprint } else { &c.value }, c.footprint) });
-        if let Some(m) = &c.mpn {
-            stock["mpn"] = json!(m);
+        if let Some(x) = &c.mpn {
+            stock["mpn"] = json!(x);
         }
-        if let Some(m) = &c.manufacturer {
-            stock["manufacturer"] = json!(m);
+        if let Some(x) = &c.manufacturer {
+            stock["manufacturer"] = json!(x);
         }
         if let Some(l) = &c.lcsc {
             stock["sources"] = json!([{ "supplier": "LCSC", "sku": l, "url": format!("https://www.lcsc.com/product-detail/{l}.html") }]);
         }
         let name = if c.value.is_empty() { c.reference.clone() } else { format!("{} {}", c.reference, c.value) };
-        parts.push(json!({ "name": name, "rot": r4(c.rotation), "bottom": bottom, "blocks": blocks, "stock": stock }));
+        parts.push(json!({ "name": name, "s": solids, "m": m, "stock": stock }));
     }
     let data = json!({
         "t": board.thickness,
@@ -134,8 +137,6 @@ fn program(tx: &Tx, id: StableId) -> Result<(String, Vec<(String, f64)>), Comman
         "outline": outline.into_iter().map(pt).collect::<Vec<_>>(),
         "cutouts": cutouts.into_iter().map(|c| c.into_iter().map(pt).collect::<Vec<_>>()).collect::<Vec<_>>(),
         "holes": holes,
-        "padsTop": pads_top,
-        "padsBottom": pads_bottom,
         "parts": parts,
         "board": board_mat,
     });
@@ -148,34 +149,27 @@ fn program(tx: &Tx, id: StableId) -> Result<(String, Vec<(String, f64)>), Comman
 }
 
 const BODY: &str = r#"const t = B.t;
-const cu = 0.035;
 let pcb = (__OUTLINE__).extrude(t);
+// Holes and slots: a cylinder, or two joined by a box (exact in STEP, no hulls).
 const drill = (h) => {
   const len = Math.hypot(h.b[0] - h.a[0], h.b[1] - h.a[1]);
   const c = cylinder(t + 2, h.r).translate(h.a[0], h.a[1], -1);
-  return len < 1e-6 ? c : c.add(cylinder(t + 2, h.r).translate(h.b[0], h.b[1], -1)).hull();
+  if (len < 1e-6) return c;
+  const mid = [(h.a[0] + h.b[0]) / 2, (h.a[1] + h.b[1]) / 2];
+  const slot = box(len, 2 * h.r, t + 2).translate(-len / 2, -h.r, -1).rotate(0, 0, h.rot).translate(mid[0], mid[1], 0);
+  return union(c, cylinder(t + 2, h.r).translate(h.b[0], h.b[1], -1), slot);
 };
 if (B.holes.length) pcb = pcb.subtract(union(B.holes.map(drill)));
-const copper = [
-  ...B.padsTop.map((o) => polygon(o).extrude(cu).translate(0, 0, t)),
-  ...B.padsBottom.map((o) => polygon(o).extrude(cu).translate(0, 0, -cu)),
-];
-// One part: the bare board as a fab makes it (copper included), a "pcb_fab" line in the BOM.
-if (copper.length) {
-  let pads = union(copper);
-  if (B.holes.length) pads = pads.subtract(union(B.holes.map(drill)));
-  pcb = pcb.add(pads);
-}
+// The bare board as a fab makes it, a "pcb_fab" line in the BOM (copper, mask and silk are drawn by the view).
 const out = [part("PCB", pcb, { material: B.board, process: "pcb_fab" })];
 // Each populated component is one bought part, declared as stock (MPN, LCSC) for the BOM.
-for (const c of B.parts) {
-  const solids = c.blocks.map((b) => {
-    const h = b.z[1] - b.z[0];
-    const s = b.cyl ? cylinder(h, b.w / 2) : box(b.w, b.l, h).translate(-b.w / 2, -b.l / 2, 0).rotate(0, 0, c.rot);
-    return s.translate(b.c[0], b.c[1], c.bottom ? -b.z[1] : t + b.z[0]);
-  });
-  out.push(part(c.name, union(solids), { material: c.blocks[0].m, stock: c.stock }));
-}
+const solid = ([shape, x, y, z, sx, sy, sz, rot]) => {
+  if (shape === "cyl") return cylinder(sz, sx / 2).translate(x, y, z);
+  if (shape === "sphere") return sphere(sx / 2).translate(x, y, z + sx / 2);
+  if (shape === "hcyl") return cylinder(sy, sx / 2).translate(0, 0, -sy / 2).rotate(90, 0, 0).translate(0, 0, sz / 2).rotate(0, 0, rot).translate(x, y, z);
+  return box(sx, sy, sz).translate(-sx / 2, -sy / 2, 0).rotate(0, 0, rot).translate(x, y, z);
+};
+for (const c of B.parts) out.push(part(c.name, c.s.length === 1 ? solid(c.s[0]) : union(c.s.map(solid)), { material: c.m, stock: c.stock }));
 return out;
 "#;
 
