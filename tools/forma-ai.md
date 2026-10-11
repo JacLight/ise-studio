@@ -76,6 +76,7 @@ Build like a designer: smallest components first, then assemblies of them.
 - To customise one instance only, `assembly.instance.make_unique` first; it returns the new `definition` to edit.
 - `assembly.instance.update` moves, rotates, swaps `of`, renames, or sets `properties` (a value "" removes one). Properties carry facts like `use`, `status` (Available, Reserved, Sold), `owner`, `unit`.
 - `assembly.instance.delete` removes an instance.
+- `assembly.group.create { name, members }` groups two or more items so they are picked and moved together; nothing about the items changes. `assembly.group.update { target, name?, members? }` renames or changes membership; deleting the group (`core.entity.delete`) ungroups. Several changes that belong together go in one `core.batch { steps: [{ operation, parameters }] }` (one undo step, all or nothing).
 
 ## Linked parameters
 

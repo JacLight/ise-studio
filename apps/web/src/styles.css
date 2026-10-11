@@ -5522,3 +5522,19 @@ button.download.drawing-open small {
   width: 100%;
   margin-top: 0 !important;
 }
+
+.face-hint .hint-action {
+  margin-left: 10px;
+  padding: 3px 10px;
+  border: 1px solid #d9d2f0;
+  border-radius: 999px;
+  background: #f6f3ff;
+  color: #5b3fc4;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.face-hint .hint-action:hover {
+  background: #ece6ff;
+}

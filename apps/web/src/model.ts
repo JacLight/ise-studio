@@ -153,6 +153,8 @@ export function topInstanceOf(id: string, entities: ReadonlyMap<string, EntityVi
 }
 
 /** Anything placed in the scene: boxes, placed shapes and top-level instances. */
+export type GroupData = { name: string; members: string[] };
+export const groupOf = (e: EntityView | undefined) => e?.components["assembly.group"] as GroupData | undefined;
 export const isPart = (e: EntityView) => !!box(e) || (!!program(e) && !!placement(e)) || (!!instance(e) && !instance(e)!.parent);
 
 /** Where the part's own origin sits relative to its bounds' minimum corner (mm). */

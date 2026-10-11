@@ -6,7 +6,7 @@ import { StorageDialog } from "./Dialog";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
 import { RequirementsPanel } from "./RequirementsPanel";
 import { type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, mm, projectName, projectTitle, projectUrl } from "./engine";
-import { type EdgeFinish, type Frac, type LiveEdit, type Shape, box, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
+import { type EdgeFinish, type Frac, type LiveEdit, type Shape, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
 import { HistoryBody, ObjectsBody, ProjectBody, PropertiesBody, ToolPanel, ViewsBody } from "./Panels";
 import { useEdgeEditor } from "./EdgeEditor";
 import type { MotionGrab, ProgramFace, StressView, TurnBody } from "./Viewport";
@@ -653,7 +653,6 @@ export function App({ engine }: { engine: Engine }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [selected, edger, sketcher.editing]);
 
-  const remove = useCallback((id: string) => run("core.entity.delete", { target: id }), [run]);
 
   /** A STEP file in: stored by the engine, added as a part named after the file, then selected. */
   const importStep = useCallback(
@@ -694,8 +693,37 @@ export function App({ engine }: { engine: Engine }) {
     };
   }, [importStep]);
 
+  /** Steps that keep saved groups tidy when items leave them: shrink the group, or drop it below two. */
+  const regroupSteps = useCallback(
+    (leaving: string[]) => {
+      const now = engine.getState().entities;
+      return [...now.values()]
+        .filter((e) => groupOf(e)?.members.some((m) => leaving.includes(m)))
+        .map((e) => {
+          const left = groupOf(e)!.members.filter((m) => !leaving.includes(m) && now.has(m));
+          return left.length >= 2 ? { operation: "assembly.group.update", parameters: { target: e.id, members: left } } : { operation: "core.entity.delete", parameters: { target: e.id } };
+        });
+    },
+    [engine],
+  );
+  const remove = useCallback(
+    (id: string) => {
+      const tidy = regroupSteps([id]);
+      return tidy.length ? run("core.batch", { steps: [{ operation: "core.entity.delete", parameters: { target: id } }, ...tidy] }) : run("core.entity.delete", { target: id });
+    },
+    [run, regroupSteps],
+  );
+  const groups = useMemo(() => [...state.entities.values()].filter((e) => groupOf(e)), [state.entities]);
+  /** The saved group an item belongs to, with only the members that still exist. */
+  const groupFor = useCallback(
+    (id: string) => {
+      const g = groups.find((e) => groupOf(e)!.members.includes(id));
+      return g ? { id: g.id, ...groupOf(g)!, members: groupOf(g)!.members.filter((m) => state.entities.has(m)) } : null;
+    },
+    [groups, state.entities],
+  );
   const select = useCallback(
-    (id: string | null, add = false) => {
+    (id: string | null, add = false, single = false) => {
       if (add && id && selected && id !== selected) {
         // Shift-click: add it to the group, or take it out again.
         setAlso((a) => (a.includes(id) ? a.filter((x) => x !== id) : [...a, id]));
@@ -708,11 +736,13 @@ export function App({ engine }: { engine: Engine }) {
         setAlso(rest);
         return;
       }
-      setAlso([]);
+      // Clicking one member of a saved group picks the whole group (Alt-click: just that one).
+      const g = id && !add && !single ? groupFor(id) : null;
+      setAlso(g ? g.members.filter((m) => m !== id) : []);
       setSelected(id);
       if (id) setPanel((p) => (p === "objects" ? p : "properties"));
     },
-    [selected],
+    [selected, groupFor],
   );
   useEffect(() => {
     if (!selected) setAlso([]);
@@ -877,7 +907,8 @@ export function App({ engine }: { engine: Engine }) {
       } else if ((e.key === "Delete" || e.key === "Backspace") && selected) {
         if (alsoRef.current.length) {
           // The whole group, as one change.
-          void run("core.batch", { steps: [selected, ...alsoRef.current].map((id) => ({ operation: "core.entity.delete", parameters: { target: id } })) });
+          const gone = [selected, ...alsoRef.current];
+          void run("core.batch", { steps: [...gone.map((id) => ({ operation: "core.entity.delete", parameters: { target: id } })), ...regroupSteps(gone)] });
           setAlso([]);
         } else remove(selected);
       }
@@ -962,7 +993,38 @@ export function App({ engine }: { engine: Engine }) {
         {edger.bar}
         {also.length > 0 && !stressPick && (
           <div className="face-hint floating" role="status">
-            <b>{also.length + 1} items</b> selected · drag the arrows to move them together · Delete removes them · Shift-click adds or takes away · Esc
+            {(() => {
+              const g = selected ? groupFor(selected) : null;
+              const all = selected ? [selected, ...also] : also;
+              const isGroup = !!g && g.members.length === all.length && all.every((m) => g.members.includes(m));
+              return (
+                <>
+                  <b>{isGroup ? g!.name : `${all.length} items`}</b>
+                  {isGroup ? ` · ${all.length} items · Alt-click picks one` : " selected"} · drag the arrows to move them together · Delete removes them · Shift-click adds or takes away · Esc
+                  {isGroup ? (
+                    <button type="button" className="hint-action" onClick={() => void run("core.entity.delete", { target: g!.id }).then((ok) => ok && notify(`Ungrouped ${g!.name}`))}>
+                      Ungroup
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="hint-action"
+                      onClick={() => {
+                        // A new group takes over members of any group it swallows whole; others just lose those items.
+                        const steps = regroupSteps(all);
+                        const used = new Set(groups.map((e) => groupOf(e)!.name));
+                        let n = 1;
+                        while (used.has(`Group ${n}`)) n++;
+                        const name = `Group ${n}`;
+                        void run("core.batch", { steps: [...steps, { operation: "assembly.group.create", parameters: { name, members: all } }] }).then((ok) => ok && notify(`Grouped ${all.length} items as ${name}`));
+                      }}
+                    >
+                      Group
+                    </button>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
         {stressPick && (

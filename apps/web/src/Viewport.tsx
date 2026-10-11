@@ -213,7 +213,8 @@ type Props = {
   pivotLive: Frac | null;
   /** A pivot was chosen (fractions of the box), or null to leave pivot mode. `keepMode` stays in pivot mode. */
   onPickPivot: (frac: Frac | null, keepMode?: boolean) => void;
-  onSelect: (id: string | null, add?: boolean) => void;
+  /** add: Shift-click (grow or shrink the selection); single: Alt-click (one item, not its whole group). */
+  onSelect: (id: string | null, add?: boolean, single?: boolean) => void;
   /** Part of the selected assembly that is picked (by name), if any. */
   selectedPart: string | null;
   /** Clicking an already selected assembly picks the part under the pointer. */
@@ -1106,7 +1107,12 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     };
     const hitSelectedBody = (r: THREE.Raycaster) => {
       const body = selectedBody();
-      return body ? r.intersectObjects(body, false)[0] : undefined;
+      const hit = body ? r.intersectObjects(body, false)[0] : undefined;
+      if (!hit) return undefined;
+      // Only when nothing else stands in front of it: a click on a part in front picks that part.
+      const all = [...(three.current?.parts.values() ?? [])].flatMap((p) => p.meshes.filter((m) => m.visible));
+      const front = r.intersectObjects(all, true)[0];
+      return front && front.distance < hit.distance - 1e-6 && front.object.userData.id !== callbacks.current.selected ? undefined : hit;
     };
     /** Faces exist on boxes; AI-made shapes change through their parameters instead. */
     const hitSelectedFace = (r: THREE.Raycaster): Face | null => {
@@ -1305,7 +1311,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
           if (!hit) return;
           drag.current = { kind: "plane", id, normal: pick.normal, origin, startHit: hit, start, targets };
           gizmo.setActive(pick);
-        } else if (pick?.kind === "center" || hitSelectedBody(r)) {
+        } else if (pick?.kind === "center" || (!e.shiftKey && hitSelectedBody(r))) {
           const hit = r.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -start.z), new THREE.Vector3());
           if (!hit) return;
           drag.current = { kind: "ground", id, offset: new THREE.Vector2(hit.x - start.x, hit.y - start.y), start, downX: e.clientX, downY: e.clientY, moved: pick?.kind === "center", targets };
@@ -1646,7 +1652,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         pickAssemblyPart(r);
       } else {
         face.current = null;
-        callbacks.current.onSelect(id);
+        callbacks.current.onSelect(id, false, e.altKey);
       }
       dirty = true;
     };

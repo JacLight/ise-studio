@@ -34,6 +34,9 @@ impl Plugin for AssemblyPlugin {
     fn register(&self, r: &mut Registry) {
         r.component::<AssemblyDef>()
             .component::<Instance>()
+            .component::<Group>()
+            .command::<CreateGroup>()
+            .command::<UpdateGroup>()
             .command::<CreateAssembly>()
             .command::<UpdateAssembly>()
             .command::<CreateInstance>()
@@ -307,6 +310,78 @@ impl Command for CreateAssembly {
         let id = tx.create();
         tx.set(id, AssemblyDef { name: self.name, description: self.description })?;
         Ok(json!({ "id": id }))
+    }
+}
+
+/// A named group of items that are picked and moved together (a desk and its
+/// drawers, a motor and its bracket). Unlike an assembly it changes nothing
+/// about the items: ungrouping (deleting the group) leaves them as they are.
+#[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Group {
+    pub name: String,
+    pub members: Vec<StableId>,
+}
+
+impl Persist for Group {
+    const KIND: &'static str = "assembly.group";
+}
+
+/// `assembly.group.create`: group two or more items.
+#[derive(Deserialize, JsonSchema)]
+pub struct CreateGroup {
+    pub name: String,
+    pub members: Vec<StableId>,
+}
+
+fn check_members(tx: &Tx, members: &[StableId]) -> Result<Vec<StableId>, CommandError> {
+    let mut out: Vec<StableId> = vec![];
+    for m in members {
+        if !tx.exists(*m) {
+            return Err(bad(ErrorCode::UnresolvedReference, format!("{m} does not exist")));
+        }
+        if !out.contains(m) {
+            out.push(*m);
+        }
+    }
+    if out.len() < 2 {
+        return Err(bad(ErrorCode::InvalidParameters, "a group needs two or more items"));
+    }
+    Ok(out)
+}
+
+impl Command for CreateGroup {
+    const NAME: &'static str = "assembly.group.create";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        let members = check_members(tx, &self.members)?;
+        let id = tx.create();
+        let name = if self.name.trim().is_empty() { "Group".to_string() } else { self.name };
+        tx.set(id, Group { name, members })?;
+        Ok(json!({ "id": id }))
+    }
+}
+
+/// `assembly.group.update`: rename a group, or change who is in it.
+#[derive(Deserialize, JsonSchema)]
+pub struct UpdateGroup {
+    pub target: StableId,
+    pub name: Option<String>,
+    pub members: Option<Vec<StableId>>,
+}
+
+impl Command for UpdateGroup {
+    const NAME: &'static str = "assembly.group.update";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        let mut g = tx.get::<Group>(self.target).cloned().ok_or_else(|| bad(ErrorCode::UnresolvedReference, format!("{} is not a group", self.target)))?;
+        if let Some(n) = self.name {
+            g.name = n;
+        }
+        if let Some(m) = self.members {
+            g.members = check_members(tx, &m)?;
+        }
+        tx.set(self.target, g)?;
+        Ok(json!({ "id": self.target }))
     }
 }
 
