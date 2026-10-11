@@ -20,6 +20,7 @@ import {
   isSheetProcess,
   partMaterial,
   stockSize,
+  type EdgeFinish,
   type Frac,
   type Shape,
   describeOperation,
@@ -34,6 +35,23 @@ import {
 } from "./model";
 import { ScrubField } from "./ScrubField";
 import type { PanelKind } from "./ui";
+
+const FINISH_LABEL: Record<EdgeFinish["kind"], string> = { fillet: "Fillet", chamfer: "Chamfer", push: "Push", shell: "Shell", draft: "Draft" };
+
+/** What a finish does, in a few words: "2 edges · 3 mm", "open at 1 face · 2 mm walls", "all walls · 3° from +Z". */
+function finishWhat(f: EdgeFinish, size: number) {
+  const n = f.edges.length;
+  const faces = `${n} ${n === 1 ? "face" : "faces"}`;
+  if (f.kind === "shell") return `${n ? `open at ${faces}` : "sealed"} · ${fmt(Math.abs(size))} mm walls${size < 0 ? " outward" : ""}`;
+  if (f.kind === "draft") {
+    const p = f.pull ?? [0, 0, 1];
+    const k = p.findIndex((c) => Math.abs(c) > 0.5);
+    const axis = k >= 0 ? `${p[k] < 0 ? "−" : "+"}${"XYZ"[k]}` : "the pull";
+    return `${n ? faces : "all walls"} · ${fmt(size)}° from ${axis}`;
+  }
+  if (f.kind === "push") return `${faces} · ${fmt(size)} mm`;
+  return `${n} ${n === 1 ? "edge" : "edges"} · ${fmt(size)} mm`;
+}
 import type { MotionGrab, ProgramFace, StressView, TurnBody, ViewName } from "./Viewport";
 
 export type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
@@ -297,6 +315,8 @@ export type PropertiesProps = {
   onParamFormula: (key: string, formula: string | null) => void;
   /** Start picking edges to round or bevel; remove one of the part's edge finishes. */
   onEdges: () => void;
+  /** Start shelling or drafting the part. */
+  onFaceTool: (kind: "shell" | "draft") => void;
   onRemoveFinish: (index: number) => void;
   onLive: (patch: Partial<Shape> | null) => void;
   onCommit: (patch: Partial<Shape>) => void;
@@ -457,10 +477,10 @@ export function PropertiesBody(props: PropertiesProps) {
               const size = prog.params.find((q) => q.key === f.key);
               return (
                 <div key={i} className="finish-row">
-                  <span className="finish-kind">{f.kind === "fillet" ? "Fillet" : f.kind === "chamfer" ? "Chamfer" : "Push"}</span>
+                  <span className="finish-kind">{FINISH_LABEL[f.kind]}</span>
                   <span className="finish-what">
-                    {f.edges.length} {f.kind === "push" ? (f.edges.length === 1 ? "face" : "faces") : f.edges.length === 1 ? "edge" : "edges"}
-                    {f.part ? ` of ${f.part}` : ""} · {fmt(part.params?.[f.key] ?? size?.value ?? 0)} mm
+                    {finishWhat(f, part.params?.[f.key] ?? size?.value ?? 0)}
+                    {f.part ? ` · ${f.part}` : ""}
                     {part.formulas?.[f.key] ? " · linked" : ""}
                   </span>
                   <button type="button" className="ib" title="Remove this finish" aria-label="Remove this finish" onClick={() => props.onRemoveFinish(i)}>
@@ -472,6 +492,14 @@ export function PropertiesBody(props: PropertiesProps) {
             <button type="button" className="secondary finish-add" onClick={props.onEdges}>
               <Icon name="fillet" /> Round or bevel edges <kbd>E</kbd>
             </button>
+            <div className="finish-add-row">
+              <button type="button" className="secondary finish-add" onClick={() => props.onFaceTool("shell")}>
+                <Icon name="shell" /> Shell <kbd>H</kbd>
+              </button>
+              <button type="button" className="secondary finish-add" onClick={() => props.onFaceTool("draft")}>
+                <Icon name="draft" /> Draft <kbd>D</kbd>
+              </button>
+            </div>
           </div>
         </section>
       ) : (

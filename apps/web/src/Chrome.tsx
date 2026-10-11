@@ -80,6 +80,8 @@ export function ToolRail(props: {
   edging: boolean;
   canEdge: boolean;
   onEdges: () => void;
+  faceTool: "shell" | "draft" | null;
+  onFaceTool: (kind: "shell" | "draft") => void;
 }) {
   const active = (p: PanelKind) => (props.panel === p ? "active" : "");
   return (
@@ -95,6 +97,19 @@ export function ToolRail(props: {
         onClick={props.onEdges}
         disabled={!props.canEdit || !(props.canEdge || props.edging)}
       />
+      {(["shell", "draft"] as const).map((k) => {
+        const name = k === "shell" ? "Shell: hollow to a wall (H)" : "Draft: taper walls for a mould (D)";
+        return (
+          <IconButton
+            key={k}
+            icon={k}
+            label={props.canEdge || props.faceTool === k ? name : `${name} · select a part first`}
+            className={props.faceTool === k ? "active" : ""}
+            onClick={() => props.onFaceTool(k)}
+            disabled={!props.canEdit || !(props.canEdge || props.faceTool === k)}
+          />
+        );
+      })}
       <IconButton icon="layers" label="Project objects" className={active("objects")} onClick={() => props.onPanel("objects")} />
       <IconButton icon="sliders" label="Object properties" className={active("properties")} onClick={() => props.onPanel("properties")} />
       <IconButton icon="shield" label="Requirements" className={active("requirements")} onClick={() => props.onPanel("requirements")} />

@@ -40,6 +40,8 @@ const PATHS = {
   mail: "M3 6h18v12H3z M3 7l9 6 9-6",
   printer: "M7 8V3h10v5 M5 8h14a2 2 0 0 1 2 2v6h-4 M7 16H3v-6a2 2 0 0 1 2-2 M7 13h10v8H7z",
   fillet: "M4 21V13a9 9 0 0 1 9-9h8 M4 4h4 M4 4v4",
+  shell: "M3 7v13h18V7 M7 7v9h10V7 M3 7h4 M17 7h4",
+  draft: "M4 21h16 M6.5 21 9 9h6l2.5 12 M12 7V2 M9.5 4.5 12 2l2.5 2.5",
   play: "M7 4.5v15l12-7.5z",
   pause: "M8 5v14 M16 5v14",
   rotateCw: "M20 8a9 9 0 1 0 1 8 M20 3v5h-5",

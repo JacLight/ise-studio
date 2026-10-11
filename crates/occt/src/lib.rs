@@ -41,6 +41,8 @@ unsafe extern "C" {
     fn occ_faces(a: *mut c_void, h: c_int, data: *mut *const f64, len: *mut c_int) -> c_int;
     fn occ_push_face(a: *mut c_void, h: c_int, index: c_int, distance: f64) -> c_int;
     fn occ_face_near(a: *mut c_void, h: c_int, x: f64, y: f64, z: f64) -> c_int;
+    fn occ_shell(a: *mut c_void, h: c_int, thickness: f64, idx: *const c_int, n: c_int) -> c_int;
+    fn occ_draft(a: *mut c_void, h: c_int, idx: *const c_int, n: c_int, degrees: f64, dx: f64, dy: f64, dz: f64, px: f64, py: f64, pz: f64) -> c_int;
 }
 
 /// A shape in an [`Arena`] (a solid, or a planar profile on z = 0).
@@ -345,6 +347,23 @@ impl Arena {
     pub fn push_face(&mut self, s: Shape, face: usize, distance: f64) -> Result<Shape, String> {
         self.check(unsafe { occ_push_face(self.0, s.0, face as c_int, distance) })
     }
+    /// Hollows a solid to walls `thickness` thick, opening the listed faces
+    /// (numbered as [`Arena::faces`] numbers them). Positive thickness grows the
+    /// walls inward (the outside stays put); negative grows them outward (the
+    /// original shape becomes the cavity). No open faces: a closed hollow.
+    pub fn shell(&mut self, s: Shape, thickness: f64, open_faces: &[usize]) -> Result<Shape, String> {
+        let idx: Vec<c_int> = open_faces.iter().map(|e| *e as c_int).collect();
+        self.check(unsafe { occ_shell(self.0, s.0, thickness, idx.as_ptr(), idx.len() as c_int) })
+    }
+    /// Tapers faces by `degrees` relative to the pull direction, hinging about
+    /// the plane through `neutral` normal to the pull: positive angles lean the
+    /// faces inward going along the pull (a mould draft).
+    pub fn draft(&mut self, s: Shape, faces: &[usize], degrees: f64, pull: [f64; 3], neutral: [f64; 3]) -> Result<Shape, String> {
+        let idx: Vec<c_int> = faces.iter().map(|e| *e as c_int).collect();
+        self.check(unsafe {
+            occ_draft(self.0, s.0, idx.as_ptr(), idx.len() as c_int, degrees, pull[0], pull[1], pull[2], neutral[0], neutral[1], neutral[2])
+        })
+    }
     /// Writes named shapes to a STEP file (AP214, millimetres).
     pub fn write_step(&mut self, parts: &[(String, Shape)], path: &std::path::Path) -> Result<(), String> {
         let names: Vec<CString> = parts.iter().map(|(n, _)| CString::new(n.replace('\0', "")).unwrap()).collect();
@@ -479,6 +498,114 @@ mod tests {
         let want = std::f64::consts::PI * 2.0 * 2.0 * 10.0;
         assert!((a.volume(thin) - want).abs() < want * 1e-4, "volume {} vs {want}", a.volume(thin));
         assert_eq!(a.face_near(cyl, [3.0, 0.0, 5.0]).unwrap(), side, "the side is the face nearest a point on it");
+    }
+
+    #[test]
+    fn shells_hollow_exactly() {
+        let mut a = Arena::new();
+        let b = a.cube(40.0, 40.0, 20.0, false).unwrap();
+        let top = a.face_near(b, [20.0, 20.0, 20.0]).unwrap();
+        // Open at the top, 2 mm walls inward: the outside stays 40×40×20.
+        let cup = a.shell(b, 2.0, &[top]).unwrap();
+        let want = 40.0 * 40.0 * 20.0 - 36.0 * 36.0 * 18.0;
+        assert!((a.volume(cup) - want).abs() < 1e-6, "open shell {} vs {want}", a.volume(cup));
+        let bb = a.bounds(cup).unwrap();
+        assert!(bb.iter().zip([0.0, 0.0, 0.0, 40.0, 40.0, 20.0]).all(|(a, b)| (a - b).abs() < 1e-6), "{bb:?}");
+        assert_eq!(a.faces(cup).unwrap().len(), 11, "five outer, five inner, the rim");
+        // Closed: a sealed 36×36×16 void inside.
+        let sealed = a.shell(b, 2.0, &[]).unwrap();
+        let want = 40.0 * 40.0 * 20.0 - 36.0 * 36.0 * 16.0;
+        assert!((a.volume(sealed) - want).abs() < 1e-6, "closed shell {} vs {want}", a.volume(sealed));
+        // Outward: the box becomes the cavity of a 44×44×22 cup.
+        let out = a.shell(b, -2.0, &[top]).unwrap();
+        let want = 44.0 * 44.0 * 22.0 - 40.0 * 40.0 * 20.0;
+        assert!((a.volume(out) - want).abs() < 1e-6, "outward shell {} vs {want}", a.volume(out));
+        // Two open faces (top and one side) on the same box.
+        let side = a.face_near(b, [20.0, 0.0, 10.0]).unwrap();
+        let channel = a.shell(b, 2.0, &[top, side]).unwrap();
+        let want = 40.0 * 40.0 * 20.0 - 36.0 * 38.0 * 18.0;
+        assert!((a.volume(channel) - want).abs() < 1e-6, "two open faces {} vs {want}", a.volume(channel));
+        // A cylinder cup: exact circles.
+        let cyl = a.cylinder(10.0, 5.0, 5.0, false).unwrap();
+        let lid = a.face_near(cyl, [0.0, 0.0, 10.0]).unwrap();
+        let mug = a.shell(cyl, 1.0, &[lid]).unwrap();
+        let want = std::f64::consts::PI * (25.0 * 10.0 - 16.0 * 9.0);
+        assert!((a.volume(mug) - want).abs() < want * 1e-6, "cylinder cup {} vs {want}", a.volume(mug));
+        // Walls thicker than the part: an error, not a broken solid.
+        assert!(a.shell(b, 25.0, &[top]).is_err());
+    }
+
+    #[test]
+    fn drafts_taper_exactly() {
+        let mut a = Arena::new();
+        let b = a.cube(40.0, 40.0, 20.0, false).unwrap();
+        let sides: Vec<usize> = a.faces(b).unwrap().iter().enumerate().filter(|(_, f)| f.normal.is_some_and(|n| n[2].abs() < 1e-9)).map(|(i, _)| i).collect();
+        assert_eq!(sides.len(), 4);
+        // 5° about the bottom, pulled up: a frustum whose top shrinks by 2·20·tan 5° each way.
+        let t = 5f64.to_radians().tan();
+        let d = a.draft(b, &sides, 5.0, [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]).unwrap();
+        let top = 40.0 - 2.0 * 20.0 * t;
+        let faces = a.faces(d).unwrap();
+        let lid = faces.iter().find(|f| f.normal.is_some_and(|n| n[2] > 0.99)).unwrap();
+        assert!((lid.area - top * top).abs() < 1e-6, "top {} vs {}", lid.area, top * top);
+        let base = faces.iter().find(|f| f.normal.is_some_and(|n| n[2] < -0.99)).unwrap();
+        assert!((base.area - 1600.0).abs() < 1e-6, "the neutral plane keeps its size");
+        let frustum = 20.0 / 3.0 * (1600.0 + top * top + 40.0 * top);
+        assert!((a.volume(d) - frustum).abs() < 1e-6, "volume {} vs {frustum}", a.volume(d));
+        // About the middle: the top shrinks, the bottom grows, by 10·tan 5° each side.
+        let mid = a.draft(b, &sides, 5.0, [0.0, 0.0, 1.0], [0.0, 0.0, 10.0]).unwrap();
+        let (top, bot) = (40.0 - 20.0 * t, 40.0 + 20.0 * t);
+        let frustum = 20.0 / 3.0 * (top * top + bot * bot + top * bot);
+        assert!((a.volume(mid) - frustum).abs() < 1e-6, "volume {} vs {frustum}", a.volume(mid));
+        // No faces named: every wall along the pull, the same four.
+        let auto = a.draft(b, &[], 5.0, [0.0, 0.0, 1.0], [0.0, 0.0, 10.0]).unwrap();
+        assert!((a.volume(auto) - frustum).abs() < 1e-6);
+        // A cylinder's side, drafted 5° from its base: an exact cone frustum.
+        let cyl = a.cylinder(20.0, 10.0, 10.0, false).unwrap();
+        let cone = a.draft(cyl, &[], 5.0, [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]).unwrap();
+        let r = 10.0 - 20.0 * t;
+        let want = std::f64::consts::PI * 20.0 / 3.0 * (100.0 + 10.0 * r + r * r);
+        assert!((a.volume(cone) - want).abs() < want * 1e-9, "cone {} vs {want}", a.volume(cone));
+        // Negative leans outward: the top grows.
+        let flare = a.draft(b, &sides, -5.0, [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]).unwrap();
+        let top = 40.0 + 2.0 * 20.0 * t;
+        let frustum = 20.0 / 3.0 * (1600.0 + top * top + 40.0 * top);
+        assert!((a.volume(flare) - frustum).abs() < 1e-6, "flare {} vs {frustum}", a.volume(flare));
+        // Rounded corners taper with the walls; then shelled, the cavity follows.
+        let edges = a.edges(b, 0.01).unwrap();
+        let vertical: Vec<usize> = edges.iter().enumerate().filter(|(_, e)| matches!(e.kind, EdgeKind::Line { dir, .. } if dir[2].abs() > 0.99)).map(|(i, _)| i).collect();
+        let rounded = a.blend(b, Blend::Fillet, 3.0, &vertical).unwrap();
+        let drafted = a.draft(rounded, &[], 3.0, [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]).unwrap();
+        assert!(a.volume(drafted) < a.volume(rounded));
+        let lid = a.face_near(drafted, [20.0, 20.0, 20.0]).unwrap();
+        let open = a.shell(drafted, 2.0, &[lid]).unwrap();
+        let sealed = a.shell(drafted, 2.0, &[]).unwrap();
+        assert!(a.volume(open) < a.volume(sealed) && a.volume(sealed) < a.volume(drafted), "a drafted, rounded part hollows: {} < {} < {}", a.volume(open), a.volume(sealed), a.volume(drafted));
+        // At 5° the 3 mm rounds shrink to 1.25 mm at the top: a 2 mm wall cannot follow them inward, and says so.
+        let steep = a.draft(rounded, &[], 5.0, [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]).unwrap();
+        let lid = a.face_near(steep, [20.0, 20.0, 20.0]).unwrap();
+        let e = a.shell(steep, 2.0, &[lid]).unwrap_err();
+        assert!(e.contains("rounded corner") && e.contains("1.25"), "{e}");
+        let thin = a.shell(steep, 1.0, &[lid]).unwrap();
+        assert!(a.volume(thin) > 0.0 && a.volume(thin) < a.volume(steep), "a 1 mm wall fits");
+        let tight = a.blend(b, Blend::Fillet, 1.0, &vertical).unwrap();
+        let lid = a.face_near(tight, [20.0, 20.0, 20.0]).unwrap();
+        let e = a.shell(tight, 2.0, &[lid]).unwrap_err();
+        assert!(e.contains("(1 mm radius)"), "{e}");
+        // A drafted box then shelled, by hand: the cavity's walls sit 2/cos 3° in, its floor 2 up.
+        let t3 = 3f64.to_radians().tan();
+        let db = a.draft(b, &[], 3.0, [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]).unwrap();
+        let lid = a.face_near(db, [20.0, 20.0, 20.0]).unwrap();
+        let tray = a.shell(db, 2.0, &[lid]).unwrap();
+        let top = 40.0 - 40.0 * t3;
+        let outer = 20.0 / 3.0 * (1600.0 + top * top + 40.0 * top);
+        let ib = 40.0 - 4.0 * t3 - 4.0 / 3f64.to_radians().cos();
+        let it = ib - 36.0 * t3;
+        let want = outer - 18.0 / 3.0 * (ib * ib + it * it + ib * it);
+        assert!((a.volume(tray) - want).abs() < 1e-6, "drafted tray {} vs {want}", a.volume(tray));
+        // A face parallel to the neutral plane cannot be drafted.
+        let lid = a.face_near(b, [20.0, 20.0, 20.0]).unwrap();
+        assert!(a.draft(b, &[lid], 5.0, [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]).is_err());
     }
 
     #[test]

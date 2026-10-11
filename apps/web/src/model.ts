@@ -28,7 +28,16 @@ export type Program = {
 
 /** An edge as picked: kind, direction and place relative to the part's bounds (fractions). */
 export type EdgePick = { at: [number, number, number]; kind: string; dir?: [number, number, number]; radius?: number };
-export type EdgeFinish = { kind: "fillet" | "chamfer" | "push"; key: string; part?: string; edges: EdgePick[] };
+export type EdgeFinish = {
+  kind: "fillet" | "chamfer" | "push" | "shell" | "draft";
+  key: string;
+  part?: string;
+  /** Edges, or faces (push; shell: those left open; draft: those tapered, none for every wall). */
+  edges: EdgePick[];
+  /** Draft: the direction the mould opens, and the neutral plane as a fraction (0–1) of the part along it. */
+  pull?: [number, number, number];
+  neutral?: number;
+};
 
 /** An AI-made shape's program, if this entity is one. */
 export const program = (e: EntityView) => e.components["shape.program"] as Program | undefined;

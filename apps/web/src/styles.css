@@ -4025,6 +4025,22 @@ dialog p {
   color: #a39db0;
 }
 
+.finish-add-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+/* Shell and draft: the edge bar's frame, with a second row for the neutral plane. */
+.face-tool-bar .edge-row + .edge-row {
+  margin-top: 8px;
+}
+
+.face-tool-label {
+  font-size: 11px;
+  color: #6f6880;
+}
+
 .print-row {
   display: grid;
   gap: 6px;

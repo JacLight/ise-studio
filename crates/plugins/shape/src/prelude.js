@@ -142,6 +142,55 @@ class Solid {
     const face = selectFace(this, which);
     return new Solid(__n.pushFace(this.h, face.index, distance));
   }
+  /**
+   * Hollows the solid to walls `thickness` mm thick. Positive grows the walls
+   * inward (the outside stays exactly where it is); negative grows them
+   * outward (the solid as it is becomes the cavity). `which` names the faces
+   * to remove, leaving the shell open there: one face picked as push picks
+   * it, or a list of them. Leave it out for a closed hollow (a sealed void).
+   * Exact.
+   *   box(40, 40, 20).shell(2, { normal: [0, 0, 1] })   // an open-top tray
+   *   box(40, 40, 20).shell(2)                          // sealed, 2 mm walls
+   */
+  shell(thickness, which) {
+    if (typeof thickness !== "number" || !Number.isFinite(thickness) || thickness === 0) throw new Error("shell: the wall thickness must be a non-zero number of mm");
+    const open = which == null ? [] : (Array.isArray(which) ? which : [which]).map((w) => selectFace(this, w).index);
+    return new Solid(__n.shell(this.h, thickness, [...new Set(open)]));
+  }
+  /**
+   * Tapers faces by `angle` degrees so the part releases from a mould pulled
+   * along `pull` (default [0, 0, 1]). The faces hinge about the neutral plane
+   * (square to the pull) where they keep their size; positive angles lean
+   * them inward going along the pull, negative outward. Options:
+   *   faces / which: the faces (one, or a list, picked as push picks them);
+   *     default every wall running along the pull (flat sides and bosses).
+   *   pull: [x, y, z], the direction the mould opens.
+   *   neutral: where the neutral plane sits, as a distance along the pull
+   *     (for pull [0, 0, 1], a height z); default the end the pull starts
+   *     from (the bottom). neutralAt: the same as a fraction 0–1 of the part.
+   * Exact.
+   *   box(40, 40, 20).draft(5)                          // top 36.5 mm square
+   *   boss.draft(2, { pull: [0, 0, 1], neutral: 10 })
+   */
+  draft(angle, options = {}) {
+    if (typeof angle !== "number" || !Number.isFinite(angle) || Math.abs(angle) >= 89) throw new Error("draft: the angle must be a number of degrees under 89");
+    if (angle === 0) return this;
+    const pull = __unit(vec3(options.pull ?? [0, 0, 1]));
+    const pick = options.faces ?? options.which;
+    const faces = pick == null ? [] : (Array.isArray(pick) ? pick : [pick]).map((w) => selectFace(this, w).index);
+    // The part's extent along the pull: its bounds' corners projected.
+    const { min, max } = this.bounds;
+    let lo = Infinity, hi = -Infinity;
+    for (const x of [min[0], max[0]]) for (const y of [min[1], max[1]]) for (const z of [min[2], max[2]]) {
+      const d = __dot([x, y, z], pull);
+      lo = Math.min(lo, d), hi = Math.max(hi, d);
+    }
+    let at = lo;
+    if (typeof options.neutral === "number") at = options.neutral;
+    else if (typeof options.neutralAt === "number") at = lo + options.neutralAt * (hi - lo);
+    else if (options.neutral != null) at = __dot(vec3(options.neutral), pull);
+    return new Solid(__n.draft(this.h, [...new Set(faces)], angle, pull, pull.map((c) => c * at)));
+  }
 }
 
 /**
@@ -443,6 +492,8 @@ function __finish(out, p) {
     if (typeof size !== "number") throw new Error(`edge finish: the shape has no parameter “${f.key}”`);
     const apply = (s) => {
       if (f.kind === "push") return f.edges.reduce((acc, pick) => acc.push(size, pick), s);
+      if (f.kind === "shell") return s.shell(size, f.edges.length ? f.edges : undefined);
+      if (f.kind === "draft") return s.draft(size, { faces: f.edges.length ? f.edges : undefined, pull: f.pull ?? [0, 0, 1], neutralAt: f.neutral ?? 0 });
       return f.kind === "chamfer" ? s.chamfer(size, { picks: f.edges }) : s.fillet(size, { picks: f.edges });
     };
     if (out instanceof Solid) out = apply(out);

@@ -33,7 +33,7 @@ import {
 } from "./gizmo";
 import type { Overlay } from "./intent";
 import { EdgeLayer, type EdgePicture } from "./edgeLayer";
-import { FaceLayer, type FlatFace, curvedFaceAt, flatFaceAt } from "./faceLayer";
+import { FaceLayer, type FacePicture, type FlatFace, PickedFacesLayer, curvedFaceAt, flatFaceAt } from "./faceLayer";
 import { SketchLayer, type SketchPicture, segmentPoints } from "./sketchLayer";
 import { type Plane, normalOf, positions, radiusOf, toWorld } from "./sketchModel";
 import {
@@ -241,6 +241,8 @@ type Props = {
   onProgramFace: (face: ProgramFace | null, why?: "curved") => void;
   onFaceDrag: (distance: number) => void;
   onFaceDragEnd: (commit: boolean, distance: number) => void;
+  /** Faces picked for a shell or draft (clicks then pick faces through onProgramFace), and a draft's pull. */
+  facePicks: FacePicture | null;
   /** Live change from a drag (absolute millimeters for the changed fields). */
   onDrag: (id: string, patch: Partial<Shape>) => void;
   /** Drag finished: commit or cancel. */
@@ -677,6 +679,9 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
   const faceLayerRef = useRef<FaceLayer | null>(null);
   if (!faceLayerRef.current) faceLayerRef.current = new FaceLayer();
   const faceLayer = faceLayerRef.current;
+  const pickedLayerRef = useRef<PickedFacesLayer | null>(null);
+  if (!pickedLayerRef.current) pickedLayerRef.current = new PickedFacesLayer();
+  const pickedLayer = pickedLayerRef.current;
   const three = useRef<Scene | null>(null);
   const callbacks = useRef(props);
   callbacks.current = props;
@@ -907,7 +912,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       // Manipulators. The move gizmo sits on the part's pivot.
       const pivotMode = callbacks.current.pivotMode;
       const origin = s ? new THREE.Vector3(...pivotPoint(s, pivot.current)) : null;
-      gizmo.root.visible = !!s && !f && !wire && !pivotMode && !callbacks.current.edges && !faceLayer.active && (!d || d.kind !== "push");
+      gizmo.root.visible = !!s && !f && !wire && !pivotMode && !callbacks.current.edges && !callbacks.current.facePicks && !faceLayer.active && (!d || d.kind !== "push");
       const ff = faceLayer.frame();
       if (ff) faceLayer.scale(gizmoScale(ff.origin));
       pivotRoot.visible = !!s && pivotMode && (!d || d.kind === "pivot");
@@ -1704,7 +1709,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     renderer.domElement.addEventListener("pointerup", onCanvasUp);
 
     three.current = { renderer, scene, camera, controls, sun, parts: new Map(), gizmo, push, overlayRoot, overlayLabels: [], ground, grid, gridCell: 20, wireframe: false, invalidate, flight: null };
-    scene.add(sketchLayer.root, edgeLayer.root, faceLayer.root);
+    scene.add(sketchLayer.root, edgeLayer.root, faceLayer.root, pickedLayer.root);
     if (sketchLabels.current) sketchLayer.setHost(sketchLabels.current);
     sketchLayer.onEditDimension = (key, x, y) => callbacks.current.onEditDimension(key, x, y);
     resize();
@@ -1858,6 +1863,14 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     faceLayer.show(pf, at);
     t?.invalidate();
   }, [props.programFace, faceLayer]);
+
+  // Faces picked for a shell or draft: drawn where the part sits.
+  useEffect(() => {
+    const t = three.current;
+    const fp = props.facePicks;
+    pickedLayer.update(fp, fp ? (t?.parts.get(fp.id)?.group.position ?? null) : null);
+    t?.invalidate();
+  }, [props.facePicks, entities, pickedLayer]);
 
   // Edges being picked: drawn where the part sits (which can move while picking).
   useEffect(() => {

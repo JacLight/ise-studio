@@ -13,7 +13,7 @@ type Run = (operation: string, parameters: Record<string, unknown>) => Promise<u
 type Kind = EdgeFinish["kind"];
 export type FinishPreview = { id: string; stats: ShapeStats; mesh: MeshData } | null;
 
-const LABEL: Record<Kind, string> = { fillet: "Fillet", chamfer: "Chamfer", push: "Push" };
+const LABEL: Record<Kind, string> = { fillet: "Fillet", chamfer: "Chamfer", push: "Push", shell: "Shell", draft: "Draft" };
 
 /** The point halfway along a polyline. */
 function middle(points: [number, number, number][]): [number, number, number] {
