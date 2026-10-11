@@ -1097,6 +1097,7 @@ export function App({ engine }: { engine: Engine }) {
               onParamCommit={commitParam}
               onParamFormula={(key, expr) => selected && run("shape.link_param", { target: selected, key, expr })}
               onTurn={turn}
+              run={run}
               onPickFace={requestFace}
               onShowStress={showStress}
               onEdges={() => selected && edger.start(selected)}

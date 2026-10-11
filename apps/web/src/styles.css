@@ -5466,3 +5466,8 @@ button.download.drawing-open small {
 .project-card:not(.new) {
   grid-template-columns: minmax(0, 1fr);
 }
+
+.stress-item.lost {
+  color: #a33a33;
+  background: #fdeceb;
+}

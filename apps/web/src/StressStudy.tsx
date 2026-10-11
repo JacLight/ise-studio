@@ -7,8 +7,13 @@ import { projectUrl } from "./engine";
 import { Icon } from "./icons";
 import type { ProgramFace, StressView } from "./Viewport";
 
-type Face = { point: [number, number, number]; normal: [number, number, number]; triangles: number[] };
-type Load = { face: Face; magnitude: number; direction: Direction };
+type V3 = [number, number, number];
+type Face = { point: V3; normal: V3; triangles: number[] };
+/** A face as kept with the study: where on the part it sits (fractions of the part's bounds) and which way it faces. */
+type Pick = { at: V3; probe: V3; normal: V3 };
+type Spec = { part: string | null; supports: Pick[]; loads: { face: Pick; magnitude: number; direction: Direction }[]; resolution: number };
+/** The saved faces found on the part as it is now (null: no longer there). */
+type Resolved = { supports: (Face | null)[]; loads: { face: Face | null; force: V3 | null }[] };
 type Direction = "into" | "-z" | "+z" | "-x" | "+x" | "-y" | "+y";
 type Result = NonNullable<StressView["result"]> & { yield_strength: number; safety: number; elements: number; iterations: number; notes: string[] };
 type Modes = {
@@ -38,43 +43,70 @@ const RESOLUTIONS = [
 
 const n = (v: number, d = 1) => Number(v.toFixed(d)).toLocaleString("en-US");
 
-function forceOf(l: Load): [number, number, number] {
-  const unit: [number, number, number] =
-    l.direction === "into"
-      ? [-l.face.normal[0], -l.face.normal[1], -l.face.normal[2]]
-      : ({ "-z": [0, 0, -1], "+z": [0, 0, 1], "-x": [-1, 0, 0], "+x": [1, 0, 0], "-y": [0, -1, 0], "+y": [0, 1, 0] } as const)[l.direction].slice() as [number, number, number];
-  return unit.map((c) => c * l.magnitude) as [number, number, number];
-}
-
-const faceOf = (f: ProgramFace): Face => ({ point: f.centroid, normal: f.normal, triangles: Array.from(f.triangles) });
+const emptySpec = (part: string | null): Spec => ({ part, supports: [], loads: [], resolution: 56 });
 
 export function StressStudy(props: {
   id: string;
   part: string | null;
   version: unknown;
   material: string | null;
+  /** The part's bounds (part coordinates), to keep faces by where they sit. */
+  bounds: { min: V3; max: V3 } | null;
+  /** The shape's saved studies as stored (changes when anyone edits them). */
+  saved: unknown;
+  run: (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
   onPickFace: (purpose: string, take: (f: ProgramFace) => void) => void;
   onShow: (id: string, view: StressView | null) => void;
 }) {
-  const [supports, setSupports] = useState<Face[]>([]);
-  const [loads, setLoads] = useState<Load[]>([]);
-  const [resolution, setResolution] = useState(56);
+  const [spec, setSpec] = useState<Spec>(() => emptySpec(props.part));
+  const [resolved, setResolved] = useState<Resolved>({ supports: [], loads: [] });
+  const resolution = spec.resolution;
   const [state, setState] = useState<{ kind: "idle" | "busy" } | { kind: "done"; result: Result; material: string } | { kind: "error"; text: string }>({ kind: "idle" });
   const [deform, setDeform] = useState(false);
   const [vib, setVib] = useState<{ kind: "busy" } | { kind: "done"; modes: Modes } | { kind: "error"; text: string } | null>(null);
   const [mode, setMode] = useState<number | null>(null);
 
-  // A new version of the part (or another part) starts the study again.
+  // The saved study, its faces found on the part as it is now.
   useEffect(() => {
-    setSupports([]);
-    setLoads([]);
+    let live = true;
+    fetch(projectUrl(`/study/${props.id}${props.part ? `?part=${encodeURIComponent(props.part)}` : ""}`))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((out: ({ spec: Spec | null } & Partial<Resolved>) | null) => {
+        if (!live || !out) return;
+        setSpec(out.spec ?? emptySpec(props.part));
+        setResolved({ supports: out.supports ?? [], loads: out.loads ?? [] });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [props.id, props.part, props.version, props.saved]);
+  // Another part, or a new version of it: earlier results no longer apply.
+  useEffect(() => {
     setState({ kind: "idle" });
     setVib(null);
     setMode(null);
   }, [props.id, props.part, props.version]);
 
+  const supports = resolved.supports.filter((f): f is Face => !!f);
+  const loads = resolved.loads.filter((l): l is { face: Face; force: V3 } => !!l.face && !!l.force);
+  /** A picked face kept by where it sits on the part. */
+  const pickOf = (f: ProgramFace): Pick => {
+    const b = props.bounds;
+    const frac = (p: V3): V3 => (b ? ([0, 1, 2].map((k) => (b.max[k] - b.min[k] > 1e-9 ? (p[k] - b.min[k]) / (b.max[k] - b.min[k]) : 0.5)) as V3) : [0.5, 0.5, 0.5]);
+    const t = f.triangles;
+    const probe: V3 = [(t[0] + t[3] + t[6]) / 3, (t[1] + t[4] + t[7]) / 3, (t[2] + t[5] + t[8]) / 3];
+    return { at: frac(f.centroid), probe: frac(probe), normal: f.normal };
+  };
+  /** Keeps a change with the project (it syncs to teammates and undoes like any edit). */
+  const save = (next: Spec) => {
+    setSpec(next);
+    changed();
+    void props.run("shape.set_study", { target: props.id, study: { ...next, part: props.part } });
+  };
+
   const view = useMemo((): StressView => {
-    const faces: StressView["faces"] = [...supports.map((f) => ({ kind: "support" as const, triangles: f.triangles, point: f.point })), ...loads.map((l) => ({ kind: "load" as const, triangles: l.face.triangles, point: l.face.point, force: forceOf(l) }))];
+    const faces: StressView["faces"] = [...supports.map((f) => ({ kind: "support" as const, triangles: f.triangles, point: f.point })), ...loads.map((l) => ({ kind: "load" as const, triangles: l.face.triangles, point: l.face.point, force: l.force }))];
     // A vibration mode, when one is picked, shows swinging; else the stress map.
     if (vib?.kind === "done" && mode !== null) {
       const m = vib.modes.modes[mode];
@@ -92,7 +124,7 @@ export function StressStudy(props: {
       };
     }
     return { faces, result: state.kind === "done" ? state.result : undefined, deform: deform ? 1 : 0 };
-  }, [supports, loads, state, deform, vib, mode]);
+  }, [resolved, state, deform, vib, mode]); // eslint-disable-line react-hooks/exhaustive-deps
   const { id, onShow } = props;
   useEffect(() => {
     onShow(id, view.faces.length || view.result ? view : null);
@@ -105,7 +137,7 @@ export function StressStudy(props: {
       const r = await fetch(projectUrl(`/stress/${props.id}`), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ supports, loads: loads.map((l) => ({ face: l.face, force: forceOf(l) })), resolution, part: props.part }),
+        body: JSON.stringify({ supports, loads: loads.map((l) => ({ face: l.face, force: l.force })), resolution, part: props.part }),
       });
       if (!r.ok) return setState({ kind: "error", text: await r.text() });
       const out = (await r.json()) as { result: Result; material: string };
@@ -115,11 +147,11 @@ export function StressStudy(props: {
     }
   };
 
-  const changed = () => {
-    if (state.kind === "done") setState({ kind: "idle" });
+  function changed() {
+    setState((s) => (s.kind === "done" ? { kind: "idle" } : s));
     setVib(null);
     setMode(null);
-  };
+  }
   const ring = async () => {
     setVib({ kind: "busy" });
     setMode(null);
@@ -146,52 +178,53 @@ export function StressStudy(props: {
         <span className="section-note">{props.material ? `${props.material} · typical properties` : "Give the part a material first"}</span>
       </header>
       <div className="stress-list">
-        {supports.map((_, i) => (
-          <div key={`s${i}`} className="stress-item support">
+        {spec.supports.map((_, i) => (
+          <div key={`s${i}`} className={`stress-item support ${resolved.supports[i] === null ? "lost" : ""}`}>
             <span className="stress-dot" />
-            Held at face {i + 1}
-            <button type="button" aria-label="Remove this support" onClick={() => (setSupports(supports.filter((_, j) => j !== i)), changed())}>
+            {resolved.supports[i] === null ? "Face no longer found: pick it again" : `Held at face ${i + 1}`}
+            <button type="button" aria-label="Remove this support" onClick={() => save({ ...spec, supports: spec.supports.filter((_, j) => j !== i) })}>
               <Icon name="close" />
             </button>
           </div>
         ))}
-        {loads.map((l, i) => (
-          <div key={`l${i}`} className="stress-item load">
+        {spec.loads.map((l, i) => (
+          <div key={`l${i}`} className={`stress-item load ${resolved.loads[i]?.face === null ? "lost" : ""}`}>
             <span className="stress-dot" />
             <input
-              value={String(l.magnitude)}
+              defaultValue={String(l.magnitude)}
+              key={`${i}:${l.magnitude}`}
               inputMode="decimal"
               aria-label="Force in newtons"
-              onChange={(e) => {
+              onBlur={(e) => {
                 const v = Number(e.target.value);
-                if (Number.isFinite(v)) setLoads(loads.map((x, j) => (j === i ? { ...x, magnitude: v } : x)));
-                changed();
+                if (Number.isFinite(v) && v !== l.magnitude) save({ ...spec, loads: spec.loads.map((x, j) => (j === i ? { ...x, magnitude: v } : x)) });
               }}
+              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
             />
             N
-            <select value={l.direction} aria-label="Direction" onChange={(e) => (setLoads(loads.map((x, j) => (j === i ? { ...x, direction: e.target.value as Direction } : x))), changed())}>
+            <select value={l.direction} aria-label="Direction" onChange={(e) => save({ ...spec, loads: spec.loads.map((x, j) => (j === i ? { ...x, direction: e.target.value as Direction } : x)) })}>
               {DIRECTIONS.map((d) => (
                 <option key={d.value} value={d.value}>
                   {d.label}
                 </option>
               ))}
             </select>
-            <button type="button" aria-label="Remove this load" onClick={() => (setLoads(loads.filter((_, j) => j !== i)), changed())}>
+            <button type="button" aria-label="Remove this load" onClick={() => save({ ...spec, loads: spec.loads.filter((_, j) => j !== i) })}>
               <Icon name="close" />
             </button>
           </div>
         ))}
       </div>
       <div className="stress-add">
-        <button type="button" className="secondary" onClick={() => props.onPickFace("Click the face the part is held by", (f) => (setSupports((s) => [...s, faceOf(f)]), changed()))}>
+        <button type="button" className="secondary" onClick={() => props.onPickFace("Click the face the part is held by", (f) => save({ ...spec, supports: [...spec.supports, pickOf(f)] }))}>
           <Icon name="plus" /> Support
         </button>
-        <button type="button" className="secondary" onClick={() => props.onPickFace("Click the face the force pushes on", (f) => (setLoads((s) => [...s, { face: faceOf(f), magnitude: 100, direction: "into" }]), changed()))}>
+        <button type="button" className="secondary" onClick={() => props.onPickFace("Click the face the force pushes on", (f) => save({ ...spec, loads: [...spec.loads, { face: pickOf(f), magnitude: 100, direction: "into" }] }))}>
           <Icon name="plus" /> Load
         </button>
         <div className="segmented" role="group" aria-label="Resolution">
           {RESOLUTIONS.map((x) => (
-            <button key={x.value} type="button" className={x.value === resolution ? "active" : ""} aria-pressed={x.value === resolution} onClick={() => (setResolution(x.value), changed())}>
+            <button key={x.value} type="button" className={x.value === resolution ? "active" : ""} aria-pressed={x.value === resolution} onClick={() => save({ ...spec, resolution: x.value })}>
               {x.label}
             </button>
           ))}

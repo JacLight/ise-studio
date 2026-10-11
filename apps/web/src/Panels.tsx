@@ -303,6 +303,8 @@ export type PropertiesProps = {
   onDelete: () => void;
   /** Every entity, to resolve what each assembly part is made of. */
   entities: ReadonlyMap<string, EntityView>;
+  /** Commits a command (as the person). */
+  run: (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
   /** Picks a face in the view for a stress study (purpose is shown as a hint). */
   onPickFace: (purpose: string, take: (f: ProgramFace) => void) => void;
   /** Shows a stress study in the view (null clears it). */
@@ -610,6 +612,12 @@ export function PropertiesBody(props: PropertiesProps) {
           part={props.selectedPart}
           version={part.mesh}
           material={(props.selectedPart ? part.shape?.parts?.find((p) => p.name === props.selectedPart)?.material : null) ?? (current ? material(current)?.name : null) ?? null}
+          bounds={(() => {
+            const b = props.selectedPart ? part.shape?.parts?.find((p) => p.name === props.selectedPart) : part.shape;
+            return b ? { min: b.bounds_min, max: b.bounds_max } : null;
+          })()}
+          saved={part.components["shape.studies"]}
+          run={props.run}
           onPickFace={props.onPickFace}
           onShow={props.onShowStress}
         />
