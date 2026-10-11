@@ -1066,6 +1066,43 @@ async fn stress(State(server): State<Arc<Server>>, Path(id): Path<String>, Query
     }
 }
 
+#[derive(serde::Deserialize)]
+struct ThermalRequest {
+    #[serde(flatten)]
+    study: de_shape::fea::ThermalStudy,
+    #[serde(default)]
+    part: Option<String>,
+}
+
+/// Steady temperatures through a part, in its own material.
+async fn thermal(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>, axum::Json(req): axum::Json<ThermalRequest>) -> axum::response::Response {
+    let fail = |code: StatusCode, message: String| (code, message).into_response();
+    let app = match server.project(query.get("project")) {
+        Ok(app) => app,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let found = {
+        let project = app.project.lock().unwrap();
+        serde_json::from_value::<StableId>(json!(id)).ok().and_then(|sid| {
+            let e = project.entity(sid)?;
+            let program = de_shape::resolved_program(project.world(), e)?;
+            let part_material = req.part.as_ref().and_then(|n| project.get::<ShapeSolid>(sid)?.stats.parts.iter().find(|p| &p.name == n)?.material.clone());
+            let material = part_material.or_else(|| {
+                let m = project.get::<de_solid::MaterialRef>(sid)?;
+                project.get::<de_solid::Material>(m.0).map(|m| m.name.clone())
+            });
+            Some((program, material))
+        })
+    };
+    let Some((program, material)) = found else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
+    let Some(material) = material else { return fail(StatusCode::UNPROCESSABLE_ENTITY, "give the part a material first: how well it conducts heat comes from it".into()) };
+    match tokio::task::spawn_blocking(move || de_shape::thermal_study(&program, req.part.as_deref(), &material, &req.study).map(|r| (r, material))).await {
+        Ok(Ok((r, material))) => axum::Json(json!({ "result": r, "material": material })).into_response(),
+        Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
 /// A moving part checked for strength at the worst moment of its motion.
 async fn motion_stress(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
     let fail = |code: StatusCode, message: String| (code, message).into_response();
@@ -1127,7 +1164,9 @@ async fn study(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(
                 json!({ "face": face, "force": force })
             })
             .collect();
-        json!({ "spec": spec, "supports": supports, "loads": loads })
+        let holds: Vec<Value> = spec.holds.iter().map(|h| json!({ "face": de_shape::resolve_face(&program, spec.part.as_deref(), &h.face) })).collect();
+        let heats: Vec<Value> = spec.heats.iter().map(|h| json!({ "face": de_shape::resolve_face(&program, spec.part.as_deref(), &h.face) })).collect();
+        json!({ "spec": spec, "supports": supports, "loads": loads, "holds": holds, "heats": heats })
     })
     .await;
     match out {
@@ -1582,6 +1621,7 @@ async fn main() -> std::io::Result<()> {
         .route("/modes/{id}", axum::routing::post(modes))
         .route("/study/{id}", get(study))
         .route("/motion-stress/{id}", get(motion_stress))
+        .route("/thermal/{id}", axum::routing::post(thermal))
         .route("/team", get(team_status))
         .route("/team/invite", axum::routing::post(team_invite))
         .route("/team/settings", axum::routing::post(team_settings))

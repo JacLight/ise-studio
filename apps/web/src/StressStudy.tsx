@@ -11,9 +11,24 @@ type V3 = [number, number, number];
 type Face = { point: V3; normal: V3; triangles: number[] };
 /** A face as kept with the study: where on the part it sits (fractions of the part's bounds) and which way it faces. */
 type Pick = { at: V3; probe: V3; normal: V3 };
-type Spec = { part: string | null; supports: Pick[]; loads: { face: Pick; magnitude: number; direction: Direction }[]; resolution: number };
+type Convection = { h: number; ambient: number };
+type Spec = {
+  part: string | null;
+  supports: Pick[];
+  loads: { face: Pick; magnitude: number; direction: Direction }[];
+  holds: { face: Pick; temperature: number }[];
+  heats: { face: Pick; watts: number }[];
+  convection: Convection | null;
+  resolution: number;
+};
 /** The saved faces found on the part as it is now (null: no longer there). */
-type Resolved = { supports: (Face | null)[]; loads: { face: Face | null; force: V3 | null }[] };
+type Resolved = { supports: (Face | null)[]; loads: { face: Face | null; force: V3 | null }[]; holds: { face: Face | null }[]; heats: { face: Face | null }[] };
+type Temps = { cell: number; origin: V3; cells: [V3, number][]; max: number; min: number; heat_in: number; to_holds: number; to_air: number; notes: string[] };
+const AIR: { label: string; h: number }[] = [
+  { label: "No air", h: 0 },
+  { label: "Still air", h: 10 },
+  { label: "Fan", h: 50 },
+];
 type Direction = "into" | "-z" | "+z" | "-x" | "+x" | "-y" | "+y";
 type Result = NonNullable<StressView["result"]> & { yield_strength: number; safety: number; elements: number; iterations: number; notes: string[] };
 type Modes = {
@@ -43,7 +58,8 @@ const RESOLUTIONS = [
 
 const n = (v: number, d = 1) => Number(v.toFixed(d)).toLocaleString("en-US");
 
-const emptySpec = (part: string | null): Spec => ({ part, supports: [], loads: [], resolution: 56 });
+const emptySpec = (part: string | null): Spec => ({ part, supports: [], loads: [], holds: [], heats: [], convection: null, resolution: 56 });
+const noFaces: Resolved = { supports: [], loads: [], holds: [], heats: [] };
 
 export function StressStudy(props: {
   id: string;
@@ -59,7 +75,10 @@ export function StressStudy(props: {
   onShow: (id: string, view: StressView | null) => void;
 }) {
   const [spec, setSpec] = useState<Spec>(() => emptySpec(props.part));
-  const [resolved, setResolved] = useState<Resolved>({ supports: [], loads: [] });
+  const [resolved, setResolved] = useState<Resolved>(noFaces);
+  const [heat, setHeat] = useState<{ kind: "busy" } | { kind: "done"; temps: Temps } | { kind: "error"; text: string } | null>(null);
+  // Which result the view shows: the last one run.
+  const [showing, setShowing] = useState<"stress" | "modes" | "heat">("stress");
   const resolution = spec.resolution;
   const [state, setState] = useState<{ kind: "idle" | "busy" } | { kind: "done"; result: Result; material: string } | { kind: "error"; text: string }>({ kind: "idle" });
   const [deform, setDeform] = useState(false);
@@ -73,8 +92,8 @@ export function StressStudy(props: {
       .then((r) => (r.ok ? r.json() : null))
       .then((out: ({ spec: Spec | null } & Partial<Resolved>) | null) => {
         if (!live || !out) return;
-        setSpec(out.spec ?? emptySpec(props.part));
-        setResolved({ supports: out.supports ?? [], loads: out.loads ?? [] });
+        setSpec({ ...emptySpec(props.part), ...(out.spec ?? {}) });
+        setResolved({ supports: out.supports ?? [], loads: out.loads ?? [], holds: out.holds ?? [], heats: out.heats ?? [] });
       })
       .catch(() => {});
     return () => {
@@ -86,6 +105,7 @@ export function StressStudy(props: {
     setState({ kind: "idle" });
     setVib(null);
     setMode(null);
+    setHeat(null);
   }, [props.id, props.part, props.version]);
 
   const supports = resolved.supports.filter((f): f is Face => !!f);
@@ -106,7 +126,19 @@ export function StressStudy(props: {
   };
 
   const view = useMemo((): StressView => {
-    const faces: StressView["faces"] = [...supports.map((f) => ({ kind: "support" as const, triangles: f.triangles, point: f.point })), ...loads.map((l) => ({ kind: "load" as const, triangles: l.face.triangles, point: l.face.point, force: l.force }))];
+    const thermalFaces: StressView["faces"] = [
+      ...resolved.holds.flatMap((h) => (h.face ? [{ kind: "hold" as const, triangles: h.face.triangles, point: h.face.point }] : [])),
+      ...resolved.heats.flatMap((h) => (h.face ? [{ kind: "heat" as const, triangles: h.face.triangles, point: h.face.point }] : [])),
+    ];
+    if (showing === "heat" && heat?.kind === "done") {
+      const t = heat.temps;
+      return { faces: thermalFaces, result: { cell: t.cell, origin: t.origin, cells: t.cells.map(([c, v]) => [c, v - t.min] as [V3, number]), displacements: [], max_stress: Math.max(t.max - t.min, 1e-9), max_displacement: 1 } };
+    }
+    const faces: StressView["faces"] = [
+      ...supports.map((f) => ({ kind: "support" as const, triangles: f.triangles, point: f.point })),
+      ...loads.map((l) => ({ kind: "load" as const, triangles: l.face.triangles, point: l.face.point, force: l.force })),
+      ...thermalFaces,
+    ];
     // A vibration mode, when one is picked, shows swinging; else the stress map.
     if (vib?.kind === "done" && mode !== null) {
       const m = vib.modes.modes[mode];
@@ -124,7 +156,7 @@ export function StressStudy(props: {
       };
     }
     return { faces, result: state.kind === "done" ? state.result : undefined, deform: deform ? 1 : 0 };
-  }, [resolved, state, deform, vib, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [resolved, state, deform, vib, mode, heat, showing]); // eslint-disable-line react-hooks/exhaustive-deps
   const { id, onShow } = props;
   useEffect(() => {
     onShow(id, view.faces.length || view.result ? view : null);
@@ -142,6 +174,7 @@ export function StressStudy(props: {
       if (!r.ok) return setState({ kind: "error", text: await r.text() });
       const out = (await r.json()) as { result: Result; material: string };
       setState({ kind: "done", result: out.result, material: out.material });
+      setShowing("stress");
     } catch {
       setState({ kind: "error", text: "The engine did not answer" });
     }
@@ -151,7 +184,27 @@ export function StressStudy(props: {
     setState((s) => (s.kind === "done" ? { kind: "idle" } : s));
     setVib(null);
     setMode(null);
+    setHeat(null);
   }
+  const holds = resolved.holds.map((h, i) => (h.face ? { face: h.face, temperature: spec.holds[i]?.temperature ?? 20 } : null)).filter((x): x is { face: Face; temperature: number } => !!x);
+  const heats = resolved.heats.map((h, i) => (h.face ? { face: h.face, watts: spec.heats[i]?.watts ?? 0 } : null)).filter((x): x is { face: Face; watts: number } => !!x);
+  const runHeat = async () => {
+    setHeat({ kind: "busy" });
+    setMode(null);
+    try {
+      const r = await fetch(projectUrl(`/thermal/${props.id}`), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ holds, heats, convection: spec.convection && spec.convection.h > 0 ? spec.convection : null, resolution: Math.min(resolution, 72), part: props.part }),
+      });
+      if (!r.ok) return setHeat({ kind: "error", text: await r.text() });
+      const out = (await r.json()) as { result: Temps };
+      setHeat({ kind: "done", temps: out.result });
+      setShowing("heat");
+    } catch {
+      setHeat({ kind: "error", text: "The engine did not answer" });
+    }
+  };
   const ring = async () => {
     setVib({ kind: "busy" });
     setMode(null);
@@ -165,6 +218,7 @@ export function StressStudy(props: {
       const modes = (await r.json()) as Modes;
       setVib({ kind: "done", modes });
       setMode(0);
+      setShowing("modes");
     } catch {
       setVib({ kind: "error", text: "The engine did not answer" });
     }
@@ -276,6 +330,105 @@ export function StressStudy(props: {
           <p className="motion-note">{r.notes.join(" ")}</p>
         </div>
       )}
+      <div className="heat-block">
+        <h4>Heat</h4>
+        <div className="stress-list">
+          {spec.holds.map((h, i) => (
+            <div key={`h${i}`} className={`stress-item hold ${resolved.holds[i]?.face === null ? "lost" : ""}`}>
+              <span className="stress-dot" />
+              Held at
+              <input
+                defaultValue={String(h.temperature)}
+                key={`${i}:${h.temperature}`}
+                inputMode="decimal"
+                aria-label="Temperature in degrees Celsius"
+                onBlur={(e) => {
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v) && v !== h.temperature) save({ ...spec, holds: spec.holds.map((x, j) => (j === i ? { ...x, temperature: v } : x)) });
+                }}
+                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              />
+              °C
+              <button type="button" aria-label="Remove" onClick={() => save({ ...spec, holds: spec.holds.filter((_, j) => j !== i) })}>
+                <Icon name="close" />
+              </button>
+            </div>
+          ))}
+          {spec.heats.map((h, i) => (
+            <div key={`q${i}`} className={`stress-item heat ${resolved.heats[i]?.face === null ? "lost" : ""}`}>
+              <span className="stress-dot" />
+              <input
+                defaultValue={String(h.watts)}
+                key={`${i}:${h.watts}`}
+                inputMode="decimal"
+                aria-label="Heat in watts"
+                onBlur={(e) => {
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v) && v !== h.watts) save({ ...spec, heats: spec.heats.map((x, j) => (j === i ? { ...x, watts: v } : x)) });
+                }}
+                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              />
+              W coming in
+              <button type="button" aria-label="Remove" onClick={() => save({ ...spec, heats: spec.heats.filter((_, j) => j !== i) })}>
+                <Icon name="close" />
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="stress-add">
+          <button type="button" className="secondary" onClick={() => props.onPickFace("Click the face held at a temperature (a heatsink, a wall)", (f) => save({ ...spec, holds: [...spec.holds, { face: pickOf(f), temperature: 20 }] }))}>
+            <Icon name="plus" /> Held at °C
+          </button>
+          <button type="button" className="secondary" onClick={() => props.onPickFace("Click the face the heat comes in through (a motor, a chip)", (f) => save({ ...spec, heats: [...spec.heats, { face: pickOf(f), watts: 5 }] }))}>
+            <Icon name="plus" /> Heat in
+          </button>
+          <div className="segmented" role="group" aria-label="Air cooling">
+            {AIR.map((a) => (
+              <button
+                key={a.h}
+                type="button"
+                className={(spec.convection?.h ?? 0) === a.h ? "active" : ""}
+                aria-pressed={(spec.convection?.h ?? 0) === a.h}
+                title={a.h ? `${a.h} W/m²·K, air at ${spec.convection?.ambient ?? 20} °C` : "No cooling by air"}
+                onClick={() => save({ ...spec, convection: a.h ? { h: a.h, ambient: spec.convection?.ambient ?? 20 } : null })}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <button type="button" className="secondary stress-run heat-run" disabled={(!holds.length && !(spec.convection && spec.convection.h > 0)) || heat?.kind === "busy" || !props.material} onClick={runHeat} title="Steady temperatures: where it gets hot, and where the heat goes">
+          <Icon name="alert" /> {heat?.kind === "busy" ? "Solving…" : "Heat"}
+        </button>
+        {heat?.kind === "error" && <p className="print-note bad">{heat.text}</p>}
+        {heat?.kind === "done" && (
+          <div className="stress-result">
+            <dl>
+              <dt>Hottest</dt>
+              <dd>{n(heat.temps.max, 1)} °C</dd>
+              <dt>Coolest</dt>
+              <dd>{n(heat.temps.min, 1)} °C</dd>
+              <dt>Heat in</dt>
+              <dd>{n(heat.temps.heat_in, 2)} W</dd>
+              <dt>Out to holds · air</dt>
+              <dd>
+                {n(heat.temps.to_holds, 2)} W · {n(heat.temps.to_air, 2)} W
+              </dd>
+            </dl>
+            <div className="stress-legend heat-legend" aria-hidden="true">
+              <span>{n(heat.temps.min, 0)} °C</span>
+              <i />
+              <span>{n(heat.temps.max, 0)} °C</span>
+            </div>
+            {showing !== "heat" && (
+              <button type="button" className="link-button" onClick={() => setShowing("heat")}>
+                Show the temperatures
+              </button>
+            )}
+            <p className="motion-note">{heat.temps.notes.join(" ")}</p>
+          </div>
+        )}
+      </div>
     </section>
   );
 }

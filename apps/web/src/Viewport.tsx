@@ -64,7 +64,7 @@ export type ViewName = "perspective" | "top" | "front" | "bottom";
 
 /** A stress study as the view shows it (part coordinates, mm). */
 export type StressView = {
-  faces: { kind: "support" | "load"; triangles: number[]; point: [number, number, number]; force?: [number, number, number] }[];
+  faces: { kind: "support" | "load" | "hold" | "heat"; triangles: number[]; point: [number, number, number]; force?: [number, number, number] }[];
   result?: {
     cell: number;
     origin: [number, number, number];
@@ -1894,7 +1894,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         g.setAttribute("position", new THREE.Float32BufferAttribute(f.triangles, 3));
         const tint = new THREE.Mesh(
           g,
-          new THREE.MeshBasicMaterial({ color: f.kind === "support" ? "#2f8a5b" : "#e0761f", transparent: true, opacity: view.result ? 0.22 : 0.55, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }),
+          new THREE.MeshBasicMaterial({ color: { support: "#2f8a5b", load: "#e0761f", hold: "#2b6fd6", heat: "#d6372b" }[f.kind], transparent: true, opacity: view.result ? 0.22 : 0.55, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }),
         );
         tint.renderOrder = 960;
         group.add(tint);

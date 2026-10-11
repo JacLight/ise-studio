@@ -103,8 +103,35 @@ pub struct StudySpec {
     pub supports: Vec<FacePick>,
     #[serde(default)]
     pub loads: Vec<LoadPick>,
+    /// Heat: faces held at temperatures, heat coming in, air cooling.
+    #[serde(default)]
+    pub holds: Vec<HoldPick>,
+    #[serde(default)]
+    pub heats: Vec<HeatPick>,
+    #[serde(default)]
+    pub convection: Option<Convection>,
     #[serde(default = "default_resolution")]
     pub resolution: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+pub struct HoldPick {
+    pub face: FacePick,
+    /// °C.
+    pub temperature: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+pub struct HeatPick {
+    pub face: FacePick,
+    pub watts: f64,
+}
+
+impl StudySpec {
+    /// Nothing set: the study can go.
+    pub fn is_empty(&self) -> bool {
+        self.supports.is_empty() && self.loads.is_empty() && self.holds.is_empty() && self.heats.is_empty() && self.convection.is_none()
+    }
 }
 
 impl LoadPick {
@@ -437,6 +464,25 @@ fn voxelize(positions: &[f32], triangles: &[u32], resolution: usize) -> Grid {
     grid
 }
 
+/// How much of the part each node serves (the cubes around it, by fill): a
+/// face load shared by these weights spreads evenly over the face's area,
+/// instead of piling onto its corners.
+fn node_shares(nodes: usize, corners: &[[usize; 8]], weight: &[f64]) -> Vec<f64> {
+    let mut share = vec![0.0; nodes];
+    for (c, w) in corners.iter().zip(weight) {
+        for &n in c {
+            share[n] += w;
+        }
+    }
+    share
+}
+
+/// Spreads `total` over `on` by their shares.
+fn spread(on: &[usize], share: &[f64], total: f64) -> Vec<(usize, f64)> {
+    let sum: f64 = on.iter().map(|&n| share[n]).sum();
+    on.iter().map(|&n| (n, if sum > 0.0 { total * share[n] / sum } else { total / on.len() as f64 })).collect()
+}
+
 /// Grid nodes the part uses nearest an axis: within a cube and a half of the closest.
 fn nodes_on_bore(grid: &Grid, used: &[bool], bore: &Bore) -> Vec<usize> {
     let l = (bore.axis[0] * bore.axis[0] + bore.axis[1] * bore.axis[1] + bore.axis[2] * bore.axis[2]).sqrt().max(1e-12);
@@ -645,14 +691,15 @@ pub fn solve(positions: &[f32], triangles: &[u32], material: &Elastic, study: &S
     let h = grid.h;
     let mut notes = vec![];
     let mut f = vec![0.0; 3 * nodes];
+    let share = node_shares(nodes, corners, &model.weight);
     for (l, load) in study.loads.iter().enumerate() {
         let on: Vec<usize> = nodes_on(grid, used, &load.face).into_iter().filter(|&n| !fixed[3 * n]).collect();
         if on.is_empty() {
             return Err(format!("load {} touches no free part of the part", l + 1));
         }
-        for &n in &on {
-            for d in 0..3 {
-                f[3 * n + d] += load.force[d] / on.len() as f64;
+        for d in 0..3 {
+            for (n, v) in spread(&on, &share, load.force[d]) {
+                f[3 * n + d] += v;
             }
         }
     }
@@ -661,9 +708,9 @@ pub fn solve(positions: &[f32], triangles: &[u32], material: &Elastic, study: &S
         if on.is_empty() {
             return Err(format!("bore load {} touches no free part of the part", l + 1));
         }
-        for &n in &on {
-            for d in 0..3 {
-                f[3 * n + d] += load.force[d] / on.len() as f64;
+        for d in 0..3 {
+            for (n, v) in spread(&on, &share, load.force[d]) {
+                f[3 * n + d] += v;
             }
         }
     }
@@ -932,4 +979,284 @@ pub fn modes(positions: &[f32], triangles: &[u32], material: &Elastic, density: 
         mass: cube * model.weight.iter().sum::<f64>(),
         notes,
     })
+}
+
+// ---- Heat ------------------------------------------------------------------------
+
+/// Thermal conductivity (W/m·K), typical by material name.
+pub fn conductivity(material: &str) -> Option<f64> {
+    let m = material.to_lowercase();
+    Some(if m.contains("stainless") {
+        16.0
+    } else if m.contains("steel") {
+        50.0
+    } else if m.contains("alumin") {
+        167.0
+    } else if m.contains("copper") {
+        400.0
+    } else if m.contains("brass") {
+        110.0
+    } else if m.contains("titan") {
+        7.0
+    } else if m.contains("pla") {
+        0.13
+    } else if m.contains("petg") {
+        0.2
+    } else if m.contains("abs") {
+        0.17
+    } else if m.contains("nylon") {
+        0.25
+    } else if m.contains("acetal") || m.contains("pom") {
+        0.31
+    } else if m.contains("oak") {
+        0.17
+    } else if m.contains("ply") {
+        0.13
+    } else if m.contains("mdf") {
+        0.12
+    } else if m.contains("glass") {
+        1.0
+    } else if m.contains("concrete") {
+        1.7
+    } else {
+        return None;
+    })
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Hold {
+    pub face: Face,
+    /// °C.
+    pub temperature: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Heat {
+    pub face: Face,
+    /// Watts going in (negative: taken out).
+    pub watts: f64,
+}
+
+/// Air carrying heat away from every outside face.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+pub struct Convection {
+    /// W/m²·K: about 5–10 still air, 25–100 a fan.
+    pub h: f64,
+    /// °C.
+    pub ambient: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ThermalStudy {
+    #[serde(default)]
+    pub holds: Vec<Hold>,
+    #[serde(default)]
+    pub heats: Vec<Heat>,
+    #[serde(default)]
+    pub convection: Option<Convection>,
+    #[serde(default = "default_resolution")]
+    pub resolution: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Temperatures {
+    pub cell: f64,
+    pub origin: [f64; 3],
+    /// Filled cubes and their temperature (°C).
+    pub cells: Vec<([u32; 3], f32)>,
+    pub max: f64,
+    pub min: f64,
+    /// Watts flowing in through the heated faces, and out through holds and air.
+    pub heat_in: f64,
+    pub to_holds: f64,
+    pub to_air: f64,
+    pub notes: Vec<String>,
+}
+
+/// Conductance of a cube of side h (mm) per unit conductivity (W/mm·K): 8×8.
+fn cube_conductance(h: f64) -> [[f64; 8]; 8] {
+    let gp = 1.0 / 3f64.sqrt();
+    let w = (h / 2.0).powi(3);
+    let mut k = [[0.0; 8]; 8];
+    for c in CORNERS {
+        let xi = [c[0] * gp, c[1] * gp, c[2] * gp];
+        let grad: Vec<[f64; 3]> = CORNERS
+            .iter()
+            .map(|n| {
+                let f = |q: usize| 1.0 + xi[q] * n[q];
+                [n[0] * f(1) * f(2) / 8.0 * 2.0 / h, n[1] * f(0) * f(2) / 8.0 * 2.0 / h, n[2] * f(0) * f(1) / 8.0 * 2.0 / h]
+            })
+            .collect();
+        for a in 0..8 {
+            for b in 0..8 {
+                k[a][b] += w * (grad[a][0] * grad[b][0] + grad[a][1] * grad[b][1] + grad[a][2] * grad[b][2]);
+            }
+        }
+    }
+    k
+}
+
+/// Steady temperatures through a part: conduction inside, faces held at
+/// temperatures, heat in through faces, and air cooling on the outside.
+/// `k` in W/m·K.
+pub fn thermal(positions: &[f32], triangles: &[u32], k: f64, study: &ThermalStudy) -> Result<Temperatures, String> {
+    if study.holds.is_empty() && study.convection.is_none() {
+        return Err("hold a face at a temperature, or cool it with air: heat needs somewhere to go".into());
+    }
+    let grid = voxelize(positions, triangles, study.resolution.clamp(8, 160));
+    let h = grid.h;
+    let cells: Vec<[usize; 3]> = (0..grid.n[2]).flat_map(|z| (0..grid.n[1]).flat_map(move |y| (0..grid.n[0]).map(move |x| [x, y, z]))).filter(|&[i, j, kk]| grid.fill[grid.cell(i, j, kk)] >= MIN_FILL).collect();
+    if cells.is_empty() {
+        return Err("the part is too thin for this resolution: raise it".into());
+    }
+    let nodes = (grid.n[0] + 1) * (grid.n[1] + 1) * (grid.n[2] + 1);
+    let corners: Vec<[usize; 8]> = cells.iter().map(|&[i, j, kk]| grid.corners(i, j, kk)).collect();
+    let weight: Vec<f64> = cells.iter().map(|&[i, j, kk]| (grid.fill[grid.cell(i, j, kk)] as f64).min(1.0)).collect();
+    let mut used = vec![false; nodes];
+    for c in &corners {
+        for &n in c {
+            used[n] = true;
+        }
+    }
+    let ke = cube_conductance(h);
+    let k_mm = k / 1000.0; // W/mm·K
+    // Air: each outside face of a cube (no filled neighbour) sheds h·A·(T − ambient), shared by its 4 corners.
+    let mut air = vec![0.0; nodes]; // W/K at each node
+    let filled = |i: i64, j: i64, kk: i64| i >= 0 && j >= 0 && kk >= 0 && (i as usize) < grid.n[0] && (j as usize) < grid.n[1] && (kk as usize) < grid.n[2] && grid.fill[grid.cell(i as usize, j as usize, kk as usize)] >= MIN_FILL;
+    let mut air_area = 0.0;
+    if let Some(cv) = study.convection {
+        let per_face = cv.h * 1e-6 * h * h; // W/K for one cube face (W/m²K × mm² → ×1e-6)
+        for &[i, j, kk] in &cells {
+            let (i, j, kk) = (i as i64, j as i64, kk as i64);
+            for (d, quad) in [([-1, 0, 0], [0usize, 3, 7, 4]), ([1, 0, 0], [1, 2, 6, 5]), ([0, -1, 0], [0, 1, 5, 4]), ([0, 1, 0], [3, 2, 6, 7]), ([0, 0, -1], [0, 1, 2, 3]), ([0, 0, 1], [4, 5, 6, 7])] {
+                if filled(i + d[0], j + d[1], kk + d[2]) {
+                    continue;
+                }
+                let c = grid.corners(i as usize, j as usize, kk as usize);
+                for q in quad {
+                    air[c[q]] += per_face / 4.0;
+                }
+                air_area += h * h;
+            }
+        }
+    }
+    // Held nodes and their temperatures; heat in at the nodes of heated faces.
+    let mut fixed: Vec<Option<f64>> = vec![None; nodes];
+    for (s, hold) in study.holds.iter().enumerate() {
+        let on = nodes_on(&grid, &used, &hold.face);
+        if on.is_empty() {
+            return Err(format!("held face {} touches no part of the part", s + 1));
+        }
+        for n in on {
+            fixed[n] = Some(hold.temperature);
+        }
+    }
+    let mut q = vec![0.0; nodes];
+    let mut heat_in = 0.0;
+    let share = node_shares(nodes, &corners, &weight);
+    for (s, heat) in study.heats.iter().enumerate() {
+        let on: Vec<usize> = nodes_on(&grid, &used, &heat.face).into_iter().filter(|&n| fixed[n].is_none()).collect();
+        if on.is_empty() {
+            return Err(format!("heated face {} touches no free part of the part", s + 1));
+        }
+        for (n, v) in spread(&on, &share, heat.watts) {
+            q[n] += v;
+        }
+        heat_in += heat.watts;
+    }
+    if let Some(cv) = study.convection {
+        for n in 0..nodes {
+            q[n] += air[n] * cv.ambient;
+        }
+    }
+    // K·T (conduction plus air), all nodes.
+    let apply = |t: &[f64]| -> Vec<f64> {
+        let mut y = corners
+            .par_chunks(4096)
+            .zip(weight.par_chunks(4096))
+            .fold(
+                || vec![0.0; nodes],
+                |mut y, (chunk, ws)| {
+                    for (c, w) in chunk.iter().zip(ws) {
+                        for a in 0..8 {
+                            let mut s = 0.0;
+                            for b in 0..8 {
+                                s += ke[a][b] * t[c[b]];
+                            }
+                            y[c[a]] += w * k_mm * s;
+                        }
+                    }
+                    y
+                },
+            )
+            .reduce(|| vec![0.0; nodes], |mut a, b| {
+                a.iter_mut().zip(&b).for_each(|(x, y)| *x += y);
+                a
+            });
+        y.iter_mut().zip(&air).zip(t).for_each(|((y, a), t)| *y += a * t);
+        y
+    };
+    let free = |n: usize| used[n] && fixed[n].is_none();
+    // T = T_held on held nodes; solve the rest of K·T = q for the free ones.
+    let mut t: Vec<f64> = (0..nodes).map(|n| fixed[n].unwrap_or(0.0)).collect();
+    let mut diag = air.clone();
+    for (c, w) in corners.iter().zip(&weight) {
+        for a in 0..8 {
+            diag[c[a]] += w * k_mm * ke[a][a];
+        }
+    }
+    let mask = |v: &mut Vec<f64>| v.iter_mut().enumerate().for_each(|(n, x)| if !free(n) { *x = 0.0 });
+    let kt = apply(&t);
+    let mut r: Vec<f64> = q.iter().zip(&kt).map(|(a, b)| a - b).collect();
+    mask(&mut r);
+    let rnorm0 = r.iter().map(|v| v * v).sum::<f64>().sqrt().max(1e-300);
+    let pre = |r: &[f64]| -> Vec<f64> { r.iter().zip(&diag).enumerate().map(|(n, (v, d))| if free(n) && *d > 0.0 { v / d } else { 0.0 }).collect() };
+    let mut z = pre(&r);
+    let mut p = z.clone();
+    let mut rz: f64 = r.iter().zip(&z).map(|(a, b)| a * b).sum();
+    let mut it = 0;
+    while it < 20_000 && r.iter().map(|v| v * v).sum::<f64>().sqrt() > 1e-10 * rnorm0 {
+        let mut ap = apply(&p);
+        mask(&mut ap);
+        let pap: f64 = p.iter().zip(&ap).map(|(a, b)| a * b).sum();
+        if pap.abs() < 1e-300 {
+            break;
+        }
+        let alpha = rz / pap;
+        t.iter_mut().zip(&p).for_each(|(x, y)| *x += alpha * y);
+        r.iter_mut().zip(&ap).for_each(|(x, y)| *x -= alpha * y);
+        z = pre(&r);
+        let rz2: f64 = r.iter().zip(&z).map(|(a, b)| a * b).sum();
+        p.iter_mut().zip(&z).for_each(|(x, y)| *x = y + rz2 / rz * *x);
+        rz = rz2;
+        it += 1;
+    }
+    // Where the heat went: into the holds (their reaction) and to the air.
+    let kt = apply(&t);
+    // A held node takes out what conduction brings it beyond its own input: q − K·T there.
+    let to_holds: f64 = (0..nodes).filter(|&n| used[n] && fixed[n].is_some()).map(|n| q[n] - kt[n]).sum();
+    let to_air: f64 = study.convection.map_or(0.0, |cv| (0..nodes).filter(|&n| used[n]).map(|n| air[n] * (t[n] - cv.ambient)).sum());
+    let cell_t: Vec<f64> = corners.iter().map(|c| c.iter().map(|&n| t[n]).sum::<f64>() / 8.0).collect();
+    let (max, min) = (0..nodes).filter(|&n| used[n]).fold((f64::NEG_INFINITY, f64::INFINITY), |(hi, lo), n| (hi.max(t[n]), lo.min(t[n])));
+    let mut notes = vec![format!("{} cubes of {} mm; conductivity {} W/m·K (typical).", cells.len(), crate::drawing::length_text(h), k)];
+    if study.convection.is_some() {
+        notes.push(format!("Air cools {} cm² of outside surface (as the cubes' faces).", crate::drawing::length_text(air_area / 100.0)));
+    }
+    Ok(Temperatures {
+        cell: h,
+        origin: grid.origin,
+        cells: cells.iter().zip(&cell_t).map(|(c, v)| (c.map(|x| x as u32), *v as f32)).collect(),
+        max,
+        min,
+        heat_in,
+        to_holds,
+        to_air,
+        notes,
+    })
+}
+
+/// The temperature at the cube nearest a point (°C).
+pub fn temperature_at(r: &Temperatures, point: [f64; 3]) -> Option<f64> {
+    let idx = [0, 1, 2].map(|k| ((point[k] - r.origin[k]) / r.cell - 0.5).round() as i64);
+    r.cells.iter().find(|(c, _)| (0..3).all(|k| c[k] as i64 == idx[k])).map(|(_, s)| *s as f64)
 }

@@ -969,3 +969,50 @@ fn a_connecting_rod_is_checked_at_its_hardest_moment() {
     eprintln!("rod mid-shank {mid:.2} MPa vs F/A {want:.2} MPa");
     assert!((mid - want).abs() < want * 0.1, "mid-shank {mid:.1} MPa vs F/A = {want:.1} MPa");
 }
+
+fn end_face(x: f64, n: f64, s: f64) -> de_shape::fea::Face {
+    de_shape::fea::Face { point: [x, s / 2.0, s / 2.0], normal: [n, 0.0, 0.0], triangles: vec![x, 0.0, 0.0, x, s, 0.0, x, s, s, x, 0.0, 0.0, x, s, s, x, 0.0, s] }
+}
+
+#[test]
+fn heat_flows_along_a_bar_as_fouriers_law_says() {
+    // Aluminium 100 × 10 × 10 mm, held at 20 °C at x = 0, 10 W in at x = 100: T(x) = 20 + Q·x/(k·A).
+    let e = runtime::evaluate("return box(100, 10, 10);", &[], 0.01).unwrap();
+    let k = de_shape::fea::conductivity("Aluminium").unwrap();
+    let study = de_shape::fea::ThermalStudy {
+        holds: vec![de_shape::fea::Hold { face: end_face(0.0, -1.0, 10.0), temperature: 20.0 }],
+        heats: vec![de_shape::fea::Heat { face: end_face(100.0, 1.0, 10.0), watts: 10.0 }],
+        convection: None,
+        resolution: 50,
+    };
+    let r = de_shape::fea::thermal(&e.positions, &e.indices, k, &study).unwrap();
+    let at = |x: f64| 20.0 + 10.0 * (x / 1000.0) / (k * 1e-4);
+    for x in [25.0, 51.0, 77.0] {
+        let x = (x / r.cell).floor() * r.cell + r.cell / 2.0;
+        let got = de_shape::fea::temperature_at(&r, [x, 5.0, 5.0]).unwrap();
+        assert!((got - at(x)).abs() < (at(x) - 20.0) * 0.02 + 0.05, "at x = {x}: {got:.2} °C vs {:.2} °C", at(x));
+    }
+    assert!((r.max - at(100.0)).abs() < (at(100.0) - 20.0) * 0.02, "hottest {:.2} vs {:.2}", r.max, at(100.0));
+    assert!((r.to_holds - 10.0).abs() < 1e-3, "all 10 W leave through the held end: {}", r.to_holds);
+}
+
+#[test]
+fn a_block_in_still_air_settles_where_its_surface_sheds_the_heat() {
+    // Copper 50 mm cube, 5 W in on one face, still air (h = 10 W/m²K) at 20 °C on all six faces:
+    // conduction is quick, so T ≈ 20 + Q/(h·A), A = 6 × 2500 mm².
+    let e = runtime::evaluate("return box(50, 50, 50);", &[], 0.01).unwrap();
+    let k = de_shape::fea::conductivity("Copper").unwrap();
+    let study = de_shape::fea::ThermalStudy {
+        holds: vec![],
+        heats: vec![de_shape::fea::Heat { face: end_face(50.0, 1.0, 50.0), watts: 5.0 }],
+        convection: Some(de_shape::fea::Convection { h: 10.0, ambient: 20.0 }),
+        resolution: 24,
+    };
+    let r = de_shape::fea::thermal(&e.positions, &e.indices, k, &study).unwrap();
+    let want = 20.0 + 5.0 / (10.0 * 6.0 * 0.05 * 0.05);
+    let mean = r.cells.iter().map(|(_, t)| *t as f64).sum::<f64>() / r.cells.len() as f64;
+    eprintln!("block: mean {mean:.2} °C (want {want:.2}), spread {:.3}, to air {:.4} W", r.max - r.min, r.to_air);
+    assert!((mean - want).abs() < 0.2, "mean {mean:.2} vs {want:.2}");
+    assert!(r.max - r.min < 0.5, "copper evens it out");
+    assert!((r.to_air - 5.0).abs() < 1e-3, "all 5 W go to the air: {}", r.to_air);
+}

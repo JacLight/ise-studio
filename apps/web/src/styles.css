@@ -5492,3 +5492,33 @@ button.download.drawing-open small {
   height: 28px;
   font-size: 11px;
 }
+
+.heat-block {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #ece8f2;
+}
+
+.heat-block h4 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8a8398;
+}
+
+.stress-item.hold .stress-dot {
+  background: #2b6fd6;
+}
+
+.stress-item.heat .stress-dot {
+  background: #d6372b;
+}
+
+.heat-run {
+  width: 100%;
+  margin-top: 0 !important;
+}

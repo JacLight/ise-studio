@@ -256,7 +256,7 @@ impl Command for SetStudy {
         }
         let mut studies = tx.get::<ShapeStudies>(self.target).cloned().unwrap_or_default();
         studies.0.retain(|s| s.part != self.study.part);
-        if !self.study.supports.is_empty() || !self.study.loads.is_empty() {
+        if !self.study.is_empty() {
             studies.0.push(self.study);
         }
         if studies.0.is_empty() {
@@ -707,6 +707,21 @@ pub fn stress_study(program: &ShapeProgram, part: Option<&str>, material: &str, 
         None => (0, e.indices.len()),
     };
     fea::solve(&e.positions, &e.indices[start..start + count], &props, study)
+}
+
+/// Steady temperatures through a program's solid (or one part) in its material.
+pub fn thermal_study(program: &ShapeProgram, part: Option<&str>, material: &str, study: &fea::ThermalStudy) -> Result<fea::Temperatures, String> {
+    let k = fea::conductivity(material).ok_or_else(|| format!("no conductivity figure for “{material}”"))?;
+    let e = evaluated_at(program, program.display_tolerance())?;
+    let (start, count) = match part {
+        Some(name) => {
+            let p = e.parts.iter().find(|p| p.name == name).ok_or_else(|| format!("no part called “{name}”"))?;
+            (p.index_start, p.index_count)
+        }
+        None if e.parts.len() > 1 => return Err("pick one part of the assembly to study".into()),
+        None => (0, e.indices.len()),
+    };
+    fea::thermal(&e.positions, &e.indices[start..start + count], k, study)
 }
 
 /// A moving part checked at the worst moment of its motion.
