@@ -45,6 +45,7 @@ const TITLES: Record<PanelKind, string> = {
   requirements: "Requirements",
   history: "Change history",
   views: "View",
+  comments: "Comments",
 };
 
 export function ToolPanel(props: { kind: PanelKind; title?: string; onClose: () => void; children: ReactNode }) {

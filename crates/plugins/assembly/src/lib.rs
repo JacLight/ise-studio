@@ -24,6 +24,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub mod comments;
+pub use comments::{Anchor, CommentReply, CommentThread, Stroke};
+
 pub struct AssemblyPlugin;
 
 impl Plugin for AssemblyPlugin {
@@ -43,6 +46,14 @@ impl Plugin for AssemblyPlugin {
             .command::<UpdateInstance>()
             .command::<MakeUnique>()
             .command::<DeleteInstance>()
+            .component::<CommentThread>()
+            .component::<CommentReply>()
+            .command::<comments::CreateComment>()
+            .command::<comments::ReplyComment>()
+            .command::<comments::ResolveComment>()
+            .command::<comments::ReopenComment>()
+            .command::<comments::EditComment>()
+            .command::<comments::DeleteComment>()
             .derived(Derived {
                 name: "assembly.stats",
                 inputs: &[AssemblyDef::KIND, Instance::KIND],

@@ -223,6 +223,12 @@ const OPERATIONS: Record<string, string> = {
   "core.entity.delete": "Deleted an object",
   "intent.requirement.create": "Added a requirement",
   "intent.requirement.update": "Changed a requirement",
+  "comment.create": "Commented",
+  "comment.reply": "Replied to a comment",
+  "comment.resolve": "Resolved a comment",
+  "comment.reopen": "Reopened a comment",
+  "comment.edit": "Edited a comment",
+  "comment.delete": "Deleted a comment",
   "core.undo": "Undid a change",
   "core.redo": "Redid a change",
 };

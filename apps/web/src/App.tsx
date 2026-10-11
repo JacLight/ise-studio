@@ -18,6 +18,7 @@ import { sketchOf } from "./sketchModel";
 import { ComponentTree, InstanceBody, ParameterSets, StackingPlan, parameterSet, stackingSubject } from "./Components";
 import { type AiMode, type Group, type PanelKind, type UiPrefs, loadPrefs, savePrefs } from "./ui";
 import { ProjectsHome } from "./ProjectsHome";
+import { type CommentPin, type CommentsView, type MarkupTool, type PinAnchor, type Stroke, CommentsPanel, DraftCard, ThreadCard, colorFor, initialsOf, pinsFor, placeName, useThreads } from "./Comments";
 import { type ViewName, Viewport, type ViewportHandle } from "./Viewport";
 
 const DIMS = ["width", "depth", "height"] as const;
@@ -699,6 +700,160 @@ export function App({ engine }: { engine: Engine }) {
 
   // Rounding and bevelling edges of the selected part.
   const edger = useEdgeEditor({ engine, entities: state.entities, run, notify, setPreview: setShapePreview });
+
+  // Comments pinned to the model: comment mode (C) drops a pin where the model is clicked.
+  const me = team?.my_name?.trim() || "You";
+  const threads = useThreads(state.entities);
+  const [commenting, setCommenting] = useState(false);
+  const [openThread, setOpenThread] = useState<string | null>(null);
+  const [draft, setDraft] = useState<{ anchor: PinAnchor; strokes: Stroke[] } | null>(null);
+  const [markTool, setMarkTool] = useState<MarkupTool | null>(null);
+  const [commentFilter, setCommentFilter] = useState<"open" | "resolved" | "all">("open");
+  const [pinsShown, setPinsShown] = useState(true);
+  const [frameReq, setFrameReq] = useState<{ id: string } | null>(null);
+  useEffect(() => {
+    if (frameReq) viewport.current?.framePin(frameReq.id);
+  }, [frameReq]);
+  const openComments = threads.filter((t) => !t.resolved).length;
+  const closeDraft = useCallback(() => {
+    setDraft(null);
+    setMarkTool(null);
+  }, []);
+  const toggleCommenting = useCallback(() => {
+    setCommenting((on) => {
+      if (on) {
+        setDraft(null);
+        setMarkTool(null);
+      } else setPanel("comments");
+      return !on;
+    });
+  }, []);
+  const openThreadAt = useCallback(
+    (id: string) => {
+      closeDraft();
+      setOpenThread(id);
+      const t = threads.find((x) => x.id === id);
+      // A resolved thread opened from the list shows its pin while it is open.
+      if (t && !t.gone) setFrameReq({ id });
+    },
+    [closeDraft, threads],
+  );
+  // The open thread was deleted (here or by a teammate): close its card. A thread
+  // just posted may open before it arrives, so only one seen and then gone closes.
+  const openSeen = useRef<string | null>(null);
+  useEffect(() => {
+    if (!openThread) return;
+    if (threads.some((t) => t.id === openThread)) openSeen.current = openThread;
+    else if (openSeen.current === openThread) setOpenThread(null);
+  }, [openThread, threads]);
+  // Teammates' new comments and replies, as they arrive.
+  const seenComments = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const ids = new Set<string>();
+    const fresh: { author: string; text: string; reply: boolean; on: string | null }[] = [];
+    for (const t of threads) {
+      for (const m of [{ ...t, reply: false }, ...t.replies.map((r) => ({ ...r, reply: true }))]) {
+        ids.add(m.id);
+        if (seenComments.current && !seenComments.current.has(m.id) && m.author !== me) fresh.push({ author: m.author, text: m.text, reply: m.reply, on: t.on });
+      }
+    }
+    if (state.connection === "online") seenComments.current = ids;
+    const f = fresh.at(-1);
+    if (f) {
+      const said = f.text.length > 60 ? `${f.text.slice(0, 57)}…` : f.text;
+      notify(`${f.author} ${f.reply ? "replied" : `commented${f.on ? ` on ${f.on}` : ""}`}: “${said}”`);
+    }
+  }, [threads, me, notify, state.connection]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        // Step back one thing at a time: the pen, the new comment, the open thread, comment mode.
+        const editing = e.target instanceof HTMLElement && !!e.target.closest(".comment-message");
+        if (editing) return;
+        if (markTool) setMarkTool(null);
+        else if (draft) closeDraft();
+        else if (openThread) setOpenThread(null);
+        else if (commenting) setCommenting(false);
+        else return;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key.toLowerCase() === "c" && !sketcher.editing && !edger.editing) {
+        e.preventDefault();
+        toggleCommenting();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [markTool, draft, openThread, commenting, closeDraft, toggleCommenting, sketcher.editing, edger.editing]);
+  // Sketching or picking edges takes the clicks: comment mode steps aside.
+  useEffect(() => {
+    if (sketcher.editing || edger.editing) {
+      setCommenting(false);
+      closeDraft();
+    }
+  }, [sketcher.editing, edger.editing, closeDraft]);
+  const postComment = useCallback(
+    async (text: string) => {
+      if (!draft) return false;
+      const a = draft.anchor;
+      const out = (await run("comment.create", { target: a.target, part: a.part, point: a.point, normal: a.normal, text, author: me, markup: draft.strokes.map((s) => ({ points: s.points, arrow: !!s.arrow })) })) as { id?: string } | null;
+      if (!out) return false;
+      closeDraft();
+      if (out.id) setOpenThread(out.id);
+      return true;
+    },
+    [draft, run, me, closeDraft],
+  );
+  const commentsView = useMemo((): CommentsView | null => {
+    const showResolved = commentFilter !== "open";
+    let pins: CommentPin[] = pinsShown || commenting ? pinsFor(threads, showResolved) : [];
+    if (commentFilter === "resolved") pins = pins.filter((p) => p.resolved);
+    // The open thread keeps its pin even when the filter would hide it.
+    const active = openThread ? threads.find((t) => t.id === openThread) : undefined;
+    if (active && !active.gone && !pins.some((p) => p.id === active.id)) pins = [...pins, ...pinsFor([active], true)];
+    if (draft) {
+      pins = [
+        ...pins,
+        { id: "draft", number: 0, initials: initialsOf(me), color: colorFor(me), target: draft.anchor.target, point: draft.anchor.point, normal: draft.anchor.normal, resolved: false, replies: 0, markup: draft.strokes, draft: true },
+      ];
+    }
+    const card = draft ? (
+      <DraftCard
+        me={me}
+        where={placeName(draft.anchor, state.entities)}
+        strokes={draft.strokes.length}
+        tool={markTool}
+        onTool={setMarkTool}
+        onUndoStroke={() => setDraft((d) => (d ? { ...d, strokes: d.strokes.slice(0, -1) } : d))}
+        onPost={postComment}
+        onCancel={closeDraft}
+      />
+    ) : active ? (
+      <ThreadCard thread={active} me={me} run={run} onClose={() => setOpenThread(null)} />
+    ) : null;
+    if (!pins.length && !card && !commenting) return null;
+    return {
+      pins,
+      active: draft ? "draft" : openThread,
+      placing: commenting,
+      tool: draft ? markTool : null,
+      me: { initials: initialsOf(me), color: colorFor(me) },
+      card,
+      onPlace: (anchor) => {
+        setOpenThread(null);
+        setMarkTool(null);
+        setDraft({ anchor, strokes: [] });
+      },
+      onOpen: (id) => {
+        closeDraft();
+        setOpenThread(id);
+      },
+      onStroke: (s) => setDraft((d) => (d ? { ...d, strokes: [...d.strokes, s].slice(-24) } : d)),
+    };
+  }, [threads, commentFilter, pinsShown, commenting, openThread, draft, markTool, me, state.entities, run, postComment, closeDraft]);
   useEffect(() => {
     // Selecting something else leaves edge picking.
     if (edger.editing && selected !== edger.editing) edger.stop();
@@ -1002,6 +1157,7 @@ export function App({ engine }: { engine: Engine }) {
           onSelect={select}
           teammates={teammates}
           onHover3D={onHover3D}
+          comments={commentsView}
           selectedPart={selectedPartName}
           hidden={hiddenItems}
           isolated={isolated}
@@ -1091,6 +1247,11 @@ export function App({ engine }: { engine: Engine }) {
             })()}
           </div>
         )}
+        {commenting && !draft && !stressPick && (
+          <div className="face-hint floating comment-hint" role="status">
+            <b>Comment</b> · click the model to pin a comment · <kbd>C</kbd> or Esc to leave
+          </div>
+        )}
         {stressPick && (
           <div className="face-hint floating" role="status">
             {stressPick.purpose} · Esc to cancel
@@ -1168,6 +1329,9 @@ export function App({ engine }: { engine: Engine }) {
               edging={!!edger.editing}
               canEdge={!!selectedPart && !!program(selectedPart)}
               onEdges={() => (edger.editing ? edger.stop() : selected && edger.start(selected))}
+              commenting={commenting}
+              openComments={openComments}
+              onComment={toggleCommenting}
             />
           )}
           {hidden.view ? (
@@ -1196,6 +1360,18 @@ export function App({ engine }: { engine: Engine }) {
               onHistory={() => setPanel("history")}
               onRestore={restoreAll}
               onFocus={() => setFocus(true)}
+            />
+          )}
+          {panel === "comments" && (
+            <CommentsPanel
+              threads={threads}
+              active={openThread}
+              filter={commentFilter}
+              onFilter={setCommentFilter}
+              pinsShown={pinsShown}
+              onPinsShown={setPinsShown}
+              onOpen={openThreadAt}
+              onNew={() => !commenting && toggleCommenting()}
             />
           )}
           {panel === "objects" && (

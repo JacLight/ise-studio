@@ -9,6 +9,7 @@ const PATHS = {
   minus: "M5 12h14",
   comment: "M4 4h16v13H9l-5 4z",
   check: "m5 12 4 4L19 6",
+  arrow: "M5 19 19 5 M9 5h10v10",
   history: "M3 10a9 9 0 1 1 1 8 M3 4v6h6 M12 7v6l4 2",
   cursor: "m5 3 14 10-7 1-3 7z",
   undo: "M8 5 3 10l5 5 M3 10h11a6 6 0 0 1 6 6",
