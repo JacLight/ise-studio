@@ -1544,6 +1544,10 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
     let Some((program, material, mass, sid, setup, parts)) = found else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
     options.section = setup.section;
     options.dimensions = setup.dimensions;
+    options.details = setup.details;
+    options.frames = setup.frames;
+    options.datums = setup.datums;
+    options.hole_fits = setup.hole_fits;
     let title = de_shape::drawing::Title {
         title: options.part.clone().unwrap_or_else(|| program.name.clone()),
         number: format!("{}-{}", query.get("project").unwrap_or(&server.default).to_uppercase(), &sid.to_string().replace('-', "")[..6].to_uppercase()),

@@ -273,8 +273,9 @@ impl Command for SetStudy {
     }
 }
 
-/// How a part's drawing is set up: a section, and dimensions the person
-/// added (one setup per part, or for the whole shape).
+/// How a part's drawing is set up: a section, dimensions (with tolerances),
+/// detail views and geometrical tolerances the person added (one setup per
+/// part, or for the whole shape).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct DrawingSpec {
     #[serde(default)]
@@ -283,6 +284,25 @@ pub struct DrawingSpec {
     pub section: Option<f64>,
     #[serde(default)]
     pub dimensions: Vec<drawing::DimSpec>,
+    /// Detail views (circles of a view drawn larger).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub details: Vec<drawing::DetailSpec>,
+    /// Geometrical tolerances: feature control frames (ISO 1101).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames: Vec<drawing::FrameSpec>,
+    /// Datum feature symbols.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub datums: Vec<drawing::DatumSpec>,
+    /// ISO 286 fits on hole callouts, by diameter.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hole_fits: Vec<drawing::HoleFit>,
+}
+
+impl DrawingSpec {
+    /// Nothing set: the default drawing.
+    pub fn is_empty(&self) -> bool {
+        self.section.is_none() && self.dimensions.is_empty() && self.details.is_empty() && self.frames.is_empty() && self.datums.is_empty() && self.hole_fits.is_empty()
+    }
 }
 
 #[derive(Component, Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -292,7 +312,7 @@ impl Persist for ShapeDrawings {
     const KIND: &'static str = "shape.drawings";
 }
 
-/// Keeps a drawing's setup with the shape (no section and no dimensions removes it).
+/// Keeps a drawing's setup with the shape (an empty setup removes it).
 #[derive(Deserialize, JsonSchema)]
 pub struct SetDrawing {
     pub target: StableId,
@@ -311,9 +331,11 @@ impl Command for SetDrawing {
                 return Err(CommandError::new(ErrorCode::InvalidParameters, "section is a percentage of the depth, 0 to 100"));
             }
         }
+        let dw = &self.drawing;
+        drawing::validate(&dw.dimensions, &dw.details, &dw.frames, &dw.datums, &dw.hole_fits).map_err(|e| CommandError::new(ErrorCode::InvalidParameters, e))?;
         let mut all = tx.get::<ShapeDrawings>(self.target).cloned().unwrap_or_default();
         all.0.retain(|d| d.part != self.drawing.part);
-        if self.drawing.section.is_some() || !self.drawing.dimensions.is_empty() {
+        if !self.drawing.is_empty() {
             all.0.push(self.drawing);
         }
         if all.0.is_empty() {

@@ -4928,6 +4928,249 @@ button.download.drawing-open small {
   cursor: pointer;
 }
 
+.drawing-tools {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.drawing-controls .chip-toggle .chip-glyph {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linejoin: round;
+}
+
+.chip-glyph .solid {
+  fill: currentColor;
+  stroke: none;
+}
+
+.segmented.small button {
+  height: 24px;
+  padding: 0 9px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.drawing-warnings {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(720px, calc(100% - 32px));
+  padding: 7px 12px;
+  border: 1px solid #f1d39a;
+  border-radius: 10px;
+  background: #fff8ea;
+  color: #8a5a00;
+  font-size: 11.5px;
+  box-shadow: 0 6px 18px rgb(60 40 0 / 0.1);
+}
+
+.drawing-warnings .icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.drawing-pop {
+  position: absolute;
+  z-index: 3;
+  border: 1px solid #e4e0ec;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 2px 4px rgb(30 20 60 / 0.06), 0 16px 40px rgb(30 20 60 / 0.18);
+  animation: drawing-pop-in 0.14s ease-out;
+}
+
+@keyframes drawing-pop-in {
+  from {
+    opacity: 0;
+    translate: 0 -6px;
+  }
+}
+
+.pop-body {
+  display: grid;
+  gap: 10px;
+  width: 248px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+.pop-body.wide {
+  width: 296px;
+}
+
+.pop-body * {
+  box-sizing: border-box;
+}
+
+.pop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pop-head strong {
+  font-size: 13px;
+  color: #2a2633;
+  font-variant-numeric: tabular-nums;
+}
+
+.pop-head span,
+.pop-sub {
+  font-size: 11px;
+  color: #8a8398;
+}
+
+.pop-sub {
+  margin-top: -4px;
+}
+
+.pop-row {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+
+.pop-field {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #6f6880;
+}
+
+.pop-field input,
+.pop-select {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #e4e0ec;
+  border-radius: 8px;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: #2a2633;
+  font-variant-numeric: tabular-nums;
+}
+
+.pop-field input:focus,
+.pop-select:focus {
+  border-color: #6d4ae0;
+  outline: 2px solid rgb(109 74 224 / 0.15);
+}
+
+.pop-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  font-size: 11.5px;
+  color: #4b4559;
+  white-space: nowrap;
+}
+
+.pop-check input {
+  width: auto;
+  height: auto;
+  margin: 0;
+  accent-color: #6d4ae0;
+}
+
+.pop-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.pop-primary,
+.pop-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.pop-primary {
+  background: #6d4ae0;
+  color: #fff;
+}
+
+.pop-primary:disabled {
+  opacity: 0.45;
+}
+
+.pop-danger {
+  color: #c4453c;
+}
+
+.pop-danger:hover {
+  background: #fdf0ef;
+}
+
+.pop-danger .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.gdt-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.gdt-grid button {
+  display: grid;
+  min-width: 0;
+  padding: 0;
+  place-items: center;
+  aspect-ratio: 1;
+  border: 1px solid #e4e0ec;
+  border-radius: 7px;
+  background: #fff;
+  color: #3e3849;
+}
+
+.gdt-grid button:hover {
+  border-color: #cfc5ef;
+}
+
+.gdt-grid button.active {
+  border-color: #6d4ae0;
+  background: #f3effe;
+  color: #5b3fc4;
+}
+
+.gdt-symbol {
+  width: 22px;
+  height: 22px;
+}
+
+.datum-picks {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
 .drawing-hint {
   position: absolute;
   left: 50%;
