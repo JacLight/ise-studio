@@ -141,6 +141,14 @@ impl Gerber {
 
     /// A pad (or its mask/paste opening, grown by `grow`), flashed or as a region.
     pub fn pad(&mut self, p: &PadView, grow: f64, function: &str, attrs: &[(&str, String)]) {
+        if let Some(poly) = &p.polygon {
+            // A custom pad: its outline as a region (grown for the mask opening).
+            let contours = if grow.abs() > 1e-9 { geom::contours(&manifold_csg::CrossSection::from_polygons(&[poly.clone()]).offset(grow, manifold_csg::JoinType::Round, 2.0, 16)) } else { vec![poly.clone()] };
+            for c in contours.iter().filter(|c| geom::polygon_area(c) > 0.0) {
+                self.region(&[c.clone()], function, attrs);
+            }
+            return;
+        }
         let (w, h) = (p.size[0] + 2.0 * grow, p.size[1] + 2.0 * grow);
         let quarter = (p.rotation / 90.0).round();
         let square = (p.rotation - quarter * 90.0).abs() < 1e-6;
@@ -154,7 +162,7 @@ impl Gerber {
                 let r = if p.shape == PadShape::Rect { 0.0 } else { p.corner + grow };
                 Some(round_rect(w, h, r, p.rotation))
             }
-            PadShape::Oval => None,
+            PadShape::Oval | PadShape::Custom => None,
         };
         match def {
             Some(def) => {

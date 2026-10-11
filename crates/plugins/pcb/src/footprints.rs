@@ -34,6 +34,8 @@ pub enum PadShape {
     Circle,
     /// Stadium (slot-shaped).
     Oval,
+    /// Any outline: `polygon` (pad coordinates, before `rotation`); `size` is its bounding box.
+    Custom,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -58,6 +60,10 @@ pub struct Pad {
     /// Paste windows instead of the whole pad: [x, y, width, height] each (an exposed pad's windowpane).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paste: Vec<[f64; 4]>,
+    /// A `custom` pad's outline, counter-clockwise, relative to `at` (mm). Clearance checks use its
+    /// convex hull (never closer than the copper really is); outputs draw the outline itself.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub polygon: Vec<[f64; 2]>,
 }
 
 fn is_zero(v: &f64) -> bool {
@@ -221,7 +227,24 @@ pub fn pad_prim(p: &Pad, at: [f64; 2], rotation: f64, bottom: bool) -> crate::ge
         PadShape::RoundRect => crate::geom::Prim::rect(c, w, h, rot, p.corner.unwrap_or(0.25) * w.min(h)),
         PadShape::Circle => crate::geom::Prim::circle(c, w.max(h) / 2.0),
         PadShape::Oval => crate::geom::Prim::rect(c, w, h, rot, w.min(h) / 2.0),
+        PadShape::Custom if p.polygon.len() >= 3 => crate::geom::Prim { pts: crate::geom::convex_hull(&pad_polygon(p, at, rotation, bottom)), r: 0.0 },
+        PadShape::Custom => crate::geom::Prim::rect(c, w, h, rot, 0.0),
     }
+}
+
+/// A custom pad's outline placed on the board (counter-clockwise); empty for other shapes.
+pub fn pad_polygon(p: &Pad, at: [f64; 2], rotation: f64, bottom: bool) -> Vec<[f64; 2]> {
+    if p.shape != PadShape::Custom || p.polygon.len() < 3 {
+        return vec![];
+    }
+    let mirror = |q: [f64; 2]| if bottom { [-q[0], q[1]] } else { q };
+    let c = crate::geom::add(at, crate::geom::rotate(mirror(p.at), rotation));
+    let rot = if bottom { -p.rotation } else { p.rotation } + rotation;
+    let mut out: Vec<[f64; 2]> = p.polygon.iter().map(|q| crate::geom::add(c, crate::geom::rotate(mirror(*q), rot))).collect();
+    if crate::geom::polygon_area(&out) < 0.0 {
+        out.reverse();
+    }
+    out
 }
 
 fn round_out(v: f64, up: bool) -> f64 {
@@ -309,11 +332,11 @@ fn r6(v: f64) -> f64 {
 }
 
 fn smd(number: impl Into<String>, at: [f64; 2], size: [f64; 2]) -> Pad {
-    Pad { number: number.into(), kind: PadKind::Smd, shape: PadShape::RoundRect, size, at, rotation: 0.0, drill: None, corner: Some(0.25), paste: vec![] }
+    Pad { number: number.into(), kind: PadKind::Smd, shape: PadShape::RoundRect, size, at, rotation: 0.0, drill: None, corner: Some(0.25), paste: vec![], polygon: vec![] }
 }
 
 fn tht(number: impl Into<String>, at: [f64; 2], size: [f64; 2], drill: f64, shape: PadShape) -> Pad {
-    Pad { number: number.into(), kind: PadKind::Tht, shape, size, at, rotation: 0.0, drill: Some([drill, drill]), corner: None, paste: vec![] }
+    Pad { number: number.into(), kind: PadKind::Tht, shape, size, at, rotation: 0.0, drill: Some([drill, drill]), corner: None, paste: vec![], polygon: vec![] }
 }
 
 fn body(at: [f64; 2], size: [f64; 2], z: [f64; 2], material: &str) -> BodyPart {
@@ -530,7 +553,7 @@ fn qfn32() -> Footprint {
     // Paste on the exposed pad as a 2 × 2 windowpane, about 55 % of its area.
     let w = 1.25;
     let o = 0.8;
-    let mut epad = Pad { number: "33".into(), kind: PadKind::Smd, shape: PadShape::Rect, size: [ep, ep], at: [0.0, 0.0], rotation: 0.0, drill: None, corner: None, paste: vec![] };
+    let mut epad = Pad { number: "33".into(), kind: PadKind::Smd, shape: PadShape::Rect, size: [ep, ep], at: [0.0, 0.0], rotation: 0.0, drill: None, corner: None, paste: vec![], polygon: vec![] };
     epad.paste = vec![[-o, -o, w, w], [o, -o, w, w], [-o, o, w, w], [o, o, w, w]];
     pads.push(epad);
     let f = Footprint {
@@ -667,14 +690,14 @@ fn usb_c_16() -> Footprint {
     for (num, x) in [("B8", -1.75), ("A5", -1.25), ("B7", -0.75), ("A6", -0.25), ("A7", 0.25), ("B6", 0.75), ("A8", 1.25), ("B5", 1.75)] {
         pads.push(smd(num, [x, y], [0.3, len]));
     }
-    let slot = |at: [f64; 2], pad: [f64; 2], hole: [f64; 2]| Pad { number: "S1".into(), kind: PadKind::Tht, shape: PadShape::Oval, size: pad, at, rotation: 0.0, drill: Some(hole), corner: None, paste: vec![] };
+    let slot = |at: [f64; 2], pad: [f64; 2], hole: [f64; 2]| Pad { number: "S1".into(), kind: PadKind::Tht, shape: PadShape::Oval, size: pad, at, rotation: 0.0, drill: Some(hole), corner: None, paste: vec![], polygon: vec![] };
     for x in [-4.325, 4.325] {
         // The drawing's pads are 0.9 mm wide (a 0.15 mm ring); 1.0 mm gives 0.2 mm, above JLCPCB's 0.18 mm minimum.
         pads.push(slot([x, 3.13], [1.0, 2.1], [0.6, 1.7]));
         pads.push(slot([x, 3.13 - 4.18], [1.0, 1.8], [0.6, 1.4]));
     }
     for x in [-2.89, 2.89] {
-        pads.push(Pad { number: "".into(), kind: PadKind::Npth, shape: PadShape::Circle, size: [0.6, 0.6], at: [x, 2.6], rotation: 0.0, drill: Some([0.6, 0.6]), corner: None, paste: vec![] });
+        pads.push(Pad { number: "".into(), kind: PadKind::Npth, shape: PadShape::Circle, size: [0.6, 0.6], at: [x, 2.6], rotation: 0.0, drill: Some([0.6, 0.6]), corner: None, paste: vec![], polygon: vec![] });
     }
     let f = Footprint {
         name: "USB-C_16P".into(),
@@ -717,7 +740,7 @@ fn esp32_wroom_32() -> Footprint {
         let (i, j) = ((k % 3) as f64 - 1.0, (k / 3) as f64 - 1.0);
         [gc[0] + i * 1.4, gc[1] + j * 1.4, 0.9, 0.9]
     }).collect();
-    pads.push(Pad { number: "39".into(), kind: PadKind::Smd, shape: PadShape::Rect, size: [3.7, 3.7], at: gc, rotation: 0.0, drill: None, corner: None, paste: windows });
+    pads.push(Pad { number: "39".into(), kind: PadKind::Smd, shape: PadShape::Rect, size: [3.7, 3.7], at: gc, rotation: 0.0, drill: None, corner: None, paste: windows, polygon: vec![] });
     let f = Footprint {
         name: "ESP32-WROOM-32".into(),
         description: "Espressif ESP32-WROOM-32E Wi-Fi/Bluetooth module (LCSC C701341), 18 × 25.5 × 3.1 mm, 38 pads at 1.27 mm + GND pad 39; antenna at +y (top 6.19 mm): keep copper away, ideally overhang the board edge".into(),
@@ -743,9 +766,9 @@ fn mounting_hole(m: u32, plated: bool) -> Footprint {
     };
     let keep = head + 0.5;
     let pad = if plated {
-        Pad { number: "1".into(), kind: PadKind::Tht, shape: PadShape::Circle, size: [keep, keep], at: [0.0, 0.0], rotation: 0.0, drill: Some([hole, hole]), corner: None, paste: vec![] }
+        Pad { number: "1".into(), kind: PadKind::Tht, shape: PadShape::Circle, size: [keep, keep], at: [0.0, 0.0], rotation: 0.0, drill: Some([hole, hole]), corner: None, paste: vec![], polygon: vec![] }
     } else {
-        Pad { number: "".into(), kind: PadKind::Npth, shape: PadShape::Circle, size: [hole, hole], at: [0.0, 0.0], rotation: 0.0, drill: Some([hole, hole]), corner: None, paste: vec![] }
+        Pad { number: "".into(), kind: PadKind::Npth, shape: PadShape::Circle, size: [hole, hole], at: [0.0, 0.0], rotation: 0.0, drill: Some([hole, hole]), corner: None, paste: vec![], polygon: vec![] }
     };
     let label = if m == 25 { "M2.5".to_string() } else { format!("M{m}") };
     let mut f = Footprint {

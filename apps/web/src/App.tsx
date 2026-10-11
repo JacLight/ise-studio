@@ -4,7 +4,7 @@ import { type Proposal, interpret } from "./assistant";
 import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
 import { StockBrowser } from "./StockBrowser";
-import { PcbWorkspace } from "./Pcb";
+import { PcbWorkspace, importKicadFile } from "./Pcb";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
 import { type Bench, Workbench } from "./Bom";
 import { RequirementsPanel } from "./RequirementsPanel";
@@ -1005,6 +1005,11 @@ export function App({ engine }: { engine: Engine }) {
       const f = e.dataTransfer?.files?.[0];
       if (!f) return;
       e.preventDefault();
+      // A KiCad board becomes a Forma board, opened in the Electronics workspace.
+      if (/\.kicad_pcb$/i.test(f.name)) {
+        void importKicadFile(f, (op, p, done) => run(op, p).then((out) => (out && done && notify(done), out))).then((made) => made && setPcbOpen(true));
+        return;
+      }
       importStep(f);
     };
     window.addEventListener("dragover", over);
@@ -1013,7 +1018,7 @@ export function App({ engine }: { engine: Engine }) {
       window.removeEventListener("dragover", over);
       window.removeEventListener("drop", drop);
     };
-  }, [importStep]);
+  }, [importStep, run, notify]);
 
   /** Steps that keep saved groups tidy when items leave them: shrink the group, or drop it below two. */
   const regroupSteps = useCallback(

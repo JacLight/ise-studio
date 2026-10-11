@@ -51,7 +51,7 @@ type Comp = {
   pin_names: Record<string, string>;
   known: boolean;
 };
-type Track = { id: string; net: string | null; layer: string; width: number; points: P[]; auto: boolean };
+type Track = { id: string; net: string | null; layer: string; width: number; points: P[]; auto: boolean; reroute?: boolean };
 type Via = { id: string; net: string | null; at: P; drill: number; diameter: number };
 type Zone = { id: string; net: string; layer: string; outline: P[]; fill: P[][][]; priority: number; area: number };
 type Hole = { at: P; size: P; rotation: number; plated: boolean; owner: string };
@@ -323,6 +323,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
               {detail!.errors ? `${detail!.errors} DRC ${detail!.errors === 1 ? "error" : "errors"}` : "DRC passes"}
             </button>
           )}
+          {b && <KicadImport run={commit} canEdit={props.canEdit} onMade={(id) => setBoardId(id)} label="KiCad" />}
           {b?.model && (
             <button type="button" className="secondary pcb-3d" onClick={() => props.onShow3D(b.model!)}>
               <Icon name="cube" /> Show in 3D
@@ -401,6 +402,38 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
   );
 }
 
+/** A KiCad board (.kicad_pcb) read in the browser and made into a Forma board by the engine. */
+export async function importKicadFile(file: File, run: (op: string, p: Record<string, unknown>, done?: string) => Promise<unknown>) {
+  const text = await file.text();
+  const name = file.name.replace(/\.kicad_pcb$/i, "").replace(/[_-]+/g, " ");
+  const out = (await run("pcb.board.import_kicad", { text, name }, `Imported ${file.name}`)) as { output?: { id: string; notes?: string[] } } | null;
+  return out?.output ?? null;
+}
+
+function KicadImport(props: { run: (op: string, p: Record<string, unknown>, done?: string) => Promise<unknown>; canEdit: boolean; onMade: (id: string) => void; label?: string }) {
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <button type="button" className="secondary" disabled={!props.canEdit} onClick={() => input.current?.click()} title="Open a KiCad board (.kicad_pcb) as a Forma board">
+        <Icon name="download" /> {props.label ?? "Import KiCad board"}
+      </button>
+      <input
+        ref={input}
+        type="file"
+        accept=".kicad_pcb"
+        style={{ display: "none" }}
+        onChange={async (e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (!f) return;
+          const made = await importKicadFile(f, props.run);
+          if (made?.id) props.onMade(made.id);
+        }}
+      />
+    </>
+  );
+}
+
 function NewBoard(props: { run: (op: string, p: Record<string, unknown>, done?: string) => Promise<unknown>; canEdit: boolean; onMade: (id: string) => void }) {
   const [name, setName] = useState("Main board");
   const [w, setW] = useState(50);
@@ -447,6 +480,10 @@ function NewBoard(props: { run: (op: string, p: Record<string, unknown>, done?: 
             New board
           </button>
         </form>
+        <div className="pcb-new-import">
+          <span>or</span>
+          <KicadImport run={props.run} canEdit={props.canEdit} onMade={props.onMade} />
+        </div>
       </div>
     </div>
   );
@@ -483,6 +520,9 @@ function BoardCanvas(props: {
   const pan = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const [routing, setRouting] = useState(false);
   const [route, setRoute] = useState<P[]>([]);
+  // Finished runs of the track being drawn on other layers (a via joins each to the next).
+  const [runs, setRuns] = useState<{ layer: string; points: P[] }[]>([]);
+  const routeLayer = useRef(props.active);
   const [cursor, setCursor] = useState<P | null>(null);
   const fitted = useRef<string | null>(null);
 
@@ -563,11 +603,27 @@ function BoardCanvas(props: {
     pan.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty };
   };
 
+  // Switching layer (V) mid-track places a via at the last point and goes on from it on the other layer.
+  useEffect(() => {
+    const was = routeLayer.current;
+    routeLayer.current = props.active;
+    if (!routing || was === props.active || route.length === 0) return;
+    const last = route[route.length - 1];
+    if (route.length >= 1) setRuns((r) => [...r, { layer: was, points: route }]);
+    setRoute([last]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.active]);
+
   const finishRoute = async (points: P[]) => {
-    const clean = points.filter((p, i) => i === 0 || Math.hypot(p[0] - points[i - 1][0], p[1] - points[i - 1][1]) > 1e-6);
+    const clean = (list: P[]) => list.filter((p, i) => i === 0 || Math.hypot(p[0] - list[i - 1][0], p[1] - list[i - 1][1]) > 1e-6);
+    const usable = [...runs, { layer: props.active, points }].map((r) => ({ layer: r.layer, points: clean(r.points) }));
+    // A via with nothing after it is dropped.
+    while (usable.length > 1 && usable[usable.length - 1].points.length < 2) usable.pop();
     setRoute([]);
-    if (clean.length < 2) return;
-    await props.commit("pcb.track.create", { board: b.id, layer: props.active, points: clean }, "Track added");
+    setRuns([]);
+    if (usable.length === 1 && usable[0].points.length < 2) return;
+    if (usable.length === 1) await props.commit("pcb.track.create", { board: b.id, layer: usable[0].layer, points: usable[0].points }, "Track added");
+    else await props.commit("pcb.route.create", { board: b.id, runs: usable }, `Track added with ${usable.length - 1} via${usable.length > 2 ? "s" : ""}`);
   };
 
   useEffect(() => {
@@ -579,14 +635,16 @@ function BoardCanvas(props: {
       } else if (e.key === "Escape") {
         e.preventDefault();
         e.stopImmediatePropagation();
-        if (route.length) setRoute([]);
-        else setRouting(false);
+        if (route.length || runs.length) {
+          setRoute([]);
+          setRuns([]);
+        } else setRouting(false);
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routing, route]);
+  }, [routing, route, runs]);
 
   const onMove = (e: ReactPointerEvent) => {
     if (!view) return;
@@ -635,6 +693,18 @@ function BoardCanvas(props: {
   };
 
   const offsetOf = (component: string) => (drag && drag.id === component ? drag.delta : null);
+  // While a part is dragged, the ends of tracks on its pads go with it (the engine bends them at 45° on drop).
+  const dragPads = useMemo(() => (drag ? b.pads.filter((q) => q.component === drag.id && q.kind !== "npth") : []), [drag?.id, b.pads]);
+  const trackPoints = (t: Track): P[] => {
+    if (!drag || !dragPads.length) return t.points;
+    const on = (p: P) => dragPads.some((q) => q.layers.includes(t.layer) && Math.hypot(q.at[0] - p[0], q.at[1] - p[1]) <= Math.max(q.size[0], q.size[1]) / 2 + 1e-6);
+    const d = drag.delta;
+    const n = t.points.length;
+    const first = on(t.points[0]);
+    const last = on(t.points[n - 1]);
+    if (!first && !last) return t.points;
+    return t.points.map((p, i) => ((first && last) || (first && i === 0) || (last && i === n - 1) ? [p[0] + d[0], p[1] + d[1]] : p));
+  };
   const tf = (component: string) => {
     const o = offsetOf(component);
     return o ? `translate(${o[0]} ${o[1]})` : undefined;
@@ -701,7 +771,7 @@ function BoardCanvas(props: {
                     .map((t) => (
                       <polyline
                         key={t.id}
-                        points={pts(t.points)}
+                        points={pts(trackPoints(t))}
                         fill="none"
                         stroke={color}
                         strokeWidth={t.width}
@@ -809,6 +879,19 @@ function BoardCanvas(props: {
                 const ob = pb ? offsetOf(pb.component) : null;
                 return <line key={i} x1={w.a[0] + (oa?.[0] ?? 0)} y1={w.a[1] + (oa?.[1] ?? 0)} x2={w.b[0] + (ob?.[0] ?? 0)} y2={w.b[1] + (ob?.[1] ?? 0)} className={`pcb-rat ${lit(w.net) ? "lit" : ""}`} />;
               })}
+            {/* Tracks dragged with a part: check or re-route them */}
+            {b.tracks
+              .filter((t) => t.reroute)
+              .map((t) => (
+                <polyline key={`rr${t.id}`} points={pts(t.points)} className="pcb-reroute" fill="none" strokeWidth={t.width + 0.18} strokeLinecap="round" strokeLinejoin="round" />
+              ))}
+            {routing &&
+              runs.map((r, i) => (
+                <g key={`run${i}`}>
+                  <polyline points={pts(r.points)} fill="none" stroke={COPPER[r.layer]} strokeWidth={0.25} strokeLinecap="round" strokeLinejoin="round" opacity={0.9} />
+                  <circle cx={r.points[r.points.length - 1][0]} cy={r.points[r.points.length - 1][1]} r={0.3} className="pcb-via-preview" />
+                </g>
+              ))}
             {/* Selection */}
             {selTrack && <polyline points={pts(selTrack.points)} fill="none" className="pcb-chosen-line" strokeWidth={selTrack.width + 0.25} strokeLinecap="round" strokeLinejoin="round" />}
             {selVia && <circle cx={selVia.at[0]} cy={selVia.at[1]} r={selVia.diameter / 2 + 0.15} className="pcb-chosen-line" fill="none" strokeWidth={0.12} />}
@@ -872,7 +955,7 @@ function BoardCanvas(props: {
       </div>
       <div className="pcb-legend">
         {routing ? (
-          <span>Click to place points · snaps to pads and a 0.25 mm grid (Alt: 0.05) · double-click or Enter finishes · V switches layer · Esc</span>
+          <span>Click to place points · snaps to pads and a 0.25 mm grid (Alt: 0.05) · V drops a via and goes on on the other layer · double-click or Enter finishes · Esc</span>
         ) : (
           <span>
             Drag parts to move · <kbd>R</kbd> turn · <kbd>F</kbd> flip side · <kbd>Del</kbd> remove · scroll to zoom, drag to pan

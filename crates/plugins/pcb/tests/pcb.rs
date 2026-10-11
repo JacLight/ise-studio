@@ -325,21 +325,24 @@ fn the_3d_part_follows_the_board() {
     let (board, model) = small_board(&mut p);
     let solid = p.get::<de_shape::ShapeSolid>(model).expect("the 3D board evaluates");
     let names: Vec<&str> = solid.stats.parts.iter().map(|x| x.name.as_str()).collect();
-    assert!(names.contains(&"PCB") && names.contains(&"Exposed copper") && names.contains(&"R1 10k") && names.contains(&"J1 Header (Black plastic (PBT))") || names.contains(&"J1 Header"), "{names:?}");
-    assert!(near(solid.stats.bounds_min[2], -0.035, 1e-6), "{:?}", solid.stats.bounds_min);
+    assert!(names.contains(&"PCB") && names.contains(&"R1 10k") && names.contains(&"J1 Header"), "{names:?}");
+    // The header's pins come 3 mm through the bottom.
+    assert!(near(solid.stats.bounds_min[2], -3.0, 1e-6), "{:?}", solid.stats.bounds_min);
     // The header's pins stand 8.5 mm above the 1.6 mm board.
     assert!(near(solid.stats.bounds_max[2], 1.6 + 8.5, 1e-6), "{:?}", solid.stats.bounds_max);
     let r1 = de_pcb::items(p.world(), board).components.into_iter().find(|(_, c)| c.reference == "R1").unwrap().0;
     ok(&mut p, "pcb.component.update", json!({ "target": r1, "at": [5, 5] }));
     let src = &p.get::<de_shape::ShapeProgram>(model).unwrap().source;
-    assert!(src.contains("[5.0,5.0]") || src.contains("[5,5]"), "moved in the program");
+    assert!(src.contains("\"box\",5.0,5.0") || src.contains("\"box\",5,5"), "moved in the program");
     // Bought parts are declared as stock for the BOM.
     let declared = &p.get::<de_shape::ShapeSolid>(model).unwrap().stats;
     let _ = declared;
     // Moving to the bottom puts the body under the board.
     ok(&mut p, "pcb.component.update", json!({ "target": r1, "side": "bottom" }));
     let solid = p.get::<de_shape::ShapeSolid>(model).unwrap();
-    assert!(solid.stats.bounds_min[2] < -0.4, "{:?}", solid.stats.bounds_min);
+    assert!(solid.stats.bounds_min[2] <= -3.0 + 1e-6, "{:?}", solid.stats.bounds_min);
+    let src = &p.get::<de_shape::ShapeProgram>(model).unwrap().source;
+    assert!(src.contains("\"box\",5.0,5.0,-") || src.contains("\"box\",5,5,-"), "R1's body is under the board");
 }
 
 #[test]

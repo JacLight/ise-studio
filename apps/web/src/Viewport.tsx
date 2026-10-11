@@ -15,6 +15,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { pcbLooks } from "./pcb3d";
 import type { EntityView, MeshData } from "./engine";
 import {
   AXIS_NAMES,
@@ -965,6 +966,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     let hoverFace: Face | null = null;
     let hoverPush = false;
     const invalidate = () => (dirty = true);
+    pcbLooks.setInvalidate(invalidate);
     controls.addEventListener("change", invalidate);
     // Taking hold of the view ends any glide.
     controls.addEventListener("start", () => {
@@ -2282,10 +2284,12 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     }
     // Drawn directly: boxes, placed shapes and top-level instances. Components
     // (definitions) are drawn only through their instances.
+    pcbLooks.touch();
     const drawn = (e: EntityView | undefined) => !!e && (instance(e) ? !instance(e)!.parent : !!e.mesh && !isDefinition(e));
     for (const [id, part] of t.parts) {
       if (!drawn(entities.get(id))) {
         t.scene.remove(part.group);
+        pcbLooks.detach(id);
         disposePart(part);
         t.parts.delete(id);
       }
@@ -2308,6 +2312,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         t.scene.add(part.group);
         t.parts.set(e.id, part);
       }
+      // A board's 3D part is drawn as the board (mask, copper, silk, real bodies).
+      if (!part.shared) pcbLooks.attach(e.id, part.group, part.meshes);
       // The engine's shape is the truth for placement, refreshed on every update. Only the
       // mesh is cached: it is rebuilt when the size changes, so its size always matches `base`.
       part.base = shapeOf(e);
