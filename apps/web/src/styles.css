@@ -4787,6 +4787,88 @@ button.download.drawing-open small {
   color: #c4453c;
 }
 
+.drawing-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.drawing-controls .chip-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid #e4e0ec;
+  border-radius: 8px;
+  background: #fff;
+  color: #4b4559;
+  font-size: 11px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+
+.drawing-controls .chip-toggle:hover {
+  border-color: #cfc5ef;
+}
+
+.drawing-controls .chip-toggle.active {
+  border-color: #6d4ae0;
+  background: #f3effe;
+  color: #5b3fc4;
+}
+
+.drawing-controls .chip-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.drawing-depth {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #5b5368;
+  font-variant-numeric: tabular-nums;
+}
+
+.drawing-depth input {
+  width: 90px;
+  accent-color: #6d4ae0;
+}
+
+.drawing-depth span {
+  min-width: 30px;
+}
+
+.drawing-desk.measuring .drawing-sheet {
+  cursor: crosshair;
+}
+
+.drawing-sheet.updating {
+  opacity: 0.75;
+  transition: opacity 0.2s 0.15s;
+}
+
+.drawing-mark {
+  cursor: pointer;
+}
+
+.drawing-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: #1d1a24;
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 8px 24px rgb(20 10 40 / 0.25);
+  pointer-events: none;
+}
+
 /* ---- Linkage motion ---- */
 .joint-list {
   display: grid;

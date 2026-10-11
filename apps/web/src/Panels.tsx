@@ -6,10 +6,11 @@ import { AXIS_COLORS } from "./gizmo";
 import { type EntityView, type HistoryEntry, type PartStats, type ProjectInfo, type ShapeStats, projectName, projectTitle, projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
 import { AnimatedNumber } from "./AnimatedNumber";
-import { DrawingView } from "./DrawingView";
+import { type DrawingSetup, DrawingView } from "./DrawingView";
 import { GearCheck } from "./GearCheck";
 import { ProjectsHome } from "./ProjectsHome";
 import { StressStudy } from "./StressStudy";
+import { MachineConnection } from "./MachineConnection";
 import {
   KNOWN_MATERIALS,
   PROCESS_NAMES,
@@ -128,6 +129,7 @@ export function ProjectBody(props: {
         </span>
       </div>
       <ProjectSwitcher />
+      <MachineConnection />
       <button type="button" className="list-row" onClick={props.onStorage}>
         <Icon name="cloud" />
         <span>Project storage</span>
@@ -646,6 +648,7 @@ export function PropertiesBody(props: PropertiesProps) {
         displayTolerance={prog?.display_tolerance ?? 0.01}
         selectedPart={props.selectedPart}
         onSelectPart={props.onSelectPart}
+        run={props.run}
       />
 
       {prog && (
@@ -701,6 +704,7 @@ function MakeSections(props: {
   displayTolerance: number;
   selectedPart: string | null;
   onSelectPart: (name: string | null) => void;
+  run: Run;
 }) {
   const { part, parts } = props;
   const presets = accuracies(props.displayTolerance);
@@ -806,7 +810,16 @@ function MakeSections(props: {
           <Icon name="ruler" /> Engineering drawing
           <small>Views, dimensions, title block · PDF or DXF</small>
         </button>
-        {drawing && <DrawingView id={part.id} name={partName(part)} parts={parts.map((p) => p.name)} onClose={() => setDrawing(false)} />}
+        {drawing && (
+          <DrawingView
+            id={part.id}
+            name={partName(part)}
+            parts={parts.map((p) => p.name)}
+            setups={(part.components["shape.drawings"] as DrawingSetup[] | undefined) ?? []}
+            onSave={(setup) => props.run("shape.set_drawing", { target: part.id, drawing: setup })}
+            onClose={() => setDrawing(false)}
+          />
+        )}
         <PrintRow id={part.id} />
       </section>
     </>

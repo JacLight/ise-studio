@@ -58,6 +58,10 @@ For linkages (cranks, connecting rods, pistons, levers, four-bars), join the par
 
 Stress: POST `/stress/<id>` with `{ supports: [face], loads: [{ face, force: [fx, fy, fz] N }], resolution: 56, part }` (a face is `{ point, normal, triangles: [x y z × 3 per triangle] }` in part coordinates) solves linear static stress on the part in its own material (typical properties: steel, aluminium, titanium, brass, copper, PLA, PETG, ABS, nylon, acetal, oak, plywood, MDF, glass, concrete) and returns the largest von Mises stress (MPa), the largest displacement (mm) and the safety factor against yield. Checked against beam theory (cantilever deflection within 1 %, bending stress within 0.1 %). The person runs the same study in the part's Stress section by clicking faces. Say that figures are typical, not a datasheet, and that sharp inside corners read lower than their true peak.
 
+## Drawings
+
+`/drawing/{id}` (add `.pdf` or `.dxf`; `?sheet=A3&projection=first|third&part=Name`) lays out front, top, side and isometric views from the exact solid with overall dimensions, hole callouts and a title block; a shape with two or more parts gets a parts list. `shape.set_drawing { target, drawing: { part?, section?, dimensions: [{ view: "front"|"top"|"right", a: [u, v], b: [u, v], kind: "horizontal"|"vertical"|"aligned", offset }] } }` saves a section (front view cut through at `section` percent of the depth, cut faces hatched) and extra dimensions; `a` and `b` are model millimetres along the view's axes (front x,z · top x,y · right y,z), `offset` is sheet mm off the points.
+
 ## Exact geometry, STEP in and out
 
 The engine evaluates every program twice over: as meshes for the view and checks, and exactly (OpenCascade B-rep) for STEP. Boxes, cylinders, cones, spheres, profiles (polygons, circles, offsets), extrude, revolve, booleans, fillets and chamfers are exact; geometry a program computes as triangles (`fromMesh`) or hulls is exported faceted. Prefer the exact vocabulary when a part will be machined.

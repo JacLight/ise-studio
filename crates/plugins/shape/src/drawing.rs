@@ -7,7 +7,7 @@
 
 use crate::ShapeProgram;
 use de_core::schemars::{self, JsonSchema};
-use de_occt::{Arena, Shape, ViewLine};
+use de_occt::{Arena, Bool, Shape, ViewLine};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 
@@ -45,7 +45,7 @@ pub enum Projection {
     Third,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
 pub struct Options {
     #[serde(default)]
     pub sheet: Sheet,
@@ -54,6 +54,85 @@ pub struct Options {
     /// Only this part of an assembly (all of it when absent).
     #[serde(default)]
     pub part: Option<String>,
+    /// Show the front view cut through (section A–A), this far back through
+    /// the part (percent of its depth).
+    #[serde(default)]
+    pub section: Option<f64>,
+    /// Dimensions the person added.
+    #[serde(default)]
+    pub dimensions: Vec<DimSpec>,
+}
+
+/// One of the three orthographic views.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewName {
+    Front,
+    Top,
+    Right,
+}
+
+impl ViewName {
+    /// The model axes across and up the view (0 x, 1 y, 2 z).
+    pub fn axes(self) -> [usize; 2] {
+        match self {
+            ViewName::Front => [0, 2],
+            ViewName::Top => [0, 1],
+            ViewName::Right => [1, 2],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DimKind {
+    /// Across the view.
+    #[default]
+    Horizontal,
+    /// Up the view.
+    Vertical,
+    /// Straight from one point to the other.
+    Aligned,
+}
+
+/// A dimension between two points of a view, kept in model millimetres so
+/// it stays on the part when the sheet or scale changes.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
+pub struct DimSpec {
+    pub view: ViewName,
+    /// The two points, as model coordinates along the view's axes.
+    pub a: [f64; 2],
+    pub b: [f64; 2],
+    #[serde(default)]
+    pub kind: DimKind,
+    /// How far the dimension line stands off the points (sheet mm; negative: the other side).
+    #[serde(default = "default_offset")]
+    pub offset: f64,
+}
+
+fn default_offset() -> f64 {
+    10.0
+}
+
+/// One row of the parts list.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct PartRow {
+    pub name: String,
+    pub quantity: usize,
+    pub material: String,
+    pub mass: String,
+}
+
+/// Where a view sits on the sheet: a model point p shows at
+/// `at + [p[axes[0]], p[axes[1]]] · scale`.
+#[derive(Clone, Debug, Serialize)]
+pub struct ViewFrame {
+    pub view: ViewName,
+    pub at: [f64; 2],
+    pub scale: f64,
+    pub axes: [usize; 2],
+    /// The view's outline on the sheet: [x0, y0, x1, y1].
+    pub bounds: [f64; 4],
 }
 
 /// What the title block says.
@@ -65,6 +144,8 @@ pub struct Title {
     pub mass: String,
     pub drawn_by: String,
     pub date: String,
+    /// The parts list (shown when there are two or more parts).
+    pub parts: Vec<PartRow>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -132,6 +213,17 @@ pub struct Drawing {
     /// Filled shapes (arrowheads).
     pub fills: Vec<Vec<[f64; 2]>>,
     pub texts: Vec<Text>,
+    /// Where the orthographic views are, for picking points on them.
+    pub views: Vec<ViewFrame>,
+    /// Where each of the person's dimensions landed: its index in
+    /// `Options::dimensions` and its box on the sheet.
+    pub marks: Vec<DimMark>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DimMark {
+    pub dimension: usize,
+    pub bounds: [f64; 4],
 }
 
 /// Standard scales (ISO 5455), largest first.
@@ -209,18 +301,33 @@ pub fn layout(arena: &mut Arena, shape: Shape, options: &Options, title: &Title)
     let size3 = [b[3] - b[0], b[4] - b[1], b[5] - b[2]];
     let deflection = (size3.iter().cloned().fold(0.0, f64::max) / 2000.0).clamp(0.005, 1.0);
     let view = |arena: &mut Arena, dir: [f64; 3], up: [f64; 3]| arena.hlr_view(shape, dir, up, deflection).map(View::of);
-    let front = view(arena, [0.0, 1.0, 0.0], [0.0, 0.0, 1.0])?;
+    // Section A–A: the front view of what lies behind the cutting plane, no hidden lines.
+    let cut = options.section.map(|p| b[1] + size3[1] * (p / 100.0).clamp(0.01, 0.99));
+    let front = match cut {
+        None => view(arena, [0.0, 1.0, 0.0], [0.0, 0.0, 1.0])?,
+        Some(y) => {
+            let m = size3.iter().cloned().fold(0.0, f64::max) + 1.0;
+            let keep = arena.cube(size3[0] + 2.0 * m, b[4] - y + m, size3[2] + 2.0 * m, false)?;
+            let keep = arena.translate(keep, [b[0] - m, y, b[2] - m])?;
+            let behind = arena.boolean(Bool::Intersection, shape, keep)?;
+            let mut v = View::of(arena.hlr_view(behind, [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], deflection)?);
+            v.lines.retain(|l| !l.hidden);
+            v
+        }
+    };
     let top = view(arena, [0.0, 0.0, -1.0], [0.0, 1.0, 0.0])?;
     let right = view(arena, [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0])?;
     let k = 1.0 / 3f64.sqrt();
     let iso = view(arena, [-k, k, -k], [0.0, 0.0, 1.0])?;
 
     let [w, h] = options.sheet.size();
-    let mut d = Drawing { width: w, height: h, scale: 1.0, scale_text: String::new(), strokes: vec![], fills: vec![], texts: vec![] };
+    let mut d = Drawing { width: w, height: h, scale: 1.0, scale_text: String::new(), strokes: vec![], fills: vec![], texts: vec![], views: vec![], marks: vec![] };
     // Frame: 20 mm binding margin on the left, 10 mm elsewhere (ISO 5457).
     let (fx0, fy0, fx1, fy1) = (20.0, 10.0, w - 10.0, h - 10.0);
     d.strokes.push(Stroke { pen: Pen::Frame, points: vec![[fx0, fy0], [fx1, fy0], [fx1, fy1], [fx0, fy1], [fx0, fy0]] });
     let block = [180.0f64.min(fx1 - fx0), 32.0];
+    // The parts list sits on the title block, one row per part plus a header.
+    let list_h = if title.parts.len() >= 2 { 6.0 * (title.parts.len() + 1) as f64 } else { 0.0 };
 
     // The views in a grid: front in the middle, the others where the projection puts them.
     let gap = 22.0; // sheet mm between views: room for a dimension
@@ -229,7 +336,7 @@ pub fn layout(arena: &mut Arena, shape: Shape, options: &Options, title: &Title)
     let (rw, rh) = (right.size()[0], right.size()[1]);
     let (iw, ih) = (iso.size()[0], iso.size()[1]);
     // The area above the title block, inside the frame, less a margin for dimensions.
-    let area = [fx1 - fx0 - 2.0 * gap, fy1 - fy0 - block[1] - 2.0 * gap];
+    let area = [fx1 - fx0 - 2.0 * gap, fy1 - fy0 - block[1] - list_h - 2.0 * gap];
     // The main scale fits the three orthographic views; the isometric takes
     // whatever scale fits the room left beside them (and says so).
     let fits = |s: f64| (rw + fw.max(tw)) * s + gap <= area[0] - 40.0 && (fh.max(rh) + th) * s + gap <= area[1];
@@ -253,7 +360,7 @@ pub fn layout(arena: &mut Arena, shape: Shape, options: &Options, title: &Title)
         (a, _) => a.is_some(),
     };
     let x0 = if in_corner { fx0 + gap + (area[0] - main_w).max(0.0) / 2.0 } else { fx0 + gap };
-    let y0 = fy0 + block[1] + gap + (area[1] - total_h).max(0.0) / 2.0;
+    let y0 = fy0 + block[1] + list_h + gap + (area[1] - total_h).max(0.0) / 2.0;
     let (col_side, col_main) = match options.projection {
         Projection::First => (x0, x0 + rw * s + gap),
         Projection::Third => (x0 + mid_w + gap, x0),
@@ -262,7 +369,7 @@ pub fn layout(arena: &mut Arena, shape: Shape, options: &Options, title: &Title)
         Projection::First => (y0, y0 + th * s + gap),
         Projection::Third => (y0 + row_front + gap, y0),
     };
-    let (iso_cell, iso_scale) = if in_corner { ([col_side, row_top, col_side + rw * s, row_top + th * s], corner) } else { ([x0 + main_w + gap, fy0 + block[1] + gap, fx1 - gap, fy1 - gap], column) };
+    let (iso_cell, iso_scale) = if in_corner { ([col_side, row_top, col_side + rw * s, row_top + th * s], corner) } else { ([x0 + main_w + gap, fy0 + block[1] + list_h + gap, fx1 - gap, fy1 - gap], column) };
     // Where each view's lower left lands (sheet mm), the views centred in their cells.
     let place = |v: &View, cell: [f64; 2], cw: f64, ch: f64, k: f64| [cell[0] + (cw - v.size()[0] * k) / 2.0 - v.min[0] * k, cell[1] + (ch - v.size()[1] * k) / 2.0 - v.min[1] * k];
     let at_front = place(&front, [col_main, row_main], mid_w, row_front, s);
@@ -271,6 +378,25 @@ pub fn layout(arena: &mut Arena, shape: Shape, options: &Options, title: &Title)
     for (v, at) in [(&front, at_front), (&top, at_top), (&right, at_right)] {
         for l in &v.lines {
             d.strokes.push(Stroke { pen: if l.hidden { Pen::Hidden } else { Pen::Visible }, points: l.points.iter().map(|p| [at[0] + p[0] * s, at[1] + p[1] * s]).collect() });
+        }
+    }
+    for (name, v, at) in [(ViewName::Front, &front, at_front), (ViewName::Top, &top, at_top), (ViewName::Right, &right, at_right)] {
+        d.views.push(ViewFrame { view: name, at, scale: s, axes: name.axes(), bounds: [at[0] + v.min[0] * s, at[1] + v.min[1] * s, at[0] + v.max[0] * s, at[1] + v.max[1] * s] });
+    }
+    if let Some(y) = cut {
+        // Hatch the cut faces, and mark the cutting plane on the top view.
+        let mesh = arena.mesh(shape, deflection)?;
+        let segments: Vec<[[f64; 2]; 2]> = slice(&mesh.positions, &mesh.triangles, y + size3[1] * 1e-7).into_iter().map(|[p, q]| [[at_front[0] + p[0] * s, at_front[1] + p[1] * s], [at_front[0] + q[0] * s, at_front[1] + q[1] * s]]).collect();
+        hatch(&mut d, &segments, 2.5);
+        let line_y = at_top[1] + y * s;
+        let (xa, xb) = (at_top[0] + b[0] * s - 8.0, at_top[0] + b[3] * s + 8.0);
+        d.strokes.push(Stroke { pen: Pen::Center, points: vec![[xa + 5.0, line_y], [xb - 5.0, line_y]] });
+        for (x, inward) in [(xa, 1.0), (xb, -1.0)] {
+            d.strokes.push(Stroke { pen: Pen::Frame, points: vec![[x, line_y], [x + inward * 5.0, line_y]] });
+            // The arrows point the way the section is looked at (+y, up this view).
+            d.strokes.push(Stroke { pen: Pen::Thin, points: vec![[x + inward * 1.5, line_y], [x + inward * 1.5, line_y + 6.0]] });
+            arrow(&mut d, [x + inward * 1.5, line_y + 7.0], [0.0, 1.0]);
+            d.texts.push(Text { at: [x + inward * 1.5 - inward * 3.5, line_y + 3.0], size: 3.5, text: "A".into(), anchor: Anchor::Middle, angle: 0.0, bold: true });
         }
     }
     holes(&mut d, arena, shape, deflection, s, [(at_front, 1), (at_top, 2), (at_right, 0)]);
@@ -297,11 +423,42 @@ pub fn layout(arena: &mut Arena, shape: Shape, options: &Options, title: &Title)
         dim_h(&mut d, f0[0], f1[0], f0[1], f0[1] - 9.0, size3[0]);
     }
     dim_v(&mut d, f0[1], f1[1], f1[0], f1[0] + 9.0, size3[2]);
-    dim_v(&mut d, t0[1], t1[1], t1[0], t1[0] + 9.0, size3[1]);
+    // Clear of the cutting-plane arrows when there is a section.
+    dim_v(&mut d, t0[1], t1[1], t1[0], t1[0] + if cut.is_some() { 23.0 } else { 9.0 }, size3[1]);
+    if cut.is_some() {
+        let y = if above_front { f0[1] - 7.0 } else { f0[1] - 16.0 };
+        d.texts.push(Text { at: [(f0[0] + f1[0]) / 2.0, y], size: 3.5, text: "SECTION A–A".into(), anchor: Anchor::Middle, angle: 0.0, bold: true });
+    }
+    // The person's own dimensions.
+    for (index, dim) in options.dimensions.iter().enumerate() {
+        let Some(frame) = d.views.iter().find(|v| v.view == dim.view).cloned() else { continue };
+        let on_sheet = |p: [f64; 2]| [frame.at[0] + p[0] * s, frame.at[1] + p[1] * s];
+        let value = match dim.kind {
+            DimKind::Horizontal => (dim.a[0] - dim.b[0]).abs(),
+            DimKind::Vertical => (dim.a[1] - dim.b[1]).abs(),
+            DimKind::Aligned => (dim.a[0] - dim.b[0]).hypot(dim.a[1] - dim.b[1]),
+        };
+        if value > 1e-9 {
+            let (strokes, texts) = (d.strokes.len(), d.texts.len());
+            dim_between(&mut d, on_sheet(dim.a), on_sheet(dim.b), dim.kind, dim.offset, value);
+            let mut b = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+            for p in d.strokes[strokes..].iter().flat_map(|s| &s.points) {
+                b = [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])];
+            }
+            for t in &d.texts[texts..] {
+                let r = text_box(t);
+                b = [b[0].min(r[0]), b[1].min(r[1]), b[2].max(r[2]), b[3].max(r[3])];
+            }
+            d.marks.push(DimMark { dimension: index, bounds: b });
+        }
+    }
 
     title_block(&mut d, [fx1 - block[0], fy0], block, title, options.projection);
+    if list_h > 0.0 {
+        parts_list(&mut d, [fx1 - block[0], fy0 + block[1]], block[0], &title.parts);
+    }
     d.texts.push(Text {
-        at: [fx1 - block[0], fy0 + block[1] + 3.0],
+        at: [fx1 - block[0], fy0 + block[1] + list_h + 3.0],
         size: 2.5,
         text: "Dimensions in mm · General tolerances ISO 2768-m · Do not scale the drawing".into(),
         anchor: Anchor::Start,
@@ -483,6 +640,132 @@ fn dim_v(d: &mut Drawing, y0: f64, y1: f64, from_x: f64, x: f64, value: f64) {
     arrow(d, [x, y1], [0.0, 1.0]);
     // Read from the right (ISO 129): the text runs up the page, left of the line.
     d.texts.push(Text { at: [x - 1.2, (y0 + y1) / 2.0], size: 3.5, text: length_text(value), anchor: Anchor::Middle, angle: 90.0, bold: false });
+}
+
+/// Where a closed mesh crosses the plane y = `y`: segments in (x, z).
+fn slice(positions: &[f64], triangles: &[u32], y: f64) -> Vec<[[f64; 2]; 2]> {
+    let p = |i: u32| {
+        let i = i as usize * 3;
+        [positions[i], positions[i + 1], positions[i + 2]]
+    };
+    let mut out = vec![];
+    for t in triangles.chunks_exact(3) {
+        let v = [p(t[0]), p(t[1]), p(t[2])];
+        let mut hits = vec![];
+        for (a, b) in [(0, 1), (1, 2), (2, 0)] {
+            let (da, db) = (v[a][1] - y, v[b][1] - y);
+            if (da < 0.0) != (db < 0.0) {
+                let k = da / (da - db);
+                hits.push([v[a][0] + k * (v[b][0] - v[a][0]), v[a][2] + k * (v[b][2] - v[a][2])]);
+            }
+        }
+        if hits.len() == 2 {
+            out.push([hits[0], hits[1]]);
+        }
+    }
+    out
+}
+
+/// 45° hatching inside the region the segments bound (even–odd), `spacing` mm apart.
+fn hatch(d: &mut Drawing, segments: &[[[f64; 2]; 2]], spacing: f64) {
+    if segments.is_empty() {
+        return;
+    }
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for p in segments.iter().flatten() {
+        lo = lo.min(p[0] - p[1]);
+        hi = hi.max(p[0] - p[1]);
+    }
+    let step = spacing * std::f64::consts::SQRT_2;
+    // Offset off the grid so lines do not pass exactly through corners.
+    let mut c = lo + step * 0.437;
+    while c < hi {
+        let mut cross: Vec<[f64; 2]> = segments
+            .iter()
+            .filter_map(|[p, q]| {
+                let (fp, fq) = (p[0] - p[1] - c, q[0] - q[1] - c);
+                if (fp < 0.0) == (fq < 0.0) {
+                    return None;
+                }
+                let k = fp / (fp - fq);
+                Some([p[0] + k * (q[0] - p[0]), p[1] + k * (q[1] - p[1])])
+            })
+            .collect();
+        cross.sort_by(|a, b| (a[0] + a[1]).total_cmp(&(b[0] + b[1])));
+        for pair in cross.chunks_exact(2) {
+            d.strokes.push(Stroke { pen: Pen::Thin, points: vec![pair[0], pair[1]] });
+        }
+        c += step;
+    }
+}
+
+/// A dimension between two sheet points, its line `offset` mm off them.
+fn dim_between(d: &mut Drawing, pa: [f64; 2], pb: [f64; 2], kind: DimKind, offset: f64, value: f64) {
+    let (u, n) = match kind {
+        DimKind::Horizontal => ([1.0, 0.0], [0.0, 1.0]),
+        DimKind::Vertical => ([0.0, 1.0], [-1.0, 0.0]),
+        DimKind::Aligned => {
+            let l = (pb[0] - pa[0]).hypot(pb[1] - pa[1]).max(1e-9);
+            let u = [(pb[0] - pa[0]) / l, (pb[1] - pa[1]) / l];
+            (u, [-u[1], u[0]])
+        }
+    };
+    let dot = |p: [f64; 2], v: [f64; 2]| p[0] * v[0] + p[1] * v[1];
+    // The line stands `offset` beyond the farther point (along n).
+    let level = if offset >= 0.0 { dot(pa, n).max(dot(pb, n)) + offset } else { dot(pa, n).min(dot(pb, n)) + offset };
+    let side = offset.signum();
+    let foot = |p: [f64; 2]| {
+        let k = level - dot(p, n);
+        [p[0] + n[0] * k, p[1] + n[1] * k]
+    };
+    let (ea, eb) = (foot(pa), foot(pb));
+    for (p, e) in [(pa, ea), (pb, eb)] {
+        if (dot(e, n) - dot(p, n)).abs() > 1.5 {
+            d.strokes.push(Stroke { pen: Pen::Thin, points: vec![[p[0] + n[0] * side, p[1] + n[1] * side], [e[0] + n[0] * side * 2.0, e[1] + n[1] * side * 2.0]] });
+        }
+    }
+    d.strokes.push(Stroke { pen: Pen::Thin, points: vec![ea, eb] });
+    let along = if dot(eb, u) >= dot(ea, u) { u } else { [-u[0], -u[1]] };
+    arrow(d, ea, [-along[0], -along[1]]);
+    arrow(d, eb, along);
+    // Text above the line, upright or reading from the right (ISO 129).
+    let mut angle = along[1].atan2(along[0]).to_degrees();
+    if angle > 90.0 + 1e-6 {
+        angle -= 180.0;
+    } else if angle <= -90.0 + 1e-6 {
+        angle += 180.0;
+    }
+    let up = [-(angle.to_radians().sin()), angle.to_radians().cos()];
+    let mid = [(ea[0] + eb[0]) / 2.0 + up[0] * 1.2, (ea[1] + eb[1]) / 2.0 + up[1] * 1.2];
+    d.texts.push(Text { at: mid, size: 3.5, text: length_text(value), anchor: Anchor::Middle, angle, bold: false });
+}
+
+/// The parts list on top of the title block, numbered from the bottom up (ISO 7573).
+fn parts_list(d: &mut Drawing, at: [f64; 2], width: f64, rows: &[PartRow]) {
+    let [x, y] = at;
+    let row_h = 6.0;
+    let h = row_h * (rows.len() + 1) as f64;
+    d.strokes.push(Stroke { pen: Pen::Frame, points: vec![[x, y], [x + width, y], [x + width, y + h], [x, y + h], [x, y]] });
+    let cols = [0.0, 0.08, 0.52, 0.62, 0.84].map(|c| x + c * width);
+    for c in &cols[1..] {
+        d.strokes.push(Stroke { pen: Pen::Thin, points: vec![[*c, y], [*c, y + h]] });
+    }
+    for r in 1..=rows.len() {
+        let ry = y + r as f64 * row_h;
+        d.strokes.push(Stroke { pen: Pen::Thin, points: vec![[x, ry], [x + width, ry]] });
+    }
+    let cell = |d: &mut Drawing, r: usize, values: [&str; 5], bold: bool| {
+        let ry = y + r as f64 * row_h + 1.9;
+        for (k, v) in values.iter().enumerate() {
+            let (cx, anchor) = if k == 0 || k == 2 { ((cols[k] + if k + 1 < 5 { cols[k + 1] } else { x + width }) / 2.0, Anchor::Middle) } else { (cols[k] + 1.5, Anchor::Start) };
+            d.texts.push(Text { at: [cx, ry], size: if bold { 2.0 } else { 2.5 }, text: v.to_string(), anchor, angle: 0.0, bold });
+        }
+    };
+    // The header is the top row.
+    cell(d, rows.len(), ["ITEM", "NAME", "QTY", "MATERIAL", "MASS EACH"], true);
+    for (i, row) in rows.iter().enumerate() {
+        cell(d, i, [&(i + 1).to_string(), &row.name, &row.quantity.to_string(), &row.material, &row.mass], false);
+    }
 }
 
 fn title_block(d: &mut Drawing, at: [f64; 2], size: [f64; 2], t: &Title, projection: Projection) {

@@ -44,6 +44,7 @@ impl Plugin for ShapePlugin {
         r.component::<ShapeProgram>()
             .component::<PartMaterials>()
             .component::<ShapeStudies>()
+            .component::<ShapeDrawings>()
             .component::<ParameterSet>()
             .component::<sketch::Sketch>()
             .command::<sketch::CreateSketch>()
@@ -57,6 +58,7 @@ impl Plugin for ShapePlugin {
             .command::<SetShapeParams>()
             .command::<UpdateShape>()
             .command::<SetStudy>()
+            .command::<SetDrawing>()
             // Formulas first: geometry is evaluated from the resolved values, and
             // re-evaluated when anything a formula reads changes.
             .derived(Derived {
@@ -263,6 +265,58 @@ impl Command for SetStudy {
             tx.remove::<ShapeStudies>(self.target)?;
         } else {
             tx.set(self.target, studies)?;
+        }
+        Ok(json!({ "id": self.target }))
+    }
+}
+
+/// How a part's drawing is set up: a section, and dimensions the person
+/// added (one setup per part, or for the whole shape).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DrawingSpec {
+    #[serde(default)]
+    pub part: Option<String>,
+    #[serde(default)]
+    pub section: Option<f64>,
+    #[serde(default)]
+    pub dimensions: Vec<drawing::DimSpec>,
+}
+
+#[derive(Component, Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ShapeDrawings(pub Vec<DrawingSpec>);
+
+impl Persist for ShapeDrawings {
+    const KIND: &'static str = "shape.drawings";
+}
+
+/// Keeps a drawing's setup with the shape (no section and no dimensions removes it).
+#[derive(Deserialize, JsonSchema)]
+pub struct SetDrawing {
+    pub target: StableId,
+    pub drawing: DrawingSpec,
+}
+
+impl Command for SetDrawing {
+    const NAME: &'static str = "shape.set_drawing";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        if tx.get::<ShapeProgram>(self.target).is_none() {
+            return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{} is not a shape", self.target)));
+        }
+        if let Some(p) = self.drawing.section {
+            if !(0.0..=100.0).contains(&p) {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, "section is a percentage of the depth, 0 to 100"));
+            }
+        }
+        let mut all = tx.get::<ShapeDrawings>(self.target).cloned().unwrap_or_default();
+        all.0.retain(|d| d.part != self.drawing.part);
+        if self.drawing.section.is_some() || !self.drawing.dimensions.is_empty() {
+            all.0.push(self.drawing);
+        }
+        if all.0.is_empty() {
+            tx.remove::<ShapeDrawings>(self.target)?;
+        } else {
+            tx.set(self.target, all)?;
         }
         Ok(json!({ "id": self.target }))
     }

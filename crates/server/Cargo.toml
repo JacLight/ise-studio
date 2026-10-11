@@ -20,6 +20,6 @@ manifold-csg = "0.4"
 serde.workspace = true
 serde_json.workspace = true
 axum = { version = "0.8", features = ["ws"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "signal", "process", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "signal", "process", "io-util", "time"] }
 tower-http = { version = "0.7", features = ["fs"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

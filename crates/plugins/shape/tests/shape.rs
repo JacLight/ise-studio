@@ -670,9 +670,9 @@ fn a_drawing_has_views_hidden_lines_dimensions_and_exports() {
         finishes: vec![],
         inputs: String::new(),
     };
-    let title = de_shape::drawing::Title { title: "Plate".into(), number: "P-001".into(), material: "Aluminium".into(), mass: "300 g".into(), drawn_by: "Forma".into(), date: "2026-10-10".into() };
+    let title = de_shape::drawing::Title { title: "Plate".into(), number: "P-001".into(), material: "Aluminium".into(), mass: "300 g".into(), drawn_by: "Forma".into(), date: "2026-10-10".into(), parts: vec![] };
     for projection in [de_shape::drawing::Projection::First, de_shape::drawing::Projection::Third] {
-        let d = de_shape::drawing::drawing(&program, &de_shape::drawing::Options { sheet: de_shape::drawing::Sheet::A4, projection, part: None }, &title).unwrap();
+        let d = de_shape::drawing::drawing(&program, &de_shape::drawing::Options { sheet: de_shape::drawing::Sheet::A4, projection, part: None, ..Default::default() }, &title).unwrap();
         assert_eq!(d.scale_text, "1:1", "100 mm fits an A4 at full size");
         // The hole shows as hidden lines in the front and side views.
         let hidden = d.strokes.iter().filter(|s| s.pen == de_shape::drawing::Pen::Hidden).count();
@@ -698,6 +698,70 @@ fn a_drawing_has_views_hidden_lines_dimensions_and_exports() {
             std::fs::write(format!("{dir}/plate-{projection:?}.pdf"), &pdf).unwrap();
             std::fs::write(format!("{dir}/plate-{projection:?}.dxf"), &dxf).unwrap();
         }
+    }
+}
+
+#[test]
+fn a_drawing_sections_dimensions_and_lists_parts() {
+    use de_shape::drawing::{DimKind, DimSpec, Options, PartRow, Pen, Sheet, Title, ViewName};
+    // Plate 100 × 60 × 20 with a ⌀16 hole through it at (50, 30).
+    let program = de_shape::ShapeProgram {
+        name: "Plate".into(),
+        description: String::new(),
+        source: "return box(100, 60, 20).subtract(cylinder(30, 8).translate([50, 30, -5]));".into(),
+        params: vec![],
+        display_tolerance: None,
+        levels: vec![],
+        uses: Default::default(),
+        finishes: vec![],
+        inputs: String::new(),
+    };
+    let title = |parts: Vec<PartRow>| Title { title: "Plate".into(), number: "P-1".into(), material: "Steel".into(), mass: "1 kg".into(), drawn_by: "F".into(), date: "2026-10-10".into(), parts };
+    let plain = de_shape::drawing::drawing(&program, &Options { sheet: Sheet::A4, ..Default::default() }, &title(vec![])).unwrap();
+    // The view frames say where the model lands on the sheet: the front view's
+    // outline is the part's x and z extent.
+    let front = plain.views.iter().find(|v| v.view == ViewName::Front).unwrap();
+    let want = [front.at[0], front.at[1] + 0.0, front.at[0] + 100.0 * front.scale, front.at[1] + 20.0 * front.scale];
+    for k in 0..4 {
+        assert!((front.bounds[k] - want[k]).abs() < 0.05, "front view bounds {:?} vs {want:?}", front.bounds);
+    }
+    let top = plain.views.iter().find(|v| v.view == ViewName::Top).unwrap();
+    assert!((top.bounds[3] - top.bounds[1] - 60.0 * top.scale).abs() < 0.05, "top view is 60 deep");
+
+    // Section through the hole's centre (half way back): hatching on the
+    // material either side of the hole, none across the hole.
+    let dims = vec![
+        DimSpec { view: ViewName::Top, a: [50.0, 30.0], b: [100.0, 30.0], kind: DimKind::Horizontal, offset: 12.0 },
+        DimSpec { view: ViewName::Front, a: [0.0, 0.0], b: [100.0, 20.0], kind: DimKind::Aligned, offset: 8.0 },
+    ];
+    let cut = de_shape::drawing::drawing(&program, &Options { sheet: Sheet::A4, section: Some(50.0), dimensions: dims, ..Default::default() }, &title(vec![])).unwrap();
+    let f = cut.views.iter().find(|v| v.view == ViewName::Front).unwrap();
+    let hatch: Vec<_> = cut.strokes.iter().filter(|s| s.pen == Pen::Thin && s.points.len() == 2).filter(|s| s.points.iter().all(|p| p[0] >= f.bounds[0] - 0.01 && p[0] <= f.bounds[2] + 0.01 && p[1] >= f.bounds[1] - 0.01 && p[1] <= f.bounds[3] + 0.01)).filter(|s| ((s.points[1][1] - s.points[0][1]) - (s.points[1][0] - s.points[0][0])).abs() < 1e-6).collect();
+    assert!(hatch.len() > 20, "{} hatch lines", hatch.len());
+    let hole = (f.at[0] + 42.0 * f.scale + 0.1, f.at[0] + 58.0 * f.scale - 0.1);
+    for s in &hatch {
+        let (x0, x1) = (s.points[0][0].min(s.points[1][0]), s.points[0][0].max(s.points[1][0]));
+        assert!(x1 <= hole.0 || x0 >= hole.1, "a hatch line crosses the hole: {:?}", s.points);
+    }
+    assert!(cut.strokes.iter().all(|s| s.pen != Pen::Hidden || !s.points.iter().all(|p| p[1] >= f.bounds[1] && p[1] <= f.bounds[3] && p[0] >= f.bounds[0] && p[0] <= f.bounds[2])), "no hidden lines in the section");
+    assert!(cut.texts.iter().any(|t| t.text == "SECTION A–A"));
+    assert_eq!(cut.texts.iter().filter(|t| t.text == "A").count(), 2, "the cutting plane is lettered at both ends");
+    // The person's dimensions: 50 across the top view, the front diagonal √(100² + 20²).
+    assert!(cut.texts.iter().any(|t| t.text == "50"), "added 50");
+    let diag = de_shape::drawing::length_text(100f64.hypot(20.0));
+    let t = cut.texts.iter().find(|t| t.text == diag).expect("aligned dimension");
+    assert!((t.angle - 20f64.atan2(100.0).to_degrees()).abs() < 0.01, "it runs along the diagonal: {}°", t.angle);
+
+    // A parts list for an assembly.
+    let rows = vec![PartRow { name: "Base".into(), quantity: 1, material: "Steel".into(), mass: "1.2 kg".into() }, PartRow { name: "Bolt".into(), quantity: 4, material: "Steel".into(), mass: "12 g".into() }];
+    let listed = de_shape::drawing::drawing(&program, &Options { sheet: Sheet::A4, ..Default::default() }, &title(rows)).unwrap();
+    for v in ["ITEM", "QTY", "Base", "Bolt", "4", "12 g"] {
+        assert!(listed.texts.iter().any(|t| t.text == v), "parts list shows {v}");
+    }
+    assert!(listed.strokes.iter().flat_map(|s| &s.points).all(|p| p[0] >= 0.0 && p[0] <= listed.width && p[1] >= 0.0 && p[1] <= listed.height));
+    if let Ok(dir) = std::env::var("DRAWING_OUT") {
+        std::fs::write(format!("{dir}/plate-section.pdf"), de_shape::drawing::pdf(&cut)).unwrap();
+        std::fs::write(format!("{dir}/plate-list.pdf"), de_shape::drawing::pdf(&listed)).unwrap();
     }
 }
 

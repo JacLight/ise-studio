@@ -8,6 +8,7 @@
 //! Clients pick a project with `?project=<name>` on `/ws` and `/export`.
 
 mod ai;
+mod machines;
 mod peers;
 
 use axum::{
@@ -57,6 +58,7 @@ struct Server {
     /// Drawings already laid out, by what they were made from (exact
     /// evaluation of a big part takes a while; preview and download share one).
     drawings: Mutex<HashMap<u64, Arc<de_shape::drawing::Drawing>>>,
+    machines: machines::MachineQueries,
 }
 
 /// Project names are file names: lowercase letters, digits and dashes.
@@ -1259,7 +1261,7 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
         Ok(app) => app,
         Err(e) => return fail(StatusCode::BAD_REQUEST, e),
     };
-    let options = de_shape::drawing::Options {
+    let mut options = de_shape::drawing::Options {
         sheet: match query.get("sheet").map(String::as_str) {
             Some("A4") => de_shape::drawing::Sheet::A4,
             Some("A2") => de_shape::drawing::Sheet::A2,
@@ -1269,6 +1271,7 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
         },
         projection: if query.get("projection").is_some_and(|p| p == "third") { de_shape::drawing::Projection::Third } else { de_shape::drawing::Projection::First },
         part: query.get("part").filter(|p| !p.is_empty()).cloned(),
+        ..Default::default()
     };
     let found = {
         let project = app.project.lock().unwrap();
@@ -1295,22 +1298,46 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
                     de_shape::part_masses(project.world(), e).ok()?.get(index).copied().flatten()
                 }
             };
-            Some((program, material, mass, sid))
+            // The saved setup: section and the person's dimensions.
+            let setup = project.get::<de_shape::ShapeDrawings>(sid).and_then(|all| all.0.iter().find(|d| d.part == options.part).cloned()).unwrap_or_default();
+            // The parts list: one row per distinct part, with how many there are.
+            let mut parts: Vec<de_shape::drawing::PartRow> = vec![];
+            if options.part.is_none() {
+                let stats = &project.get::<ShapeSolid>(sid)?.stats.parts;
+                let masses = de_shape::part_masses(project.world(), e).unwrap_or_default();
+                for (i, p) in stats.iter().enumerate() {
+                    if let Some(row) = parts.iter_mut().find(|r| r.name == p.name) {
+                        row.quantity += 1;
+                        continue;
+                    }
+                    let kg = masses.get(i).copied().flatten();
+                    parts.push(de_shape::drawing::PartRow {
+                        name: p.name.clone(),
+                        quantity: 1,
+                        material: p.material.clone().unwrap_or_else(|| "—".into()),
+                        mass: kg.map(|kg| if kg < 1.0 { format!("{} g", de_shape::drawing::length_text(kg * 1000.0)) } else { format!("{} kg", de_shape::drawing::length_text(kg)) }).unwrap_or_else(|| "—".into()),
+                    });
+                }
+            }
+            Some((program, material, mass, sid, setup, parts))
         })
     };
-    let Some((program, material, mass, sid)) = found else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
+    let Some((program, material, mass, sid, setup, parts)) = found else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
+    options.section = setup.section;
+    options.dimensions = setup.dimensions;
     let title = de_shape::drawing::Title {
         title: options.part.clone().unwrap_or_else(|| program.name.clone()),
         number: format!("{}-{}", query.get("project").unwrap_or(&server.default).to_uppercase(), &sid.to_string().replace('-', "")[..6].to_uppercase()),
         material: material.unwrap_or_else(|| "—".into()),
         mass: mass.map(|kg| if kg < 1.0 { format!("{} g", de_shape::drawing::length_text(kg * 1000.0)) } else { format!("{} kg", de_shape::drawing::length_text(kg)) }).unwrap_or_else(|| "—".into()),
+        parts,
         drawn_by: std::env::var("USER").map(|u| u[..1].to_uppercase() + &u[1..]).unwrap_or_else(|_| "Forma".into()),
         date: today(),
     };
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (&program.source, &program.inputs, format!("{:?}", program.params), &options, &title.title, &title.material, &title.mass, &title.date).hash(&mut h);
+        (&program.source, &program.inputs, format!("{:?}", program.params), format!("{options:?}"), &title.title, &title.material, &title.mass, &title.date, format!("{:?}", title.parts)).hash(&mut h);
         h.finish()
     };
     let cached = server.drawings.lock().unwrap().get(&key).cloned();
@@ -1604,7 +1631,8 @@ async fn main() -> std::io::Result<()> {
     de_shape::assets::set_dir(dir.join("assets"));
     let engine = engine_id(&dir)?;
     println!("engine {engine}");
-    let server = Arc::new(Server { engine, port, ai, dir, default: default.clone(), registry, open: Mutex::new(HashMap::new()), drawings: Mutex::new(HashMap::new()) });
+    let machines = machines::MachineQueries::new(&root);
+    let server = Arc::new(Server { engine, port, ai, dir, default: default.clone(), registry, open: Mutex::new(HashMap::new()), drawings: Mutex::new(HashMap::new()), machines });
     server.project(None).map_err(std::io::Error::other)?;
 
     let ui = ServeDir::new(&web).fallback(ServeFile::new(web.join("index.html")));
@@ -1614,6 +1642,7 @@ async fn main() -> std::io::Result<()> {
         .route("/projects", get(projects))
         .route("/projects/{name}/thumbnail", get(thumbnail_get).post(thumbnail_put).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024)))
         .route("/slicer/{file}", axum::routing::post(send_to_slicer))
+        .route("/machines/jcz/status", axum::routing::post(machines::status))
         .route("/gears/{id}", axum::routing::post(gear_check))
         .route("/drawing/{file}", get(drawing))
         .route("/motion/{id}", get(motion))
