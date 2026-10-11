@@ -322,7 +322,8 @@ pub(crate) fn symbol_view(id: StableId, s: &schematic::SchSymbol) -> SymbolView 
             if p.length > 1e-6 {
                 draw.push(Draw::Line { p: vec![at, inner], w: W_PIN, ink: "pin" });
             }
-            let mid = [(at[0] + inner[0]) / 2.0, (at[1] + inner[1]) / 2.0];
+            // Numbers sit nearer the body, clear of a no-connect flag on the end.
+            let mid = [at[0] + (inner[0] - at[0]) * 0.62, at[1] + (inner[1] - at[1]) * 0.62];
             let horizontal = matches!(dir, Dir::Left | Dir::Right);
             if d.show_pin_numbers && p.length > 1e-6 {
                 let shown = if pads.len() > 1 && pads.len() <= 4 && !pads.iter().any(|x| x == &p.number) { pads.join(",") } else { p.number.clone() };

@@ -1177,8 +1177,10 @@ pub fn label_on_pin(tx: &mut Tx, schematic: StableId, pin: &PinRef, kind: LabelK
         wire = Some(add_item(tx, schematic, SchWire { schematic, sheet: pin.sheet.clone(), points: vec![pin.at, end] })?);
     }
     let rotation = match kind {
-        LabelKind::Power if is_ground(text) => 270.0,
+        // A port points away from a vertical pin; off a side pin, ground hangs down and supplies stand up.
+        LabelKind::Power if pin.dir == Dir::Up => 90.0,
         LabelKind::Power if pin.dir == Dir::Down => 270.0,
+        LabelKind::Power if is_ground(text) => 270.0,
         LabelKind::Power => 90.0,
         _ => rotation_for(pin.dir),
     };

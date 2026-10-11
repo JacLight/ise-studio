@@ -379,7 +379,7 @@ export function SchematicPane(props: {
                 ["add", "Add", null],
                 ["nets", "Nets", v.nets.length],
                 ["erc", "ERC", errors || null],
-                ["sync", "Board", pending || null],
+                ["sync", "Sync", pending || null],
               ] as [Tab, string, number | null][]
             ).map(([k, label, n]) => (
               <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>

@@ -13693,3 +13693,16 @@ a.button .icon {
   width: 15px;
   height: 15px;
 }
+
+.sch-check {
+  justify-content: flex-start;
+  grid-template-columns: none;
+  cursor: pointer;
+}
+
+.sch-check input {
+  width: auto;
+  height: auto;
+  margin: 0;
+  flex: none;
+}
