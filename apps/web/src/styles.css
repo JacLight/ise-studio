@@ -5735,3 +5735,657 @@ button.download.drawing-open small {
   white-space: nowrap;
   box-shadow: 0 2px 6px rgb(0 0 0 / 0.18);
 }
+
+/* ---- Comments pinned to the model ---- */
+.comment-pins {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 7;
+}
+
+.comment-pin {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  padding: 0;
+  display: none;
+  pointer-events: auto;
+  background: none;
+  transition: opacity 0.18s ease, filter 0.18s ease;
+  will-change: transform;
+}
+
+.comment-pin:hover {
+  background: none;
+}
+
+/* A speech bubble whose pointed corner sits on the spot. */
+.pin-bubble {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 50% 50% 50% 3px;
+  background: var(--who);
+  border: 2px solid #fff;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  box-shadow: 0 4px 12px rgb(30 20 60 / 0.28), 0 1px 2px rgb(30 20 60 / 0.2);
+  transform-origin: 0 100%;
+  transition: transform 0.16s cubic-bezier(0.3, 1.4, 0.5, 1), box-shadow 0.16s ease;
+  animation: pin-drop 0.32s cubic-bezier(0.3, 1.5, 0.5, 1) both;
+}
+
+.comment-pin:hover .pin-bubble {
+  transform: scale(1.1);
+}
+
+.comment-pin.is-active .pin-bubble {
+  transform: scale(1.16);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--who) 26%, transparent), 0 6px 16px rgb(30 20 60 / 0.3);
+}
+
+.pin-num {
+  position: absolute;
+  left: 21px;
+  bottom: 21px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: #fff;
+  color: #2c2833;
+  font-size: 9.5px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 1px 4px rgb(30 20 60 / 0.25);
+  pointer-events: none;
+  animation: pin-drop 0.32s 0.06s cubic-bezier(0.3, 1.5, 0.5, 1) both;
+}
+
+.comment-pin.is-resolved .pin-bubble {
+  background: #fff;
+  color: var(--who);
+  border-color: var(--who);
+  opacity: 0.85;
+}
+
+.comment-pin.is-resolved .pin-num {
+  background: #1f9d74;
+  color: #fff;
+}
+
+/* Behind the model: still findable, clearly not in front. */
+.comment-pin.is-behind {
+  opacity: 0.38;
+  filter: saturate(0.5);
+}
+
+.comment-pin.is-behind .pin-bubble {
+  transform: scale(0.82);
+  box-shadow: none;
+}
+
+.comment-pin.is-draft .pin-bubble {
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--who) 45%, transparent), 0 6px 16px rgb(30 20 60 / 0.3);
+  animation: pin-drop 0.32s cubic-bezier(0.3, 1.5, 0.5, 1) both, pin-pulse 1.6s 0.3s ease-out infinite;
+}
+
+.comment-pin.is-ghost {
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+.comment-pin.is-ghost .pin-bubble {
+  animation: none;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+@keyframes pin-drop {
+  from {
+    transform: translateY(-8px) scale(0.4);
+    opacity: 0;
+  }
+}
+
+@keyframes pin-pulse {
+  70% {
+    box-shadow: 0 0 0 10px color-mix(in srgb, var(--who) 0%, transparent), 0 6px 16px rgb(30 20 60 / 0.3);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--who) 0%, transparent), 0 6px 16px rgb(30 20 60 / 0.3);
+  }
+}
+
+.viewport.is-commenting .model-canvas {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 26 26'%3E%3Cpath d='M2 24V13a11 11 0 1 1 11 11z' fill='%237352d6' stroke='white' stroke-width='2'/%3E%3Cpath d='M13 8v10M8 13h10' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") 2 24, crosshair;
+}
+
+.viewport.is-marking .model-canvas {
+  cursor: crosshair;
+}
+
+/* Markup drawn on the model. */
+.comment-markup {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 6;
+  overflow: hidden;
+}
+
+.comment-markup path {
+  fill: none;
+  stroke-width: 3.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.comment-markup path.halo {
+  stroke: #fff;
+  stroke-width: 6.5;
+  opacity: 0.92;
+}
+
+/* The open thread, beside its pin. */
+.comment-card-anchor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 16;
+  display: none;
+  will-change: transform;
+}
+
+.comment-card {
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  max-height: min(470px, 72dvh);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgb(40 30 70 / 0.2), 0 0 0 1px rgb(40 30 70 / 0.06);
+  animation: card-in 0.18s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  overflow: hidden;
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+
+.comment-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 8px 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.comment-card-head .ib {
+  width: 28px;
+  height: 28px;
+  color: #8f899c;
+}
+
+.comment-num {
+  flex: none;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 11px 11px 11px 3px;
+  background: var(--who);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.comment-num .icon {
+  width: 12px;
+  stroke-width: 2.4;
+}
+
+.comment-where {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.comment-resolve {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1.5px solid #dcd8e5;
+  color: #a19bae;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.comment-resolve .icon {
+  width: 14px;
+  stroke-width: 2.2;
+}
+
+.comment-resolve:hover {
+  border-color: #1f9d74;
+  color: #1f9d74;
+  background: #effaf5;
+}
+
+.comment-resolve.on {
+  background: #1f9d74;
+  border-color: #1f9d74;
+  color: #fff;
+}
+
+.comment-thread {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 12px;
+  scrollbar-width: thin;
+}
+
+.comment-message {
+  display: flex;
+  gap: 9px;
+  padding: 9px 0;
+}
+
+.comment-message + .comment-message {
+  border-top: 1px solid #f3f1f6;
+}
+
+.comment-avatar {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--who);
+  color: #fff;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.comment-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.comment-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-height: 20px;
+}
+
+.comment-meta b {
+  font-size: 12px;
+  font-weight: 650;
+  color: #2c2833;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comment-meta time {
+  flex: none;
+  font-size: 10.5px;
+  color: #9a94a6;
+}
+
+.comment-own {
+  margin-left: auto;
+  display: flex;
+  gap: 1px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.comment-message:hover .comment-own,
+.comment-own:focus-within {
+  opacity: 1;
+}
+
+.comment-own .ib {
+  width: 22px;
+  height: 22px;
+  color: #9a94a6;
+}
+
+.comment-own .icon {
+  width: 13px;
+}
+
+.comment-text {
+  margin: 1px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #3b3646;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.comment-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #fff4f2;
+  font-size: 11.5px;
+  color: #7a3a33;
+}
+
+.comment-confirm button {
+  padding: 3px 8px;
+  font-size: 11.5px;
+}
+
+.comment-confirm button.danger {
+  margin-left: auto;
+  color: #c43c2c;
+  font-weight: 650;
+}
+
+.comment-resolved-note {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 2px 0 8px;
+  font-size: 11px;
+  color: #1f9d74;
+}
+
+.comment-resolved-note .icon {
+  width: 13px;
+  stroke-width: 2.2;
+}
+
+.comment-card.is-resolved .comment-text {
+  color: #6f6a7a;
+}
+
+.comment-composer {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.comment-body .comment-composer {
+  padding: 4px 0 0;
+  border-top: 0;
+}
+
+.comment-card.is-draft .comment-composer {
+  border-top: 0;
+}
+
+.comment-composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 36px;
+  max-height: 160px;
+  resize: none;
+  padding: 8px 10px;
+  border: 1px solid #e3e0ea;
+  border-radius: 10px;
+  outline: none;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: #2c2833;
+  background: #fff;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.comment-composer textarea:focus {
+  border-color: #9574eb;
+  box-shadow: 0 0 0 3px rgb(149 116 235 / 0.16);
+}
+
+.composer-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.composer-gap {
+  flex: 1;
+}
+
+.composer-send {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--purple);
+  color: #fff;
+}
+
+.composer-send:hover {
+  background: #6440cc;
+  color: #fff;
+}
+
+.composer-send:disabled {
+  background: #e9e5f2;
+  color: #fff;
+}
+
+.composer-send .icon {
+  width: 15px;
+  stroke-width: 2.2;
+}
+
+.composer-cancel {
+  padding: 5px 10px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.markup-tools {
+  display: flex;
+  gap: 2px;
+}
+
+.markup-tools .ib {
+  width: 28px;
+  height: 28px;
+  color: #8f899c;
+}
+
+.markup-tools .ib.active {
+  background: #efe9fd;
+  color: #6745cd;
+}
+
+.markup-tools .icon {
+  width: 15px;
+}
+
+.markup-hint {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: #6745cd;
+  background: #f6f2ff;
+}
+
+/* The list of every thread. */
+.comments-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.comments-tools .secondary kbd {
+  margin-left: 2px;
+}
+
+.comments-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #766b85;
+  cursor: pointer;
+}
+
+.comment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.comment-row {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 10px 8px;
+  text-align: left;
+  border-radius: 10px;
+}
+
+.comment-row:hover {
+  background: #f7f5fa;
+  color: inherit;
+}
+
+.comment-row.active {
+  background: #f3effa;
+}
+
+.comment-row.is-resolved {
+  opacity: 0.72;
+}
+
+.comment-row-body {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.comment-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #3b3646;
+  overflow-wrap: anywhere;
+}
+
+.comment-row-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 10.5px;
+  color: #9a94a6;
+}
+
+.comment-replies {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #f1eff5;
+  color: #766b85;
+}
+
+.comments-empty {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 18px 10px 8px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.comments-empty p {
+  margin: 6px 0 0;
+}
+
+.comments-empty-pin {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50% 50% 50% 6px;
+  background: #f1ecfd;
+  color: var(--purple);
+}
+
+.comments-empty-pin .icon {
+  width: 20px;
+}
+
+.rail-badge-host {
+  position: relative;
+  display: inline-flex;
+}
+
+.rail-badge {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  border: 1.5px solid #fff;
+  background: #e2553f;
+  color: #fff;
+  font-size: 8.5px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.comment-hint kbd {
+  margin: 0 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pin-bubble,
+  .pin-num,
+  .comment-card,
+  .comment-pin.is-draft .pin-bubble {
+    animation: none;
+  }
+}

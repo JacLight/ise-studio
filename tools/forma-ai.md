@@ -84,6 +84,14 @@ Build like a designer: smallest components first, then assemblies of them.
 - `assembly.instance.delete` removes an instance.
 - `assembly.group.create { name, members }` groups two or more items so they are picked and moved together; nothing about the items changes. `assembly.group.update { target, name?, members? }` renames or changes membership; deleting the group (`core.entity.delete`) ungroups. Several changes that belong together go in one `core.batch { steps: [{ operation, parameters }] }` (one undo step, all or nothing).
 
+## Comments on the model
+
+Design-review comments are pinned to a point on a part and sync to the team like any change. Sign them `"author": "Forma AI"`.
+- `comment.create { target, at: [x,y,z], normal?, part?, text, author, markup? }` pins a thread. `target` is a box, a placed shape or a top-level instance; `at` is in project coordinates (mm), converted to the part's own so the pin follows the part when it moves (`point` instead gives part coordinates directly). `normal` is the surface direction there (pins behind the model dim by it); `part` names the part of a multi-part shape. `markup: [{ points: [[x,y,z], …], arrow? }]` draws strokes or arrows on the model, in the same coordinates as the point.
+- `comment.reply { thread, text, author }` answers; `comment.resolve { target, author }` / `comment.reopen { target }`.
+- `comment.edit { target, text, author }` and `comment.delete { target, author }` work only on the author's own comment (deleting a thread deletes its replies).
+- Threads are `comment.thread` components (anchor, author, created ms, text, resolved, markup); replies are separate `comment.reply` entities with `thread`. Read them with `./forma list` / `get` to answer "what is still open?".
+
 ## Linked parameters
 
 Any parameter can follow a formula instead of holding its own value, and links are chosen, not implied: link everything, some things or nothing. A table top's width can drive the frame, and the frame the position of a plug strip, even though none was modelled from the other.

@@ -32,6 +32,7 @@ import {
   faceFrame,
 } from "./gizmo";
 import type { Overlay } from "./intent";
+import type { CommentPin, CommentsView, PinAnchor } from "./Comments";
 import { EdgeLayer, type EdgePicture } from "./edgeLayer";
 import { FaceLayer, type FlatFace, curvedFaceAt, flatFaceAt } from "./faceLayer";
 import { SketchLayer, type SketchPicture, segmentPoints } from "./sketchLayer";
@@ -197,6 +198,8 @@ export type ViewportHandle = {
   setTurntable: (on: boolean) => void;
   snapshot: () => string | null;
   resize: () => void;
+  /** Glides to a comment pin, turning to face the surface it is on. */
+  framePin: (id: string) => void;
 };
 
 type Props = {
@@ -206,6 +209,8 @@ type Props = {
   teammates?: { engine: string; name: string; color: string; selected: string | null; pointer: [number, number, number] | null }[];
   /** Where the pointer is over the model (world mm), or null off it; for teammates to see. */
   onHover3D?: (p: [number, number, number] | null) => void;
+  /** Comment pins on the model, the open thread's card, and comment mode. */
+  comments?: CommentsView | null;
   /** Other items picked with it (Shift-click): outlined, and moved with it while it is dragged. */
   also?: string[];
   live: LiveEdit | null;
@@ -263,6 +268,10 @@ export type SketchPointer = {
 };
 
 const MM = 1000; // engine meters -> scene millimeters
+const Z_AXIS = new THREE.Vector3(0, 0, 1);
+/** Most points kept in one markup stroke, and the screen distance (px) between them. */
+const STROKE_POINTS = 400;
+const STROKE_STEP = 3;
 const OUTLINE = new THREE.Color("#8b66ef");
 const POS_KEYS = ["x", "y", "z"] as const;
 const SIZE_KEYS = ["width", "depth", "height"] as const;
@@ -662,6 +671,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
   const label = useRef<HTMLDivElement>(null);
   const readout = useRef<HTMLDivElement>(null);
   const cursorLayer = useRef<HTMLDivElement>(null);
+  const pinLayer = useRef<HTMLDivElement>(null);
+  const pinGhost = useRef<HTMLDivElement>(null);
+  const markupLayer = useRef<SVGSVGElement>(null);
+  const cardAnchor = useRef<HTMLDivElement>(null);
   const faceBadge = useRef<HTMLDivElement>(null);
   const labelLayer = useRef<HTMLDivElement>(null);
   const sketchLabels = useRef<HTMLDivElement>(null);
@@ -882,7 +895,176 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       (out.children[1] as HTMLElement).textContent = sub;
     };
 
+    // ---- Comment pins: points in a part's own coordinates, drawn where the part is now.
+    /** An instance draws its contents already placed by its position and rotation; other parts draw in their own coordinates. */
+    const instanceFrame = (target: string) => {
+      const inst = instance(callbacks.current.entities.get(target));
+      return inst ? { at: new THREE.Vector3(...inst.at), angle: (inst.rotation * Math.PI) / 180 } : null;
+    };
+    const shownPart = (target: string) => {
+      const part = three.current?.parts.get(target);
+      return part && part.group.visible && part.meshes.some((m) => m.visible) ? part : undefined;
+    };
+    /** Where a point in a part's coordinates is now (null when the part is gone or hidden). */
+    const pinWorld = (target: string | null, p: readonly number[]): THREE.Vector3 | null => {
+      const v = new THREE.Vector3(p[0], p[1], p[2]);
+      if (!target) return v;
+      const part = shownPart(target);
+      if (!part) return null;
+      const f = instanceFrame(target);
+      if (f) v.applyAxisAngle(Z_AXIS, f.angle).add(f.at);
+      part.group.updateMatrixWorld();
+      return part.group.localToWorld(v);
+    };
+    const pinLocal = (target: string, w: THREE.Vector3): THREE.Vector3 | null => {
+      const part = three.current?.parts.get(target);
+      if (!part) return null;
+      part.group.updateMatrixWorld();
+      const v = part.group.worldToLocal(w.clone());
+      const f = instanceFrame(target);
+      if (f) v.sub(f.at).applyAxisAngle(Z_AXIS, -f.angle);
+      return v;
+    };
+    const dirWorld = (target: string | null, d: readonly number[]) => {
+      const v = new THREE.Vector3(d[0], d[1], d[2]);
+      const f = target ? instanceFrame(target) : null;
+      return f ? v.applyAxisAngle(Z_AXIS, f.angle) : v;
+    };
+    const visibleBodies = () => [...(three.current?.parts.values() ?? [])].flatMap((p) => (p.group.visible ? p.meshes.filter((m) => m.visible) : []));
+    const round3 = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z].map((x) => Math.round(x * 1000) / 1000) as [number, number, number];
+    const onCommentUi = (e: Event) => !!(e.target as Element | null)?.closest?.(".comment-pins, .comment-card-anchor");
+
+    /**
+     * Pins behind the model are dimmed. Ray casts are not free on a big model,
+     * so they run once the view settles, not on every frame of an orbit.
+     */
+    const pinBehind = new Map<string, boolean>();
+    let occlusionTimer = 0;
+    const updateOcclusion = () => {
+      const c = callbacks.current.comments;
+      if (!c) return;
+      const bodies = visibleBodies();
+      const eye = camera.position;
+      let changed = false;
+      for (const pin of c.pins) {
+        const w = pinWorld(pin.target, pin.point);
+        let behind = false;
+        if (w) {
+          const n = pin.normal ? dirWorld(pin.target, pin.normal) : null;
+          const toEye = eye.clone().sub(w);
+          const dist = toEye.length();
+          if (n && n.dot(toEye) < -1e-6 * dist) behind = true;
+          else {
+            const hit = new THREE.Raycaster(eye.clone(), w.clone().sub(eye).normalize(), 0, dist).intersectObjects(bodies, false)[0];
+            behind = !!hit && hit.distance < dist - Math.max(0.5, dist * 0.004);
+          }
+        }
+        if (pinBehind.get(pin.id) !== behind) {
+          pinBehind.set(pin.id, behind);
+          changed = true;
+        }
+      }
+      if (changed) dirty = true;
+    };
+    const scheduleOcclusion = () => {
+      window.clearTimeout(occlusionTimer);
+      occlusionTimer = window.setTimeout(updateOcclusion, 90);
+    };
+
+    /** A markup stroke being drawn (project coordinates). */
+    let liveStroke: { points: THREE.Vector3[]; arrow: boolean; pointer: number } | null = null;
+
+    const strokePath = (pts: { x: number; y: number }[]) => pts.map((q, i) => `${i ? "L" : "M"}${q.x.toFixed(1)} ${q.y.toFixed(1)}`).join("");
+    /** An arrowhead at the end of a stroke, pointing the way it was drawn on screen. */
+    const arrowHead = (pts: { x: number; y: number }[], size: number) => {
+      const tip = pts[pts.length - 1];
+      let from = pts[0];
+      for (let i = pts.length - 2; i >= 0; i--) {
+        if (Math.hypot(pts[i].x - tip.x, pts[i].y - tip.y) >= size * 1.2) {
+          from = pts[i];
+          break;
+        }
+      }
+      const a = Math.atan2(tip.y - from.y, tip.x - from.x);
+      const wing = (s: number) => `${(tip.x - size * Math.cos(a + s * 0.48)).toFixed(1)} ${(tip.y - size * Math.sin(a + s * 0.48)).toFixed(1)}`;
+      return `M${wing(1)}L${tip.x.toFixed(1)} ${tip.y.toFixed(1)}L${wing(-1)}`;
+    };
+    const drawMarkup = (c: CommentsView | null | undefined, placed: Map<string, boolean>) => {
+      const svg = markupLayer.current;
+      if (!svg) return;
+      const lines: string[] = [];
+      const draw = (pts: { x: number; y: number }[], arrow: boolean, color: string, opacity: number) => {
+        if (pts.length < 2) return;
+        const d = strokePath(pts) + (arrow ? arrowHead(pts, 13) : "");
+        lines.push(`<g opacity="${opacity}"><path d="${d}" class="halo"/><path d="${d}" stroke="${color}"/></g>`);
+      };
+      const project = (w: THREE.Vector3 | null) => {
+        if (!w) return null;
+        const q = toScreen(w);
+        return q.behind ? null : q;
+      };
+      for (const pin of c?.pins ?? []) {
+        if (!pin.markup.length || !placed.has(pin.id)) continue;
+        const active = c!.active === pin.id || pin.draft;
+        const opacity = placed.get(pin.id) && !active ? 0.3 : active ? 1 : 0.72;
+        for (const st of pin.markup) {
+          const pts = st.points.map((p) => project(pinWorld(pin.target, p))).filter((q): q is { x: number; y: number; behind: boolean } => !!q);
+          draw(pts, !!st.arrow, pin.color, opacity);
+        }
+      }
+      if (liveStroke && c) {
+        const pts = liveStroke.points.map((w) => project(w)).filter((q): q is { x: number; y: number; behind: boolean } => !!q);
+        draw(pts, liveStroke.arrow, c.me.color, 1);
+      }
+      svg.innerHTML = lines.join("");
+    };
+
+    const layoutPins = () => {
+      const c = callbacks.current.comments;
+      const rect = renderer.domElement.getBoundingClientRect();
+      // Pin id → whether it is dimmed (behind the model); only pins on screen.
+      const placed = new Map<string, boolean>();
+      const screen = new Map<string, { x: number; y: number }>();
+      for (const tag of Array.from(pinLayer.current?.children ?? []) as HTMLElement[]) {
+        const pin: CommentPin | undefined = c?.pins.find((p) => p.id === tag.dataset.pin);
+        const w = pin ? pinWorld(pin.target, pin.point) : null;
+        const q = w ? toScreen(w) : null;
+        if (!pin || !q || q.behind) {
+          tag.style.display = "none";
+          continue;
+        }
+        const behind = !!pinBehind.get(pin.id) && c!.active !== pin.id && !pin.draft;
+        tag.style.display = "block";
+        tag.style.transform = `translate(${q.x.toFixed(1)}px, ${q.y.toFixed(1)}px)`;
+        tag.classList.toggle("is-behind", behind);
+        placed.set(pin.id, behind);
+        screen.set(pin.id, q);
+      }
+      // The open thread's card sits beside its pin, on whichever side has room.
+      const card = cardAnchor.current;
+      if (card) {
+        if (!c?.active || !c.card) card.style.display = "none";
+        else {
+          card.style.display = "block";
+          const at = screen.get(c.active);
+          const [w, h] = [rect.width, rect.height];
+          const [cw, ch] = [card.offsetWidth || 320, card.offsetHeight || 180];
+          let x = w - cw - 24;
+          let y = 96;
+          if (at) {
+            x = at.x + 46 + cw <= w - 12 ? at.x + 46 : at.x - 18 - cw;
+            y = at.y - 34;
+          }
+          x = Math.max(12, Math.min(x, w - cw - 12));
+          y = Math.max(12, Math.min(y, h - ch - 12));
+          card.style.transform = `translate(${x.toFixed(0)}px, ${y.toFixed(0)}px)`;
+        }
+      }
+      drawMarkup(c, placed);
+    };
+
     const layoutOverlays = () => {
+      layoutPins();
       for (const { el: tag, at } of three.current?.overlayLabels ?? []) {
         const p = toScreen(at);
         tag.style.display = p.behind ? "none" : "block";
@@ -1079,6 +1261,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       layoutOverlays();
       sketchLayer.layout(toScreen);
       renderer.render(scene, camera);
+      if (callbacks.current.comments?.pins.length) scheduleOcclusion();
     };
     raf = requestAnimationFrame(frame);
 
@@ -1214,6 +1397,22 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     // A mechanism being dragged by hand: where the pointer was last.
     let motionDrag: { x: number; y: number } | null = null;
     const onDown = (e: PointerEvent) => {
+      if (onCommentUi(e)) return;
+      const cm = callbacks.current.comments;
+      if (cm?.tool && e.button === 0) {
+        e.stopPropagation();
+        e.preventDefault();
+        const hit = rayAt(e.clientX, e.clientY).intersectObjects(visibleBodies(), false)[0];
+        if (!hit) return;
+        const n = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : new THREE.Vector3();
+        el.setPointerCapture(e.pointerId);
+        controls.enabled = false;
+        liveStroke = { points: [hit.point.clone().addScaledVector(n, camera.position.distanceTo(hit.point) * 0.0015)], arrow: cm.tool === "arrow", pointer: e.pointerId };
+        dirty = true;
+        return;
+      }
+      // Comment mode: a click pins a comment; dragging still orbits.
+      if (cm?.placing) return;
       // Sketching: a left click draws on the plane (zoom and right-drag pan still work).
       if (callbacks.current.sketch) {
         if (e.button !== 0) return;
@@ -1363,6 +1562,42 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     };
     const onMove = (e: PointerEvent) => {
       reportHover(e);
+      const cm = callbacks.current.comments;
+      if (liveStroke && cm) {
+        // Markup follows the surface under the pointer; off the model it stays in the plane facing the eye.
+        const r = rayAt(e.clientX, e.clientY);
+        const hit = r.intersectObjects(visibleBodies(), false)[0];
+        const last = liveStroke.points[liveStroke.points.length - 1];
+        let at: THREE.Vector3 | null = null;
+        if (hit) {
+          const n = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : new THREE.Vector3();
+          at = hit.point.clone().addScaledVector(n, camera.position.distanceTo(hit.point) * 0.0015);
+        } else {
+          const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()), last);
+          at = r.ray.intersectPlane(plane, new THREE.Vector3());
+        }
+        if (at && liveStroke.points.length < STROKE_POINTS) {
+          const a = toScreen(at);
+          const b = toScreen(last);
+          if (Math.hypot(a.x - b.x, a.y - b.y) >= STROKE_STEP) {
+            liveStroke.points.push(at);
+            dirty = true;
+          }
+        }
+        return;
+      }
+      if (cm?.placing && !cm.tool && !drag.current) {
+        // A ghost pin under the pointer shows where a click would pin the comment.
+        const ghost = pinGhost.current;
+        const hit = onCommentUi(e) ? undefined : rayAt(e.clientX, e.clientY).intersectObjects(visibleBodies(), false)[0];
+        if (ghost) {
+          if (hit) {
+            const q = toScreen(hit.point);
+            ghost.style.display = "block";
+            ghost.style.transform = `translate(${q.x.toFixed(1)}px, ${q.y.toFixed(1)}px)`;
+          } else ghost.style.display = "none";
+        }
+      } else if (pinGhost.current) pinGhost.current.style.display = "none";
       if (callbacks.current.sketch) {
         sketchPointer("move", e);
         return;
@@ -1539,6 +1774,21 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       callbacks.current.onDragEnd(commit && moved);
     };
     const onUp = (e: PointerEvent) => {
+      if (liveStroke) {
+        const st = liveStroke;
+        liveStroke = null;
+        e.stopPropagation();
+        if (el.hasPointerCapture(st.pointer)) el.releasePointerCapture(st.pointer);
+        controls.enabled = true;
+        dirty = true;
+        const cm = callbacks.current.comments;
+        const target = cm?.pins.find((p) => p.draft)?.target ?? null;
+        if (cm && st.points.length >= 2) {
+          const pts = st.points.map((w) => (target ? pinLocal(target, w) : w)).filter((v): v is THREE.Vector3 => !!v);
+          if (pts.length >= 2) cm.onStroke({ points: pts.map(round3), arrow: st.arrow });
+        }
+        return;
+      }
       if (callbacks.current.sketch) {
         if (e.button === 0) sketchPointer("up", e);
         return;
@@ -1673,6 +1923,27 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       renderer.domElement.classList.remove("dragging");
       if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return;
       const r = rayAt(e.clientX, e.clientY);
+      const cm = callbacks.current.comments;
+      if (cm?.tool) return;
+      if (cm?.placing) {
+        const hit = r.intersectObjects(visibleBodies(), false)[0];
+        const target = hit ? (hit.object.userData.id as string | undefined) : undefined;
+        if (!hit || !target) return cm.onOpen(null);
+        const local = pinLocal(target, hit.point);
+        if (!local) return;
+        const nWorld = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : null;
+        const f = instanceFrame(target);
+        const normal = nWorld ? (f ? nWorld.applyAxisAngle(Z_AXIS, -f.angle) : nWorld) : null;
+        // Which part of a multi-part shape, by the triangle hit.
+        const parts = assemblyParts(callbacks.current.entities.get(target));
+        const own = three.current?.parts.get(target);
+        const tri = hit.faceIndex != null && own && !own.shared ? hit.faceIndex * 3 : -1;
+        const named = tri >= 0 ? parts.find((q) => tri >= q.index_start && tri < q.index_start + q.index_count)?.name : undefined;
+        const anchor: PinAnchor = { target, part: named ?? null, point: round3(local), normal: normal ? round3(normal.normalize()) : null };
+        cm.onPlace(anchor);
+        return;
+      }
+      if (cm?.active) cm.onOpen(null);
       if (drill(r)) return;
       const bodies = [...(three.current?.parts.values() ?? [])].flatMap((p) => p.meshes.filter((m) => m.visible));
       const hit = r.intersectObjects(bodies, true)[0];
@@ -1693,6 +1964,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
 
     el.addEventListener("pointerdown", onDown, true);
     const onDouble = (e: MouseEvent) => {
+      if (onCommentUi(e)) return;
       if (callbacks.current.sketch) sketchPointer("double", e);
     };
     el.addEventListener("dblclick", onDouble, true);
@@ -1711,6 +1983,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
 
     return () => {
       cancelAnimationFrame(raf);
+      window.clearTimeout(occlusionTimer);
       observer.disconnect();
       controls.dispose();
       window.removeEventListener("keydown", onKey, true);
@@ -1868,6 +2141,18 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     t?.invalidate();
   }, [props.edges, entities, edgeLayer]);
 
+  // Comment pins and the open card: laid out again when they change, and when the card grows (a reply posted).
+  useEffect(() => void three.current?.invalidate(), [props.comments]);
+  useEffect(() => {
+    const card = cardAnchor.current;
+    if (!card) return;
+    const observer = new ResizeObserver(() => three.current?.invalidate());
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => void host.current?.classList.toggle("is-commenting", !!props.comments?.placing && !props.comments.tool), [props.comments?.placing, props.comments?.tool]);
+  useEffect(() => void host.current?.classList.toggle("is-marking", !!props.comments?.tool), [props.comments?.tool]);
+
   // Isolating something (or showing everything again) frames what is now in view.
   const lastIsolated = useRef<string | null>(null);
   useEffect(() => {
@@ -1985,6 +2270,31 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       t.controls.target.copy(target);
       t.camera.position.copy(target).addScaledVector(n, distance);
       t.controls.update();
+      t.invalidate();
+    },
+    framePin(id) {
+      const t = three.current;
+      const pin = props.comments?.pins.find((p) => p.id === id) ?? callbacks.current.comments?.pins.find((p) => p.id === id);
+      if (!t || !pin) return;
+      const part = pin.target ? t.parts.get(pin.target) : undefined;
+      if (part) part.group.updateMatrixWorld();
+      const inst = pin.target ? instance(callbacks.current.entities.get(pin.target)) : undefined;
+      const local = new THREE.Vector3(...pin.point);
+      if (inst) local.applyAxisAngle(Z_AXIS, (inst.rotation * Math.PI) / 180).add(new THREE.Vector3(...inst.at));
+      const at = part ? part.group.localToWorld(local) : local;
+      // Close enough to read the spot, far enough to see the part around it.
+      const radius = part ? new THREE.Box3().setFromObject(part.group).getBoundingSphere(new THREE.Sphere()).radius : 200;
+      const now = t.camera.position.distanceTo(t.controls.target);
+      const distance = Math.max(Math.min(now, radius * 2.8), radius * 0.9, 40);
+      const dir = t.camera.position.clone().sub(t.controls.target).normalize();
+      if (pin.normal) {
+        // Swing round to the side the comment is on, keeping some of the current angle.
+        const n = new THREE.Vector3(...pin.normal);
+        if (inst) n.applyAxisAngle(Z_AXIS, (inst.rotation * Math.PI) / 180);
+        if (dir.dot(n) < 0.35) dir.addScaledVector(n, 1.4).normalize();
+      }
+      t.controls.autoRotate = false;
+      glideTo(t, { position: at.clone().addScaledVector(dir, distance), target: at, up: new THREE.Vector3(0, 0, 1) });
       t.invalidate();
     },
     frame(id, glide) {
@@ -2212,6 +2522,34 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       <div ref={pivotTip} className="face-badge pivot-tip" aria-hidden />
       <div ref={snapTag} className="snap-tag" aria-hidden />
       <div ref={readout} className="drag-readout" aria-hidden />
+      <svg ref={markupLayer} className="comment-markup" aria-hidden />
+      <div ref={pinLayer} className="comment-pins">
+        {(props.comments?.pins ?? []).map((p) => {
+          const active = props.comments!.active === p.id;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              data-pin={p.id}
+              className={`comment-pin ${active ? "is-active" : ""} ${p.resolved ? "is-resolved" : ""} ${p.draft ? "is-draft" : ""}`}
+              style={{ "--who": p.color } as React.CSSProperties}
+              aria-label={p.draft ? "New comment" : `Comment ${p.number}${p.replies ? `, ${p.replies} ${p.replies === 1 ? "reply" : "replies"}` : ""}${p.resolved ? ", resolved" : ""}`}
+              onClick={() => !p.draft && props.comments!.onOpen(active ? null : p.id)}
+            >
+              <span className="pin-bubble">{p.initials}</span>
+              {!p.draft && <span className="pin-num">{p.resolved ? "✓" : p.number}</span>}
+            </button>
+          );
+        })}
+      </div>
+      {props.comments?.placing && !props.comments.tool && (
+        <div ref={pinGhost} className="comment-pin is-ghost" style={{ "--who": props.comments.me.color } as React.CSSProperties} aria-hidden>
+          <span className="pin-bubble">+</span>
+        </div>
+      )}
+      <div ref={cardAnchor} className="comment-card-anchor">
+        {props.comments?.card}
+      </div>
       <div ref={cursorLayer} className="team-cursors" aria-hidden>
         {(props.teammates ?? []).map((m) => (
           <div key={m.engine} data-engine={m.engine} className="team-cursor" style={{ "--mate": m.color } as React.CSSProperties}>

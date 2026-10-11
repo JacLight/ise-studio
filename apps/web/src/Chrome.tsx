@@ -80,6 +80,10 @@ export function ToolRail(props: {
   edging: boolean;
   canEdge: boolean;
   onEdges: () => void;
+  commenting: boolean;
+  /** Open comment threads, shown as a count on the comment tool. */
+  openComments: number;
+  onComment: () => void;
 }) {
   const active = (p: PanelKind) => (props.panel === p ? "active" : "");
   return (
@@ -95,6 +99,10 @@ export function ToolRail(props: {
         onClick={props.onEdges}
         disabled={!props.canEdit || !(props.canEdge || props.edging)}
       />
+      <span className="rail-badge-host">
+        <IconButton icon="comment" label="Comment (C)" className={props.commenting ? "active" : ""} onClick={props.onComment} />
+        {props.openComments > 0 && <span className="rail-badge">{props.openComments > 99 ? "99+" : props.openComments}</span>}
+      </span>
       <IconButton icon="layers" label="Project objects" className={active("objects")} onClick={() => props.onPanel("objects")} />
       <IconButton icon="sliders" label="Object properties" className={active("properties")} onClick={() => props.onPanel("properties")} />
       <IconButton icon="shield" label="Requirements" className={active("requirements")} onClick={() => props.onPanel("requirements")} />
