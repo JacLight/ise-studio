@@ -12,6 +12,7 @@ import { GearCheck } from "./GearCheck";
 import { ProjectsHome } from "./ProjectsHome";
 import { StressStudy } from "./StressStudy";
 import { MachineConnection } from "./MachineConnection";
+import { ConfigSection } from "./Configurations";
 import {
   KNOWN_MATERIALS,
   PROCESS_NAMES,
@@ -21,6 +22,8 @@ import {
   isSheetProcess,
   partMaterial,
   stockSize,
+  type ConfigRow,
+  configurations,
   type EdgeFinish,
   type Frac,
   type Shape,
@@ -323,6 +326,8 @@ export type PropertiesProps = {
   onParamCommit: (key: string, value: number) => void;
   /** Link a parameter to a formula ("=Desk size.width"), or unlink it (null). */
   onParamFormula: (key: string, formula: string | null) => void;
+  /** Shows a configuration in the view without committing it (null puts the shape back). */
+  onConfigPreview: (row: ConfigRow | null) => void;
   /** Start picking edges to round or bevel; remove one of the part's edge finishes. */
   onEdges: () => void;
   /** Start shelling or drafting the part. */
@@ -384,6 +389,16 @@ export function LinkNote({ formula, onUnlink }: { formula: string; onUnlink: () 
       </button>
     </span>
   );
+}
+
+/** How many instances show each configuration of a shape. */
+function configUsers(id: string, entities: ReadonlyMap<string, EntityView>) {
+  const out: Record<string, number> = {};
+  for (const e of entities.values()) {
+    const inst = e.components["assembly.instance"] as { of: string; config?: string | null } | undefined;
+    if (inst?.of === id && inst.config) out[inst.config] = (out[inst.config] ?? 0) + 1;
+  }
+  return out;
 }
 
 export function PropertiesBody(props: PropertiesProps) {
@@ -515,7 +530,11 @@ export function PropertiesBody(props: PropertiesProps) {
             </div>
           </div>
         </section>
-      ) : (
+      ) : null}
+
+      {prog && <ConfigSection key={part.id} entity={part} run={props.run} onPreview={props.onConfigPreview} users={configUsers(part.id, props.entities)} />}
+
+      {prog ? null : (
       <section className="props-section">
           <header>
             <h3>Size</h3>
@@ -860,9 +879,11 @@ function MakeSections(props: {
         {drawing && (
           <DrawingView
             id={part.id}
-            name={partName(part)}
+            name={program(part)?.name ?? partName(part)}
             parts={parts.map((p) => p.name)}
             setups={(part.components["shape.drawings"] as DrawingSetup[] | undefined) ?? []}
+            configs={configurations(part)?.rows.map((r) => r.name)}
+            activeConfig={configurations(part)?.active}
             onSave={(setup) => props.run("shape.set_drawing", { target: part.id, drawing: setup })}
             onClose={() => setDrawing(false)}
           />

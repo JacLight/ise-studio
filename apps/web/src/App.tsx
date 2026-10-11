@@ -6,7 +6,7 @@ import { StorageDialog } from "./Dialog";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
 import { RequirementsPanel } from "./RequirementsPanel";
 import { type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, type TeamCursor, mm, projectInfo, projectName, projectTitle, projectUrl } from "./engine";
-import { type EdgeFinish, type Frac, type LiveEdit, type Shape, assemblyParts, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
+import { type ConfigRow, type EdgeFinish, type Frac, type LiveEdit, type Shape, assemblyParts, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
 import { GroupList, HistoryBody, ObjectsBody, ProjectBody, PropertiesBody, ToolPanel, ViewsBody } from "./Panels";
 import { useEdgeEditor } from "./EdgeEditor";
 import { type FaceToolKind, useFaceTool } from "./FaceTool";
@@ -510,6 +510,24 @@ export function App({ engine }: { engine: Engine }) {
       void pumpPreview();
     },
     [selected, pumpPreview],
+  );
+
+  // A configuration hovered in the switcher: its values (and finishes) shown without committing.
+  const previewConfig = useCallback(
+    (row: ConfigRow | null) => {
+      const prog = selected ? program(state.entities.get(selected)!) : undefined;
+      if (!selected || !prog) return;
+      if (!row) {
+        previewNext.current = null;
+        previewSeq.current++;
+        setShapePreview(null);
+        return;
+      }
+      const finishes = row.suppress?.length ? (prog.finishes ?? []).filter((f) => !row.suppress!.includes(f.key)) : undefined;
+      previewNext.current = { id: selected, values: row.values, finishes };
+      void pumpPreview();
+    },
+    [selected, state.entities, pumpPreview],
   );
 
   const commitParam = useCallback(
@@ -1529,6 +1547,7 @@ export function App({ engine }: { engine: Engine }) {
               shapeStats={shapePreview && shapePreview.id === selected ? shapePreview.stats : (selectedPart?.shape ?? null)}
               shapePreviewing={!!shapePreview && shapePreview.id === selected}
               onParamLive={previewParam}
+              onConfigPreview={previewConfig}
               onParamCommit={commitParam}
               onParamFormula={(key, expr) => selected && run("shape.link_param", { target: selected, key, expr })}
               onTurn={turn}

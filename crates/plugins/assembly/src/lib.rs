@@ -6,8 +6,11 @@
 //! project, at a position and a rotation about Z. Every instance of a
 //! definition shows the same design: edit the definition and all of them
 //! change. `make_unique` gives one instance its own copy to customise (a
-//! penthouse floor in a stack of typical floors). Instances carry free-form
-//! properties (use, sale status, owner) for schedules such as a stacking plan.
+//! penthouse floor in a stack of typical floors). An instance of a shape with
+//! configurations can show one of them instead (the M8×30 of a bolt whose
+//! definition shows M6×20), still sharing the definition. Instances carry
+//! free-form properties (use, sale status, owner) for schedules such as a
+//! stacking plan.
 //!
 //! Dependencies run upward (instance → its definition, assembly → its
 //! instances), so a change deep inside reaches every assembly and
@@ -18,13 +21,15 @@ use de_core::{
     bevy_ecs::{self, component::Component, entity::Entity, world::World},
     json, schemars,
 };
-use de_shape::{PartMaterials, ShapeProgram, ShapeSolid};
+use de_shape::{PartMaterials, ShapeConfigurations, ShapeProgram, ShapeSolid};
 use de_solid::{MassProperties, MaterialRef};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 pub mod comments;
+pub mod configs;
 pub use comments::{Anchor, CommentReply, CommentThread, Stroke};
 
 pub struct AssemblyPlugin;
@@ -46,6 +51,7 @@ impl Plugin for AssemblyPlugin {
             .command::<UpdateInstance>()
             .command::<MakeUnique>()
             .command::<DeleteInstance>()
+            .command::<configs::SetConfigTable>()
             .component::<CommentThread>()
             .component::<CommentReply>()
             .command::<comments::CreateComment>()
@@ -54,6 +60,13 @@ impl Plugin for AssemblyPlugin {
             .command::<comments::ReopenComment>()
             .command::<comments::EditComment>()
             .command::<comments::DeleteComment>()
+            // An instance in a configuration of its shape, before the totals that read it.
+            .derived(Derived {
+                name: "assembly.configured",
+                inputs: &[Instance::KIND],
+                reads_dependencies: true,
+                compute: configured,
+            })
             .derived(Derived {
                 name: "assembly.stats",
                 inputs: &[AssemblyDef::KIND, Instance::KIND],
@@ -94,6 +107,10 @@ pub struct Instance {
     /// Free-form facts: "use": "Residence", "status": "Sold", "owner": "…".
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub properties: BTreeMap<String, String>,
+    /// For an instance of a shape with configurations: the one shown here
+    /// (`None` shows the definition as it is).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
 }
 
 impl Persist for Instance {
@@ -157,8 +174,11 @@ pub struct Occurrence {
     pub shape: StableId,
     /// Instance path from the top (outermost first).
     pub path: Vec<StableId>,
-    /// Names along the path, ending with the shape's name.
+    /// Names along the path, ending with the shape's name (with its
+    /// configuration: “Bolt (M8×30)”).
     pub names: Vec<String>,
+    /// The configuration of the shape shown here, if its instance names one.
+    pub config: Option<String>,
     /// Placement of the shape's own coordinates in the root's coordinates.
     pub transform: Transform,
 }
@@ -223,13 +243,41 @@ fn walk(world: &World, e: Entity, t: Transform, path: &mut Vec<StableId>, names:
         }
     } else if let Some(p) = world.get::<ShapeProgram>(e) {
         let Some(id) = id_of(world, e) else { return };
+        // The instance that placed this shape may show one of its configurations;
+        // a shape on its own shows its active one.
+        let config = match path.last().and_then(|i| entity(world, *i)).and_then(|i| world.get::<Instance>(i)) {
+            Some(inst) => inst.config.clone(),
+            None => None,
+        };
+        let shown = config.clone().or_else(|| world.get::<ShapeConfigurations>(e).and_then(|t| t.active.clone()));
         let mut n = names.clone();
-        n.push(p.name.clone());
-        out.push(Occurrence { shape: id, path: path.clone(), names: n, transform: t });
+        n.push(de_shape::configs::display_name(&p.name, shown.as_deref()));
+        out.push(Occurrence { shape: id, path: path.clone(), names: n, transform: t, config });
     }
 }
 
 // ---- Derived: what an assembly or instance adds up to ----------------------
+
+/// Derived, on every instance: its shape evaluated in the configuration it
+/// names (`None` when it shows its definition as it is).
+#[derive(Component, Clone, Default)]
+pub struct InstanceConfigured(pub Option<Arc<de_shape::configs::Configured>>);
+
+fn configured(world: &World, e: Entity) -> Option<Result<InstanceConfigured, String>> {
+    let inst = world.get::<Instance>(e)?;
+    let (Some(name), Some(def)) = (&inst.config, entity(world, inst.of)) else { return Some(Ok(InstanceConfigured(None))) };
+    if world.get::<ShapeProgram>(def).is_none() {
+        return Some(Ok(InstanceConfigured(None)));
+    }
+    Some(de_shape::configs::evaluate(world, def, name).map(|c| InstanceConfigured(Some(Arc::new(c)))))
+}
+
+/// The configured result an occurrence shows, when its instance names a configuration.
+pub fn configured_of<'w>(world: &'w World, o: &Occurrence) -> Option<&'w de_shape::configs::Configured> {
+    o.config.as_ref()?;
+    let e = entity(world, *o.path.last()?)?;
+    world.get::<InstanceConfigured>(e)?.0.as_deref()
+}
 
 /// Totals for an assembly definition or an instance, in its own coordinates (mm).
 #[derive(Component, Clone, Debug, PartialEq, Serialize, JsonSchema)]
@@ -258,20 +306,26 @@ fn stats(world: &World, e: Entity) -> Option<Result<AssemblyStats, String>> {
     let mut metrics = BTreeMap::new();
     for o in &occ {
         let Some(se) = entity(world, o.shape) else { continue };
-        let Some(solid) = world.get::<ShapeSolid>(se) else {
-            return Some(Err(format!("{} has no valid result", o.names.join(" › "))));
+        // An instance in a configuration counts as that configuration.
+        let (stats, kg) = match (configured_of(world, o), &o.config) {
+            (Some(c), _) => (&c.stats, c.mass.mass_kg),
+            (None, Some(_)) => return Some(Err(format!("{} has no valid result", o.names.join(" › ")))),
+            (None, None) => match world.get::<ShapeSolid>(se) {
+                Some(solid) => (&solid.stats, world.get::<MassProperties>(se).and_then(|m| m.mass_kg)),
+                None => return Some(Err(format!("{} has no valid result", o.names.join(" › ")))),
+            },
         };
-        let (a, b) = o.transform.bounds(solid.stats.bounds_min, solid.stats.bounds_max);
+        let (a, b) = o.transform.bounds(stats.bounds_min, stats.bounds_max);
         for k in 0..3 {
             lo[k] = lo[k].min(a[k]);
             hi[k] = hi[k].max(b[k]);
         }
-        mass = match (mass, world.get::<MassProperties>(se).and_then(|m| m.mass_kg)) {
+        mass = match (mass, kg) {
             (Some(total), Some(m)) => Some(total + m),
             _ => None,
         };
-        parts += solid.stats.parts.len().max(1);
-        for (k, v) in &solid.stats.metrics {
+        parts += stats.parts.len().max(1);
+        for (k, v) in &stats.metrics {
             *metrics.entry(k.clone()).or_insert(0.0) += v.value;
         }
     }
@@ -432,6 +486,20 @@ pub struct CreateInstance {
     pub rotation: f64,
     #[serde(default)]
     pub properties: BTreeMap<String, String>,
+    /// A configuration of the shape to show (see `shape.config.set_table`).
+    pub config: Option<String>,
+}
+
+/// Checks that `config` is a configuration of definition `of`.
+fn check_config(tx: &Tx, of: StableId, config: &str) -> Result<(), CommandError> {
+    let Some(program) = tx.get::<ShapeProgram>(of) else {
+        return Err(bad(ErrorCode::InvalidParameters, "only a shape's instances can show a configuration"));
+    };
+    match tx.get::<ShapeConfigurations>(of) {
+        Some(t) if t.row(config).is_some() => Ok(()),
+        Some(t) => Err(bad(ErrorCode::InvalidParameters, format!("{} has no configuration “{config}” (it has {})", program.name, t.names()))),
+        None => Err(bad(ErrorCode::InvalidParameters, format!("{} has no configurations: make a table first (shape.config.set_table)", program.name))),
+    }
 }
 
 impl Command for CreateInstance {
@@ -452,8 +520,12 @@ impl Command for CreateInstance {
         if !(self.at.iter().all(|v| v.is_finite()) && self.rotation.is_finite()) {
             return Err(bad(ErrorCode::InvalidParameters, "position and rotation must be finite numbers"));
         }
+        let config = self.config.filter(|c| !c.is_empty());
+        if let Some(c) = &config {
+            check_config(tx, self.of, c)?;
+        }
         let id = tx.create();
-        tx.set(id, Instance { name: self.name, of: self.of, parent: self.parent, at: self.at, rotation: self.rotation, properties: self.properties })?;
+        tx.set(id, Instance { name: self.name, of: self.of, parent: self.parent, at: self.at, rotation: self.rotation, properties: self.properties, config })?;
         tx.add_dependency(id, self.of)?;
         if let Some(parent) = self.parent {
             tx.add_dependency(parent, id)?;
@@ -462,8 +534,9 @@ impl Command for CreateInstance {
     }
 }
 
-/// `assembly.instance.update`: move, rotate, rename, swap the definition, or set properties
-/// (a property set to "" is removed).
+/// `assembly.instance.update`: move, rotate, rename, swap the definition, pick
+/// a configuration of it ("" shows the definition as it is), or set
+/// properties (a property set to "" is removed).
 #[derive(Deserialize, JsonSchema)]
 pub struct UpdateInstance {
     pub target: StableId,
@@ -471,6 +544,7 @@ pub struct UpdateInstance {
     pub at: Option<[f64; 3]>,
     pub rotation: Option<f64>,
     pub of: Option<StableId>,
+    pub config: Option<String>,
     #[serde(default)]
     pub properties: BTreeMap<String, String>,
 }
@@ -507,6 +581,18 @@ impl Command for UpdateInstance {
             tx.remove_dependency(self.target, inst.of)?;
             tx.add_dependency(self.target, of)?;
             inst.of = of;
+            // The new definition keeps the configuration only if it has one of that name.
+            if inst.config.as_ref().is_some_and(|c| check_config(tx, of, c).is_err()) {
+                inst.config = None;
+            }
+        }
+        if let Some(c) = self.config {
+            if c.is_empty() {
+                inst.config = None;
+            } else {
+                check_config(tx, inst.of, &c)?;
+                inst.config = Some(c);
+            }
         }
         for (k, v) in self.properties {
             if v.is_empty() {
@@ -531,6 +617,7 @@ fn copy_definition(tx: &mut Tx, def: StableId, name: Option<String>) -> Result<S
         }
         let materials = tx.get::<PartMaterials>(def).cloned();
         let material = tx.get::<MaterialRef>(def).copied();
+        let configs = tx.get::<ShapeConfigurations>(def).cloned();
         // A copy reads the same linked parameters as the original.
         for r in de_shape::params::references(&program.params) {
             if r != def {
@@ -546,6 +633,9 @@ fn copy_definition(tx: &mut Tx, def: StableId, name: Option<String>) -> Result<S
             for m in table.0.values() {
                 tx.add_dependency(id, *m)?;
             }
+            tx.set(id, table)?;
+        }
+        if let Some(table) = configs {
             tx.set(id, table)?;
         }
     } else if let Some(mut a) = tx.get::<AssemblyDef>(def).cloned() {
@@ -585,6 +675,13 @@ impl Command for MakeUnique {
         tx.remove_dependency(self.target, inst.of)?;
         tx.add_dependency(self.target, copy)?;
         inst.of = copy;
+        // The copy shows the configuration this instance showed, as its active one.
+        if let Some(c) = inst.config.take()
+            && let Some(mut table) = tx.get::<ShapeConfigurations>(copy).cloned()
+        {
+            table.active = Some(c);
+            de_shape::configs::store_table(tx, copy, table)?;
+        }
         tx.set(self.target, inst)?;
         Ok(json!({ "id": self.target, "definition": copy }))
     }

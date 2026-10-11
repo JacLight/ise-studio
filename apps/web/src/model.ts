@@ -1,6 +1,6 @@
 // Typed readers over engine entity views.
 
-import type { EntityView } from "./engine";
+import type { Configured, EntityView } from "./engine";
 
 export type Q = { value: number; unit: string };
 export type BoxFeature = { width: Q; depth: Q; height: Q };
@@ -41,6 +41,14 @@ export type EdgeFinish = {
 
 /** An AI-made shape's program, if this entity is one. */
 export const program = (e: EntityView) => e.components["shape.program"] as Program | undefined;
+
+/** One configuration of a shape: a value for each column, and finishes it leaves off (by size parameter). */
+export type ConfigRow = { name: string; values: Record<string, number>; description?: string; suppress?: string[] };
+/** A shape's configuration table: columns (parameter keys), rows, and the one the shape shows. */
+export type Configurations = { params: string[]; rows: ConfigRow[]; active?: string | null };
+export const configurations = (e: EntityView | undefined) => e?.components["shape.configurations"] as Configurations | undefined;
+/** “Bolt (M8×30)”. */
+export const configName = (name: string, config?: string | null) => (config ? `${name} (${config})` : name);
 
 /** An assembly's material table: names its parts use → material entity ids. */
 export const partMaterials = (e: EntityView) => (e.components["shape.materials"] as Record<string, string> | undefined) ?? {};
@@ -91,6 +99,8 @@ export type InstanceData = {
   at: [number, number, number];
   rotation: number;
   properties?: Record<string, string>;
+  /** The configuration of its shape it shows (none: the definition as it is). */
+  config?: string | null;
 };
 
 export const instance = (e: EntityView | undefined) => e?.components["assembly.instance"] as InstanceData | undefined;
@@ -126,8 +136,9 @@ export function compose(inner: Transform, outer: Transform): Transform {
   };
 }
 
-/** One shape somewhere inside an instance: which component, where, and the instance path to it. */
-export type Occurrence = { shape: string; path: string[]; transform: Transform };
+/** One shape somewhere inside an instance: which component, where, and the instance path to it
+ * (and, when its instance shows a configuration, that configuration evaluated). */
+export type Occurrence = { shape: string; path: string[]; transform: Transform; configured?: Configured };
 
 /** Every shape under an instance (or assembly definition), in the instance's parent coordinates. */
 export function occurrences(id: string, entities: ReadonlyMap<string, EntityView>): Occurrence[] {
@@ -142,7 +153,11 @@ export function occurrences(id: string, entities: ReadonlyMap<string, EntityView
       for (const c of childrenOf(eid, entities)) walk(c.id, t, path, depth + 1);
       return;
     }
-    if (program(e)) out.push({ shape: eid, path, transform: t });
+    if (program(e)) {
+      const holder = entities.get(path[path.length - 1]);
+      const configured = instance(holder)?.config ? (holder?.configured ?? undefined) : undefined;
+      out.push({ shape: eid, path, transform: t, configured });
+    }
   };
   walk(id, { at: [0, 0, 0], rotation: 0 }, [], 0);
   return out;
@@ -179,7 +194,7 @@ export function partName(e: EntityView) {
   const inst = instance(e);
   if (inst) return inst.name;
   const prog = program(e);
-  if (prog) return prog.name;
+  if (prog) return configName(prog.name, configurations(e)?.active);
   const b = box(e);
   return b ? `Box ${fmt(toMm(b.width))} × ${fmt(toMm(b.depth))} × ${fmt(toMm(b.height))}` : "Object";
 }
@@ -219,6 +234,8 @@ const OPERATIONS: Record<string, string> = {
   "shape.create": "Created a shape",
   "shape.set_params": "Changed shape parameters",
   "shape.update": "Rewrote a shape",
+  "shape.config.set_table": "Edited configurations",
+  "shape.config.activate": "Switched configuration",
   "assembly.create": "Created an assembly",
   "assembly.update": "Renamed an assembly",
   "assembly.instance.create": "Placed a component",

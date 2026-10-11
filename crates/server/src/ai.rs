@@ -519,15 +519,21 @@ fn describe(project: &Project, id: StableId) -> Option<String> {
         let users = project.entity_ids().into_iter().filter(|e| project.get::<de_assembly::Instance>(*e).is_some_and(|x| x.of == i.of)).count();
         let props: Vec<String> = i.properties.iter().map(|(k, v)| format!("{k}={v}")).collect();
         return Some(format!(
-            "instance “{}” of {def} {} ({}){}",
+            "instance “{}” of {def} {}{} ({}){}",
             i.name,
             i.of,
+            i.config.as_ref().map(|c| format!(" in configuration “{c}”")).unwrap_or_default(),
             if users > 1 { format!("shared by {users} instances") } else { "unique".into() },
             if props.is_empty() { String::new() } else { format!(" [{}]", props.join(", ")) }
         ));
     }
     if let Some(p) = project.get::<de_shape::ShapeProgram>(id) {
-        return Some(format!("shape “{}”", p.name));
+        let configs = project
+            .get::<de_shape::ShapeConfigurations>(id)
+            .filter(|t| !t.rows.is_empty())
+            .map(|t| format!(" with configurations {}{}", t.names(), t.active.as_ref().map(|a| format!(" (showing “{a}”)")).unwrap_or_default()))
+            .unwrap_or_default();
+        return Some(format!("shape “{}”{configs}", p.name));
     }
     if let Some(a) = project.get::<de_assembly::AssemblyDef>(id) {
         return Some(format!("assembly definition “{}”", a.name));
