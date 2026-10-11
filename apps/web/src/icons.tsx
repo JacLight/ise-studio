@@ -59,6 +59,18 @@ const PATHS = {
   subtract: "M4 4h10v6h-4v4H4z M13 13h7v7h-7z",
   intersect: "M10 10h4v4h-4z M4 14V4h10 M20 10v10H10",
   offset: "M8 8h8v8H8z M3 3h18v18H3z",
+  // Sketch constraints.
+  cHorizontal: "M4 12h16 M4 9v6 M20 9v6",
+  cVertical: "M12 4v16 M9 4h6 M9 20h6",
+  cParallel: "M6 20 14 4 M10 20l8-16",
+  cPerpendicular: "M5 19h14 M12 19V5",
+  cEqual: "M5 9h14 M5 15h14",
+  cTangent: "M3 19h18 M12 19a6 6 0 1 0 0-12 6 6 0 0 0 0 12z",
+  cConcentric: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z",
+  cCoincident: "M4 20 12 12 M20 20l-8-8 M12 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z",
+  cOnCurve: "M3 17c4-9 14-9 18 0 M12 8.5a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z",
+  cMidpoint: "M3 12h18 M12 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z M3 9v6 M21 9v6",
+  cFix: "M12 13v8 M8 3h8 M9 3v6l-3 4h12l-3-4V3",
 } as const;
 
 export type IconName = keyof typeof PATHS;

@@ -418,10 +418,6 @@ impl Multigrid {
         Some(Multigrid { levels, direct, fine_inv })
     }
 
-    pub(super) fn levels(&self) -> usize {
-        self.levels.len() + 1
-    }
-
     /// One V-cycle: an approximate K⁻¹·r.
     pub(super) fn precondition(&self, m: &Model, r: &[f64]) -> Vec<f64> {
         self.cycle(m, 0, r)

@@ -18,6 +18,7 @@ pub mod params;
 pub mod pathfinder;
 pub mod runtime;
 pub mod sketch;
+pub mod trim;
 
 pub use params::{ParameterSet, ResolvedParams, resolved_program};
 
@@ -51,6 +52,8 @@ impl Plugin for ShapePlugin {
             .command::<sketch::UpdateSketch>()
             .command::<pathfinder::CombineSketch>()
             .command::<pathfinder::OffsetSketch>()
+            .command::<trim::TrimSketch>()
+            .command::<trim::ExtendSketch>()
             .command::<CreateParameterSet>()
             .command::<SetParameters>()
             .command::<LinkParam>()

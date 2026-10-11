@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EntityView } from "./engine";
-import { Icon } from "./icons";
+import { Icon, type IconName } from "./icons";
 import type { SketchPicture } from "./sketchLayer";
 import {
   type Dim,
@@ -31,7 +31,7 @@ import { type Align, align, distribute, duplicate, extent, inBox, mapPoints, mir
 import type { SketchPointer } from "./Viewport";
 
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
-export type Tool = "select" | "pen" | "line" | "rect" | "circle" | "arc" | "dimension";
+export type Tool = "select" | "pen" | "line" | "rect" | "circle" | "arc" | "dimension" | "trim" | "extend";
 
 const TOOLS: { tool: Tool; label: string; key: string; hint: string }[] = [
   { tool: "select", label: "Select", key: "S", hint: "Click to select · Shift adds · drag a box (right to left: touching) · drag to move · arrows nudge · ⌘D copies · Delete removes" },
@@ -41,6 +41,8 @@ const TOOLS: { tool: Tool; label: string; key: string; hint: string }[] = [
   { tool: "circle", label: "Circle", key: "C", hint: "Click the centre, then the radius" },
   { tool: "arc", label: "Arc", key: "A", hint: "Click the centre, the start, then the end (counter-clockwise)" },
   { tool: "dimension", label: "Dimension", key: "D", hint: "Click a line, circle or arc, or two points, then type a value or =formula" },
+  { tool: "trim", label: "Trim", key: "T", hint: "Click the piece of a curve to cut away, back to where other curves cross it" },
+  { tool: "extend", label: "Extend", key: "E", hint: "Click near the end of a line or arc to carry it on to the next curve" },
 ];
 
 type Draft =
@@ -349,6 +351,10 @@ export function useSketchEditor(props: {
       }
       // A click ("down").
       switch (tool) {
+        case "trim":
+        case "extend":
+          if (e.curve !== null && editing) void run(tool === "trim" ? "sketch.trim" : "sketch.extend", { target: editing, curve: e.curve, at });
+          break;
         case "select": {
           const id = e.point ?? e.curve;
           if (id === null) {
@@ -470,7 +476,7 @@ export function useSketchEditor(props: {
         }
       }
     },
-    [data, tool, draft, pos, commit, commitDrag, addDimension, solved, penPointer, selection, setSelected, applyMoves],
+    [data, tool, draft, pos, commit, commitDrag, addDimension, solved, penPointer, selection, setSelected, applyMoves, editing, run],
   );
 
   // Keys: tools, Escape, Delete.
@@ -637,11 +643,92 @@ export function useSketchEditor(props: {
       <Icon name={p.icon} />
     </button>
   );
+  // Constraints that fit what is selected.
+  const constrainBar = (() => {
+    if (!data) return null;
+    const g = data.geometry;
+    const curveOf = (id: number) => g.curves.find((c) => c.id === id);
+    const ids = [...selection];
+    const lines = ids.filter((id) => curveOf(id)?.kind === "line");
+    const rounds = ids.filter((id) => ["circle", "arc"].includes(curveOf(id)?.kind ?? ""));
+    const points = ids.filter((id) => g.points.some((p) => p.id === id) && !curveOf(id));
+    const others = ids.length - lines.length - rounds.length - points.length;
+    type C = Geometry["constraints"][number];
+    const options: { glyph: IconName; label: string; make: () => C[] }[] = [];
+    const only = (l: number, r: number, p: number) => lines.length === l && rounds.length === r && points.length === p && others === 0;
+    if (lines.length >= 1 && rounds.length === 0 && points.length === 0 && others === 0) {
+      options.push({ glyph: "cHorizontal", label: "Horizontal", make: () => lines.map((line) => ({ kind: "horizontal", line }) as C) });
+      options.push({ glyph: "cVertical", label: "Vertical", make: () => lines.map((line) => ({ kind: "vertical", line }) as C) });
+    }
+    if (only(2, 0, 0)) {
+      const [a, b] = lines as [number, number];
+      options.push({ glyph: "cParallel", label: "Parallel", make: () => [{ kind: "parallel", a, b } as C] });
+      options.push({ glyph: "cPerpendicular", label: "Perpendicular", make: () => [{ kind: "perpendicular", a, b } as C] });
+      options.push({ glyph: "cEqual", label: "Equal length", make: () => [{ kind: "equal", a, b } as C] });
+    }
+    if (only(0, 2, 0)) {
+      const [a, b] = rounds as [number, number];
+      const centre = (id: number) => {
+        const c = curveOf(id)!;
+        return c.kind === "circle" || c.kind === "arc" ? c.center : -1;
+      };
+      options.push({ glyph: "cEqual", label: "Equal radius", make: () => [{ kind: "equal", a, b } as C] });
+      options.push({ glyph: "cConcentric", label: "Concentric (same centre)", make: () => [{ kind: "coincident", a: centre(a), b: centre(b) } as C] });
+      options.push({ glyph: "cTangent", label: "Tangent", make: () => [{ kind: "tangent", a, b } as C] });
+    }
+    if (only(1, 1, 0)) options.push({ glyph: "cTangent", label: "Tangent", make: () => [{ kind: "tangent", a: lines[0]!, b: rounds[0]! } as C] });
+    if (only(0, 0, 2)) options.push({ glyph: "cCoincident", label: "Coincident (join the points)", make: () => [{ kind: "coincident", a: points[0]!, b: points[1]! } as C] });
+    if (points.length === 1 && lines.length + rounds.length === 1 && others === 0) {
+      const curve = (lines[0] ?? rounds[0])!;
+      options.push({ glyph: "cOnCurve", label: "On the curve", make: () => [{ kind: "on_curve", point: points[0]!, curve } as C] });
+      if (lines.length === 1) options.push({ glyph: "cMidpoint", label: "Midpoint of the line", make: () => [{ kind: "midpoint", point: points[0]!, line: lines[0]! } as C] });
+    }
+    if (points.length >= 1 && lines.length + rounds.length + others === 0)
+      options.push({
+        glyph: "cFix",
+        label: "Fix where it is",
+        make: () => points.map((point) => ({ kind: "fixed", point, x: pos.get(point)?.[0] ?? 0, y: pos.get(point)?.[1] ?? 0 }) as C),
+      });
+    const touches = (c: C) => {
+      const v = Object.entries(c).filter(([k]) => !["kind", "key", "x", "y"].includes(k)).map(([, x]) => x);
+      return v.some((x) => typeof x === "number" && selection.has(x));
+    };
+    const loose = g.constraints.filter((c) => !("key" in c) && touches(c));
+    if (!options.length && !loose.length) return null;
+    const same = (a: C, b: C) => JSON.stringify(a) === JSON.stringify(b);
+    return (
+      <div className="sel-group sel-constrain" aria-label="Constraints">
+        {options.map((o) => (
+          <button
+            key={o.label}
+            type="button"
+            className="sel-btn"
+            title={o.label}
+            aria-label={o.label}
+            onClick={() => {
+              const add = o.make().filter((c) => !g.constraints.some((x) => same(x, c)));
+              if (!add.length) return props.notify(`Already ${o.label.toLowerCase()}`);
+              void commit({ ...g, constraints: [...g.constraints, ...add] });
+            }}
+          >
+            <Icon name={o.glyph} />
+          </button>
+        ))}
+        {loose.length > 0 && (
+          <button type="button" className="sel-glyph sel-free" title={`Remove ${loose.length} constraint${loose.length === 1 ? "" : "s"} on these (dimensions stay)`} aria-label="Remove constraints" onClick={() => void commit({ ...g, constraints: g.constraints.filter((c) => !loose.includes(c)) })}>
+            ✕ {loose.length}
+          </button>
+        )}
+      </div>
+    );
+  })();
+
   const selectionBar = data && selection.size > 0 && (
     <div className="sketch-selection" role="toolbar" aria-label="Transform the selection">
       <span className="sel-count">
         {objectCount} {objectCount === 1 ? "object" : "objects"}
       </span>
+      {constrainBar}
       <div className="sel-group">
         <IB icon="rotate" label="Rotate 90° anticlockwise" onClick={() => transform({ rotate: 90 })} />
         <IB icon="rotateCw" label="Rotate 90° clockwise" onClick={() => transform({ rotate: -90 })} />

@@ -38,6 +38,8 @@ People can sketch by hand (the pencil, or K): points, lines, arcs and circles on
 - A program uses a sketch by name: `sketch("Bracket outline").extrude(p.depth)`, `.revolve(360)`, `.profile` (2D, sketch coordinates) and `.place(solid)` (onto its plane). Arcs stay true arcs in STEP.
 - The engine reports each sketch's freedoms left and any conflicting constraints; prefer fully constrained sketches for parts that will be made.
 
+Trim and extend like a drafting tool: `sketch.trim { target, curve, at: [x, y] }` removes the piece of a curve around `at` between the nearest crossings with other curves (a circle becomes an arc; a curve with no crossings goes entirely); `sketch.extend { target, curve, at }` carries the line or arc end nearer `at` on to the next curve. New ends are held on the curve that cut them.
+
 ## Fillets and chamfers
 
 Round or bevel edges in a program with `solid.fillet(radius, which)` and `solid.chamfer(distance, which)`. They are exact (true cylinders, tori and spheres in STEP); the view then meshes the true surfaces, so use them on the parts that need them rather than everywhere in a big assembly. `which` picks edges:

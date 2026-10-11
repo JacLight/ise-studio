@@ -111,7 +111,7 @@ fn parse(n: usize, d: &[f64]) -> Vec<Loop> {
 }
 
 /// The numbers a constraint refers to (points and curves).
-fn refs(c: &Constraint) -> Vec<u32> {
+pub(crate) fn refs(c: &Constraint) -> Vec<u32> {
     match serde_json::to_value(c) {
         Ok(Value::Object(m)) => m.iter().filter(|(k, _)| !matches!(k.as_str(), "kind" | "key" | "x" | "y")).filter_map(|(_, v)| v.as_u64().map(|n| n as u32)).collect(),
         _ => vec![],
@@ -134,7 +134,7 @@ fn without(s: &mut Sketch, gone: &BTreeSet<u32>) -> Geometry {
     Geometry { points, curves, constraints }
 }
 
-fn curve_points(c: &Curve) -> Vec<u32> {
+pub(crate) fn curve_points(c: &Curve) -> Vec<u32> {
     match c {
         Curve::Line { a, b, .. } => vec![*a, *b],
         Curve::Arc { center, start, end, .. } => vec![*center, *start, *end],

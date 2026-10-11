@@ -1125,3 +1125,90 @@ fn a_thin_plate_bends_as_plate_theory_says_and_solves_quickly() {
     // Plain Jacobi-CG took over 3000 steps here; multigrid takes a few dozen.
     assert!(r.iterations < 150, "{} iterations", r.iterations);
 }
+
+#[test]
+fn trim_cuts_back_to_the_nearest_crossings_and_extend_reaches_the_next_curve() {
+    use de_shape::sketch::{Constraint, Curve, Sketch};
+    let solved_of = |p: &Project, s: StableId| {
+        let sk = p.get::<Sketch>(s).unwrap().clone();
+        let solved = de_shape::sketch::solve(&sk.geometry, &Default::default()).unwrap();
+        (sk, solved)
+    };
+    let mut p = project();
+    // A plus sign (two lines crossing at the origin) and a circle round it, radius 30.
+    let g = json!({
+        "points": [{ "id": 1, "x": -50, "y": 0 }, { "id": 2, "x": 50, "y": 0 }, { "id": 3, "x": 0, "y": -50 }, { "id": 4, "x": 0, "y": 50 }, { "id": 5, "x": 0, "y": 0 }],
+        "curves": [{ "kind": "line", "id": 10, "a": 1, "b": 2 }, { "kind": "line", "id": 11, "a": 3, "b": 4 }, { "kind": "circle", "id": 12, "center": 5, "radius": 30 }],
+        "constraints": [{ "kind": "horizontal", "line": 10 }]
+    });
+    let s = id(run(&mut p, "sketch.create", json!({ "name": "T", "plane": { "name": "XY" }, "geometry": g })).unwrap());
+    // Trim the horizontal line between the crossings at x = 0 and x = 30: two pieces stay.
+    run(&mut p, "sketch.trim", json!({ "target": s, "curve": 10, "at": [15, 0] })).unwrap();
+    let (sk, sol) = solved_of(&p, s);
+    let lines: Vec<(f64, f64)> = sk.geometry.curves.iter().filter_map(|c| match c {
+        Curve::Line { a, b, .. } if sol.points[a][1].abs() < 1e-6 && sol.points[b][1].abs() < 1e-6 => Some((sol.points[a][0].min(sol.points[b][0]), sol.points[a][0].max(sol.points[b][0]))),
+        _ => None,
+    }).collect();
+    let mut lines = lines;
+    lines.sort_by(|a, b| a.0.total_cmp(&b.0));
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!((lines[0].0 + 50.0).abs() < 1e-6 && lines[0].1.abs() < 1e-6, "left piece ends at the crossing: {lines:?}");
+    assert!((lines[1].0 - 30.0).abs() < 1e-6 && (lines[1].1 - 50.0).abs() < 1e-6, "right piece starts at the circle: {lines:?}");
+    assert_eq!(sk.geometry.constraints.iter().filter(|c| matches!(c, Constraint::Horizontal { .. })).count(), 2, "both pieces stay level");
+    assert!(sk.geometry.constraints.iter().any(|c| matches!(c, Constraint::OnCurve { curve: 12, .. })), "the cut end is held on the circle");
+
+    // Trim the top of the circle (between the vertical line and the right piece): an arc stays.
+    run(&mut p, "sketch.trim", json!({ "target": s, "curve": 12, "at": [21.2, 21.2] })).unwrap();
+    let (sk, sol) = solved_of(&p, s);
+    let arc = sk.geometry.curves.iter().find(|c| c.id() == 12).unwrap();
+    let Curve::Arc { start, end, .. } = arc else { panic!("the circle became {arc:?}") };
+    let (a, b) = (sol.points[start], sol.points[end]);
+    assert!((a[0] - 0.0).abs() < 1e-6 && (a[1] - 30.0).abs() < 1e-6, "arc starts at the top crossing: {a:?}");
+    assert!((b[0] - 30.0).abs() < 1e-6 && b[1].abs() < 1e-6, "and runs round to the right crossing: {b:?}");
+
+    // A lone line with no crossings goes entirely.
+    let lone = json!({
+        "points": [{ "id": 1, "x": 100, "y": 100 }, { "id": 2, "x": 120, "y": 100 }],
+        "curves": [{ "kind": "line", "id": 3, "a": 1, "b": 2 }],
+        "constraints": [{ "kind": "length", "line": 3, "key": "d1" }]
+    });
+    let s2 = id(run(&mut p, "sketch.create", json!({ "name": "L", "plane": { "name": "XY" }, "geometry": lone, "params": [{ "key": "d1", "label": "Length", "value": 20 }] })).unwrap());
+    run(&mut p, "sketch.trim", json!({ "target": s2, "curve": 3, "at": [110, 100] })).unwrap();
+    let sk2 = p.get::<Sketch>(s2).unwrap();
+    assert!(sk2.geometry.curves.is_empty() && sk2.geometry.constraints.is_empty() && sk2.params.is_empty(), "line, its length and the dimension all go");
+
+    // Extend: a line stopping short of an upright reaches it; another reaches the upright's end and joins it.
+    let e = json!({
+        "points": [{ "id": 1, "x": 0, "y": 0 }, { "id": 2, "x": 20, "y": 0 }, { "id": 3, "x": 50, "y": -10 }, { "id": 4, "x": 50, "y": 40 }, { "id": 5, "x": 0, "y": 40 }, { "id": 6, "x": 10, "y": 40 }],
+        "curves": [{ "kind": "line", "id": 10, "a": 1, "b": 2 }, { "kind": "line", "id": 11, "a": 3, "b": 4 }, { "kind": "line", "id": 12, "a": 5, "b": 6 }],
+        "constraints": [{ "kind": "length", "line": 10, "key": "d1" }]
+    });
+    let s3 = id(run(&mut p, "sketch.create", json!({ "name": "E", "plane": { "name": "XY" }, "geometry": e, "params": [{ "key": "d1", "label": "Length", "value": 20 }] })).unwrap());
+    run(&mut p, "sketch.extend", json!({ "target": s3, "curve": 10, "at": [19, 0] })).unwrap();
+    run(&mut p, "sketch.extend", json!({ "target": s3, "curve": 12, "at": [9, 40] })).unwrap();
+    let (sk3, sol3) = solved_of(&p, s3);
+    assert!((sol3.points[&2][0] - 50.0).abs() < 1e-6, "reached the upright: {:?}", sol3.points[&2]);
+    assert!(sk3.geometry.constraints.iter().any(|c| matches!(c, Constraint::OnCurve { point: 2, curve: 11 })), "and is held on it");
+    assert!(!sk3.geometry.constraints.iter().any(|c| matches!(c, Constraint::Length { .. })), "its old length no longer holds it back");
+    let Some(Curve::Line { b, .. }) = sk3.geometry.curves.iter().find(|c| c.id() == 12) else { panic!() };
+    assert_eq!(*b, 4, "the second line now shares the upright's top end");
+    assert!(run(&mut p, "sketch.extend", json!({ "target": s3, "curve": 11, "at": [50, 39] })).is_err(), "a joined end does not extend");
+
+    // A Bézier crossed by a line: trimming keeps the part outside, still a Bézier ending on the line.
+    let bz = json!({
+        "points": [{ "id": 1, "x": 0, "y": 0 }, { "id": 2, "x": 60, "y": 0 }, { "id": 3, "x": 15, "y": 30 }, { "id": 4, "x": 45, "y": 30 }, { "id": 5, "x": 30, "y": -10 }, { "id": 6, "x": 30, "y": 40 }],
+        "curves": [{ "kind": "bezier", "id": 10, "a": 1, "b": 2, "c1": 3, "c2": 4 }, { "kind": "line", "id": 11, "a": 5, "b": 6 }],
+        "constraints": []
+    });
+    let s4 = id(run(&mut p, "sketch.create", json!({ "name": "B", "plane": { "name": "XY" }, "geometry": bz })).unwrap());
+    run(&mut p, "sketch.trim", json!({ "target": s4, "curve": 10, "at": [50, 15] })).unwrap();
+    let (sk4, sol4) = solved_of(&p, s4);
+    let Some(Curve::Bezier { a, b, c1, c2, .. }) = sk4.geometry.curves.iter().find(|c| c.id() == 10) else { panic!() };
+    assert_eq!(*a, 1, "keeps its start");
+    let end = sol4.points[b];
+    assert!((end[0] - 30.0).abs() < 0.05 && (end[1] - 22.5).abs() < 0.05, "ends on the line at the crossing: {end:?}");
+    // The kept half follows the original curve exactly (de Casteljau split at t = ½).
+    let mid = de_shape::sketch::bezier_at(sol4.points[a], sol4.points[c1], sol4.points[c2], end, 0.5);
+    let orig = de_shape::sketch::bezier_at([0.0, 0.0], [15.0, 30.0], [45.0, 30.0], [60.0, 0.0], 0.25);
+    assert!((mid[0] - orig[0]).abs() < 0.05 && (mid[1] - orig[1]).abs() < 0.05, "{mid:?} vs {orig:?}");
+}

@@ -3733,6 +3733,30 @@ dialog p {
   height: 16px;
 }
 
+.sel-glyph {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 7px;
+  color: #5b5368;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.sel-glyph:hover {
+  background: #fff;
+  color: #5b3fc4;
+  box-shadow: 0 1px 3px rgb(40 30 70 / 0.12);
+}
+
+.sel-glyph.sel-free {
+  font-size: 11px;
+  color: #a2414a;
+}
+
 .sel-field {
   display: inline-flex;
   align-items: center;
