@@ -21,6 +21,7 @@ unsafe extern "C" {
     fn occ_circle(a: *mut c_void, r: f64) -> c_int;
     fn occ_sketch_profile(a: *mut c_void, nloops: c_int, d: *const f64, len: c_int) -> c_int;
     fn occ_compound(a: *mut c_void, hs: *const c_int, n: c_int) -> c_int;
+    fn occ_section(a: *mut c_void, h: c_int, ox: f64, oy: f64, oz: f64, nx: f64, ny: f64, nz: f64) -> c_int;
     fn occ_profile_loops(a: *mut c_void, h: c_int, data: *mut *const f64, len: *mut c_int) -> c_int;
     fn occ_hlr_view(a: *mut c_void, h: c_int, dx: f64, dy: f64, dz: f64, ux: f64, uy: f64, uz: f64, deflection: f64, data: *mut *const f64, len: *mut c_int) -> c_int;
     fn occ_rect(a: *mut c_void, x: f64, y: f64, center: c_int) -> c_int;
@@ -233,6 +234,11 @@ impl Arena {
             i += 2 + count * 2;
         }
         Ok(out)
+    }
+    /// Where `s` crosses the plane through `origin` square to `normal`: its
+    /// edges (read them with [`Arena::edges`]).
+    pub fn section(&mut self, s: Shape, origin: [f64; 3], normal: [f64; 3]) -> Result<Shape, String> {
+        self.check(unsafe { occ_section(self.0, s.0, origin[0], origin[1], origin[2], normal[0], normal[1], normal[2]) })
     }
     /// Shapes kept together as one, without fusing them.
     pub fn compound(&mut self, shapes: &[Shape]) -> Result<Shape, String> {

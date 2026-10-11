@@ -2029,3 +2029,320 @@ fn a_drawing_has_several_sheets() {
     assert!(d.warnings.iter().any(|w| w.contains("10:1")), "{:?}", d.warnings);
     on_sheet(&d);
 }
+
+/// A sketch and where its constraints put everything (every constraint met).
+fn solved_sketch(p: &Project, s: StableId) -> (de_shape::sketch::Sketch, de_shape::sketch::Solved) {
+    let sk = p.get::<de_shape::sketch::Sketch>(s).unwrap().clone();
+    let dims = de_shape::params::resolve(p.world(), &sk.params).unwrap();
+    let solved = de_shape::sketch::solve(&sk.geometry, &dims).unwrap();
+    assert!(solved.conflicts.is_empty(), "every constraint holds: {:?}", solved.conflicts);
+    (sk, solved)
+}
+
+fn near(a: [f64; 2], b: [f64; 2]) -> bool {
+    (a[0] - b[0]).abs() < 1e-6 && (a[1] - b[1]).abs() < 1e-6
+}
+
+/// A 40 × 30 rectangle from the origin, level and upright, its width and height dimensioned.
+fn rectangle(p: &mut Project) -> StableId {
+    let g = json!({
+        "points": [{ "id": 1, "x": 0, "y": 0 }, { "id": 2, "x": 40, "y": 0 }, { "id": 3, "x": 40, "y": 30 }, { "id": 4, "x": 0, "y": 30 }],
+        "curves": [{ "kind": "line", "id": 5, "a": 1, "b": 2 }, { "kind": "line", "id": 6, "a": 2, "b": 3 }, { "kind": "line", "id": 7, "a": 3, "b": 4 }, { "kind": "line", "id": 8, "a": 4, "b": 1 }],
+        "constraints": [
+            { "kind": "horizontal", "line": 5 }, { "kind": "vertical", "line": 6 }, { "kind": "horizontal", "line": 7 }, { "kind": "vertical", "line": 8 },
+            { "kind": "fixed", "point": 1, "x": 0, "y": 0 },
+            { "kind": "length", "line": 5, "key": "d1" }, { "kind": "length", "line": 8, "key": "d2" }
+        ]
+    });
+    let params = json!([{ "key": "d1", "label": "Width", "value": 40, "unit": "mm" }, { "key": "d2", "label": "Height", "value": 30, "unit": "mm" }]);
+    id(run(p, "sketch.create", json!({ "name": "R", "plane": { "name": "XY" }, "geometry": g, "params": params })).unwrap())
+}
+
+#[test]
+fn a_fillet_rounds_a_corner_tangent_with_its_radius_a_dimension() {
+    use de_shape::sketch::{Constraint, Curve};
+    let mut p = project();
+    let s = rectangle(&mut p);
+    // Round the corner at (40, 0) with r = 5: the arc runs from 5 mm along each side.
+    let out = run(&mut p, "sketch.fillet", json!({ "target": s, "point": 2, "radius": 5 })).unwrap();
+    let key = out["key"].as_str().unwrap().to_string();
+    let arc_id = out["curves"][0].as_u64().unwrap() as u32;
+    let arc_ends = |p: &Project| {
+        let (sk, sol) = solved_sketch(p, s);
+        let Some(Curve::Arc { center, start, end, .. }) = sk.geometry.curves.iter().find(|c| c.id() == arc_id).cloned() else { panic!("no arc") };
+        (sol.points[&center], sol.points[&start], sol.points[&end], sk, sol)
+    };
+    let (c, a, b, sk, sol) = arc_ends(&p);
+    assert!(near(c, [35.0, 5.0]), "centre {c:?}");
+    assert!(near(a, [35.0, 0.0]) && near(b, [40.0, 5.0]), "anticlockwise from the bottom side to the right side: {a:?} {b:?}");
+    assert_eq!(sk.geometry.constraints.iter().filter(|c| matches!(c, Constraint::Tangent { b, .. } if *b == arc_id)).count(), 2, "tangent to both sides");
+    assert!(sk.geometry.constraints.iter().any(|c| matches!(c, Constraint::Radius { curve, key: k } if *curve == arc_id && *k == key)));
+    assert_eq!(sk.params.iter().find(|q| q.key == key).unwrap().value, 5.0);
+    // The bottom side now ends at the round; the width still measures to the virtual sharp.
+    let Some(Curve::Line { a: l0, b: l1, .. }) = sk.geometry.curves.iter().find(|c| c.id() == 5).cloned() else { panic!() };
+    assert!(near(sol.points[&l0], [0.0, 0.0]) && near(sol.points[&l1], [35.0, 0.0]));
+    assert!(near(sol.points[&2], [40.0, 0.0]), "the old corner stays as a virtual sharp");
+    assert_eq!(sol.free, 0, "still fully constrained");
+
+    // The radius is a dimension: r = 8 moves the tangent points 8 mm from the corner.
+    run(&mut p, "parameters.set", json!({ "target": s, "values": { key.clone(): 8.0 } })).unwrap();
+    let (_, a, b, ..) = arc_ends(&p);
+    assert!(near(a, [32.0, 0.0]) && near(b, [40.0, 8.0]), "{a:?} {b:?}");
+    // And the round follows the rectangle when it grows.
+    run(&mut p, "parameters.set", json!({ "target": s, "values": { "d1": 50.0 } })).unwrap();
+    let (c, a, b, ..) = arc_ends(&p);
+    assert!(near(c, [42.0, 8.0]) && near(a, [42.0, 0.0]) && near(b, [50.0, 8.0]), "{c:?} {a:?} {b:?}");
+
+    // Too large a round for the sides is refused.
+    assert!(run(&mut p, "sketch.fillet", json!({ "target": s, "point": 4, "radius": 60 })).is_err());
+}
+
+#[test]
+fn fillets_between_lines_arcs_and_circles_touch_both_exactly() {
+    use de_shape::sketch::Curve;
+    let mut p = project();
+    // Two lines crossing at the origin, rounded between their right and upper pieces.
+    let g = json!({
+        "points": [{ "id": 1, "x": -20, "y": 0 }, { "id": 2, "x": 20, "y": 0 }, { "id": 3, "x": 0, "y": -20 }, { "id": 4, "x": 0, "y": 20 }],
+        "curves": [{ "kind": "line", "id": 5, "a": 1, "b": 2 }, { "kind": "line", "id": 6, "a": 3, "b": 4 }],
+        "constraints": []
+    });
+    let s = id(run(&mut p, "sketch.create", json!({ "name": "X", "geometry": g })).unwrap());
+    let out = run(&mut p, "sketch.fillet", json!({ "target": s, "curves": [5, 6], "picks": [[10, 0], [0, 10]], "radius": 5 })).unwrap();
+    let arc_id = out["curves"][0].as_u64().unwrap() as u32;
+    let (sk, sol) = solved_sketch(&p, s);
+    let Some(Curve::Arc { center, start, end, .. }) = sk.geometry.curves.iter().find(|c| c.id() == arc_id).cloned() else { panic!() };
+    // Anticlockwise round the centre (5, 5) from the upper line to the right one, facing the crossing.
+    assert!(near(sol.points[&center], [5.0, 5.0]) && near(sol.points[&start], [0.0, 5.0]) && near(sol.points[&end], [5.0, 0.0]));
+    let Some(Curve::Line { a, b, .. }) = sk.geometry.curves.iter().find(|c| c.id() == 5).cloned() else { panic!() };
+    assert!(near(sol.points[&a], [5.0, 0.0]) && near(sol.points[&b], [20.0, 0.0]), "the left piece is trimmed away");
+
+    // An arc (r 20 round the origin, from (20, 0) to the top) meeting a line straight up from its top.
+    let g = json!({
+        "points": [{ "id": 1, "x": 0, "y": 0 }, { "id": 2, "x": 20, "y": 0 }, { "id": 3, "x": 0, "y": 20 }, { "id": 4, "x": 0, "y": 50 }],
+        "curves": [{ "kind": "arc", "id": 5, "center": 1, "start": 2, "end": 3 }, { "kind": "line", "id": 6, "a": 3, "b": 4 }],
+        "constraints": []
+    });
+    let s = id(run(&mut p, "sketch.create", json!({ "name": "A", "geometry": g })).unwrap());
+    let out = run(&mut p, "sketch.fillet", json!({ "target": s, "point": 3, "radius": 5 })).unwrap();
+    let arc_id = out["curves"][0].as_u64().unwrap() as u32;
+    let (sk, sol) = solved_sketch(&p, s);
+    // Centre 5 from the line and 25 from the arc's centre: (5, √600); it touches the arc on the line to its centre.
+    let h = 600f64.sqrt();
+    let Some(Curve::Arc { center, start, end, .. }) = sk.geometry.curves.iter().find(|c| c.id() == arc_id).cloned() else { panic!() };
+    assert!(near(sol.points[&center], [5.0, h]), "{:?}", sol.points[&center]);
+    let touches = [sol.points[&start], sol.points[&end]];
+    assert!(touches.iter().any(|t| near(*t, [0.0, h])), "touches the line at (0, √600): {touches:?}");
+    assert!(touches.iter().any(|t| near(*t, [4.0, h * 0.8])), "touches the arc 20/25 of the way out: {touches:?}");
+    let Some(Curve::Arc { end: arc_end, .. }) = sk.geometry.curves.iter().find(|c| c.id() == 5).cloned() else { panic!() };
+    assert!(near(sol.points[&arc_end], [4.0, h * 0.8]), "the arc now ends at the round");
+
+    // A line and a whole circle: the circle stays whole, the round outside it above the line.
+    let g = json!({
+        "points": [{ "id": 1, "x": -40, "y": 0 }, { "id": 2, "x": 40, "y": 0 }, { "id": 3, "x": 0, "y": 0 }],
+        "curves": [{ "kind": "line", "id": 5, "a": 1, "b": 2 }, { "kind": "circle", "id": 6, "center": 3, "radius": 20 }],
+        "constraints": []
+    });
+    let s = id(run(&mut p, "sketch.create", json!({ "name": "C", "geometry": g })).unwrap());
+    let out = run(&mut p, "sketch.fillet", json!({ "target": s, "curves": [5, 6], "picks": [[30, 0], [0, 20]], "radius": 5 })).unwrap();
+    let arc_id = out["curves"][0].as_u64().unwrap() as u32;
+    let (sk, sol) = solved_sketch(&p, s);
+    let Some(Curve::Arc { center, .. }) = sk.geometry.curves.iter().find(|c| c.id() == arc_id).cloned() else { panic!() };
+    assert!(near(sol.points[&center], [h, 5.0]), "{:?}", sol.points[&center]);
+    assert!(sk.geometry.curves.iter().any(|c| matches!(c, Curve::Circle { id: 6, .. })), "the circle stays whole");
+}
+
+#[test]
+fn a_chamfer_cuts_both_sides_back_by_its_distance() {
+    use de_shape::sketch::Curve;
+    let mut p = project();
+    let s = rectangle(&mut p);
+    let out = run(&mut p, "sketch.chamfer", json!({ "target": s, "point": 3, "distance": 5 })).unwrap();
+    let cut = out["curves"][0].as_u64().unwrap() as u32;
+    let key = out["key"].as_str().unwrap().to_string();
+    let (sk, sol) = solved_sketch(&p, s);
+    let Some(Curve::Line { a, b, .. }) = sk.geometry.curves.iter().find(|c| c.id() == cut).cloned() else { panic!() };
+    let ends = [sol.points[&a], sol.points[&b]];
+    assert!(ends.iter().any(|e| near(*e, [40.0, 25.0])) && ends.iter().any(|e| near(*e, [35.0, 30.0])), "{ends:?}");
+    assert_eq!(sol.free, 0);
+    run(&mut p, "parameters.set", json!({ "target": s, "values": { key: 10.0 } })).unwrap();
+    let (_, sol) = solved_sketch(&p, s);
+    let ends = [sol.points[&a], sol.points[&b]];
+    assert!(ends.iter().any(|e| near(*e, [40.0, 20.0])) && ends.iter().any(|e| near(*e, [30.0, 30.0])), "{ends:?}");
+}
+
+#[test]
+fn patterns_make_linked_copies_that_follow_the_original() {
+    use de_shape::sketch::Curve;
+    let mut p = project();
+    // A ⌀6 circle at the origin, pinned: four in a row, 10 mm apart.
+    let g = json!({
+        "points": [{ "id": 1, "x": 0, "y": 0 }],
+        "curves": [{ "kind": "circle", "id": 2, "center": 1, "radius": 3 }],
+        "constraints": [{ "kind": "fixed", "point": 1, "x": 0, "y": 0 }, { "kind": "diameter", "curve": 2, "key": "d1" }]
+    });
+    let s = id(run(&mut p, "sketch.create", json!({ "name": "Row", "geometry": g, "params": [{ "key": "d1", "label": "Hole", "value": 6, "unit": "mm" }] })).unwrap());
+    let out = run(&mut p, "sketch.pattern", json!({ "target": s, "curves": [2], "kind": "linear", "count": 4, "spacing": 10, "direction": [1, 0] })).unwrap();
+    let spacing = out["key"].as_str().unwrap().to_string();
+    let copies: Vec<u32> = out["curves"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u32).collect();
+    assert_eq!(copies.len(), 3);
+    let circles = |p: &Project| {
+        let (sk, sol) = solved_sketch(p, s);
+        copies
+            .iter()
+            .map(|id| match sk.geometry.curves.iter().find(|c| c.id() == *id).unwrap() {
+                Curve::Circle { center, .. } => (sol.points[center], sol.radii[id]),
+                other => panic!("{other:?}"),
+            })
+            .collect::<Vec<_>>()
+    };
+    for (k, (c, r)) in circles(&p).iter().enumerate() {
+        assert!(near(*c, [10.0 * (k + 1) as f64, 0.0]) && (r - 3.0).abs() < 1e-6, "copy {k}: {c:?} r {r}");
+    }
+    assert_eq!(solved_sketch(&p, s).1.free, 0, "the row is fully defined");
+    // The spacing is a dimension, and the copies follow the original's size.
+    run(&mut p, "parameters.set", json!({ "target": s, "values": { spacing: 12.0, "d1": 8.0 } })).unwrap();
+    for (k, (c, r)) in circles(&p).iter().enumerate() {
+        assert!(near(*c, [12.0 * (k + 1) as f64, 0.0]) && (r - 4.0).abs() < 1e-6, "copy {k}: {c:?} r {r}");
+    }
+
+    // Circular: a radial line 20–30 mm out (its inner end pinned), four round the origin (90° apart by default).
+    let g = json!({
+        "points": [{ "id": 1, "x": 20, "y": 0 }, { "id": 2, "x": 30, "y": 0 }],
+        "curves": [{ "kind": "line", "id": 3, "a": 1, "b": 2 }],
+        "constraints": [{ "kind": "fixed", "point": 1, "x": 20, "y": 0 }, { "kind": "horizontal", "line": 3 }]
+    });
+    let s = id(run(&mut p, "sketch.create", json!({ "name": "Ring", "geometry": g })).unwrap());
+    let out = run(&mut p, "sketch.pattern", json!({ "target": s, "curves": [3], "kind": "circular", "count": 4, "center": [0, 0] })).unwrap();
+    let angle = out["key"].as_str().unwrap().to_string();
+    let copies: Vec<u32> = out["curves"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u32).collect();
+    let lines = |p: &Project| {
+        let (sk, sol) = solved_sketch(p, s);
+        copies
+            .iter()
+            .map(|id| match sk.geometry.curves.iter().find(|c| c.id() == *id).unwrap() {
+                Curve::Line { a, b, .. } => (sol.points[a], sol.points[b]),
+                other => panic!("{other:?}"),
+            })
+            .collect::<Vec<_>>()
+    };
+    let want = [([0.0, 20.0], [0.0, 30.0]), ([-20.0, 0.0], [-30.0, 0.0]), ([0.0, -20.0], [0.0, -30.0])];
+    for (got, want) in lines(&p).iter().zip(want) {
+        assert!(near(got.0, want.0) && near(got.1, want.1), "{got:?} vs {want:?}");
+    }
+    // A 60° step: the first copy at 60°, the third at 180°.
+    run(&mut p, "parameters.set", json!({ "target": s, "values": { angle: 60.0 } })).unwrap();
+    let got = lines(&p);
+    let r3 = 3f64.sqrt();
+    // (The outer end is free along its level line, so check where the inner one lands and which way the outer one points.)
+    let toward = |q: [f64; 2]| q[1].atan2(q[0]).to_degrees();
+    assert!(near(got[0].0, [10.0, 10.0 * r3]) && (toward(got[0].1) - 60.0).abs() < 1e-6, "{:?}", got[0]);
+    assert!(near(got[2].0, [-20.0, 0.0]) && (toward(got[2].1).abs() - 180.0).abs() < 1e-6, "{:?}", got[2]);
+    // Dragging the original's outer end turns its copies with it.
+    run(&mut p, "sketch.update", json!({ "target": s, "drag": { "point": 2, "x": 40, "y": 0 } })).unwrap();
+    let got = lines(&p);
+    assert!(near(got[2].1, [-40.0, 0.0]), "{:?}", got[2]);
+}
+
+#[test]
+fn a_mirror_copies_curves_reflected_and_keeps_them_symmetric() {
+    use de_shape::sketch::Curve;
+    let mut p = project();
+    // An upright construction line on x = 0, a line from it to the right and an arc beyond.
+    let g = json!({
+        "points": [{ "id": 1, "x": 0, "y": -50 }, { "id": 2, "x": 0, "y": 50 }, { "id": 3, "x": 0, "y": 10 }, { "id": 4, "x": 20, "y": 10 }, { "id": 5, "x": 20, "y": 0 }, { "id": 6, "x": 30, "y": 0 }],
+        "curves": [{ "kind": "line", "id": 7, "a": 1, "b": 2, "construction": true }, { "kind": "line", "id": 8, "a": 3, "b": 4 }, { "kind": "arc", "id": 9, "center": 5, "start": 6, "end": 4 }],
+        "constraints": [{ "kind": "vertical", "line": 7 }, { "kind": "fixed", "point": 1, "x": 0, "y": -50 }]
+    });
+    let s = id(run(&mut p, "sketch.create", json!({ "name": "M", "geometry": g })).unwrap());
+    let out = run(&mut p, "sketch.mirror", json!({ "target": s, "curves": [8, 9], "line": 7 })).unwrap();
+    let made: Vec<u32> = out["curves"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u32).collect();
+    assert_eq!(made.len(), 2);
+    let (sk, sol) = solved_sketch(&p, s);
+    let Some(Curve::Line { a, b, .. }) = sk.geometry.curves.iter().find(|c| c.id() == made[0]).cloned() else { panic!() };
+    assert_eq!(a, 3, "the end on the mirror is shared");
+    assert!(near(sol.points[&b], [-20.0, 10.0]));
+    let Some(Curve::Arc { center, start, end, .. }) = sk.geometry.curves.iter().find(|c| c.id() == made[1]).cloned() else { panic!() };
+    // Reflected, so it runs the other way round: from the mirrored end to the mirrored start.
+    assert!(near(sol.points[&center], [-20.0, 0.0]) && near(sol.points[&start], [-20.0, 10.0]) && near(sol.points[&end], [-30.0, 0.0]));
+    // Dragging the original moves its reflection.
+    run(&mut p, "sketch.update", json!({ "target": s, "drag": { "point": 6, "x": 32, "y": 0 } })).unwrap();
+    let (_, sol) = solved_sketch(&p, s);
+    assert!(near(sol.points[&6], [32.0, 0.0]) && near(sol.points[&end], [-32.0, 0.0]), "{:?} mirrors {:?}", sol.points[&end], sol.points[&6]);
+}
+
+#[test]
+fn projecting_a_box_and_a_cylinder_gives_their_outline_on_the_plane() {
+    use de_shape::sketch::{Constraint, Curve};
+    let mut p = project();
+    let block = id(run(&mut p, "shape.create", json!({ "name": "Block", "source": "return box(40, 30, 10);", "params": [] })).unwrap());
+    run(&mut p, "solid.part.move", json!({ "target": block, "placement": { "x": { "value": 5, "unit": "mm" }, "y": { "value": 5, "unit": "mm" }, "z": { "value": 0, "unit": "mm" } } })).unwrap();
+    let rod = id(run(&mut p, "shape.create", json!({ "name": "Rod", "source": "return cylinder(20, 10).translate(100, 0, 0);", "params": [] })).unwrap());
+    let s = id(run(&mut p, "sketch.create", json!({ "name": "Top", "plane": { "name": "XY" } })).unwrap());
+
+    // The block from above: its 40 × 30 rectangle, moved 5 mm in x and y.
+    let out = run(&mut p, "sketch.project", json!({ "target": s, "from": block })).unwrap();
+    assert_eq!(out["count"], 4, "{out}");
+    let (sk, sol) = solved_sketch(&p, s);
+    let mut lines: Vec<([f64; 2], [f64; 2])> = sk
+        .geometry
+        .curves
+        .iter()
+        .filter_map(|c| match c {
+            Curve::Line { a, b, .. } => Some((sol.points[a], sol.points[b])),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(lines.len(), 4);
+    for c in [[5.0, 5.0], [45.0, 5.0], [45.0, 35.0], [5.0, 35.0]] {
+        assert_eq!(lines.iter().filter(|(a, b)| near(*a, c) || near(*b, c)).count(), 2, "two sides meet at {c:?}: {lines:?}");
+    }
+    lines.retain(|(a, b)| (a[1] - b[1]).abs() < 1e-9);
+    assert!(lines.iter().all(|(a, b)| ((a[0] - b[0]).abs() - 40.0).abs() < 1e-6), "the level sides are 40 long");
+    assert_eq!(sk.geometry.points.len(), 4, "the corners are shared");
+    assert_eq!(sk.geometry.constraints.iter().filter(|c| matches!(c, Constraint::Fixed { .. })).count(), 4, "pinned as reference geometry");
+    assert_eq!(sol.free, 0);
+
+    // The rod from above: one circle, r 10 round (100, 0), its size a dimension.
+    let out = run(&mut p, "sketch.project", json!({ "target": s, "from": rod })).unwrap();
+    let made = out["curves"].as_array().unwrap();
+    assert_eq!(made.len(), 1, "{out}");
+    let (sk, sol) = solved_sketch(&p, s);
+    let circle_id = made[0].as_u64().unwrap() as u32;
+    let Some(Curve::Circle { center, .. }) = sk.geometry.curves.iter().find(|c| c.id() == circle_id).cloned() else { panic!("{:?}", sk.geometry.curves) };
+    assert!(near(sol.points[&center], [100.0, 0.0]) && (sol.radii[&circle_id] - 10.0).abs() < 1e-6);
+    assert_eq!(sol.free, 0);
+
+    // From the front (XZ): the rod's side is a 20 × 20 rectangle; its silhouettes are true lines.
+    let front = id(run(&mut p, "sketch.create", json!({ "name": "Front", "plane": { "name": "XZ" } })).unwrap());
+    run(&mut p, "sketch.project", json!({ "target": front, "from": rod, "construction": true, "fixed": false })).unwrap();
+    let (sk, sol) = solved_sketch(&p, front);
+    let xs: Vec<f64> = sol.points.values().map(|q| q[0]).collect();
+    let ys: Vec<f64> = sol.points.values().map(|q| q[1]).collect();
+    let (x0, x1) = (xs.iter().cloned().fold(f64::MAX, f64::min), xs.iter().cloned().fold(f64::MIN, f64::max));
+    let (y0, y1) = (ys.iter().cloned().fold(f64::MAX, f64::min), ys.iter().cloned().fold(f64::MIN, f64::max));
+    assert!((x0 - 90.0).abs() < 1e-6 && (x1 - 110.0).abs() < 1e-6 && y0.abs() < 1e-6 && (y1 - 20.0).abs() < 1e-6, "{x0} {x1} {y0} {y1}");
+    assert!(sk.geometry.curves.iter().all(|c| matches!(c, Curve::Line { construction: true, .. })), "lines only, as construction: {:?}", sk.geometry.curves);
+
+    // A section half-way up the block (and through the rod): the rectangle and the circle.
+    let mid = id(run(&mut p, "sketch.create", json!({ "name": "Mid", "plane": { "name": "XY", "offset": 5 } })).unwrap());
+    let out = run(&mut p, "sketch.project", json!({ "target": mid, "from": [block, rod], "mode": "section" })).unwrap();
+    let (sk, sol) = solved_sketch(&p, mid);
+    assert_eq!(sk.geometry.curves.iter().filter(|c| matches!(c, Curve::Line { .. })).count(), 4, "{out}");
+    assert_eq!(sk.geometry.curves.iter().filter(|c| matches!(c, Curve::Circle { .. })).count(), 1, "{out}");
+    assert!(sol.points.values().any(|q| near(*q, [45.0, 35.0])));
+}
+
+#[test]
+fn a_loop_of_no_width_is_no_profile_and_does_not_stop_the_sketch() {
+    // Two lines drawn over each other between the same points (as overlapping pattern copies make).
+    let g: de_shape::sketch::Geometry = serde_json::from_value(json!({
+        "points": [{ "id": 1, "x": 0, "y": 0 }, { "id": 2, "x": 40, "y": 0 }],
+        "curves": [{ "kind": "line", "id": 3, "a": 1, "b": 2 }, { "kind": "line", "id": 4, "a": 2, "b": 1 }],
+        "constraints": []
+    }))
+    .unwrap();
+    let solved = de_shape::sketch::solve(&g, &Default::default()).unwrap();
+    let (loops, _) = de_shape::sketch::loops(&g, &solved);
+    assert!(loops.is_empty());
+}

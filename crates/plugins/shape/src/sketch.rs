@@ -2,7 +2,8 @@
 //!
 //! A sketch is points, lines, circles and arcs on a plane, plus constraints
 //! (coincident, horizontal, vertical, parallel, perpendicular, equal,
-//! tangent, point on curve, fixed) and dimensions. Every dimension is a
+//! tangent, point on curve, fixed, symmetric, and the steps of linear and
+//! circular patterns) and dimensions. Every dimension is a
 //! parameter of the sketch, so it can be typed, scrubbed, driven by a formula
 //! (`=Desk size.width - 40`) or read by other shapes, the same as any other
 //! parameter. Nothing follows anything implicitly.
@@ -110,6 +111,14 @@ pub enum Constraint {
     Diameter { curve: u32, key: DimKey },
     /// Angle from line a to line b, degrees.
     Angle { a: u32, b: u32, key: DimKey },
+    /// Point b is point a moved by line `along` (its start to its end): one
+    /// step of a linear pattern. Editing the original moves its copies.
+    Translate { a: u32, b: u32, along: u32 },
+    /// Point b is point a turned about the start of line `from` by the angle
+    /// from line `from` to line `to`: one step of a circular pattern.
+    Rotate { a: u32, b: u32, from: u32, to: u32 },
+    /// Points a and b mirror each other about line `line` (extended).
+    Symmetric { a: u32, b: u32, line: u32 },
 }
 
 impl Constraint {
@@ -378,6 +387,28 @@ fn residual(ctx: &Ctx, x: &[f64], c: &Constraint, out: &mut Vec<f64>) -> Result<
                 d += 2.0 * std::f64::consts::PI;
             }
             out.push(d * len(u).min(len(w)).max(1.0));
+        }
+        Constraint::Translate { a, b, along } => {
+            let (p, q) = (ctx.p(x, *a).ok_or_else(miss)?, ctx.p(x, *b).ok_or_else(miss)?);
+            let (s, e) = ctx.line(x, *along).ok_or_else(miss)?;
+            out.extend([q[0] - p[0] - (e[0] - s[0]), q[1] - p[1] - (e[1] - s[1])]);
+        }
+        Constraint::Rotate { a, b, from, to } => {
+            let (p, q) = (ctx.p(x, *a).ok_or_else(miss)?, ctx.p(x, *b).ok_or_else(miss)?);
+            let (c, r0) = ctx.line(x, *from).ok_or_else(miss)?;
+            let (s1, r1) = ctx.line(x, *to).ok_or_else(miss)?;
+            let (u, w) = (sub(r0, c), sub(r1, s1));
+            let ang = cross(u, w).atan2(dot(u, w));
+            let (sn, cs) = ang.sin_cos();
+            let d = sub(p, c);
+            out.extend([q[0] - (c[0] + d[0] * cs - d[1] * sn), q[1] - (c[1] + d[0] * sn + d[1] * cs)]);
+        }
+        Constraint::Symmetric { a, b, line } => {
+            let (p, q) = (ctx.p(x, *a).ok_or_else(miss)?, ctx.p(x, *b).ok_or_else(miss)?);
+            let (s, e) = ctx.line(x, *line).ok_or_else(miss)?;
+            let d = unit(sub(e, s));
+            let m = [(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0];
+            out.extend([cross(d, sub(m, s)), dot(d, sub(q, p))]);
         }
     }
     Ok(())
@@ -799,8 +830,13 @@ pub fn loops_of_curves(g: &Geometry, s: &Solved) -> (Vec<(Loop, Vec<u32>)>, usiz
             closed = at == first;
         }
         if closed {
-            found.push(merge_collinear(chain));
-            found_ids.push(ids);
+            // A loop of no width (curves drawn over each other and back) folds
+            // away to nothing: it encloses nothing, so it is no profile.
+            let merged = merge_collinear(chain);
+            if polygon(&merged, 0.01).len() >= 3 && area(&polygon(&merged, 0.01)).abs() > 1e-12 {
+                found.push(merged);
+                found_ids.push(ids);
+            }
         } else {
             open += 1
         }

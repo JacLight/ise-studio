@@ -13,10 +13,13 @@ pub mod drawing;
 pub mod exact;
 pub mod fea;
 pub mod fabricate;
+pub mod fillet;
 pub mod gears;
 pub mod mechanism;
 pub mod params;
 pub mod pathfinder;
+pub mod pattern;
+pub mod project;
 pub mod runtime;
 pub mod sketch;
 pub mod trim;
@@ -57,6 +60,11 @@ impl Plugin for ShapePlugin {
             .command::<pathfinder::OffsetSketch>()
             .command::<trim::TrimSketch>()
             .command::<trim::ExtendSketch>()
+            .command::<fillet::FilletSketch>()
+            .command::<fillet::ChamferSketch>()
+            .command::<pattern::PatternSketch>()
+            .command::<pattern::MirrorSketch>()
+            .command::<project::ProjectSketch>()
             .command::<CreateParameterSet>()
             .command::<SetParameters>()
             .command::<LinkParam>()

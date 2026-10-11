@@ -30,7 +30,13 @@ export type Constraint =
   | { kind: "length"; line: number; key: string }
   | { kind: "radius"; curve: number; key: string }
   | { kind: "diameter"; curve: number; key: string }
-  | { kind: "angle"; a: number; b: number; key: string };
+  | { kind: "angle"; a: number; b: number; key: string }
+  /** Point b is point a moved by line `along` (start to end): a step of a linear pattern. */
+  | { kind: "translate"; a: number; b: number; along: number }
+  /** Point b is point a turned about line `from`'s start by the angle from `from` to `to`: a step of a circular pattern. */
+  | { kind: "rotate"; a: number; b: number; from: number; to: number }
+  /** Points a and b mirror each other about a line. */
+  | { kind: "symmetric"; a: number; b: number; line: number };
 export type Geometry = { points: SPoint[]; curves: Curve[]; constraints: Constraint[] };
 export type Dim = { key: string; label: string; value: number; unit: string; min?: number | null; max?: number | null; step?: number | null; expr?: string };
 export type SketchData = { name: string; plane: Plane; geometry: Geometry; params: Dim[] };
