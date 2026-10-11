@@ -657,15 +657,21 @@ impl App {
     }
 
     /// Takes change sets from another member's engine (merged in causal order),
-    /// or from a branch merging back. Returns the clashes it reported.
+    /// or from a branch merging back or pulling. Returns the clashes it reported.
     fn receive(&self, changes: Vec<WireChangeSet>) -> Result<Vec<de_core::Conflict>, String> {
+        self.receive_except(changes, |_| false)
+    }
+
+    /// `receive`, leaving out of the report the clashes `known` says were
+    /// already reported elsewhere (merged all the same, just not listed twice).
+    fn receive_except(&self, changes: Vec<WireChangeSet>, known: impl Fn(&de_core::Conflict) -> bool) -> Result<Vec<de_core::Conflict>, String> {
         let mut project = self.project.lock().unwrap();
         let (logged, before) = (project.log().len(), project.revision());
         let mut clashes = Vec::new();
         let mut result = Ok(());
         for wire in changes {
             match project.receive(wire) {
-                Ok(merges) => clashes.extend(merges.into_iter().flat_map(|m| m.conflicts)),
+                Ok(merges) => clashes.extend(merges.into_iter().flat_map(|m| m.conflicts).filter(|c| !known(c))),
                 Err(e) => {
                     result = Err(e.to_string());
                     break;
@@ -2143,6 +2149,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/versions/branch", axum::routing::post(history::branch))
         .route("/branch", get(history::status))
         .route("/branch/merge", axum::routing::post(history::merge))
+        .route("/branch/pull", axum::routing::post(history::pull_in))
         .route("/shares", get(share::list).post(share::create))
         .route("/shares/revoke", axum::routing::post(share::revoke))
         // An invite link opens the join screen (the web app); joining itself is a POST.
@@ -2380,6 +2387,154 @@ mod tests {
         assert!(restored["changed"].as_u64().unwrap_or(0) >= 1, "{restored}");
         assert_eq!(parts(&app), 1);
         assert_eq!(app.project.lock().unwrap().revision().0, revision.0 + 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A POST with a JSON body, answered with JSON (the error text as `error` when refused).
+    async fn post_json(at: SocketAddr, path: &str, body: Value) -> Value {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut s = tokio::net::TcpStream::connect(at).await.unwrap();
+        let body = body.to_string();
+        s.write_all(format!("POST {path} HTTP/1.1\r\nHost: {at}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        s.read_to_end(&mut buf).await.unwrap();
+        let text = String::from_utf8_lossy(&buf).to_string();
+        let reply = &text[text.find("\r\n\r\n").map(|i| i + 4).unwrap_or(0)..];
+        let (start, end) = (reply.find('{'), reply.rfind('}'));
+        match (start, end) {
+            (Some(a), Some(b)) => serde_json::from_str(&reply[a..=b]).unwrap_or_else(|_| json!({ "error": reply })),
+            _ => json!({ "error": reply }),
+        }
+    }
+
+    fn boxes_in(a: &App) -> Vec<StableId> {
+        let p = a.project.lock().unwrap();
+        p.entity_ids().into_iter().filter(|id| p.get::<de_solid::BoxFeature>(*id).is_some()).collect()
+    }
+
+    fn box_value(a: &App, id: StableId) -> Value {
+        serde_json::to_value(a.project.lock().unwrap().get::<de_solid::BoxFeature>(id).unwrap()).unwrap()
+    }
+
+    fn command_ids(a: &App) -> Vec<String> {
+        a.project.lock().unwrap().log().iter().map(|w| w.command_id.clone()).collect()
+    }
+
+    fn mm(v: f64) -> Value {
+        json!({ "value": v, "unit": "mm" })
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_branch_pulls_the_originals_newer_changes() {
+        let dir = temp_dir("pull");
+        let server = server_in(&dir);
+        let name = "bracket".to_string();
+        let app = server.project(Some(&name)).unwrap();
+        app.commit_here("project.set_info", json!({ "title": "Bracket" })).unwrap();
+        box_part(&app);
+        let plate = boxes_in(&app)[0];
+        let marked = app.commit_here("version.create", json!({ "name": "v1" })).unwrap();
+        let at = serve(server.clone()).await;
+        let made = post_json(at, &format!("/versions/branch?project={name}"), json!({ "version": marked["output"]["id"] })).await;
+        let branch_name = made["name"].as_str().unwrap_or_else(|| panic!("{made}")).to_string();
+        let branch = server.project(Some(&branch_name)).unwrap();
+        let status = |s: &str| history::branch_status(&server, &branch_name)[s].clone();
+        assert_eq!((status("ahead"), status("behind")), (json!(0), json!(0)), "nothing on either side yet (the branch's own title does not count)");
+
+        // Both sides work: the branch adds a part; the original adds one, deepens the plate and renames itself.
+        box_part(&branch);
+        box_part(&app);
+        app.commit_here("solid.box.set_dimensions", json!({ "target": plate, "depth": mm(25.0) })).unwrap();
+        app.commit_here("project.set_info", json!({ "title": "Bracket Mk2" })).unwrap();
+        assert_eq!((status("ahead"), status("behind")), (json!(1), json!(2)), "the original's new title is not a change to bring");
+
+        // Pull: the original's two changes land on the branch, its title does not, nothing clashes.
+        let pulled = post_json(at, &format!("/branch/pull?project={branch_name}"), json!({})).await;
+        assert_eq!(pulled["from"], "bracket", "{pulled}");
+        assert_eq!(pulled["conflicts"], json!([]));
+        assert_eq!(pulled["changes"], 2, "{pulled}");
+        assert_eq!(pulled["branch"]["behind"], 0);
+        assert_eq!(pulled["branch"]["ahead"], 1, "the branch's own part is still to merge back");
+        assert!(pulled["branch"]["pulled_at"].is_u64());
+        assert_eq!(boxes_in(&branch).len(), 3);
+        assert_eq!(box_value(&branch, plate), box_value(&app, plate), "the deeper plate");
+        assert_eq!(info_of(&server.dir, &branch_name)["title"], "Bracket — branch from v1", "the branch keeps its name");
+
+        // Pulling again brings nothing; a newer change in the original, and only it, comes next time.
+        let revision = branch.project.lock().unwrap().revision();
+        assert_eq!(history::pull(&server, &branch_name).unwrap().1, 0);
+        assert_eq!(branch.project.lock().unwrap().revision(), revision);
+        box_part(&app);
+        assert_eq!(status("behind"), 1);
+        let (_, landed, clashes) = history::pull(&server, &branch_name).unwrap();
+        assert_eq!((landed, clashes.len()), (1, 0));
+        assert_eq!(boxes_in(&branch).len(), 4);
+
+        // Merge back: only the branch's own part goes; nothing pulled comes back twice.
+        let merged = post_json(at, &format!("/branch/merge?project={branch_name}"), json!({})).await;
+        assert_eq!((merged["changes"].clone(), merged["conflicts"].clone()), (json!(1), json!([])), "{merged}");
+        assert_eq!(boxes_in(&app).len(), 4);
+        let ids = command_ids(&app);
+        assert_eq!(ids.len(), ids.iter().collect::<std::collections::HashSet<_>>().len(), "no change set is in the original twice");
+        assert_eq!(info_of(&server.dir, &name)["title"], "Bracket Mk2");
+        assert_eq!((status("ahead"), status("behind")), (json!(0), json!(0)));
+        assert_eq!(history::pull(&server, &branch_name).unwrap().1, 0, "the merged changes do not come back either");
+        let record = history::Branch::load(&server.dir, &branch_name).unwrap();
+        assert_eq!((record.pulled, record.merged), (3, 1));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pull_reports_clashes_once() {
+        let dir = temp_dir("pull-clash");
+        let server = server_in(&dir);
+        let name = "bracket".to_string();
+        let app = server.project(Some(&name)).unwrap();
+        box_part(&app);
+        let plate = boxes_in(&app)[0];
+        let marked = app.commit_here("version.create", json!({ "name": "v1" })).unwrap();
+        let at = serve(server.clone()).await;
+        let made = post_json(at, &format!("/versions/branch?project={name}"), json!({ "version": marked["output"]["id"] })).await;
+        let branch_name = made["name"].as_str().unwrap_or_else(|| panic!("{made}")).to_string();
+        let branch = server.project(Some(&branch_name)).unwrap();
+
+        // Both make the plate taller, differently; the branch also changes its width, alone.
+        app.commit_here("solid.box.set_dimensions", json!({ "target": plate, "height": mm(7.0) })).unwrap();
+        branch.commit_here("solid.box.set_dimensions", json!({ "target": plate, "height": mm(9.0) })).unwrap();
+        branch.commit_here("solid.box.set_dimensions", json!({ "target": plate, "width": mm(44.0) })).unwrap();
+
+        // Pull: the height clashes, is reported in the branch's team list, and both copies end up agreeing.
+        let pulled = post_json(at, &format!("/branch/pull?project={branch_name}"), json!({})).await;
+        let clashes = pulled["conflicts"].as_array().unwrap_or_else(|| panic!("{pulled}"));
+        assert_eq!(clashes.len(), 1, "{pulled}");
+        assert_eq!(clashes[0]["kind"], "solid.box");
+        assert!(clashes[0]["path"].as_str().unwrap().starts_with("/height"), "{pulled}");
+        assert_eq!(branch.conflicts.lock().unwrap().len(), 1, "listed in the branch's team panel");
+        assert!(app.conflicts.lock().unwrap().is_empty());
+
+        // Merging back meets the same clash from the other side: merged, not reported again.
+        let merged = history::merge_back(&server, &branch_name).unwrap();
+        assert!(merged.2.is_empty(), "the clash was already reported on the branch: {:?}", merged.2);
+        assert!(app.conflicts.lock().unwrap().is_empty());
+        assert_eq!(box_value(&app, plate), box_value(&branch, plate), "same height (the later change) and the branch's width on both");
+        assert_eq!(box_value(&app, plate)["width"], box_value(&branch, plate)["width"]);
+
+        // Settled in the branch's team panel, as teammates' clashes are.
+        let c = branch.conflicts.lock().unwrap()[0].clone();
+        let settled = post_json(at, &format!("/team/conflicts/settle?project={branch_name}"), json!({ "id": c.id, "path": c.path, "command_id": c.command_id })).await;
+        assert_eq!(settled["conflicts"], json!([]), "{settled}");
+
+        // A new clash, made after: merging back reports it in the original (only the old one is known).
+        app.commit_here("solid.box.set_dimensions", json!({ "target": plate, "depth": mm(30.0) })).unwrap();
+        branch.commit_here("solid.box.set_dimensions", json!({ "target": plate, "depth": mm(33.0) })).unwrap();
+        let (_, _, clashes) = history::merge_back(&server, &branch_name).unwrap();
+        assert_eq!(clashes.len(), 1, "{clashes:?}");
+        assert!(clashes[0].path.starts_with("/depth"));
+        assert_eq!(app.conflicts.lock().unwrap().len(), 1);
+        // And pulling then meets that one from the other side: not reported again on the branch.
+        let (_, _, clashes) = history::pull(&server, &branch_name).unwrap();
+        assert!(clashes.is_empty(), "{clashes:?}");
+        assert_eq!(box_value(&app, plate), box_value(&branch, plate));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

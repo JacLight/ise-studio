@@ -11,7 +11,19 @@
 //! - branch: a new project made of the version's changes, which remembers
 //!   where it came from (`<name>.branch.json`) and stamps its own changes as
 //!   its own engine, so they can later merge back into the original through
-//!   the same field-by-field merge teammates use.
+//!   the same field-by-field merge teammates use;
+//! - pull: the reverse, the original's newer changes brought into the branch
+//!   through that same merge.
+//!
+//! What has crossed between a branch and its original needs no ledger of its
+//! own: every change set keeps the stamp (engine and clock) it was made with
+//! wherever it lands, so each side's version vector already says which of the
+//! other's changes it holds. A pull sends only what the branch's vector does
+//! not cover, a merge back only what the original's does not: pulled changes
+//! never go back, and pulling or merging again brings only what is new. The
+//! branch file keeps the rest: when each last happened, how much it brought,
+//! and the clashes already reported on one side (so the same clash is not
+//! reported again on the other when the changes behind it cross back).
 
 use crate::{App, Server, bad_request, info_of, pretty_name, valid_name};
 use axum::{
@@ -212,6 +224,40 @@ pub struct Branch {
     pub merged_at: Option<u64>,
     #[serde(default)]
     pub merged: usize,
+    /// The last pull from the original: when (s), and how many changes it brought in all.
+    #[serde(default)]
+    pub pulled_at: Option<u64>,
+    #[serde(default)]
+    pub pulled: usize,
+    /// Clashes already reported on one side (most recent first, a few hundred kept).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clashed: Vec<Clashed>,
+}
+
+/// A clash reported when changes crossed one way. The changes the receiving
+/// side held then (`held`) are the ones it clashed with: when one of them
+/// crosses the other way and clashes on the same field, it is the same clash
+/// met from the other side (already listed where it first came up, and
+/// settled there), not a new one.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Clashed {
+    /// Where it was reported: "branch" (on a pull) or "original" (on a merge back).
+    pub on: String,
+    pub id: StableId,
+    pub kind: String,
+    pub path: String,
+    pub held: Vector,
+}
+
+const CLASHES_KEPT: usize = 400;
+
+impl Clashed {
+    /// Whether `c`, reported on the other side for the change set stamped
+    /// `stamp`, is this clash met again.
+    fn again(&self, c: &Conflict, stamp: Option<&de_core::Stamp>) -> bool {
+        let overlaps = |a: &str, b: &str| a.is_empty() || b.is_empty() || a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"));
+        self.id == c.id && self.kind == c.kind && overlaps(&self.path, &c.path) && stamp.is_some_and(|s| de_core::versions::covers(&self.held, &s.origin, s.clock))
+    }
 }
 
 impl Branch {
@@ -239,24 +285,53 @@ fn fresh(branch: &Project, base: &Vector) -> Vec<WireChangeSet> {
     branch.log_beyond(base)
 }
 
-/// What the branch panel shows: where it came from, and what is not merged back yet.
+/// A change set that only names the project (its title and description):
+/// each side keeps its own name, so it is not something to bring over.
+fn names_only(w: &WireChangeSet) -> bool {
+    w.ops.iter().all(|op| match op {
+        WireOp::Set { kind, .. } => kind == "core.project",
+        WireOp::Create { id } | WireOp::Delete { id } => w.ops.iter().any(|o| matches!(o, WireOp::Set { id: i, kind, .. } if i == id && kind == "core.project")),
+    })
+}
+
+/// The change set without the project's name in it. (It still crosses, empty
+/// if need be: later ones may build on it.)
+fn without_name(mut w: WireChangeSet) -> WireChangeSet {
+    w.ops.retain(|op| !matches!(op, WireOp::Set { kind, .. } if kind == "core.project"));
+    w
+}
+
+/// Of `changes`, the ones not covered by `known` (what the side holding it lacks).
+fn beyond(changes: Vec<WireChangeSet>, known: &Vector) -> Vec<WireChangeSet> {
+    changes.into_iter().filter(|w| w.stamp.as_ref().is_some_and(|s| !de_core::versions::covers(known, &s.origin, s.clock))).collect()
+}
+
+/// Of `changes`, the ones worth counting: not empty, not just a name, and not
+/// the naming of the version the branch started from (made after the state it
+/// names, so never in the branch at first; it crosses with the first pull).
+fn counted(changes: &[WireChangeSet], start: Option<StableId>) -> usize {
+    let only_start = |w: &WireChangeSet| start.is_some_and(|v| w.ops.iter().all(|op| matches!(op, WireOp::Set { id, .. } | WireOp::Create { id } | WireOp::Delete { id } if *id == v)));
+    changes.iter().filter(|w| !w.ops.is_empty() && !names_only(w) && !only_start(w)).count()
+}
+
+/// What the branch panel shows: where it came from, what is not merged back
+/// yet (`ahead`), and what the original has that the branch does not
+/// (`behind`, what a pull brings).
 pub fn branch_status(server: &Server, name: &str) -> Value {
     let Some(b) = Branch::load(&server.dir, name) else { return Value::Null };
     let exists = server.dir.join(format!("{}.jsonl", b.from)).exists();
     let (ahead, behind) = match (server.project(Some(&name.to_string())), exists.then(|| server.project(Some(&b.from))).and_then(Result::ok)) {
         (Ok(app), Some(original)) => {
-            let mine = fresh(&app.project.lock().unwrap(), &b.base);
-            let theirs = original.project.lock().unwrap();
-            let known = theirs.known();
-            // The branch's own title and description stay on it: they are not "ahead".
-            let own_name_only = |w: &WireChangeSet| w.ops.iter().all(|op| match op {
-                WireOp::Set { kind, .. } => kind == "core.project",
-                WireOp::Create { id } | WireOp::Delete { id } => w.ops.iter().any(|o| matches!(o, WireOp::Set { id: i, kind, .. } if i == id && kind == "core.project")),
-            });
-            let ahead = mine.iter().filter(|w| !own_name_only(w) && w.stamp.as_ref().is_some_and(|s| !de_core::versions::covers(known, &s.origin, s.clock))).count();
-            // Its own changes since (not the branch's, merged back).
-            let behind = theirs.log_beyond(&b.base).iter().filter(|w| w.stamp.as_ref().is_none_or(|s| s.origin != b.origin) && !w.ops.is_empty()).count();
-            (ahead, behind)
+            // One project locked at a time (another request may lock them the other way round).
+            let (mine, known_here) = {
+                let p = app.project.lock().unwrap();
+                (fresh(&p, &b.base), p.known().clone())
+            };
+            let (theirs, known_there) = {
+                let p = original.project.lock().unwrap();
+                (beyond(p.log_beyond(&known_here), &known_here), p.known().clone())
+            };
+            (counted(&beyond(mine, &known_there), None), counted(&theirs, b.version))
         }
         _ => (0, 0),
     };
@@ -270,6 +345,8 @@ pub fn branch_status(server: &Server, name: &str) -> Value {
         "created": b.created * 1000,
         "merged_at": b.merged_at.map(|t| t * 1000),
         "merged": b.merged,
+        "pulled_at": b.pulled_at.map(|t| t * 1000),
+        "pulled": b.pulled,
         "ahead": ahead,
         "behind": behind,
     })
@@ -334,6 +411,9 @@ pub async fn branch(State(server): State<Arc<Server>>, Query(q): Query<HashMap<S
             created: crate::peers::now(),
             merged_at: None,
             merged: 0,
+            pulled_at: None,
+            pulled: 0,
+            clashed: Vec::new(),
         };
         // The branch file first (it says how the project's changes are stamped), then its log.
         record.save(&server.dir, &to).map_err(|e| e.to_string())?;
@@ -371,41 +451,87 @@ pub async fn status(State(server): State<Arc<Server>>, Query(q): Query<HashMap<S
 /// from, through the same merge teammates' changes go through: what does not
 /// clash lands, and fields both changed differently are reported as
 /// conflicts (in the original's team panel, like teammates' clashes).
-/// Merging again brings only what is new. The branch's own title and
-/// description stay on the branch.
+/// Merging again brings only what is new, and changes pulled from the
+/// original do not go back. The branch's own title and description stay on
+/// the branch.
 pub fn merge_back(server: &Server, name: &str) -> Result<(String, usize, Vec<Conflict>), String> {
+    cross(server, name, Way::Merge)
+}
+
+/// Brings the original's changes the branch does not have yet into the
+/// branch, through the same merge: what does not clash lands, and fields both
+/// changed differently are reported as conflicts in the branch's team panel.
+/// Pulling again brings only what is new, and pulled changes are never merged
+/// back. The original's title and description stay on the original.
+pub fn pull(server: &Server, name: &str) -> Result<(String, usize, Vec<Conflict>), String> {
+    cross(server, name, Way::Pull)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Way {
+    /// Branch → original.
+    Merge,
+    /// Original → branch.
+    Pull,
+}
+
+impl Way {
+    /// The side receiving, and the side sending (as `Clashed::on` names them).
+    fn sides(self) -> (&'static str, &'static str) {
+        match self {
+            Way::Merge => ("original", "branch"),
+            Way::Pull => ("branch", "original"),
+        }
+    }
+}
+
+/// Sends what one side has and the other lacks across (see `merge_back`, `pull`).
+fn cross(server: &Server, name: &str, way: Way) -> Result<(String, usize, Vec<Conflict>), String> {
     let mut record = Branch::load(&server.dir, name).ok_or("this project is not a branch")?;
     if !server.dir.join(format!("{}.jsonl", record.from)).exists() {
         return Err(format!("the project it was branched from ({}) is not here any more", record.from));
     }
     let branch = server.project(Some(&name.to_string()))?;
     let original = server.project(Some(&record.from))?;
-    let changes: Vec<WireChangeSet> = {
-        let p = branch.project.lock().unwrap();
-        let known = original.project.lock().unwrap().known().clone();
-        fresh(&p, &record.base)
-            .into_iter()
-            .filter(|w| w.stamp.as_ref().is_some_and(|s| !de_core::versions::covers(&known, &s.origin, s.clock)))
-            .map(|mut w| {
-                // The branch's name for itself stays on the branch. (The change set
-                // still goes over, empty if need be: later ones may build on it.)
-                w.ops.retain(|op| !matches!(op, WireOp::Set { kind, .. } if kind == "core.project"));
-                w
-            })
-            .collect()
+    let (from, to) = match way {
+        Way::Merge => (&branch, &original),
+        Way::Pull => (&original, &branch),
     };
-    let before = original.project.lock().unwrap().revision();
-    let conflicts = original.receive(changes.clone())?;
-    let landed = original.project.lock().unwrap().revision().0 - before.0;
-    let waiting = original.project.lock().unwrap().waiting();
+    // One project locked at a time (another request may lock them the other way round).
+    let held = to.project.lock().unwrap().known().clone();
+    let changes: Vec<WireChangeSet> = {
+        let p = from.project.lock().unwrap();
+        let candidates = match way {
+            Way::Merge => fresh(&p, &record.base),
+            Way::Pull => p.log_beyond(&held),
+        };
+        beyond(candidates, &held).into_iter().map(without_name).collect()
+    };
+    let stamps: HashMap<String, de_core::Stamp> = changes.iter().filter_map(|w| Some((w.command_id.clone(), w.stamp.clone()?))).collect();
+    // Counted as the branch panel counts them (so "3 newer" pulls 3).
+    let landed = counted(&changes, if way == Way::Pull { record.version } else { None });
+    let (here, there) = way.sides();
+    // A clash first reported on the other side, met again as its changes cross back, is not listed twice.
+    let conflicts = to.receive_except(changes, |c| record.clashed.iter().any(|k| k.on == there && k.again(c, stamps.get(&c.command_id))))?;
+    let waiting = to.project.lock().unwrap().waiting();
     if waiting > 0 {
-        return Err(format!("{waiting} of the branch's changes build on changes the original does not have (made by teammates on the branch who are not on the original): they wait until those arrive"));
+        return Err(match way {
+            Way::Merge => format!("{waiting} of the branch's changes build on changes the original does not have (made by teammates on the branch who are not on the original): they wait until those arrive"),
+            Way::Pull => format!("{waiting} of the original's changes build on changes this branch does not have: they wait until those arrive"),
+        });
     }
-    record.merged_at = Some(crate::peers::now());
-    record.merged += landed as usize;
+    for c in conflicts.iter().rev() {
+        record.clashed.insert(0, Clashed { on: here.into(), id: c.id, kind: c.kind.clone(), path: c.path.clone(), held: held.clone() });
+    }
+    record.clashed.truncate(CLASHES_KEPT);
+    let now = Some(crate::peers::now());
+    match way {
+        Way::Merge => (record.merged_at, record.merged) = (now, record.merged + landed),
+        Way::Pull => (record.pulled_at, record.pulled) = (now, record.pulled + landed),
+    }
     record.save(&server.dir, name).map_err(|e| e.to_string())?;
     branch.team_changed();
-    Ok((record.from, landed as usize, conflicts))
+    Ok((record.from, landed, conflicts))
 }
 
 /// `POST /branch/merge?project=…`: merges this branch back into its original.
@@ -418,6 +544,20 @@ pub async fn merge(State(server): State<Arc<Server>>, Query(q): Query<HashMap<St
     let n = name.clone();
     match blocking(move || merge_back(&s, &n)).await {
         Ok((into, landed, conflicts)) => axum::Json(json!({ "into": into, "changes": landed, "conflicts": conflicts, "branch": branch_status(&server, &name) })).into_response(),
+        Err(e) => (StatusCode::UNPROCESSABLE_ENTITY, e).into_response(),
+    }
+}
+
+/// `POST /branch/pull?project=…`: brings the original's newer changes into this branch.
+pub async fn pull_in(State(server): State<Arc<Server>>, Query(q): Query<HashMap<String, String>>) -> axum::response::Response {
+    let name = q.get("project").filter(|n| !n.is_empty()).cloned().unwrap_or_else(|| server.default.clone());
+    if !valid_name(&name) {
+        return bad_request("not a project name");
+    }
+    let s = server.clone();
+    let n = name.clone();
+    match blocking(move || pull(&s, &n)).await {
+        Ok((from, landed, conflicts)) => axum::Json(json!({ "from": from, "changes": landed, "conflicts": conflicts, "branch": branch_status(&server, &name) })).into_response(),
         Err(e) => (StatusCode::UNPROCESSABLE_ENTITY, e).into_response(),
     }
 }
