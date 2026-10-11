@@ -523,12 +523,13 @@ fn layout(parts: &[Part], schematic: StableId, flags: bool) -> Layout {
     // Anchor order: supply inputs, regulators, processors, other connectors.
     let rank = |i: usize| {
         let p = &parts[i];
+        let supply_conn = p.def.category == "Connector" && p.nets.values().any(|n| is_power_net(n) && !is_ground(n)) && p.nets.values().all(|n| is_power_net(n));
         let powered_conn = p.def.category == "Connector" && p.nets.values().any(|n| is_power_net(n) && !is_ground(n));
         match p.def.category.as_str() {
             _ if powered_conn && p.def.name.starts_with("USB") => 0,
             "Power IC" => 2,
             "Module" | "IC" => 3,
-            _ if powered_conn => 1,
+            _ if supply_conn => 1,
             "Connector" => 4,
             _ => 5,
         }
@@ -547,7 +548,11 @@ fn layout(parts: &[Part], schematic: StableId, flags: bool) -> Layout {
             let mut score = 0;
             for n in &nets {
                 let w = if is_ground(n) { 0 } else if is_power_net(n) { 2 } else { 10 };
-                score += w * parts[a].nets.values().filter(|x| *x == n).count();
+                score += 4 * w * parts[a].nets.values().filter(|x| *x == n).count();
+            }
+            // Ties go to processors and regulators before connectors.
+            if score > 0 && matches!(parts[a].def.category.as_str(), "IC" | "Module" | "Power IC") {
+                score += 1;
             }
             if score > 0 && best.is_none_or(|(s, _)| score > s) {
                 best = Some((score, a));
