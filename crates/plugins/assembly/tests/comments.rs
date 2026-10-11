@@ -36,7 +36,7 @@ fn mm(v: f64) -> Value {
 
 #[test]
 fn frames_convert_both_ways_with_rotation() {
-    let f = Frame { origin: [100.0, -20.0, 5.0], rotation: 90.0 };
+    let f = Frame::from_euler([100.0, -20.0, 5.0], [0.0, 0.0, 90.0]);
     let local = [10.0, 0.0, 3.0];
     let w = f.to_world(local);
     assert!(near(w, [100.0, -10.0, 8.0]), "x turns onto y, then moves: {w:?}");
@@ -120,7 +120,7 @@ fn a_pin_follows_its_part_when_moved() {
     // A placed shape: its placement is its program's origin (here inside the part).
     let shape = id(&run(&mut p, "shape.create", json!({ "name": "Puck", "source": "return box(40, 40, 10).translate(-20, -20, 0);", "params": [] })).unwrap());
     run(&mut p, "solid.part.move", json!({ "target": shape, "placement": { "x": mm(30.0), "y": mm(0.0), "z": mm(0.0) } })).unwrap();
-    assert!(near(frame(p.world(), shape).unwrap().origin, [30.0, 0.0, 0.0]));
+    assert!(near(frame(p.world(), shape).unwrap().at, [30.0, 0.0, 0.0]));
     let s = id(&run(&mut p, "comment.create", json!({ "target": shape, "at": [30, 0, 10], "text": "Center", "author": "Ada" })).unwrap());
     assert!(near(p.get::<CommentThread>(s).unwrap().anchor.point, [0.0, 0.0, 10.0]), "the program's center");
     run(&mut p, "solid.part.move", json!({ "target": shape, "placement": { "x": mm(-100.0), "y": mm(0.0), "z": mm(0.0) } })).unwrap();
@@ -130,7 +130,7 @@ fn a_pin_follows_its_part_when_moved() {
     let bracket = component_of(&mut p);
     let inst = id(&run(&mut p, "assembly.instance.create", json!({ "of": bracket, "name": "Bracket", "at": [0, 0, 0] })).unwrap());
     let i = id(&run(&mut p, "comment.create", json!({ "target": inst, "at": [10, 0, 5], "text": "Hole here", "author": "Bo" })).unwrap());
-    run(&mut p, "assembly.instance.update", json!({ "target": inst, "at": [200, 100, 0], "rotation": 90 })).unwrap();
+    run(&mut p, "assembly.instance.update", json!({ "target": inst, "at": [200, 100, 0], "rotation": [0, 0, 90] })).unwrap();
     assert!(near(anchor_world(p.world(), &p.get::<CommentThread>(i).unwrap().anchor).unwrap(), [200.0, 110.0, 5.0]));
 
     // Its part gone, the pin has nowhere to be (the thread stays, listed as on a deleted part).
@@ -161,7 +161,7 @@ fn markup_is_kept_in_the_parts_coordinates() {
 fn replies_carry_markup_in_the_threads_part_coordinates() {
     let mut p = project();
     let bracket = component_of(&mut p);
-    let inst = id(&run(&mut p, "assembly.instance.create", json!({ "of": bracket, "name": "Bracket", "at": [200, 100, 0], "rotation": 90 })).unwrap());
+    let inst = id(&run(&mut p, "assembly.instance.create", json!({ "of": bracket, "name": "Bracket", "at": [200, 100, 0], "rotation": [0, 0, 90] })).unwrap());
     let t = id(&run(&mut p, "comment.create", json!({ "target": inst, "at": [200, 110, 5], "text": "Hole here", "author": "Ada" })).unwrap());
 
     // Bo answers with an arrow drawn in project coordinates: stored in the instance's own.
@@ -171,7 +171,7 @@ fn replies_carry_markup_in_the_threads_part_coordinates() {
     assert!(near(reply.markup[0].points[0], [0.0, 0.0, 5.0]) && near(reply.markup[0].points[1], [10.0, 0.0, 5.0]) && reply.markup[0].arrow, "{:?}", reply.markup);
 
     // When the instance moves, the reply's drawing goes with it (same frame as the pin).
-    run(&mut p, "assembly.instance.update", json!({ "target": inst, "at": [0, 0, 0], "rotation": 0 })).unwrap();
+    run(&mut p, "assembly.instance.update", json!({ "target": inst, "at": [0, 0, 0], "rotation": [0, 0, 0] })).unwrap();
     let f = frame(p.world(), inst).unwrap();
     assert!(near(f.to_world(p.get::<CommentReply>(r).unwrap().markup[0].points[1]), [10.0, 0.0, 5.0]));
 

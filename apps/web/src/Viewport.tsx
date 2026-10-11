@@ -34,6 +34,7 @@ import {
 import type { Overlay } from "./intent";
 import type { CommentPin, CommentsView, PinAnchor } from "./Comments";
 import { EdgeLayer, type EdgePicture } from "./edgeLayer";
+import { ConnectorLayer, type ConnectorPicture } from "./connectorLayer";
 import { FaceLayer, type FacePicture, type FlatFace, PickedFacesLayer, curvedFaceAt, flatFaceAt } from "./faceLayer";
 import { SketchLayer, type SketchPicture, segmentPoints } from "./sketchLayer";
 import { type Plane, normalOf, positions, radiusOf, toWorld } from "./sketchModel";
@@ -59,6 +60,11 @@ import {
   pivotOf,
   pivotPoint,
   shapeOf,
+  placedOf,
+  applyT,
+  invertT,
+  type Transform,
+  type V3,
 } from "./model";
 
 export type ViewName = "perspective" | "top" | "front" | "bottom";
@@ -369,6 +375,13 @@ type Props = {
   onDrag: (id: string, patch: Partial<Shape>) => void;
   /** Drag finished: commit or cancel. */
   onDragEnd: (commit: boolean) => void;
+  /** Connectors offered for a joint's ends: clicks pick one instead of selecting. */
+  connectors?: ConnectorPicture | null;
+  onConnectorPick?: (key: string) => void;
+  /** Instances drawn at these placements instead of their own (a joint being scrubbed or swept). */
+  poses?: ReadonlyMap<string, Transform> | null;
+  /** An instance turned with the gizmo's rings: its new position and rotation (false: refused, put it back). */
+  onTurnInstance?: (id: string, at: V3, rotation: V3) => Promise<boolean>;
 };
 
 /** A flat face of a part made by a program, and which part of an assembly it is on. */
@@ -387,7 +400,6 @@ export type SketchPointer = {
 };
 
 const MM = 1000; // engine meters -> scene millimeters
-const Z_AXIS = new THREE.Vector3(0, 0, 1);
 /** Most points kept in one markup stroke, and the screen distance (px) between them. */
 const STROKE_POINTS = 400;
 const STROKE_STEP = 3;
@@ -423,7 +435,8 @@ type Drag =
   | ({ kind: "ground"; id: string; offset: THREE.Vector2; start: Shape; downX: number; downY: number; moved: boolean } & MoveDrag)
   | { kind: "push"; id: string; face: Face; origin: THREE.Vector3; startParam: number; start: Shape }
   | { kind: "facePush"; id: string; origin: THREE.Vector3; normal: THREE.Vector3; startParam: number; start: Shape; distance: number }
-  | ({ kind: "pivot"; id: string; pick: GizmoPick; origin: THREE.Vector3; startParam: number; startHit: THREE.Vector3; plane: THREE.Plane | null; start: Shape; moved: boolean } & MoveDrag);
+  | ({ kind: "pivot"; id: string; pick: GizmoPick; origin: THREE.Vector3; startParam: number; startHit: THREE.Vector3; plane: THREE.Plane | null; start: Shape; moved: boolean } & MoveDrag)
+  | { kind: "ring"; id: string; axis: Axis; origin: THREE.Vector3; startAngle: number; last: number; turned: number; start: Shape };
 
 const SNAP_PIXELS = 12;
 
@@ -587,7 +600,7 @@ function instanceKey(e: EntityView, entities: ReadonlyMap<string, EntityView>) {
     .map((o) => {
       const def = entities.get(o.shape);
       const mesh = o.configured?.mesh ?? def?.mesh;
-      return `${o.shape}@${mesh ? meshId(mesh) : 0}:${def ? lookKey(def, entities) : ""}:${o.transform.at.join(",")},${o.transform.rotation}:${o.path.join("/")}`;
+      return `${o.shape}@${mesh ? meshId(mesh) : 0}:${def ? lookKey(def, entities) : ""}:${o.transform.at.join(",")},${o.transform.q.join(",")}:${o.path.join("/")}`;
     })
     .join("|");
 }
@@ -606,7 +619,7 @@ function buildInstance(e: EntityView, entities: ReadonlyMap<string, EntityView>,
     const materials = looksFor(def, entities).map((l) => surface(l, wireframe));
     const mesh = new THREE.Mesh(geometry, parts.length ? materials : materials[0]);
     mesh.position.set(...o.transform.at);
-    mesh.rotation.z = (o.transform.rotation * Math.PI) / 180;
+    mesh.quaternion.set(...o.transform.q);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData = { id: e.id, path: o.path, shape: o.shape };
@@ -820,6 +833,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
   const pickedLayerRef = useRef<PickedFacesLayer | null>(null);
   if (!pickedLayerRef.current) pickedLayerRef.current = new PickedFacesLayer();
   const pickedLayer = pickedLayerRef.current;
+  const connectorLayerRef = useRef<ConnectorLayer | null>(null);
+  if (!connectorLayerRef.current) connectorLayerRef.current = new ConnectorLayer();
+  const connectorLayer = connectorLayerRef.current;
+  const connectorTags = useRef<HTMLDivElement>(null);
   const three = useRef<Scene | null>(null);
   const callbacks = useRef(props);
   callbacks.current = props;
@@ -1019,13 +1036,13 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     };
     const gizmoScale = (at: THREE.Vector3) => camera.position.distanceTo(at) * GIZMO_SCALE;
 
-    const writeReadout = (main: string, sub: string, at: THREE.Vector3) => {
+    const writeReadout = (main: string, sub: string, at: THREE.Vector3, hint?: string) => {
       const out = readout.current;
       if (!out) return;
       const p = toScreen(at);
       out.style.display = p.behind ? "none" : "flex";
       out.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, calc(-100% - 16px))`;
-      out.innerHTML = "<strong></strong><span></span><em>⇧ 10 mm · ⌥ 0.1 mm · Esc cancels</em>";
+      out.innerHTML = `<strong></strong><span></span><em>${hint ?? "⇧ 10 mm · ⌥ 0.1 mm · Esc cancels"}</em>`;
       (out.children[0] as HTMLElement).textContent = main;
       (out.children[1] as HTMLElement).textContent = sub;
     };
@@ -1033,8 +1050,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     // ---- Comment pins: points in a part's own coordinates, drawn where the part is now.
     /** An instance draws its contents already placed by its position and rotation; other parts draw in their own coordinates. */
     const instanceFrame = (target: string) => {
-      const inst = instance(callbacks.current.entities.get(target));
-      return inst ? { at: new THREE.Vector3(...inst.at), angle: (inst.rotation * Math.PI) / 180 } : null;
+      const e = callbacks.current.entities.get(target);
+      return instance(e) ? placedOf(e) : null;
     };
     const shownPart = (target: string) => {
       const part = three.current?.parts.get(target);
@@ -1047,7 +1064,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       const part = shownPart(target);
       if (!part) return null;
       const f = instanceFrame(target);
-      if (f) v.applyAxisAngle(Z_AXIS, f.angle).add(f.at);
+      if (f) v.set(...applyT(f, [v.x, v.y, v.z]));
       part.group.updateMatrixWorld();
       return part.group.localToWorld(v);
     };
@@ -1057,13 +1074,13 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       part.group.updateMatrixWorld();
       const v = part.group.worldToLocal(w.clone());
       const f = instanceFrame(target);
-      if (f) v.sub(f.at).applyAxisAngle(Z_AXIS, -f.angle);
+      if (f) v.set(...applyT(invertT(f), [v.x, v.y, v.z]));
       return v;
     };
     const dirWorld = (target: string | null, d: readonly number[]) => {
       const v = new THREE.Vector3(d[0], d[1], d[2]);
       const f = target ? instanceFrame(target) : null;
-      return f ? v.applyAxisAngle(Z_AXIS, f.angle) : v;
+      return f ? v.applyQuaternion(new THREE.Quaternion(...f.q)) : v;
     };
     const visibleBodies = () => [...(three.current?.parts.values() ?? [])].flatMap((p) => (p.group.visible ? p.meshes.filter((m) => m.visible) : []));
     const round3 = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z].map((x) => Math.round(x * 1000) / 1000) as [number, number, number];
@@ -1224,7 +1241,12 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       // Manipulators. The move gizmo sits on the part's pivot.
       const pivotMode = callbacks.current.pivotMode;
       const origin = s ? new THREE.Vector3(...pivotPoint(s, pivot.current)) : null;
-      gizmo.root.visible = !!s && !f && !wire && !pivotMode && !callbacks.current.edges && !callbacks.current.facePicks && !faceLayer.active && (!d || d.kind !== "push");
+      const selEntity = callbacks.current.selected ? callbacks.current.entities.get(callbacks.current.selected) : undefined;
+      // A joint places what it holds: no handles to move it by hand.
+      const held = !!selEntity?.placed?.by || !!callbacks.current.poses;
+      gizmo.setTurnable(!!instance(selEntity) && !callbacks.current.also?.length);
+      gizmo.root.visible = !!s && !f && !wire && !pivotMode && !held && !callbacks.current.edges && !callbacks.current.facePicks && !faceLayer.active && !connectorLayer.active && (!d || d.kind !== "push");
+      connectorLayer.layout(camera, renderer.domElement.clientHeight, toScreen, connectorTags.current);
       const ff = faceLayer.frame();
       if (ff) faceLayer.scale(gizmoScale(ff.origin));
       pivotRoot.visible = !!s && pivotMode && (!d || d.kind === "pivot");
@@ -1354,6 +1376,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
           snapped.current ? pivotName(currentPivot()) : `${pivotName(currentPivot())} · ⌘ no snapping`,
           at.clone().add(new THREE.Vector3(0, 0, gizmoScale(at) * 0.9)),
         );
+      } else if (d.kind === "ring") {
+        writeReadout(`Turn ${signed(d.turned)}° about ${AXIS_NAMES[d.axis]}`, "15° steps", d.origin.clone().addScaledVector(UNIT[(d.axis + 2) % 3], gizmoScale(d.origin) * 1.05), "⇧ 45° · ⌥ 1° · Esc cancels");
       } else if (d.kind === "facePush") {
         // The app's hint names what changes; the face itself shows where.
         writeReadout(`${d.distance >= 0 ? "Push" : "Pull"} ${signed(d.distance)} mm`, "release to apply · Esc cancels", d.origin.clone().addScaledVector(d.normal, d.distance + gizmoScale(d.origin) * 1.2));
@@ -1538,11 +1562,53 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       return edgeLayer.hit(toScreen, e.clientX - rect.left, e.clientY - rect.top, hidden);
     };
 
+    /** Where the pointer is round a ring (degrees, anticlockwise about its axis), on the ring's plane. */
+    const ringAngle = (r: THREE.Raycaster, origin: THREE.Vector3, axis: Axis): number | null => {
+      const n = UNIT[axis];
+      // Looking along the ring's plane: use the plane facing the eye through the axis instead.
+      const plane = Math.abs(r.ray.direction.dot(n)) > 0.08 ? new THREE.Plane().setFromNormalAndCoplanarPoint(n, origin) : null;
+      const hit = plane ? r.ray.intersectPlane(plane, new THREE.Vector3()) : null;
+      if (!hit) return null;
+      const v = hit.sub(origin);
+      const u = UNIT[((axis + 1) % 3) as Axis];
+      const w = UNIT[((axis + 2) % 3) as Axis];
+      return THREE.MathUtils.radToDeg(Math.atan2(v.dot(w), v.dot(u)));
+    };
+    /** Shows an instance turned by `deg` about an axis through `origin` (0: as it is). */
+    const turnPreview = (id: string, axis: Axis, deg: number, origin: THREE.Vector3) => {
+      const part = three.current?.parts.get(id);
+      if (!part) return;
+      const q = new THREE.Quaternion().setFromAxisAngle(UNIT[axis], THREE.MathUtils.degToRad(deg));
+      part.group.quaternion.copy(q);
+      const base = part.group.userData.base as THREE.Vector3 | undefined;
+      const at = base ?? part.group.position.clone();
+      part.group.userData.base = at;
+      // Turning about the pivot: the group's origin swings round it.
+      part.group.position.copy(origin.clone().sub(origin.clone().sub(at).applyQuaternion(q)));
+      if (deg === 0) {
+        part.group.position.copy(at);
+        delete part.group.userData.base;
+      }
+      dirty = true;
+    };
+
     // Capture phase on the host runs before OrbitControls sees the event.
     // A mechanism being dragged by hand: where the pointer was last.
     let motionDrag: { x: number; y: number } | null = null;
     const onDown = (e: PointerEvent) => {
       if (onCommentUi(e)) return;
+      // Picking a joint's connector: a click on a triad picks it; anywhere else orbits.
+      if (connectorLayer.active && e.button === 0) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const key = connectorLayer.hit(toScreen, e.clientX - rect.left, e.clientY - rect.top);
+        if (key) {
+          e.stopPropagation();
+          e.preventDefault();
+          callbacks.current.onConnectorPick?.(key);
+          dirty = true;
+        }
+        return;
+      }
       const cm = callbacks.current.comments;
       if (cm?.tool && e.button === 0) {
         e.stopPropagation();
@@ -1661,7 +1727,12 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         const pick = pickGizmo(r);
         const origin = new THREE.Vector3(...pivotPoint(start, pivot.current));
         const targets = snapTargets(id);
-        if (pick?.kind === "axis") {
+        if (pick?.kind === "ring") {
+          const a = ringAngle(r, origin, pick.axis);
+          if (a === null) return;
+          drag.current = { kind: "ring", id, axis: pick.axis, origin, startAngle: a, last: a, turned: 0, start };
+          gizmo.setActive(pick);
+        } else if (pick?.kind === "axis") {
           const startParam = closestParam(r.ray, origin, UNIT[pick.axis]);
           if (startParam === null) return;
           drag.current = { kind: "axis", id, axis: pick.axis, origin, startParam, start, targets };
@@ -1671,7 +1742,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
           if (!hit) return;
           drag.current = { kind: "plane", id, normal: pick.normal, origin, startHit: hit, start, targets };
           gizmo.setActive(pick);
-        } else if (pick?.kind === "center" || (!e.shiftKey && hitSelectedBody(r))) {
+        } else if ((pick?.kind === "center" || (!e.shiftKey && hitSelectedBody(r))) && !callbacks.current.entities.get(id)?.placed?.by) {
           const hit = r.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -start.z), new THREE.Vector3());
           if (!hit) return;
           // Not moved until the pointer travels, even from the centre handle:
@@ -1709,6 +1780,13 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     };
     const onMove = (e: PointerEvent) => {
       reportHover(e);
+      if (connectorLayer.active && !(e.buttons & 1)) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const key = connectorLayer.hit(toScreen, e.clientX - rect.left, e.clientY - rect.top);
+        if (connectorLayer.setHover(key)) dirty = true;
+        renderer.domElement.style.cursor = key ? "pointer" : "";
+        return;
+      }
       const cm = callbacks.current.comments;
       if (liveStroke && cm) {
         // Markup follows the surface under the pointer; off the model it stays in the plane facing the eye.
@@ -1842,6 +1920,21 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         dirty = true;
         return;
       }
+      if (d.kind === "ring") {
+        const a = ringAngle(r, d.origin, d.axis);
+        if (a === null) return;
+        // Unwrapped, so turning past half a turn keeps counting.
+        let delta = a - d.last;
+        delta -= 360 * Math.round(delta / 360);
+        d.last += delta;
+        const unit = e.shiftKey ? 45 : e.altKey ? 1 : 15;
+        const turned = snap(d.last - d.startAngle, unit);
+        if (turned !== d.turned) {
+          d.turned = turned;
+          turnPreview(d.id, d.axis, turned, d.origin);
+        }
+        return;
+      }
       if (d.kind === "axis") {
         const t = closestParam(r.ray, d.origin, UNIT[d.axis]);
         if (t === null) return;
@@ -1888,6 +1981,30 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     const endDrag = (commit: boolean) => {
       const d = drag.current;
       if (!d) return;
+      if (d.kind === "ring") {
+        drag.current = null;
+        gizmo.setActive(null);
+        el.classList.remove("is-dragging");
+        controls.enabled = true;
+        dirty = true;
+        const e = callbacks.current.entities.get(d.id);
+        if (!commit || d.turned === 0 || !e || !callbacks.current.onTurnInstance) {
+          turnPreview(d.id, d.axis, 0, d.origin);
+          return;
+        }
+        // Turned about the pivot: q' = qΔ·q, at' = pivot + qΔ·(at − pivot).
+        const own = placedOf(e);
+        const qd = new THREE.Quaternion().setFromAxisAngle(UNIT[d.axis], THREE.MathUtils.degToRad(d.turned));
+        const q = qd.clone().multiply(new THREE.Quaternion(...own.q));
+        const at = new THREE.Vector3(...own.at).sub(d.origin).applyQuaternion(qd).add(d.origin);
+        const eu = new THREE.Euler().setFromQuaternion(q, "ZYX");
+        const deg = (v: number) => Math.round(THREE.MathUtils.radToDeg(v) * 1e6) / 1e6 || 0;
+        const r3 = (v: number) => Math.round(v * 1e4) / 1e4;
+        void callbacks.current.onTurnInstance(d.id, [r3(at.x), r3(at.y), r3(at.z)], [deg(eu.x), deg(eu.y), deg(eu.z)]).then((ok) => {
+          if (!ok) turnPreview(d.id, d.axis, 0, d.origin);
+        });
+        return;
+      }
       if (d.kind === "facePush") {
         drag.current = null;
         el.classList.remove("is-dragging");
@@ -2070,7 +2187,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       controls.autoRotate = false;
     };
     const onCanvasUp = (e: PointerEvent) => {
-      if (callbacks.current.sketch || callbacks.current.edges) return;
+      if (callbacks.current.sketch || callbacks.current.edges || connectorLayer.active) return;
       renderer.domElement.classList.remove("dragging");
       // Each press makes at most one click: a press that ended elsewhere must
       // not pair with a later release near the same spot.
@@ -2088,7 +2205,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         if (!local) return;
         const nWorld = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : null;
         const f = instanceFrame(target);
-        const normal = nWorld ? (f ? nWorld.applyAxisAngle(Z_AXIS, -f.angle) : nWorld) : null;
+        const normal = nWorld ? (f ? nWorld.applyQuaternion(new THREE.Quaternion(...f.q).invert()) : nWorld) : null;
         // Which part of a multi-part shape, by the triangle hit.
         const parts = assemblyParts(callbacks.current.entities.get(target));
         const own = three.current?.parts.get(target);
@@ -2131,7 +2248,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     renderer.domElement.addEventListener("pointerup", onCanvasUp);
 
     three.current = { renderer, scene, camera, controls, sun, parts: new Map(), gizmo, push, overlayRoot, overlayLabels: [], ground, grid, gridCell: 20, wireframe: false, invalidate, flight: null };
-    scene.add(sketchLayer.root, edgeLayer.root, faceLayer.root, pickedLayer.root);
+    scene.add(sketchLayer.root, edgeLayer.root, faceLayer.root, pickedLayer.root, connectorLayer.root);
     if (sketchLabels.current) sketchLayer.setHost(sketchLabels.current);
     sketchLayer.onEditDimension = (key, x, y) => callbacks.current.onEditDimension(key, x, y);
     resize();
@@ -2202,6 +2319,11 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       // Meshes are in the part's own coordinates; shapes may extend below their origin.
       const off = originOffset(e);
       part.group.position.set(s.x - off[0], s.y - off[1], s.z - off[2]);
+      if (part.group.userData.base && drag.current?.kind !== "ring") {
+        // A turn the engine has now confirmed (or refused): drawn from its placement again.
+        part.group.quaternion.identity();
+        delete part.group.userData.base;
+      }
     }
     for (const [id, part] of t.parts) {
       // A picked part shows by its glow; the whole assembly's outline would bury it.
@@ -2303,6 +2425,30 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     if (!props.edges) host.current?.classList.remove("over-handle");
     t?.invalidate();
   }, [props.edges, entities, edgeLayer]);
+
+  // Connectors to pick a joint's ends from.
+  useEffect(() => {
+    connectorLayer.update(props.connectors ?? null);
+    if (!props.connectors && three.current) three.current.renderer.domElement.style.cursor = "";
+    three.current?.invalidate();
+  }, [props.connectors, connectorLayer]);
+
+  // Instances at the placements a joint being scrubbed or swept gives them (or back at their own).
+  useEffect(() => {
+    const t = three.current;
+    if (!t) return;
+    for (const [id, part] of t.parts) {
+      if (!part.shared) continue;
+      const placed = new Map(occurrences(id, entities, props.poses ?? null).map((o) => [`${o.path.join("/")}|${o.shape}`, o.transform]));
+      for (const m of part.meshes) {
+        const tr = placed.get(`${(m.userData.path as string[]).join("/")}|${m.userData.shape}`);
+        if (!tr) continue;
+        m.position.set(...tr.at);
+        m.quaternion.set(...tr.q);
+      }
+    }
+    t.invalidate();
+  }, [props.poses, entities]);
 
   // Comment pins and the open card: laid out again when they change, and when the card grows (a reply posted).
   useEffect(() => void three.current?.invalidate(), [props.comments]);
@@ -2441,9 +2587,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       if (!t || !pin) return;
       const part = pin.target ? t.parts.get(pin.target) : undefined;
       if (part) part.group.updateMatrixWorld();
-      const inst = pin.target ? instance(callbacks.current.entities.get(pin.target)) : undefined;
+      const holder = pin.target ? callbacks.current.entities.get(pin.target) : undefined;
+      const inst = instance(holder) ? placedOf(holder) : undefined;
       const local = new THREE.Vector3(...pin.point);
-      if (inst) local.applyAxisAngle(Z_AXIS, (inst.rotation * Math.PI) / 180).add(new THREE.Vector3(...inst.at));
+      if (inst) local.set(...applyT(inst, pin.point as V3));
       const at = part ? part.group.localToWorld(local) : local;
       // Close enough to read the spot, far enough to see the part around it.
       const radius = part ? new THREE.Box3().setFromObject(part.group).getBoundingSphere(new THREE.Sphere()).radius : 200;
@@ -2453,7 +2600,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       if (pin.normal) {
         // Swing round to the side the comment is on, keeping some of the current angle.
         const n = new THREE.Vector3(...pin.normal);
-        if (inst) n.applyAxisAngle(Z_AXIS, (inst.rotation * Math.PI) / 180);
+        if (inst) n.applyQuaternion(new THREE.Quaternion(...inst.q));
         if (dir.dot(n) < 0.35) dir.addScaledVector(n, 1.4).normalize();
       }
       t.controls.autoRotate = false;
@@ -2729,6 +2876,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       <div ref={pivotTip} className="face-badge pivot-tip" aria-hidden />
       <div ref={snapTag} className="snap-tag" aria-hidden />
       <div ref={readout} className="drag-readout" aria-hidden />
+      <div ref={connectorTags} className="connector-tags" aria-hidden />
       <svg ref={markupLayer} className="comment-markup" aria-hidden />
       <div ref={pinLayer} className="comment-pins">
         {(props.comments?.pins ?? []).map((p) => {

@@ -267,9 +267,9 @@ pub struct InsertStock {
     /// Where (mm), in the parent's coordinates.
     #[serde(default)]
     pub at: [f64; 3],
-    /// Turn about Z (degrees).
+    /// Degrees about X, then Y, then Z.
     #[serde(default)]
-    pub rotation: f64,
+    pub rotation: [f64; 3],
 }
 
 fn yes() -> bool {

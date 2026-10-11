@@ -105,6 +105,21 @@ export type EntityView = {
   formulas?: Record<string, string>;
   /** An instance showing a configuration of its shape: that configuration evaluated. */
   configured?: Configured;
+  /** An instance: where it is now (where its joints put it when they hold it). */
+  placed?: Placed;
+};
+
+/** Where an instance is in its parent: position, rotation (degrees about X, Y, Z) and the same as a quaternion. */
+export type Placed = {
+  at: [number, number, number];
+  rotation: [number, number, number];
+  quaternion: [number, number, number, number];
+  /** The joint that places it (absent: it is free). */
+  by?: string;
+  /** The instance its joints hang from, when none reaches the ground. */
+  anchor?: string;
+  /** Every joint of its group, with the values it has now. */
+  values?: Record<string, number[]>;
 };
 
 /** A shape evaluated in one of its configurations (what an instance naming it shows). */

@@ -63,6 +63,19 @@ pub enum Rule {
     Clearance { a: StableId, b: StableId, min: Length },
     /// No two of the parts may overlap.
     NoCollisions { parts: Vec<StableId> },
+    /// Nothing touches while an assembly joint moves through its range (its
+    /// limits, or a full turn): every pair of instances that move relative to
+    /// each other is watched. `parts` are what it covers: the joint's
+    /// assembly (the default) or some of its instances. Pairs the joint
+    /// itself joins may touch.
+    NoClashesInMotion {
+        joint: StableId,
+        #[serde(default)]
+        parts: Vec<StableId>,
+        /// Positions checked through the range (default 72).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        steps: Option<u32>,
+    },
 }
 
 impl Rule {
@@ -70,6 +83,7 @@ impl Rule {
         match self {
             Rule::MaxMass { parts, .. } | Rule::FitsWithin { parts, .. } | Rule::NoCollisions { parts } => parts.clone(),
             Rule::Clearance { a, b, .. } => vec![*a, *b],
+            Rule::NoClashesInMotion { joint, parts, .. } => std::iter::once(*joint).chain(parts.iter().copied()).collect(),
         }
     }
 
@@ -80,6 +94,7 @@ impl Rule {
             Rule::FitsWithin { width, depth, height, .. } => format!("Fits within {} × {} × {} mm", mm(width), mm(depth), mm(height)),
             Rule::Clearance { min, .. } => format!("Clearance at least {} mm", mm(min)),
             Rule::NoCollisions { .. } => "No collisions".into(),
+            Rule::NoClashesInMotion { .. } => "No clashes through the motion".into(),
         }
     }
 }
@@ -164,6 +179,7 @@ fn evaluate(world: &World, entity: Entity) -> Option<Result<RequirementResult, S
         }
         // Assemblies are checked part against part, inside and out.
         Rule::NoCollisions { parts: ids } => parts(world, ids).map(|ps| no_collisions(&geometry::expand(ps))),
+        Rule::NoClashesInMotion { joint, parts: ids, steps } => clear_in_motion(world, *joint, ids, steps.unwrap_or(72) as usize),
     })
 }
 
@@ -304,10 +320,52 @@ fn no_collisions(ps: &[PartView]) -> RequirementResult {
     }
 }
 
+fn clear_in_motion(world: &World, joint: StableId, ids: &[StableId], steps: usize) -> Result<RequirementResult, String> {
+    let s = de_assembly::motion::sweep(world, joint, None, None, None, steps, &Default::default(), true)?;
+    let covered = |id: StableId| ids.is_empty() || ids.contains(&id) || s.assembly.is_some_and(|a| ids.contains(&a));
+    let unit = |v: f64| format!("{}{}", fmt(v), if s.unit == "°" { "°" } else { " mm" });
+    let watched: Vec<&de_assembly::motion::PairGap> = s.pairs.iter().filter(|p| !p.joined && (covered(p.a_id) || covered(p.b_id))).collect();
+    let clashes: Vec<&&de_assembly::motion::PairGap> = watched.iter().filter(|p| p.gap < 1e-4).collect();
+    let range = format!("{}–{}", unit(s.from), unit(s.to));
+    let summary = match (clashes.first(), watched.first()) {
+        (Some(c), _) => {
+            let [a, b] = c.range.unwrap_or([c.at, c.at]);
+            let more = if clashes.len() > 1 { format!(" (+{} more)", clashes.len() - 1) } else { String::new() };
+            format!("{} hits {} as {} moves, from {} to {}{more}", c.a, c.b, s.name, unit(a), unit(b))
+        }
+        (None, Some(p)) => format!("Clear through {range} of {}; closest {} mm ({} – {} at {})", s.name, fmt_gap(p.gap), p.a, p.b, unit(p.at)),
+        (None, None) => format!("Clear through {range} of {}; nothing comes within {} mm", s.name, fmt(s.search)),
+    };
+    let summary = match s.binds_at {
+        Some(v) => format!("{summary}; binds at {}", unit(v)),
+        None => summary,
+    };
+    Ok(RequirementResult {
+        passed: clashes.is_empty() && s.binds_at.is_none(),
+        measured: clashes.len() as f64,
+        limit: 0.0,
+        unit: "clashes".into(),
+        upper_bound: true,
+        summary,
+        violations: clashes.iter().map(|c| Violation { parts: vec![c.a_id, c.b_id], names: vec![c.a.clone(), c.b.clone()], region: None }).collect(),
+        fix: None,
+        accuracy_mm: None,
+    })
+}
+
 // ---- Commands --------------------------------------------------------------
 
 fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
-    for id in rule.targets() {
+    if let Rule::NoClashesInMotion { joint, steps, .. } = rule {
+        if tx.get::<de_assembly::joints::Joint>(*joint).is_none() {
+            return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{joint} is not an assembly joint")));
+        }
+        if steps.is_some_and(|n| !(2..=720).contains(&n)) {
+            return Err(CommandError::new(ErrorCode::InvalidParameters, "steps must be 2 to 720"));
+        }
+    }
+    let joint_of = |id: StableId| matches!(rule, Rule::NoClashesInMotion { joint, .. } if *joint == id);
+    for id in rule.targets().into_iter().filter(|id| !joint_of(*id)) {
         if tx.get::<BoxFeature>(id).is_none()
             && tx.get::<de_shape::ShapeProgram>(id).is_none()
             && tx.get::<de_assembly::Instance>(id).is_none()
@@ -349,8 +407,30 @@ fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
                 return Err(CommandError::new(ErrorCode::InvalidParameters, "collision checks need two parts, or one assembly"));
             }
         }
+        Rule::NoClashesInMotion { .. } => {}
     }
     Ok(())
+}
+
+/// A motion check covers the joint's assembly unless told otherwise (top
+/// level: every top-level instance), so it re-runs when any of it changes.
+fn with_default_parts(tx: &Tx, rule: Rule) -> Rule {
+    match rule {
+        Rule::NoClashesInMotion { joint, parts, steps } if parts.is_empty() => {
+            let scope = tx.get::<de_assembly::joints::Joint>(joint).and_then(|j| j.assembly);
+            let parts = match scope {
+                Some(a) => vec![a],
+                None => {
+                    let world = tx.world();
+                    let mut ids: Vec<StableId> = world.resource::<de_core::IdIndex>().iter().filter(|(_, e)| world.get::<de_assembly::Instance>(*e).is_some_and(|i| i.parent.is_none())).map(|(id, _)| id).collect();
+                    ids.sort();
+                    ids
+                }
+            };
+            Rule::NoClashesInMotion { joint, parts, steps }
+        }
+        r => r,
+    }
 }
 
 fn link(tx: &mut Tx, id: StableId, old: &[StableId], new: &[StableId]) -> Result<(), CommandError> {
@@ -373,8 +453,9 @@ pub struct CreateRequirement {
 impl Command for CreateRequirement {
     const NAME: &'static str = "intent.requirement.create";
 
-    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+    fn apply(mut self, tx: &mut Tx) -> Result<Value, CommandError> {
         validate(tx, &self.rule)?;
+        self.rule = with_default_parts(tx, self.rule);
         let id = tx.create();
         let name = self.name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| self.rule.default_name());
         link(tx, id, &[], &self.rule.targets())?;
@@ -401,6 +482,7 @@ impl Command for UpdateRequirement {
             .ok_or_else(|| CommandError::new(ErrorCode::UnresolvedReference, format!("{} is not a requirement", self.target)))?;
         if let Some(rule) = self.rule {
             validate(tx, &rule)?;
+            let rule = with_default_parts(tx, rule);
             let renamed = req.name != req.rule.default_name();
             link(tx, self.target, &req.rule.targets(), &rule.targets())?;
             if !renamed {

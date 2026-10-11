@@ -3,7 +3,8 @@
 //!
 //! A *definition* is either a shape program (a component) or an assembly.
 //! An *instance* places a definition inside an assembly, or at the top of the
-//! project, at a position and a rotation about Z. Every instance of a
+//! project, at a position and any rotation (degrees about X, then Y, then Z),
+//! or where joints between connectors put it (see `joints`). Every instance of a
 //! definition shows the same design: edit the definition and all of them
 //! change. `make_unique` gives one instance its own copy to customise (a
 //! penthouse floor in a stack of typical floors). An instance of a shape with
@@ -30,6 +31,9 @@ use std::sync::Arc;
 
 pub mod comments;
 pub mod configs;
+pub mod joints;
+pub mod motion;
+pub mod transform;
 pub use comments::{Anchor, CommentReply, CommentThread, Stroke};
 
 pub struct AssemblyPlugin;
@@ -51,6 +55,10 @@ impl Plugin for AssemblyPlugin {
             .command::<UpdateInstance>()
             .command::<MakeUnique>()
             .command::<DeleteInstance>()
+            .component::<joints::Joint>()
+            .command::<joints::CreateJoint>()
+            .command::<joints::UpdateJoint>()
+            .command::<joints::DeleteJoint>()
             .command::<configs::SetConfigTable>()
             .component::<CommentThread>()
             .component::<CommentReply>()
@@ -61,6 +69,13 @@ impl Plugin for AssemblyPlugin {
             .command::<comments::ReopenComment>()
             .command::<comments::EditComment>()
             .command::<comments::DeleteComment>()
+            // Where each instance is: its own placement, or where its joints put it.
+            .derived(Derived {
+                name: "assembly.placed",
+                inputs: &[Instance::KIND],
+                reads_dependencies: true,
+                compute: joints::placed,
+            })
             // An instance in a configuration of its shape, before the totals that read it.
             .derived(Derived {
                 name: "assembly.configured",
@@ -102,9 +117,11 @@ pub struct Instance {
     pub parent: Option<StableId>,
     /// Position of the definition's origin in the parent (mm).
     pub at: [f64; 3],
-    /// Rotation about Z (degrees), applied before the position.
-    #[serde(default)]
-    pub rotation: f64,
+    /// Rotation (degrees) about X, then Y, then Z, applied before the
+    /// position. Projects saved before full 3D placement stored one number,
+    /// the turn about Z; it still loads.
+    #[serde(default, deserialize_with = "transform::rotation_compat")]
+    pub rotation: [f64; 3],
     /// Free-form facts: "use": "Residence", "status": "Sold", "owner": "…".
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub properties: BTreeMap<String, String>,
@@ -118,54 +135,23 @@ impl Persist for Instance {
     const KIND: &'static str = "assembly.instance";
 }
 
-/// A rigid placement: rotation about Z, then translation (mm).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Transform {
-    pub at: [f64; 3],
-    pub rotation: f64,
-}
-
-impl Transform {
-    pub const IDENTITY: Transform = Transform { at: [0.0; 3], rotation: 0.0 };
-
-    pub fn apply(&self, p: [f64; 3]) -> [f64; 3] {
-        let (s, c) = self.rotation.to_radians().sin_cos();
-        [c * p[0] - s * p[1] + self.at[0], s * p[0] + c * p[1] + self.at[1], p[2] + self.at[2]]
-    }
-
-    /// `self` placed inside `outer`.
-    pub fn within(&self, outer: &Transform) -> Transform {
-        Transform { at: outer.apply(self.at), rotation: outer.rotation + self.rotation }
-    }
-
-    pub fn solid(&self, m: &manifold_csg::Manifold) -> manifold_csg::Manifold {
-        let r = if self.rotation.rem_euclid(360.0).abs() < 1e-12 { m.translate(0.0, 0.0, 0.0) } else { m.rotate(0.0, 0.0, self.rotation) };
-        r.translate(self.at[0], self.at[1], self.at[2])
-    }
-
-    /// Bounds of a box after this transform.
-    pub fn bounds(&self, lo: [f64; 3], hi: [f64; 3]) -> ([f64; 3], [f64; 3]) {
-        let mut a = [f64::INFINITY; 3];
-        let mut b = [f64::NEG_INFINITY; 3];
-        for x in [lo[0], hi[0]] {
-            for y in [lo[1], hi[1]] {
-                for z in [lo[2], hi[2]] {
-                    let p = self.apply([x, y, z]);
-                    for k in 0..3 {
-                        a[k] = a[k].min(p[k]);
-                        b[k] = b[k].max(p[k]);
-                    }
-                }
-            }
-        }
-        (a, b)
-    }
-}
+pub use transform::{M3, Transform};
 
 impl Instance {
+    /// Where it is as stored (its own position and rotation). An instance a
+    /// joint holds is drawn where the joint puts it: see [`placement`].
     pub fn transform(&self) -> Transform {
-        Transform { at: self.at, rotation: self.rotation }
+        Transform::from_euler(self.at, self.rotation)
     }
+}
+
+/// Where an instance sits in its parent now: where its joints put it when
+/// they hold it, else its own position and rotation.
+pub fn placement(world: &World, e: Entity) -> Option<Transform> {
+    if let Some(p) = world.get::<joints::Placed>(e) {
+        return Some(p.transform());
+    }
+    world.get::<Instance>(e).map(Instance::transform)
 }
 
 /// One leaf shape somewhere inside an instance tree.
@@ -231,7 +217,8 @@ fn walk(world: &World, e: Entity, t: Transform, path: &mut Vec<StableId>, names:
         path.push(id);
         names.push(inst.name.clone());
         if let Some(def) = next(inst.of) {
-            walk(world, def, inst.transform().within(&t), path, names, out, depth + 1);
+            let placed = placement(world, e).unwrap_or_else(|| inst.transform());
+            walk(world, def, placed.within(&t), path, names, out, depth + 1);
         }
         path.pop();
         names.pop();
@@ -483,8 +470,9 @@ pub struct CreateInstance {
     pub name: String,
     #[serde(default)]
     pub at: [f64; 3],
+    /// Degrees about X, then Y, then Z.
     #[serde(default)]
-    pub rotation: f64,
+    pub rotation: [f64; 3],
     #[serde(default)]
     pub properties: BTreeMap<String, String>,
     /// A configuration of the shape to show (see `shape.config.set_table`).
@@ -518,7 +506,7 @@ impl Command for CreateInstance {
                 return Err(bad(ErrorCode::InvalidParameters, "an assembly cannot contain itself"));
             }
         }
-        if !(self.at.iter().all(|v| v.is_finite()) && self.rotation.is_finite()) {
+        if !(self.at.iter().all(|v| v.is_finite()) && self.rotation.iter().all(|v| v.is_finite())) {
             return Err(bad(ErrorCode::InvalidParameters, "position and rotation must be finite numbers"));
         }
         let config = self.config.filter(|c| !c.is_empty());
@@ -543,7 +531,8 @@ pub struct UpdateInstance {
     pub target: StableId,
     pub name: Option<String>,
     pub at: Option<[f64; 3]>,
-    pub rotation: Option<f64>,
+    /// Degrees about X, then Y, then Z.
+    pub rotation: Option<[f64; 3]>,
     pub of: Option<StableId>,
     pub config: Option<String>,
     #[serde(default)]
@@ -555,8 +544,14 @@ impl Command for UpdateInstance {
 
     fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
         let mut inst = tx.get::<Instance>(self.target).cloned().ok_or_else(|| bad(ErrorCode::UnresolvedReference, format!("{} is not an instance", self.target)))?;
+        let before = inst.clone();
         if let Some(n) = self.name {
             inst.name = n;
+        }
+        // An instance a joint holds goes where the joint puts it.
+        let moved = self.at.is_some_and(|a| a != inst.at) || self.rotation.is_some_and(|r| r != inst.rotation);
+        if moved && let Some(why) = joints::held_reason(tx.world(), self.target) {
+            return Err(bad(ErrorCode::InvalidParameters, why));
         }
         if let Some(at) = self.at {
             if !at.iter().all(|v| v.is_finite()) {
@@ -565,7 +560,7 @@ impl Command for UpdateInstance {
             inst.at = at;
         }
         if let Some(r) = self.rotation {
-            if !r.is_finite() {
+            if !r.iter().all(|v| v.is_finite()) {
                 return Err(bad(ErrorCode::InvalidParameters, "rotation must be finite"));
             }
             inst.rotation = r;
@@ -602,7 +597,16 @@ impl Command for UpdateInstance {
                 inst.properties.insert(k, v);
             }
         }
+        let (of_changed, config_changed) = (inst.of != before.of, inst.config != before.config);
+        let parent = inst.parent;
         tx.set(self.target, inst)?;
+        // Its joints read its connectors: the instances they hold follow a new definition or configuration.
+        if of_changed {
+            joints::rewire(tx, parent)?;
+        }
+        if of_changed || config_changed {
+            joints::touch(tx, self.target, parent)?;
+        }
         Ok(json!({ "id": self.target }))
     }
 }
@@ -644,14 +648,18 @@ fn copy_definition(tx: &mut Tx, def: StableId, name: Option<String>) -> Result<S
             a.name = n;
         }
         tx.set(id, a)?;
-        for (_, mut child) in children(tx.world(), def) {
+        let mut map = std::collections::HashMap::new();
+        for (old, mut child) in children(tx.world(), def) {
             child.parent = Some(id);
             let of = child.of;
             let c = tx.create();
             tx.set(c, child)?;
             tx.add_dependency(c, of)?;
             tx.add_dependency(id, c)?;
+            map.insert(old, c);
         }
+        // Its joints come too, joining the copies.
+        joints::copy_joints(tx, def, id, &map)?;
     } else {
         return Err(bad(ErrorCode::UnresolvedReference, format!("{def} is not a component or an assembly")));
     }
@@ -699,10 +707,13 @@ impl Command for DeleteInstance {
 
     fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
         let inst = tx.get::<Instance>(self.target).cloned().ok_or_else(|| bad(ErrorCode::UnresolvedReference, format!("{} is not an instance", self.target)))?;
+        // Its joints go with it; what they held stays where it is.
+        joints::delete_joints_of(tx, self.target, inst.parent)?;
         if let Some(parent) = inst.parent {
             tx.remove_dependency(parent, self.target)?;
         }
         tx.delete(self.target)?;
+        joints::rewire(tx, inst.parent)?;
         Ok(json!({ "id": self.target }))
     }
 }
