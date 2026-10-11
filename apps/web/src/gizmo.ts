@@ -1,8 +1,9 @@
 // Manipulators drawn over the model.
 //
 // MoveGizmo: three axis arrows from one origin (X red, Y green, Z blue, the
-// CAD convention), plane handles for two-axis moves, and a center grip for
-// moving on the ground. FaceHandle: the selected face, highlighted, with one
+// CAD convention), plane handles for two-axis moves, a center grip for
+// moving on the ground and, for what can turn (instances), three rings to
+// turn it about X, Y or Z. FaceHandle: the selected face, highlighted, with one
 // push-pull arrow along its normal. All are drawn on top and keep a constant
 // size on screen.
 
@@ -11,7 +12,10 @@ import type { Shape } from "./model";
 
 export type Axis = 0 | 1 | 2;
 export type Face = { axis: Axis; sign: 1 | -1 };
-export type GizmoPick = { kind: "axis"; axis: Axis } | { kind: "plane"; normal: Axis } | { kind: "center" } | { kind: "push" };
+export type GizmoPick = { kind: "axis"; axis: Axis } | { kind: "plane"; normal: Axis } | { kind: "center" } | { kind: "push" } | { kind: "ring"; axis: Axis };
+
+/** Radius of the turning rings, in gizmo units (the arrows are about 1 long). */
+export const RING_RADIUS = 0.72;
 
 export const AXIS_COLORS = ["#e5484d", "#2f9e64", "#3e63dd"] as const;
 export const ACCENT = "#7352d6";
@@ -67,6 +71,8 @@ export class MoveGizmo {
   private center: THREE.Group;
   private hovered: GizmoPick | null = null;
   private active: GizmoPick | null = null;
+  private rings: THREE.Group[] = [];
+  private turning = false;
 
   constructor() {
     for (const axis of [0, 1, 2] as Axis[]) {
@@ -108,6 +114,21 @@ export class MoveGizmo {
     const hit = new THREE.Mesh(new THREE.CircleGeometry(0.13, 16), overlay(0x000000, 0, THREE.DoubleSide));
     this.center.add(disc, ring, hit);
     this.root.add(this.center);
+    // Turning rings: one round each axis, in the plane square to it.
+    for (const axis of [0, 1, 2] as Axis[]) {
+      const mat = overlay(AXIS_COLORS[axis], 0.9);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(RING_RADIUS, 0.013, 8, 96), mat);
+      const hit = new THREE.Mesh(new THREE.TorusGeometry(RING_RADIUS, 0.07, 6, 48), overlay(0x000000, 0));
+      const holder = new THREE.Group();
+      holder.add(ring, hit);
+      // A torus lies in its XY plane (round Z): turn it to lie round X or Y.
+      if (axis === 0) holder.rotation.y = Math.PI / 2;
+      if (axis === 1) holder.rotation.x = Math.PI / 2;
+      holder.visible = false;
+      this.root.add(holder);
+      this.rings.push(holder);
+      this.handles.push({ pick: { kind: "ring", axis }, root: holder, paint: [{ material: mat, color: new THREE.Color(AXIS_COLORS[axis]), opacity: 0.9 }], hit });
+    }
     this.handles.push({
       pick: { kind: "center" },
       root: this.center,
@@ -123,7 +144,14 @@ export class MoveGizmo {
   }
 
   hits() {
-    return this.handles.map((h) => h.hit);
+    return this.handles.filter((h) => h.pick.kind !== "ring" || this.turning).map((h) => h.hit);
+  }
+
+  /** Shows the turning rings (for what can turn). */
+  setTurnable(on: boolean) {
+    if (on === this.turning) return;
+    this.turning = on;
+    this.restyle();
   }
 
   pickOf(object: THREE.Object3D): GizmoPick | null {
@@ -146,7 +174,7 @@ export class MoveGizmo {
     for (const h of this.handles) {
       const on = !!focus && same(h.pick, focus);
       const dim = !!focus && !on;
-      h.root.visible = !this.active || on;
+      h.root.visible = (!this.active || on) && (h.pick.kind !== "ring" || this.turning);
       h.root.scale.setScalar(on ? 1.12 : 1);
       for (const p of h.paint) {
         p.material.color.copy(p.color);

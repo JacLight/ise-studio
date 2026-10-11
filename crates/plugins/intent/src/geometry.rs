@@ -82,8 +82,8 @@ pub struct PartView {
     pub shape: Option<(Arc<Manifold>, ShapeProgram)>,
     /// For one part of an assembly: its name (the solid is that part alone).
     pub part: Option<String>,
-    /// Rotation about Z (degrees), applied before `placement_mm`.
-    pub rotation: f64,
+    /// Rotation, applied before `placement_mm`.
+    pub rotation: de_assembly::M3,
     /// For an instance or assembly: every shape inside it, placed.
     pub members: Vec<PartView>,
     /// Instance path names, outermost first (for messages).
@@ -110,7 +110,7 @@ impl PartView {
                     _ => None,
                 }
                 .unwrap_or_else(|| display.translate(0.0, 0.0, 0.0));
-                de_assembly::Transform { at: self.placement_mm, rotation: self.rotation }.solid(&solid)
+                de_assembly::Transform { at: self.placement_mm, rot: self.rotation }.solid(&solid)
             }
             None => {
                 let s = self.aabb.size();
@@ -136,7 +136,7 @@ pub fn part(world: &World, id: StableId) -> Result<PartView, String> {
             placement_mm: at,
             shape: None,
             part: None,
-            rotation: 0.0,
+            rotation: de_assembly::Transform::IDENTITY.rot,
             members: Vec::new(),
             path: Vec::new(),
         });
@@ -156,7 +156,7 @@ pub fn part(world: &World, id: StableId) -> Result<PartView, String> {
         placement_mm: at,
         shape: Some((solid.solid.clone(), program.clone())),
         part: None,
-        rotation: 0.0,
+        rotation: de_assembly::Transform::IDENTITY.rot,
         members: Vec::new(),
         path: Vec::new(),
     })
@@ -186,7 +186,7 @@ fn compound(world: &World, id: StableId, entity: de_core::bevy_ecs::entity::Enti
             placement_mm: o.transform.at,
             shape: Some((solid.solid.clone(), program.clone())),
             part: None,
-            rotation: o.transform.rotation,
+            rotation: o.transform.rot,
             members: Vec::new(),
             path,
         });
@@ -204,7 +204,7 @@ fn compound(world: &World, id: StableId, entity: de_core::bevy_ecs::entity::Enti
         placement_mm: [0.0; 3],
         shape: None,
         part: None,
-        rotation: 0.0,
+        rotation: de_assembly::Transform::IDENTITY.rot,
         members,
         path: vec![name],
     })
@@ -230,7 +230,7 @@ pub fn expand(ps: Vec<PartView>) -> Vec<PartView> {
                 continue;
             }
         };
-        let t = de_assembly::Transform { at: p.placement_mm, rotation: p.rotation };
+        let t = de_assembly::Transform { at: p.placement_mm, rot: p.rotation };
         for q in &parts.parts {
             let (lo, hi) = t.bounds(q.bounds_min, q.bounds_max);
             out.push(PartView {

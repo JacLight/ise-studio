@@ -25,6 +25,8 @@ import { ProjectsHome } from "./ProjectsHome";
 import { VersionsSection, openVersion } from "./Versions";
 import { type CommentPin, type CommentsView, type MarkupTool, type PinAnchor, type Stroke, type ThreadMarks, CommentsPanel, DraftCard, ThreadCard, colorFor, initialsOf, pinsFor, placeName, useThreads } from "./Comments";
 import { type ViewName, Viewport, type ViewportHandle } from "./Viewport";
+import type { ConnectorPick, JointView } from "./Joints";
+import type { Transform } from "./model";
 
 const DIMS = ["width", "depth", "height"] as const;
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -88,6 +90,10 @@ export function App({ engine }: { engine: Engine }) {
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // Joints: connectors offered for picking in the view, and instances drawn where a scrubbed joint puts them.
+  const [connectorPick, setConnectorPick] = useState<ConnectorPick | null>(null);
+  const [posePreview, setPosePreview] = useState<Map<string, Transform> | null>(null);
+  const jointView = useMemo<JointView>(() => ({ pick: setConnectorPick, poses: setPosePreview }), []);
   const [live, setLiveState] = useState<LiveEdit | null>(null);
   const [lockRatio, setLockRatio] = useState(false);
   const [report, setReport] = useState<CheckReport | null>(null);
@@ -1276,6 +1282,10 @@ export function App({ engine }: { engine: Engine }) {
           }}
           onDrag={(id, patch) => preview(id, patch)}
           onDragEnd={(commit) => (commit ? commitLive() : setLive(null))}
+          connectors={connectorPick?.picture ?? null}
+          onConnectorPick={(key) => connectorPick?.onPick(key)}
+          poses={posePreview}
+          onTurnInstance={async (id, at, rotation) => (await run("assembly.instance.update", { target: id, at, rotation })) !== null}
         />
         <div className="view-caption">
           <span>{projectTitle().toUpperCase()}</span>
@@ -1579,7 +1589,7 @@ export function App({ engine }: { engine: Engine }) {
             />
           )}
           {panel === "properties" && selectedPart && instance(selectedPart) && (
-            <InstanceBody entity={selectedPart} entities={state.entities} run={run} onSelect={select} />
+            <InstanceBody entity={selectedPart} entities={state.entities} run={run} onSelect={select} joints={jointView} />
           )}
           {panel === "properties" && !(selectedPart && instance(selectedPart)) && (
             <PropertiesBody

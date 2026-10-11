@@ -23,6 +23,8 @@ import { ScrubField } from "./ScrubField";
 import { LinkNote } from "./Panels";
 import { ConfigSection, InstanceConfig } from "./Configurations";
 import { statusColor } from "./Viewport";
+import { AssemblyJoints, type JointView, jointName, jointOf } from "./Joints";
+import { IDENTITY, worldOf } from "./model";
 
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
 
@@ -215,7 +217,7 @@ export function StackingPlan(props: {
 
 // ---- Instance properties -----------------------------------------------------
 
-export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<string, EntityView>; run: Run; onSelect: (id: string) => void }) {
+export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<string, EntityView>; run: Run; onSelect: (id: string) => void; joints: JointView }) {
   const { entity, entities, run } = props;
   const inst = instance(entity)!;
   const def = entities.get(inst.of);
@@ -231,6 +233,17 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
     at[k] = v;
     return run("assembly.instance.update", { target: entity.id, at });
   };
+  const rotation = (Array.isArray(inst.rotation) ? inst.rotation : [0, 0, Number(inst.rotation) || 0]) as [number, number, number];
+  const turn = (k: 0 | 1 | 2, v: number) => {
+    const r = [...rotation] as [number, number, number];
+    r[k] = v;
+    return run("assembly.instance.update", { target: entity.id, rotation: r });
+  };
+  // A joint places it: where it is comes from the joint, and it says which.
+  const placed = entity.placed;
+  const holder = placed?.by ? entities.get(placed.by) : undefined;
+  const holderJoint = jointOf(holder);
+  const holderOther = holderJoint ? [holderJoint.a, holderJoint.b].map((end) => (typeof end === "object" && "instance" in end ? end.instance : null)).find((x) => x !== entity.id) : undefined;
   const owner = inst.parent ? [...entities.values()].find((e) => instance(e)?.of === inst.parent) : undefined;
   // In a configuration, the columns it sets show its values (edited in the definition's table).
   const table = def ? configurations(def) : undefined;
@@ -303,12 +316,52 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
           <h3>Position</h3>
           <span className="section-note">{inst.parent ? "In its assembly" : "In the project"}</span>
         </header>
-        <div className="scrub-grid">
-          {(["X", "Y", "Z"] as const).map((axis, k) => (
-            <ScrubField key={axis} label={`${axis} position`} chip={axis} tone={AXIS_COLORS[k]} value={inst.at[k]} onLive={() => {}} onCommit={(v) => move(k as 0 | 1 | 2, v)} />
-          ))}
-        </div>
+        {holder && placed ? (
+          <>
+            <p className="held-note">
+              <Icon name="link" />
+              <span>
+                Placed by the {holderJoint?.kind} joint <strong>{jointName(holder)}</strong>
+                {holderOther !== undefined && <> to {holderOther ? (instance(entities.get(holderOther))?.name ?? "?") : "the ground"}</>}. Move it by the joint's value, or delete the joint to move it freely.
+              </span>
+            </p>
+            <div className="held-readout">
+              {(["X", "Y", "Z"] as const).map((axis, k) => (
+                <span key={axis}>
+                  <i style={{ color: AXIS_COLORS[k] }}>{axis}</i>
+                  {fmt(placed.at[k])}
+                  <small>mm</small>
+                </span>
+              ))}
+              {(["X", "Y", "Z"] as const).map((axis, k) => (
+                <span key={`r${axis}`}>
+                  <i style={{ color: AXIS_COLORS[k] }}>∠{axis}</i>
+                  {fmt(placed.rotation[k])}
+                  <small>°</small>
+                </span>
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="scrub-grid">
+              {(["X", "Y", "Z"] as const).map((axis, k) => (
+                <ScrubField key={axis} label={`${axis} position`} chip={axis} tone={AXIS_COLORS[k]} value={inst.at[k]} onLive={() => {}} onCommit={(v) => move(k as 0 | 1 | 2, v)} />
+              ))}
+            </div>
+            <div className="scrub-grid rotation-grid" title="Degrees about X, then Y, then Z (or drag a ring in the view)">
+              {(["X", "Y", "Z"] as const).map((axis, k) => (
+                <ScrubField key={axis} label={`Turn about ${axis}`} chip={`∠${axis}`} tone={AXIS_COLORS[k]} value={rotation[k]} unit="°" step={1} onLive={() => {}} onCommit={(v) => turn(k as 0 | 1 | 2, v)} />
+              ))}
+            </div>
+          </>
+        )}
       </section>
+
+      <AssemblyJoints scope={inst.parent} focus={entity.id} frame={inst.parent ? worldOf(entity.id, entities, true) : IDENTITY} title="Joints" entities={entities} run={run} view={props.joints} />
+      {assemblyDef(def) && (
+        <AssemblyJoints scope={inst.of} frame={worldOf(entity.id, entities)} title={`Joints inside ${definitionName(inst.of, entities)}`} entities={entities} run={run} view={props.joints} />
+      )}
 
       {prog && def && <InstanceConfig entity={entity} def={def} config={inst.config} run={run} />}
 
@@ -427,7 +480,8 @@ function followers(id: string, key: string, entities: ReadonlyMap<string, Entity
 
 /** Project-wide values that shapes link to: change one and everything following it updates. */
 export function ParameterSets(props: { entities: ReadonlyMap<string, EntityView>; run: Run }) {
-  const sets = [...props.entities.values()].filter((e) => parameterSet(e));
+  // Joints hold their values as parameter sets too; they show with their assembly.
+  const sets = [...props.entities.values()].filter((e) => parameterSet(e) && !e.components["assembly.joint"]);
   if (!sets.length) return null;
   return (
     <div className="param-sets">
