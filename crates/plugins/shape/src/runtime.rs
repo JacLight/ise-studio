@@ -708,6 +708,16 @@ fn install_native<'js>(ctx: &Ctx<'js>, arena: &Rc<RefCell<Arena>>) -> rquickjs::
         "blend",
         Function::new(ctx.clone(), |ctx: Ctx<'js>, _op: String, _h: u32, _size: f64, _edges: Vec<u32>| -> rquickjs::Result<u32> { Err(throw(&ctx, NEEDS_EXACT)) })?,
     )?;
+    native.set(
+        "shell",
+        Function::new(ctx.clone(), |ctx: Ctx<'js>, _h: u32, _t: f64, _open: Vec<u32>| -> rquickjs::Result<u32> { Err(throw(&ctx, NEEDS_EXACT)) })?,
+    )?;
+    native.set(
+        "draft",
+        Function::new(ctx.clone(), |ctx: Ctx<'js>, _h: u32, _faces: Vec<u32>, _deg: f64, _pull: Vec<f64>, _neutral: Vec<f64>| -> rquickjs::Result<u32> {
+            Err(throw(&ctx, NEEDS_EXACT))
+        })?,
+    )?;
 
     ctx.globals().set("__native", native)?;
     Ok(())

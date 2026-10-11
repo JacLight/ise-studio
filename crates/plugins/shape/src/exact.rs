@@ -594,6 +594,38 @@ fn install<'js>(ctx: &Ctx<'js>, state: &Rc<RefCell<State>>) -> rquickjs::Result<
     {
         let st = state.clone();
         native.set(
+            "shell",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, h: u32, thickness: f64, open: Vec<u32>| -> rquickjs::Result<u32> {
+                let idx: Vec<usize> = open.iter().map(|e| *e as usize).collect();
+                st.borrow_mut().arena.shell(shape(h), thickness, &idx).map(handle).map_err(|e| fail(&ctx, "shell", e))
+            })?,
+        )?;
+    }
+
+    {
+        let st = state.clone();
+        native.set(
+            "draft",
+            Function::new(
+                ctx.clone(),
+                move |ctx: Ctx<'js>, h: u32, faces: Vec<u32>, degrees: f64, pull: Vec<f64>, neutral: Vec<f64>| -> rquickjs::Result<u32> {
+                    if pull.len() != 3 || neutral.len() != 3 {
+                        return Err(throw(&ctx, "draft: the pull direction and neutral point are [x, y, z]"));
+                    }
+                    let idx: Vec<usize> = faces.iter().map(|e| *e as usize).collect();
+                    st.borrow_mut()
+                        .arena
+                        .draft(shape(h), &idx, degrees, [pull[0], pull[1], pull[2]], [neutral[0], neutral[1], neutral[2]])
+                        .map(handle)
+                        .map_err(|e| fail(&ctx, "draft", e))
+                },
+            )?,
+        )?;
+    }
+
+    {
+        let st = state.clone();
+        native.set(
             "blend",
             Function::new(ctx.clone(), move |ctx: Ctx<'js>, op: String, h: u32, size: f64, edges: Vec<u32>| -> rquickjs::Result<u32> {
                 let kind = match op.as_str() {

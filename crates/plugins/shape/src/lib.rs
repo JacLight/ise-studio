@@ -168,7 +168,17 @@ pub struct EdgeFinish {
     /// For programs returning parts: the part whose edges these are.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub part: Option<String>,
+    /// The edges (fillet, chamfer) or faces (push; shell: the faces left
+    /// open, none for a closed hollow; draft: the faces tapered, none for
+    /// every wall along the pull).
     pub edges: Vec<EdgePick>,
+    /// Draft: the direction the mould opens (default up, [0, 0, 1]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pull: Option<[f64; 3]>,
+    /// Draft: where the neutral plane sits, as a fraction (0–1) of the part's
+    /// extent along the pull; 0 (the default) is the end the pull starts from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub neutral: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -178,6 +188,11 @@ pub enum FinishKind {
     Chamfer,
     /// A flat face pushed out (positive) or pulled in (negative) along its normal.
     Push,
+    /// Hollowed to walls this thick (positive inward, negative outward), open
+    /// at the picked faces.
+    Shell,
+    /// The picked faces tapered by this many degrees from the pull direction.
+    Draft,
 }
 
 /// An edge as picked: found again on the shape as it is now by kind,
@@ -1036,12 +1051,25 @@ fn validate(world: &World, program: &ShapeProgram, materials: &PartMaterials) ->
         let size = values.iter().find(|(k, _)| *k == f.key).map(|(_, v)| *v);
         let ok = match f.kind {
             FinishKind::Push => size.is_some(),
+            FinishKind::Shell => size.is_some_and(|s| s != 0.0),
+            FinishKind::Draft => size.is_some_and(|s| s != 0.0 && s.abs() < 89.0),
             _ => size.is_some_and(|s| s > 0.0),
         };
         if !ok {
-            return Err(CommandError::new(ErrorCode::InvalidParameters, format!("a finish is sized by “{}”, which must be a parameter of the shape (positive for fillets and chamfers)", f.key)));
+            return Err(CommandError::new(
+                ErrorCode::InvalidParameters,
+                format!("a finish is sized by “{}”, which must be a parameter of the shape (positive for fillets and chamfers, non-zero for shells, under 89° for drafts)", f.key),
+            ));
         }
-        if f.edges.is_empty() {
+        if f.kind == FinishKind::Draft {
+            if f.pull.is_some_and(|d| !d.iter().all(|c| c.is_finite()) || d.iter().map(|c| c * c).sum::<f64>() < 1e-12) {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, "a draft's pull direction must be a non-zero [x, y, z]"));
+            }
+            if f.neutral.is_some_and(|n| !(0.0..=1.0).contains(&n)) {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, "a draft's neutral plane is a fraction of the part, 0 to 1"));
+            }
+        }
+        if f.edges.is_empty() && !matches!(f.kind, FinishKind::Shell | FinishKind::Draft) {
             return Err(CommandError::new(ErrorCode::InvalidParameters, "an edge finish needs at least one edge"));
         }
     }

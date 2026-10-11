@@ -80,6 +80,8 @@ export function ToolRail(props: {
   edging: boolean;
   canEdge: boolean;
   onEdges: () => void;
+  faceTool: "shell" | "draft" | null;
+  onFaceTool: (kind: "shell" | "draft") => void;
   commenting: boolean;
   /** Open comment threads, shown as a count on the comment tool. */
   openComments: number;
@@ -99,6 +101,19 @@ export function ToolRail(props: {
         onClick={props.onEdges}
         disabled={!props.canEdit || !(props.canEdge || props.edging)}
       />
+      {(["shell", "draft"] as const).map((k) => {
+        const name = k === "shell" ? "Shell: hollow to a wall (H)" : "Draft: taper walls for a mould (D)";
+        return (
+          <IconButton
+            key={k}
+            icon={k}
+            label={props.canEdge || props.faceTool === k ? name : `${name} · select a part first`}
+            className={props.faceTool === k ? "active" : ""}
+            onClick={() => props.onFaceTool(k)}
+            disabled={!props.canEdit || !(props.canEdge || props.faceTool === k)}
+          />
+        );
+      })}
       <span className="rail-badge-host">
         <IconButton icon="comment" label="Comment (C)" className={props.commenting ? "active" : ""} onClick={props.onComment} />
         {props.openComments > 0 && <span className="rail-badge">{props.openComments > 99 ? "99+" : props.openComments}</span>}

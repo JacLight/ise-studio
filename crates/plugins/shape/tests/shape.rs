@@ -1522,3 +1522,74 @@ fn an_assembly_drawing_balloons_every_listed_part() {
     }
 }
 
+#[test]
+fn shells_and_drafts_are_exact_in_programs_and_as_finishes() {
+    let exact_volume = |source: &str, values: &[(String, f64)], inputs: &str| {
+        let (arena, exact) = de_shape::exact::evaluate_exact_in(de_occt::Arena::new(), "P", source, values, 0.01, inputs).map_err(|(_, e)| e).unwrap();
+        exact.parts.iter().map(|q| arena.volume(q.shape)).sum::<f64>()
+    };
+    // A 40 × 40 × 20 box, open at the top, 2 mm walls.
+    let tray = 40.0 * 40.0 * 20.0 - 36.0 * 36.0 * 18.0;
+    let v = exact_volume("return box(40, 40, 20).shell(2, { normal: [0, 0, 1] });", &[], "");
+    assert!((v - tray).abs() < 1e-6, "tray {v} vs {tray}");
+    // Closed: a sealed 36 × 36 × 16 void.
+    let sealed = 40.0 * 40.0 * 20.0 - 36.0 * 36.0 * 16.0;
+    let v = exact_volume("return box(40, 40, 20).shell(2);", &[], "");
+    assert!((v - sealed).abs() < 1e-6, "sealed {v} vs {sealed}");
+    // A list of open faces: top and front.
+    let v = exact_volume("return box(40, 40, 20).shell(2, [{ normal: [0, 0, 1] }, { normal: [0, -1, 0] }]);", &[], "");
+    let want = 40.0 * 40.0 * 20.0 - 36.0 * 38.0 * 18.0;
+    assert!((v - want).abs() < 1e-6, "channel {v} vs {want}");
+    // The mesh path hands shells to the exact kernel too.
+    let e = runtime::evaluate("return box(40, 40, 20).shell(2, { normal: [0, 0, 1] });", &[], 0.01).unwrap();
+    assert!((e.volume - tray).abs() < 1e-6, "meshed tray {}", e.volume);
+
+    // Draft: the four sides of the box by 5°, pulled up from the bottom → a frustum.
+    let t = 5f64.to_radians().tan();
+    let top = 40.0 - 2.0 * 20.0 * t;
+    let frustum = 20.0 / 3.0 * (1600.0 + top * top + 40.0 * top);
+    let v = exact_volume("return box(40, 40, 20).draft(5);", &[], "");
+    assert!((v - frustum).abs() < 1e-6, "draft {v} vs {frustum}");
+    let v = exact_volume(
+        "return box(40, 40, 20).draft(5, { pull: [0, 0, 1], neutral: 0, faces: [{ normal: [1, 0, 0] }, { normal: [-1, 0, 0] }, { normal: [0, 1, 0] }, { normal: [0, -1, 0] }] });",
+        &[],
+        "",
+    );
+    assert!((v - frustum).abs() < 1e-6, "named faces {v} vs {frustum}");
+    // Pulled down (the mould opens below, neutral at the top): the bottom shrinks instead, the same volume.
+    let v = exact_volume("return box(40, 40, 20).draft(5, { pull: [0, 0, -1] });", &[], "");
+    assert!((v - frustum).abs() < 1e-6, "pulled down {v} vs {frustum}");
+
+    // As finishes the view adds, each sized by a parameter: draft 5° (every wall), then shell 2 open at the top.
+    let finishes = json!([
+        { "kind": "draft", "key": "draft1", "edges": [], "pull": [0, 0, 1], "neutral": 0 },
+        { "kind": "shell", "key": "shell1", "edges": [{ "at": [0.5, 0.5, 1.0], "kind": "face", "dir": [0, 0, 1] }] }
+    ]);
+    let inputs = format!(r#"{{"sketches":{{}},"finishes":{finishes}}}"#);
+    let v = exact_volume("return box(40, 40, 20);", &[("shell1".into(), 2.0), ("draft1".into(), 5.0)], &inputs);
+    // The cavity: walls 2 mm square to each drafted face sit 2/cos 5° in horizontally,
+    // the floor 2 mm up; so a frustum 18 tall from (40 − 2·2·tan5 − 2·2/cos5) wide.
+    let c = 5f64.to_radians().cos();
+    let ib = 40.0 - 4.0 * t - 4.0 / c;
+    let it = ib - 2.0 * 18.0 * t;
+    let inner = 18.0 / 3.0 * (ib * ib + it * it + ib * it);
+    let want = frustum - inner;
+    assert!((v - want).abs() < 1e-6, "drafted tray {v} vs {want}");
+
+    // Through the project: stored on the part, editable by its parameter.
+    let mut p = project();
+    let part = id(run(&mut p, "shape.create", json!({ "name": "Tray", "source": "return box(40, 40, 20);", "params": [] })).unwrap());
+    run(&mut p, "shape.update", json!({
+        "target": part,
+        "params": [{ "key": "shell1", "label": "Shell 1 wall", "value": 2 }],
+        "finishes": [{ "kind": "shell", "key": "shell1", "edges": [{ "at": [0.5, 0.5, 1.0], "kind": "face", "dir": [0, 0, 1] }] }]
+    }))
+    .unwrap();
+    let volume = |p: &Project| p.get::<ShapeSolid>(part).unwrap().stats.volume_mm3;
+    assert!((volume(&p) - tray).abs() < 1e-3, "{}", volume(&p));
+    run(&mut p, "shape.set_params", json!({ "target": part, "values": { "shell1": 3 } })).unwrap();
+    let want = 40.0 * 40.0 * 20.0 - 34.0 * 34.0 * 17.0;
+    assert!((volume(&p) - want).abs() < 1e-3, "{}", volume(&p));
+    // A zero wall is refused.
+    assert!(run(&mut p, "shape.set_params", json!({ "target": part, "values": { "shell1": 0 } })).is_err());
+}

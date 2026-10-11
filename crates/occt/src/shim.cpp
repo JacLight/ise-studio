@@ -41,6 +41,10 @@
 #include <BRepGProp_Face.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepOffsetAPI_MakeOffset.hxx>
+#include <BRepOffsetAPI_MakeThickSolid.hxx>
+#include <BRepOffsetAPI_DraftAngle.hxx>
+#include <TopTools_ListOfShape.hxx>
+#include <gp_Pln.hxx>
 #include <BRepOffset_MakeOffset.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
@@ -1143,6 +1147,216 @@ int occ_push_face(void* p, int h, int index, double distance) {
       r = op.Shape();
     }
     return push(a, tidy(r));
+  });
+}
+
+
+/// The tightest outside rounding of a solid (cylinders, cones, spheres and
+/// tori bulging outward), mm; infinity when it has none.
+static double convex_round(const TopoDS_Shape& s) {
+  double best = std::numeric_limits<double>::infinity();
+  for (TopExp_Explorer e(s, TopAbs_FACE); e.More(); e.Next()) {
+    TopoDS_Face f = TopoDS::Face(e.Current());
+    BRepAdaptor_Surface surf(f);
+    const bool forward = f.Orientation() == TopAbs_FORWARD;
+    double u1, u2, v1, v2;
+    BRepTools::UVBounds(f, u1, u2, v1, v2);
+    switch (surf.GetType()) {
+      case GeomAbs_Cylinder:
+        if (forward == surf.Cylinder().Direct()) best = std::min(best, surf.Cylinder().Radius());
+        break;
+      case GeomAbs_Cone: {
+        gp_Cone c = surf.Cone();
+        if (forward == c.Direct())
+          for (double v : {v1, v2}) best = std::min(best, std::fabs(c.RefRadius() + v * std::sin(c.SemiAngle())));
+        break;
+      }
+      case GeomAbs_Sphere:
+        if (forward == surf.Sphere().Direct()) best = std::min(best, surf.Sphere().Radius());
+        break;
+      case GeomAbs_Torus:
+        if (forward == surf.Torus().Direct()) best = std::min(best, surf.Torus().MinorRadius());
+        break;
+      default:
+        break;
+    }
+  }
+  return best;
+}
+
+/// Hollows a solid to walls `thickness` thick. Positive: the walls grow
+/// inward from the outer skin (the outside stays put); negative: outward (the
+/// inside keeps the original shape). The listed faces are removed, leaving the
+/// shell open there; none gives a closed hollow, an inner void.
+int occ_shell(void* p, int h, double thickness, const int* idx, int n) {
+  Arena* a = static_cast<Arena*>(p);
+  return guard(a, [&] {
+    const TopoDS_Shape* s = get(a, h);
+    if (!s) return -1;
+    if (std::fabs(thickness) < 1e-9) throw Standard_Failure("the wall needs a thickness");
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(*s, TopAbs_FACE, faces);
+    TopTools_ListOfShape open;
+    for (int i = 0; i < n; i++) {
+      if (idx[i] < 0 || idx[i] >= faces.Extent()) throw Standard_Failure("unknown face");
+      open.Append(faces(idx[i] + 1));
+    }
+    // OCCT offsets along the outward normal: inward walls are a negative offset.
+    double off = -thickness;
+    GProp_GProps g0;
+    BRepGProp::VolumeProperties(*s, g0);
+    const double v0 = g0.Mass();
+    // A hollow worth keeping: valid, one solid, and not the part handed back untouched.
+    auto good = [&](const TopoDS_Shape& c) {
+      if (c.IsNull() || !BRepCheck_Analyzer(c).IsValid()) return false;
+      int solids = 0;
+      for (TopExp_Explorer e(c, TopAbs_SOLID); e.More(); e.Next()) solids++;
+      if (solids != 1) return false;
+      GProp_GProps g;
+      BRepGProp::VolumeProperties(c, g);
+      return g.Mass() > 1e-9 && std::fabs(g.Mass() - v0) > v0 * 1e-9 && (thickness < 0 || g.Mass() < v0);
+    };
+    /// The part offset by `off` everywhere, except the open faces by `open_off`.
+    auto offset_body = [&](double open_off) {
+      BRepOffset_MakeOffset mo;
+      mo.Initialize(*s, off, 1e-6, BRepOffset_Skin, Standard_False, Standard_False, GeomAbs_Intersection, Standard_False);
+      for (TopTools_ListIteratorOfListOfShape it(open); it.More(); it.Next()) mo.SetOffsetOnFace(TopoDS::Face(it.Value()), open_off);
+      mo.MakeOffsetShape();
+      if (!mo.IsDone()) throw Standard_Failure("could not hollow this solid with walls that thick");
+      return as_solid(mo.Shape());
+    };
+    auto cut = [&](const TopoDS_Shape& x, const TopoDS_Shape& y) {
+      BRepAlgoAPI_Cut op(x, y);
+      if (!op.IsDone()) throw Standard_Failure("could not hollow this solid");
+      return op.Shape();
+    };
+    auto hollow = [&]() -> TopoDS_Shape {
+    TopoDS_Shape r;
+    if (n > 0) {
+      try {
+        BRepOffsetAPI_MakeThickSolid mk;
+        mk.MakeThickSolidByJoin(*s, open, off, 1e-6, BRepOffset_Skin, Standard_False, Standard_False, GeomAbs_Intersection);
+        if (mk.IsDone()) r = as_solid(mk.Shape());
+      } catch (const Standard_Failure&) {
+      }
+      if (!good(r)) {
+        // The thick-solid algorithm can hand back the part untouched (drafted
+        // cones, say): build the same hollow as an offset body and a cut. Inward,
+        // the cavity pokes out through the open faces so the cut opens them;
+        // outward, the grown body stays flush with them.
+        try {
+          r = thickness > 0 ? cut(*s, offset_body(thickness)) : cut(offset_body(0.0), *s);
+        } catch (const Standard_Failure&) {
+          r.Nullify();
+        }
+      }
+      if (!good(r) && thickness > 0) {
+        // Again, from the sealed cavity: each flat open face's twin on it swept
+        // out through the wall, and all of it cut from the part.
+        TopoDS_Shape cavity = offset_body(off);
+        TopTools_IndexedMapOfShape inner;
+        TopExp::MapShapes(cavity, TopAbs_FACE, inner);
+        for (TopTools_ListIteratorOfListOfShape it(open); it.More(); it.Next()) {
+          TopoDS_Face f = TopoDS::Face(it.Value());
+          BRepAdaptor_Surface fs(f);
+          if (fs.GetType() != GeomAbs_Plane) throw Standard_Failure("could not open this curved face: open flat faces, or hollow it sealed");
+          gp_Dir n = fs.Plane().Axis().Direction();
+          if (f.Orientation() == TopAbs_REVERSED) n.Reverse();
+          const double d0 = gp_Vec(fs.Plane().Location().XYZ()).Dot(gp_Vec(n)) - thickness;
+          int best = 0;
+          double err = 1e300;
+          for (int i = 1; i <= inner.Extent(); i++) {
+            TopoDS_Face g = TopoDS::Face(inner(i));
+            BRepAdaptor_Surface gs(g);
+            if (gs.GetType() != GeomAbs_Plane) continue;
+            gp_Dir m = gs.Plane().Axis().Direction();
+            if (g.Orientation() == TopAbs_REVERSED) m.Reverse();
+            if (m.Dot(n) < 1 - 1e-9) continue;
+            double e = std::fabs(gp_Vec(gs.Plane().Location().XYZ()).Dot(gp_Vec(n)) - d0);
+            if (e < err) err = e, best = i;
+          }
+          if (!best || err > 1e-4) throw Standard_Failure("could not open that face with walls that thick");
+          TopoDS_Shape through = BRepPrimAPI_MakePrism(TopoDS::Face(inner(best).Oriented(TopAbs_FORWARD)), gp_Vec(n) * (thickness * 2)).Shape();
+          BRepAlgoAPI_Fuse op(cavity, through);
+          if (!op.IsDone()) throw Standard_Failure("could not open that face");
+          cavity = op.Shape();
+        }
+        r = cut(*s, cavity);
+      }
+    } else {
+      // Closed: the solid with an offset copy of itself as an inner void.
+      TopoDS_Shape body = offset_body(off);
+      r = thickness > 0 ? cut(*s, body) : cut(body, *s);
+    }
+    return r;
+    };
+    TopoDS_Shape r;
+    std::string why = "walls that thick break the solid";
+    try {
+      r = hollow();
+    } catch (const Standard_Failure& e) {
+      why = e.GetMessageString();
+    }
+    if (!good(r)) {
+      // The usual cause: an outside corner rounded tighter than the wall,
+      // which cannot be offset inward. Say which.
+      double tightest = convex_round(*s);
+      if (thickness > 0 && tightest < thickness) {
+        char msg[200];
+        std::snprintf(msg, sizeof msg, "the %.3g mm wall is thicker than a rounded corner here (%.3g mm radius): use a thinner wall, or round after shelling", thickness,
+                      tightest);
+        throw Standard_Failure(msg);
+      }
+      throw Standard_Failure(why.c_str());
+    }
+    return push(a, r);
+  });
+}
+
+/// Tapers faces by `degrees` relative to the pull direction (dx,dy,dz),
+/// hinging about the neutral plane through (px,py,pz) normal to the pull: the
+/// faces keep their size on that plane and lean inward going along the pull
+/// (positive angle), as a moulded part's walls do so it releases from the mould.
+int occ_draft(void* p, int h, const int* idx, int n, double degrees, double dx, double dy, double dz, double px, double py,
+              double pz) {
+  Arena* a = static_cast<Arena*>(p);
+  return guard(a, [&] {
+    const TopoDS_Shape* s = get(a, h);
+    if (!s) return -1;
+    if (std::fabs(degrees) < 1e-9) return push(a, *s);
+    if (std::fabs(degrees) >= 89.0) throw Standard_Failure("a draft must be under 89 degrees");
+    gp_Vec v(dx, dy, dz);
+    if (v.Magnitude() < 1e-12) throw Standard_Failure("the pull direction is zero");
+    gp_Dir dir(v);
+    gp_Pln neutral(gp_Pnt(px, py, pz), dir);
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(*s, TopAbs_FACE, faces);
+    std::vector<int> pick(idx, idx + std::max(n, 0));
+    if (pick.empty()) {
+      // Every wall running along the pull: flat faces square to it, and
+      // cylinders (bosses, holes) whose axis is the pull.
+      for (int i = 1; i <= faces.Extent(); i++) {
+        BRepAdaptor_Surface surf(TopoDS::Face(faces(i)));
+        bool wall = (surf.GetType() == GeomAbs_Plane && std::fabs(surf.Plane().Axis().Direction().Dot(dir)) < 1e-7) ||
+                    (surf.GetType() == GeomAbs_Cylinder && surf.Cylinder().Axis().Direction().IsParallel(dir, 1e-7));
+        if (wall) pick.push_back(i - 1);
+      }
+      if (pick.empty()) throw Standard_Failure("no faces run along the pull direction");
+    }
+    BRepOffsetAPI_DraftAngle draft(*s);
+    double ang = degrees * M_PI / 180.0;
+    for (int i : pick) {
+      if (i < 0 || i >= faces.Extent()) throw Standard_Failure("unknown face");
+      TopoDS_Face f = TopoDS::Face(faces(i + 1));
+      draft.Add(f, dir, ang, neutral);
+      if (!draft.AddDone()) throw Standard_Failure("this face cannot be drafted from that direction (is it parallel to the pull?)");
+    }
+    draft.Build();
+    if (!draft.IsDone()) throw Standard_Failure("could not draft these faces");
+    TopoDS_Shape r = as_solid(draft.Shape());
+    BRepCheck_Analyzer check(r);
+    if (!check.IsValid()) throw Standard_Failure("these faces cannot be drafted cleanly: try a smaller angle, fewer faces, or drafting before shelling");
+    return push(a, r);
   });
 }
 

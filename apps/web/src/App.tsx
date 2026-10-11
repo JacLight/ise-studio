@@ -9,6 +9,7 @@ import { type CheckReport, type Engine, type EngineError, type EntityView, type 
 import { type EdgeFinish, type Frac, type LiveEdit, type Shape, assemblyParts, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
 import { GroupList, HistoryBody, ObjectsBody, ProjectBody, PropertiesBody, ToolPanel, ViewsBody } from "./Panels";
 import { useEdgeEditor } from "./EdgeEditor";
+import { type FaceToolKind, useFaceTool } from "./FaceTool";
 import type { MotionGrab, ProgramFace, StressView, TurnBody, TurnOptions } from "./Viewport";
 import { useExplode } from "./Explode";
 import type { FaceDriver } from "./engine";
@@ -567,6 +568,9 @@ export function App({ engine }: { engine: Engine }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [sketcher.editing]);
 
+  // Shelling and drafting: faces clicked go to the tool while it is open.
+  const faceTool = useFaceTool({ engine, entities: state.entities, run, notify, setPreview: setShapePreview });
+
   // Push and pull on a flat face of a program part: through the parameter that
   // drives the face when there is one, else as an exact push stored on the part.
   const [programFace, setProgramFace] = useState<ProgramFace | null>(null);
@@ -596,6 +600,10 @@ export function App({ engine }: { engine: Engine }) {
         return;
       }
       if (why === "curved") notify("That surface could not be picked: try another spot on it");
+      if (faceTool.editing) {
+        if (f) faceTool.toggle(f);
+        return;
+      }
       setProgramFace(f);
       setFaceDrag(null);
       if (!f) return;
@@ -607,7 +615,7 @@ export function App({ engine }: { engine: Engine }) {
         () => setFaceDriver(null),
       );
     },
-    [engine, notify, stressPick],
+    [engine, notify, stressPick, faceTool],
   );
   /** The push finish a face drag would add (sized by a new parameter). */
   const pushFinish = useCallback(
@@ -882,16 +890,34 @@ export function App({ engine }: { engine: Engine }) {
     if (edger.editing && selected !== edger.editing) edger.stop();
   }, [selected, edger]);
   useEffect(() => {
+    if (faceTool.editing && selected !== faceTool.editing) faceTool.stop();
+  }, [selected, faceTool]);
+  /** Opens (or switches, or closes) the shell / draft tool on the selected part; one picking tool at a time. */
+  const openFaceTool = useCallback(
+    (kind: FaceToolKind) => {
+      if (faceTool.editing && faceTool.kind === kind) return faceTool.stop();
+      if (!selected) return notify(`Select a part to ${kind} it`);
+      edger.stop();
+      setProgramFace(null);
+      faceTool.start(selected, kind, selectedPartName);
+    },
+    [faceTool, edger, selected, selectedPartName, notify],
+  );
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key.toLowerCase() === "e" && selected && !edger.editing && !sketcher.editing) {
         e.preventDefault();
+        faceTool.stop();
         void edger.start(selected);
+      } else if ((e.key.toLowerCase() === "h" || e.key.toLowerCase() === "d") && selected && !edger.editing && !sketcher.editing) {
+        e.preventDefault();
+        openFaceTool(e.key.toLowerCase() === "h" ? "shell" : "draft");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, edger, sketcher.editing]);
+  }, [selected, edger, sketcher.editing, faceTool, openFaceTool]);
 
 
   /** A STEP file in: stored by the engine, added as a part named after the file, then selected. */
@@ -1190,6 +1216,7 @@ export function App({ engine }: { engine: Engine }) {
           onEditDimension={sketcher.openDim}
           edges={edger.picture}
           onEdgeClick={edger.toggle}
+          facePicks={faceTool.picture}
           programFace={programFace}
           onProgramFace={pickFace}
           onFaceDrag={dragFace}
@@ -1234,6 +1261,7 @@ export function App({ engine }: { engine: Engine }) {
         {sketcher.bar}
         {sketcher.dimEditor}
         {edger.bar}
+        {faceTool.bar}
         {also.length > 0 && !stressPick && (
           <div className="face-hint floating" role="status">
             {(() => {
@@ -1351,7 +1379,9 @@ export function App({ engine }: { engine: Engine }) {
               onSketch={() => (sketcher.editing ? sketcher.finish() : setPlaneMenu((m) => !m))}
               edging={!!edger.editing}
               canEdge={!!selectedPart && !!program(selectedPart)}
-              onEdges={() => (edger.editing ? edger.stop() : selected && edger.start(selected))}
+              onEdges={() => (edger.editing ? edger.stop() : selected && (faceTool.stop(), edger.start(selected)))}
+              faceTool={faceTool.editing ? faceTool.kind : null}
+              onFaceTool={openFaceTool}
               commenting={commenting}
               openComments={openComments}
               onComment={toggleCommenting}
@@ -1505,7 +1535,8 @@ export function App({ engine }: { engine: Engine }) {
               onPickFace={requestFace}
               onShowStress={showStress}
               onGrab={grabMotion}
-              onEdges={() => selected && edger.start(selected)}
+              onEdges={() => selected && (faceTool.stop(), edger.start(selected))}
+              onFaceTool={openFaceTool}
               onRemoveFinish={(i) => {
                 const prog = selectedPart && program(selectedPart);
                 if (!selected || !prog) return;

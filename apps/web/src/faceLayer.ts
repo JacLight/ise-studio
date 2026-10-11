@@ -232,3 +232,92 @@ export class FaceLayer {
     this.arrow.position.copy(new THREE.Vector3(...this.face.centroid).add(shift));
   }
 }
+
+/** Faces picked for a shell or draft, and a draft's pull direction and neutral plane (part coordinates, mm). */
+export type FacePicture = {
+  id: string;
+  faces: FlatFace[];
+  /** Tint: faces a shell leaves open read as removed; drafted faces as accented. */
+  tone: "open" | "draft";
+  pull?: { dir: [number, number, number]; origin: [number, number, number]; size: number };
+};
+
+/** Draws picked faces tinted, plus (for a draft) the pull arrow and the neutral plane. */
+export class PickedFacesLayer {
+  readonly root = new THREE.Group();
+  private items: THREE.Object3D[] = [];
+
+  update(picture: FacePicture | null, at: THREE.Vector3 | null) {
+    for (const o of this.items) {
+      this.root.remove(o);
+      o.traverse((m) => {
+        if (m instanceof THREE.Mesh || m instanceof THREE.Line) {
+          m.geometry.dispose();
+          (m.material as THREE.Material).dispose();
+        }
+      });
+    }
+    this.items = [];
+    this.root.visible = !!picture && !!at;
+    if (!picture || !at) return;
+    this.root.position.copy(at);
+    const open = picture.tone === "open";
+    for (const f of picture.faces) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(f.triangles, 3));
+      const m = new THREE.Mesh(
+        g,
+        new THREE.MeshBasicMaterial({
+          color: open ? "#e0567a" : ACCENT,
+          transparent: true,
+          opacity: open ? 0.42 : 0.32,
+          depthWrite: false,
+          toneMapped: false,
+          fog: false,
+          side: THREE.DoubleSide,
+          polygonOffset: true,
+          polygonOffsetFactor: -3,
+          polygonOffsetUnits: -3,
+        }),
+      );
+      m.renderOrder = 950;
+      this.add(m);
+    }
+    const p = picture.pull;
+    if (!p) return;
+    const dir = new THREE.Vector3(...p.dir).normalize();
+    const origin = new THREE.Vector3(...p.origin);
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    const s = p.size;
+    const h = s * 0.62;
+    // The neutral plane: where the drafted faces keep their size.
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(2 * h, 2 * h).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.08, depthWrite: false, toneMapped: false, fog: false, side: THREE.DoubleSide }),
+    );
+    plane.renderOrder = 940;
+    const outline = new THREE.LineLoop(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-h, 0, -h), new THREE.Vector3(h, 0, -h), new THREE.Vector3(h, 0, h), new THREE.Vector3(-h, 0, h)]),
+      new THREE.LineBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.6, depthTest: false, toneMapped: false, fog: false }),
+    );
+    outline.renderOrder = 941;
+    // The pull: the way the mould opens.
+    const mat = () => new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false, toneMapped: false, fog: false });
+    const len = s * 0.55;
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(s * 0.009, s * 0.009, len, 10), mat());
+    shaft.position.y = len / 2;
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(s * 0.035, s * 0.1, 28), mat());
+    tip.position.y = len + s * 0.05;
+    shaft.renderOrder = tip.renderOrder = 1000;
+    const frame = new THREE.Group();
+    frame.add(plane, outline, shaft, tip);
+    frame.quaternion.copy(q);
+    frame.position.copy(origin);
+    this.add(frame);
+  }
+
+  private add(o: THREE.Object3D) {
+    this.items.push(o);
+    this.root.add(o);
+  }
+}
