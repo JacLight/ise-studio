@@ -1,0 +1,15 @@
+[package]
+name = "de-sourcing"
+description = "Bills of materials, cost estimates and sourcing: suppliers, requests for quote, quotes and awards"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+de-core.workspace = true
+de-solid.workspace = true
+de-shape.workspace = true
+de-assembly.workspace = true
+manifold-csg = "0.4"
+serde.workspace = true
+serde_json.workspace = true
