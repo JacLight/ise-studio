@@ -3,6 +3,7 @@ import { AiPanel } from "./AiPanel";
 import { type Proposal, interpret } from "./assistant";
 import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
+import { StockBrowser } from "./StockBrowser";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
 import { type Bench, Workbench } from "./Bom";
 import { RequirementsPanel } from "./RequirementsPanel";
@@ -64,6 +65,7 @@ export function App({ engine }: { engine: Engine }) {
   const state = useSyncExternalStore(engine.subscribe, engine.getState);
   const [prefs, setPrefs] = useState<UiPrefs>(loadPrefs);
   const [selected, setSelected] = useState<string | null>(null);
+  const [stockOpen, setStockOpen] = useState(false);
   // More items picked with Shift: they move and delete together with the selected one.
   const [also, setAlso] = useState<string[]>([]);
   const alsoRef = useRef<string[]>([]);
@@ -1200,6 +1202,9 @@ export function App({ engine }: { engine: Engine }) {
         redo();
       } else if (mod || e.altKey) {
         return;
+      } else if (key === "i" && !document.querySelector("dialog[open]")) {
+        e.preventDefault();
+        setStockOpen(true);
       } else if (key === "a") {
         setPrefs((p) => ({ ...p, aiMode: p.aiMode === "hidden" ? p.lastMode : "hidden" }));
       } else if (key === "f") {
@@ -1417,6 +1422,8 @@ export function App({ engine }: { engine: Engine }) {
               onPanel={togglePanel}
               onSelectTool={() => select(null)}
               onAdd={addPart}
+              onStock={() => setStockOpen((o) => !o)}
+              stockOpen={stockOpen}
               onAi={() => setMode(prefs.aiMode === "hidden" || prefs.aiMode === "mini" ? "open" : "hidden")}
               onHide={() => hide("tools")}
               sketching={!!sketcher.editing || planeMenu}
@@ -1712,6 +1719,18 @@ export function App({ engine }: { engine: Engine }) {
 
       {dialog === "share" && <TeamDialog team={team} entities={state.entities} run={run} refresh={refreshTeam} onClose={() => setDialog(null)} />}
       {dialog === "storage" && <StorageDialog revision={state.revision} onClose={() => setDialog(null)} />}
+      {stockOpen && (
+        <StockBrowser
+          entities={state.entities}
+          run={run}
+          notify={notify}
+          onInserted={(id) => {
+            selectWhenReady(id);
+            setPanel("properties");
+          }}
+          onClose={() => setStockOpen(false)}
+        />
+      )}
       {home && (
         <ProjectsHome
           onClose={() => {

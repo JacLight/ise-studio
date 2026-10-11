@@ -1,0 +1,118 @@
+{
+ "id": "nema17",
+ "name": "Stepper motor",
+ "standard": "NEMA 17",
+ "category": "Motors",
+ "summary": "NEMA 17 hybrid stepper, 1.8°, 42.3 mm square, Ø22 pilot, 31 mm M3 pattern, Ø5 D-shaft. Shaft up +Z, mounting face on z = 0.",
+ "keywords": [
+  "stepper",
+  "NEMA17",
+  "17HS4401",
+  "42mm",
+  "motor",
+  "1.8 degree"
+ ],
+ "source": [
+  "common.js",
+  "nema17.js"
+ ],
+ "display_tolerance": 0.02,
+ "materials": {
+  "Aluminium": 2700,
+  "Steel": 7850,
+  "Nylon 66": 1140,
+  "NEMA 17 stator, rotor and windings (lumped)": 4950
+ },
+ "params": [
+  {
+   "key": "length",
+   "label": "Body length",
+   "value": 40,
+   "unit": "mm",
+   "min": 20,
+   "max": 80
+  }
+ ],
+ "columns": [
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "42×34",
+   "values": {
+    "length": 34
+   }
+  },
+  {
+   "name": "42×40",
+   "values": {
+    "length": 40
+   }
+  },
+  {
+   "name": "42×48",
+   "values": {
+    "length": 48
+   }
+  }
+ ],
+ "default": "42×40",
+ "checks": {
+  "42×40": {
+   "size": [
+    42.3,
+    47.79,
+    64
+   ],
+   "massG": 280,
+   "partNumber": "NEMA17-42x40-1.8",
+   "connectors": [
+    "Shaft",
+    "Pilot",
+    "Face",
+    "Hole 1",
+    "Hole 2",
+    "Hole 3",
+    "Hole 4"
+   ],
+   "connector_at": {
+    "Hole 1": [
+     15.5,
+     15.5,
+     0
+    ],
+    "Hole 2": [
+     -15.5,
+     15.5,
+     0
+    ],
+    "Hole 3": [
+     -15.5,
+     -15.5,
+     0
+    ],
+    "Hole 4": [
+     15.5,
+     -15.5,
+     0
+    ],
+    "Pilot": [
+     0,
+     0,
+     2
+    ]
+   }
+  },
+  "42×34": {
+   "massG": 230
+  },
+  "42×48": {
+   "massG": 350,
+   "size": [
+    42.3,
+    47.79,
+    72
+   ]
+  }
+ }
+}

@@ -1,0 +1,154 @@
+{
+ "id": "heatset_insert",
+ "name": "Heat-set insert",
+ "category": "Inserts & pins",
+ "summary": "Brass knurled threaded insert, pressed hot into a printed hole (Ruthex / CNC Kitchen sizes). Top face flush at z = 0, tip at z = −L.",
+ "keywords": [
+  "threaded insert",
+  "heat set",
+  "heat-set",
+  "brass insert",
+  "Ruthex",
+  "CNC Kitchen",
+  "Voron",
+  "knurled insert"
+ ],
+ "source": [
+  "common.js",
+  "heatset_insert.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Brass CuZn39Pb3",
+ "materials": {
+  "Brass CuZn39Pb3": 8470
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Thread diameter",
+   "value": 3,
+   "unit": "mm",
+   "min": 2,
+   "max": 5,
+   "step": 0.5
+  },
+  {
+   "key": "length",
+   "label": "Length",
+   "value": 5.7,
+   "unit": "mm",
+   "min": 2,
+   "max": 12,
+   "step": 0.1
+  },
+  {
+   "key": "threads",
+   "label": "True helical thread (1 = on)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "d",
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "M2×4",
+   "values": {
+    "d": 2,
+    "length": 4
+   }
+  },
+  {
+   "name": "M2.5×4",
+   "values": {
+    "d": 2.5,
+    "length": 4
+   }
+  },
+  {
+   "name": "M3×3 short",
+   "values": {
+    "d": 3,
+    "length": 3
+   }
+  },
+  {
+   "name": "M3×4 Voron",
+   "values": {
+    "d": 3,
+    "length": 4
+   }
+  },
+  {
+   "name": "M3×5.7",
+   "values": {
+    "d": 3,
+    "length": 5.7
+   }
+  },
+  {
+   "name": "M4×8.1",
+   "values": {
+    "d": 4,
+    "length": 8.1
+   }
+  },
+  {
+   "name": "M5×9.5",
+   "values": {
+    "d": 5,
+    "length": 9.5
+   }
+  }
+ ],
+ "default": "M3×5.7",
+ "checks": {
+  "M3×5.7": {
+   "size": [
+    4.6,
+    4.6,
+    5.7
+   ],
+   "tolerance": 0.06,
+   "metrics": {
+    "Printed hole Ø": 4.0,
+    "Hole depth": 6.7,
+    "Outside Ø": 4.6
+   },
+   "connectors": [
+    "Top face",
+    "Hole axis"
+   ],
+   "connector_at": {
+    "Hole axis": [
+     0,
+     0,
+     -5.7
+    ]
+   },
+   "partNumber": "Ruthex RX-M3x5.7"
+  },
+  "M3×4 Voron": {
+   "metrics": {
+    "Printed hole Ø": 4.4
+   },
+   "partNumber": "CNC Kitchen M3x5x4 Voron"
+  },
+  "M5×9.5": {
+   "size": [
+    7.1,
+    7.1,
+    9.5
+   ],
+   "tolerance": 0.06,
+   "metrics": {
+    "Printed hole Ø": 6.4
+   }
+  }
+ }
+}

@@ -1,0 +1,114 @@
+{
+ "id": "gt2_pulley",
+ "name": "GT2 timing pulley",
+ "standard": "GT2 2 mm",
+ "category": "Bearings & motion",
+ "summary": "GT2 (2 mm pitch) aluminium timing pulley for 6 mm belt, one flange, hub with two M3 set screws. Axis +Z, hub face on z = 0",
+ "keywords": [
+  "GT2",
+  "2GT",
+  "timing pulley",
+  "belt pulley",
+  "20T",
+  "16T",
+  "3D printer"
+ ],
+ "source": [
+  "common.js",
+  "gt2.js",
+  "gt2_pulley.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Aluminium 6061": 2700,
+  "Steel 45H": 7850
+ },
+ "params": [
+  {
+   "key": "teeth",
+   "label": "Teeth",
+   "value": 20,
+   "unit": "count",
+   "min": 10,
+   "max": 80,
+   "step": 1
+  },
+  {
+   "key": "bore",
+   "label": "Bore",
+   "value": 5,
+   "unit": "mm",
+   "min": 2,
+   "max": 20
+  }
+ ],
+ "columns": [
+  "teeth",
+  "bore"
+ ],
+ "rows": [
+  {
+   "name": "20T bore 5",
+   "values": {
+    "teeth": 20,
+    "bore": 5
+   }
+  },
+  {
+   "name": "20T bore 6.35",
+   "values": {
+    "teeth": 20,
+    "bore": 6.35
+   }
+  },
+  {
+   "name": "20T bore 8",
+   "values": {
+    "teeth": 20,
+    "bore": 8
+   }
+  },
+  {
+   "name": "16T bore 5",
+   "values": {
+    "teeth": 16,
+    "bore": 5
+   }
+  }
+ ],
+ "default": "20T bore 5",
+ "checks": {
+  "20T bore 5": {
+   "size": [
+    16,
+    16,
+    16
+   ],
+   "connectors": [
+    "Bore",
+    "Hub face",
+    "Belt plane",
+    "Outer face"
+   ],
+   "connector_at": {
+    "Belt plane": [
+     0,
+     0,
+     11.5
+    ]
+   },
+   "metrics": {
+    "Teeth": 20,
+    "Pitch diameter": 12.732
+   },
+   "partNumber": "GT2-20T-B5-W6"
+  },
+  "16T bore 5": {
+   "size": [
+    13,
+    13,
+    16
+   ]
+  }
+ }
+}

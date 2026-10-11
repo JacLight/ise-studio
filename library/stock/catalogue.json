@@ -1,0 +1,22 @@
+{
+  "about": "Forma stock library: real bought-in parts with true geometry, stock() metadata and connectors. Each family is <id>.json (manifest: sizes as configuration rows, materials with densities, checks) + its program files. Families are shown in this order and grouped by their category.",
+  "categories": ["Fasteners", "Inserts & pins", "Bearings & motion", "Motors", "Structural"],
+  "order": [
+    "iso4762",
+    "iso10642",
+    "iso7380",
+    "iso4032",
+    "iso7089",
+    "heatset_insert",
+    "iso8734",
+    "bearing_deep_groove",
+    "linear_bearing_lmuu",
+    "linear_rod",
+    "shaft_collar",
+    "gt2_pulley",
+    "gt2_idler",
+    "servo_hobby",
+    "nema17",
+    "tslot_20"
+  ]
+}

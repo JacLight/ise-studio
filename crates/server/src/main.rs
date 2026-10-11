@@ -13,6 +13,7 @@ mod machines;
 mod peers;
 mod share;
 mod sourcing;
+mod stock;
 
 use axum::{
     Router,
@@ -2173,6 +2174,8 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/shares/revoke", axum::routing::post(share::revoke))
         // An invite link opens the join screen (the web app); joining itself is a POST.
         .route("/join", axum::routing::get_service(ServeFile::new(web.join("index.html"))).post(team_join))
+        .route("/stock", get(stock::list))
+        .route("/stock/{family}/preview", get(stock::preview))
         .route("/import/{file}", axum::routing::post(import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
         .fallback_service(ui)
         // Everything above answers to this computer only.

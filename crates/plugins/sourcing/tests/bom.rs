@@ -385,3 +385,37 @@ fn other_sources_add_buy_lines_that_roll_up_too() {
     let indented = bom::indented_csv(&b);
     assert!(indented.contains("JST-XH 2 pin"));
 }
+
+#[test]
+fn inserted_stock_library_items_are_buy_lines_with_their_catalogue_facts() {
+    let mut p = project();
+    let rig = id(&run(&mut p, "assembly.create", json!({ "name": "Rig" })).unwrap());
+    for i in 0..12 {
+        run(&mut p, "stock.insert", json!({ "family": "iso4762", "size": "M3×12", "parent": rig, "name": format!("S{i}"), "at": [i as f64 * 10.0, 0, 0] })).unwrap();
+    }
+    for i in 0..2 {
+        run(&mut p, "stock.insert", json!({ "family": "bearing_deep_groove", "size": "608-2RS", "parent": rig, "name": format!("B{i}") })).unwrap();
+    }
+    run(&mut p, "assembly.instance.create", json!({ "of": rig, "name": "Rig 1", "at": [0, 0, 0] })).unwrap();
+    run(&mut p, "assembly.instance.create", json!({ "of": rig, "name": "Rig 2", "at": [0, 0, 0] })).unwrap();
+
+    let b = compute(&p, Scope::Project, 10);
+    assert!(b.make.is_empty(), "stock items are bought, not made: {:?}", b.make.iter().map(|l| &l.name).collect::<Vec<_>>());
+    let screws = b.buy.iter().find(|l| l.stock.as_ref().is_some_and(|s| s.part_number.contains("M3×12"))).expect("the screws");
+    let s = screws.stock.as_ref().unwrap();
+    assert_eq!(screws.qty, 24, "12 per rig, two rigs");
+    assert_eq!(s.pack, Some(100));
+    assert_eq!(screws.order_qty, 300, "240 for ten units: three packs");
+    let price = s.unit_price.expect("a typical price");
+    assert_eq!(screws.unit_price, Some(price));
+    assert!((screws.extended.unwrap() - 300.0 * price).abs() < 1e-9);
+    assert!((screws.mass_kg.unwrap() - s.mass_g.unwrap() / 1000.0).abs() < 1e-12, "mass from massG");
+    let bearings = b.buy.iter().find(|l| l.stock.as_ref().is_some_and(|s| s.part_number.contains("608"))).expect("the bearings");
+    assert_eq!(bearings.qty, 4);
+    let pack = bearings.stock.as_ref().unwrap().pack;
+    assert_eq!(bearings.order_qty, bom::pack_round(40, pack));
+    assert!(bearings.mass_kg.is_some());
+    assert!(!b.flags.iter().any(|f| f.level == "warning"), "{:?}", b.flags);
+    let unit_mass = 24.0 * screws.mass_kg.unwrap() + 4.0 * bearings.mass_kg.unwrap();
+    assert!((b.totals.mass_kg.unwrap() - unit_mass).abs() < 1e-9);
+}

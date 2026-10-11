@@ -309,6 +309,12 @@ export const describeOperation = (op: string) => {
 export type Look = { color: string; metalness: number; roughness: number; opacity?: number };
 
 const LOOKS: Record<string, Look> = {
+  // Stock-library bodies (lumped materials named for the item).
+  "sg90 body": { color: "#2f62d4", metalness: 0, roughness: 0.38 },
+  "mg90s body": { color: "#232428", metalness: 0.05, roughness: 0.42 },
+  "mg996r body": { color: "#1d1e22", metalness: 0.05, roughness: 0.42 },
+  "servo lead": { color: "#b0532c", metalness: 0, roughness: 0.6 },
+  stator: { color: "#2c2f34", metalness: 0.45, roughness: 0.42 },
   glass: { color: "#8fb9cc", metalness: 0.1, roughness: 0.04, opacity: 0.38 },
   concrete: { color: "#c3bfb6", metalness: 0, roughness: 0.92 },
   "birch ply": { color: "#e3cb9f", metalness: 0, roughness: 0.7 },

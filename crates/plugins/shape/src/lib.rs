@@ -15,6 +15,7 @@ pub mod fea;
 pub mod fabricate;
 pub mod fillet;
 pub mod gears;
+pub mod library;
 pub mod mechanism;
 pub mod params;
 pub mod pathfinder;
@@ -55,6 +56,8 @@ impl Plugin for ShapePlugin {
             .component::<ParameterSet>()
             .component::<ShapeConfigurations>()
             .component::<sketch::Sketch>()
+            .component::<library::StockFamily>()
+            .command::<library::InsertStock>()
             .command::<sketch::CreateSketch>()
             .command::<sketch::UpdateSketch>()
             .command::<pathfinder::CombineSketch>()
