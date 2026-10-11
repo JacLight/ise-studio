@@ -94,7 +94,8 @@ impl Server {
             links: Mutex::new(peers::Links::default()),
             shared,
             dialing: AtomicBool::new(false),
-            conflicts: Mutex::new(Vec::new()),
+            conflicts: Mutex::new(std::fs::read_to_string(self.dir.join(format!("{name}.conflicts.json"))).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()),
+            conflicts_path: self.dir.join(format!("{name}.conflicts.json")),
             assets: Mutex::new(peers::Assets::default()),
         });
         open.insert(name, app.clone());
@@ -173,8 +174,10 @@ struct App {
     shared: broadcast::Sender<Arc<WireChangeSet>>,
     /// Whether this project's peer dialing loop is running.
     dialing: AtomicBool,
-    /// Fields teammates changed differently at the same time (latest first).
+    /// Fields teammates changed differently at the same time (latest first),
+    /// kept in `<project>.conflicts.json` until someone settles them.
     conflicts: Mutex<Vec<de_core::Conflict>>,
+    conflicts_path: PathBuf,
     /// Imported files arriving from teammates.
     assets: Mutex<peers::Assets>,
 }
@@ -204,6 +207,21 @@ enum AiMessage {
         value: Option<String>,
         #[serde(default)]
         to: Option<String>,
+    },
+}
+
+/// Where this person is pointing and what they have selected, for teammates
+/// to see live. Never saved; passed straight to the other members' engines.
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum LiveMessage {
+    Cursor {
+        #[serde(default)]
+        selected: Option<String>,
+        #[serde(default)]
+        part: Option<String>,
+        #[serde(default)]
+        pointer: Option<[f64; 3]>,
     },
 }
 
@@ -459,6 +477,7 @@ impl App {
                 list.insert(0, c.clone());
             }
             list.truncate(200);
+            self.save_conflicts(&list);
             let _ = self.events.send(json!({ "type": "conflicts", "conflicts": clashes }).to_string().into());
         }
         if project_changed(logged, &self.project) {
@@ -482,6 +501,10 @@ impl App {
     }
 
     /// Tells open views the team or its connections changed.
+    fn save_conflicts(&self, list: &[de_core::Conflict]) {
+        let _ = if list.is_empty() { std::fs::remove_file(&self.conflicts_path).or(Ok(())) } else { std::fs::write(&self.conflicts_path, serde_json::to_string_pretty(list).unwrap()) };
+    }
+
     fn team_changed(&self) {
         let _ = self.events.send(json!({ "type": "team" }).to_string().into());
     }
@@ -581,6 +604,10 @@ async fn session(app: Arc<App>, socket: WebSocket, user_id: String) {
 
     while let Some(Ok(message)) = stream.next().await {
         if let Message::Text(text) = message {
+            if let Ok(LiveMessage::Cursor { selected, part, pointer }) = serde_json::from_str::<LiveMessage>(text.as_str()) {
+                peers::cursor(&app, selected, part, pointer);
+                continue;
+            }
             // Messages for Forma AI run alongside the engine, not on its lock.
             if let Ok(m) = serde_json::from_str::<AiMessage>(text.as_str()) {
                 let reply = match m {
@@ -1451,6 +1478,56 @@ async fn team_invite(State(server): State<Arc<Server>>, Query(query): Query<Hash
 }
 
 #[derive(Deserialize)]
+struct RemoveMember {
+    member: String,
+}
+
+/// `POST /team/remove?project=…` `{ member }`: takes someone off the team.
+/// Their computer is dropped now and refused from then on, by every member as
+/// the news spreads; what they made before stays in the project.
+async fn team_remove(State(server): State<Arc<Server>>, Query(query): Query<HashMap<String, String>>, axum::Json(body): axum::Json<RemoveMember>) -> axum::response::Response {
+    let name = query.get("project").filter(|n| !n.is_empty()).cloned().unwrap_or_else(|| server.default.clone());
+    let app = match server.project(Some(&name)) {
+        Ok(app) => app,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    };
+    {
+        let mut team = app.team.lock().unwrap();
+        if let Err(e) = team.remove(&body.member, &server.engine) {
+            return (StatusCode::UNPROCESSABLE_ENTITY, e).into_response();
+        }
+        if let Err(e) = team.save(&server.dir, &name) {
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+    }
+    app.team_changed();
+    axum::Json(peers::status(&server, &app)).into_response()
+}
+
+#[derive(Deserialize)]
+struct Settle {
+    id: StableId,
+    path: String,
+    command_id: String,
+}
+
+/// `POST /team/conflicts/settle?project=…` `{ id, path, command_id }`: a
+/// clash someone has looked at (and kept or changed) leaves the list.
+async fn team_settle(State(server): State<Arc<Server>>, Query(query): Query<HashMap<String, String>>, axum::Json(body): axum::Json<Settle>) -> axum::response::Response {
+    let app = match server.project(query.get("project")) {
+        Ok(app) => app,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    };
+    {
+        let mut list = app.conflicts.lock().unwrap();
+        list.retain(|c| !(c.id == body.id && c.path == body.path && c.command_id == body.command_id));
+        app.save_conflicts(&list);
+    }
+    app.team_changed();
+    axum::Json(peers::status(&server, &app)).into_response()
+}
+
+#[derive(Deserialize)]
 struct TeamSettings {
     my_name: Option<String>,
     public_url: Option<String>,
@@ -1654,6 +1731,8 @@ async fn main() -> std::io::Result<()> {
         .route("/team", get(team_status))
         .route("/team/invite", axum::routing::post(team_invite))
         .route("/team/settings", axum::routing::post(team_settings))
+        .route("/team/conflicts/settle", axum::routing::post(team_settle))
+        .route("/team/remove", axum::routing::post(team_remove))
         // An invite link opens the join screen (the web app); joining itself is a POST.
         .route("/join", axum::routing::get_service(ServeFile::new(web.join("index.html"))).post(team_join))
         .route("/import/{file}", axum::routing::post(import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))

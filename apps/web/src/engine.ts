@@ -106,6 +106,9 @@ export type PickEdge = {
 /** The edges of one part (or the whole solid, part null) with its bounds [min x y z, max x y z]. */
 export type PartEdges = { part: string | null; bounds: [number, number, number, number, number, number]; edges: PickEdge[] };
 
+/** A teammate's live cursor: what they have selected and where they point (part coordinates, mm). */
+export type TeamCursor = { engine: string; name?: string; selected?: string | null; part?: string | null; pointer?: [number, number, number] | null; gone?: boolean };
+
 /** The project's team: members, live connections to their engines, and clashes. */
 export type TeamStatus = {
   engine: string;
@@ -129,6 +132,7 @@ export type TeamStatus = {
     by: { user_id: string };
     command_id: string;
   }[];
+  removed: { name: string; by: string; at: number }[];
 };
 
 export type AssemblyStats = {
@@ -312,6 +316,20 @@ export class Engine {
   }
 
   private teamListeners = new Set<() => void>();
+  private cursorListeners = new Set<(c: TeamCursor) => void>();
+
+  /** Tells teammates where this person is pointing and what is selected (live only, dropped when offline). */
+  sendCursor(c: { selected: string | null; part: string | null; pointer: [number, number, number] | null }) {
+    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: "cursor", ...c }));
+  }
+
+  /** Teammates' cursors as they move (and `gone` when one drops off). Returns the unsubscribe. */
+  onCursor(listener: (c: TeamCursor) => void) {
+    this.cursorListeners.add(listener);
+    return () => {
+      this.cursorListeners.delete(listener);
+    };
+  }
 
   /** Called when the team, its connections or its conflicts change. Returns the unsubscribe. */
   onTeam(listener: () => void) {
@@ -456,6 +474,9 @@ export class Engine {
       case "team":
       case "conflicts":
         for (const l of this.teamListeners) l();
+        break;
+      case "cursor":
+        for (const l of this.cursorListeners) l(message as TeamCursor);
         break;
       case "resync":
         this.send({ type: "snapshot" });

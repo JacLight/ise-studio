@@ -83,6 +83,29 @@ pub struct Team {
     /// An invite this engine is joining with, until the team key arrives.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub joining: Option<String>,
+    /// This engine's own secret: it proves to the others which member this
+    /// is (they know only its hash). Never sent anywhere but in a handshake.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub my_token: String,
+    /// People taken off the team: their engines are refused, and nothing more
+    /// from them is taken. Spreads to every member like other team news.
+    #[serde(default)]
+    pub removed: Vec<Removed>,
+}
+
+/// Someone taken off the team, and by whom.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Removed {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub engine: Option<String>,
+    #[serde(default)]
+    pub token_hash: String,
+    #[serde(default)]
+    pub by: String,
+    #[serde(default)]
+    pub at: u64,
 }
 
 pub fn now() -> u64 {
@@ -184,9 +207,80 @@ impl Team {
         }
     }
 
-    /// Whether changes made on `engine` are taken (viewers' are not).
+    /// Whether changes made on `engine` are taken (viewers' and removed people's are not).
     fn may_edit(&self, engine: &str) -> bool {
-        !self.members.iter().any(|m| m.engine.as_deref() == Some(engine) && m.role == "viewer")
+        !self.is_removed(engine) && !self.members.iter().any(|m| m.engine.as_deref() == Some(engine) && m.role == "viewer")
+    }
+
+    pub fn is_removed(&self, engine: &str) -> bool {
+        self.removed.iter().any(|r| r.engine.as_deref() == Some(engine))
+    }
+
+    /// Gives this engine its own credential if it has none yet (teams made
+    /// before credentials: the first one it presents is the one kept).
+    pub fn ensure_credential(&mut self, me: &str) {
+        if self.my_token.is_empty() {
+            self.my_token = secret();
+        }
+        let h = hash(&self.my_token);
+        if let Some(m) = self.members.iter_mut().find(|m| m.engine.as_deref() == Some(me)) {
+            if m.token_hash.is_empty() {
+                m.token_hash = h;
+            }
+        }
+    }
+
+    /// Whether `engine`, showing `credential`, is the member it claims to be
+    /// (and not someone removed). Binds the engine to its member the first
+    /// time a member's credential shows up from it.
+    fn admit(&mut self, engine: &str, credential: Option<&str>) -> bool {
+        if self.is_removed(engine) {
+            return false;
+        }
+        let h = credential.map(hash);
+        if h.as_ref().is_some_and(|h| self.removed.iter().any(|r| &r.token_hash == h)) {
+            return false;
+        }
+        match self.members.iter_mut().find(|m| m.engine.as_deref() == Some(engine)) {
+            Some(m) if m.token_hash.is_empty() => {
+                // An older member without a credential yet: trust on first use.
+                if let Some(h) = h {
+                    m.token_hash = h;
+                }
+                true
+            }
+            Some(m) => h.as_deref() == Some(m.token_hash.as_str()),
+            None => match self.members.iter_mut().find(|m| m.engine.is_none() && !m.token_hash.is_empty() && h.as_deref() == Some(m.token_hash.as_str())) {
+                Some(m) => {
+                    m.engine = Some(engine.to_string());
+                    true
+                }
+                None => false,
+            },
+        }
+    }
+
+    /// Takes someone off the team (by member id); `me` is this engine.
+    pub fn remove(&mut self, id: &str, me: &str) -> Result<Removed, String> {
+        if self.members.iter().any(|m| m.engine.as_deref() == Some(me) && m.role == "viewer") {
+            return Err("viewers cannot remove people".into());
+        }
+        let m = self.members.iter().find(|m| m.id == id).cloned().ok_or("no such member")?;
+        if m.engine.as_deref() == Some(me) {
+            return Err("you cannot remove yourself".into());
+        }
+        let by = if self.my_name.is_empty() { whoami() } else { self.my_name.clone() };
+        let r = Removed { id: m.id.clone(), name: m.name.clone(), engine: m.engine.clone(), token_hash: m.token_hash.clone(), by, at: now() };
+        self.removed.push(r.clone());
+        self.forget_removed();
+        Ok(r)
+    }
+
+    fn forget_removed(&mut self) {
+        let ids: BTreeSet<String> = self.removed.iter().map(|r| r.id.clone()).collect();
+        let engines: BTreeSet<String> = self.removed.iter().filter_map(|r| r.engine.clone()).collect();
+        self.members.retain(|m| !ids.contains(&m.id));
+        self.peers.retain(|p| !engines.contains(&p.engine));
     }
 
     /// What other engines may know: members without token hashes, and peers.
@@ -194,27 +288,43 @@ impl Team {
         let members: Vec<Value> = self
             .members
             .iter()
-            .map(|m| json!({ "id": m.id, "name": m.name, "email": m.email, "role": m.role, "engine": m.engine, "invited_by": m.invited_by, "created": m.created }))
+            .map(|m| json!({ "id": m.id, "name": m.name, "email": m.email, "role": m.role, "engine": m.engine, "invited_by": m.invited_by, "created": m.created, "token_hash": m.token_hash }))
             .collect();
         let peers: Vec<Value> = self.peers.iter().filter(|p| !p.engine.is_empty()).map(|p| json!({ "engine": p.engine, "name": p.name, "addresses": p.addresses })).collect();
-        json!({ "members": members, "peers": peers })
+        json!({ "members": members, "peers": peers, "removed": self.removed })
     }
 
     /// Takes in what another member's engine knows about the team.
     fn learn(&mut self, public: &Value, me: &str) {
+        if let Some(list) = public["removed"].as_array() {
+            for r in list {
+                if let Ok(r) = serde_json::from_value::<Removed>(r.clone())
+                    && !self.removed.iter().any(|x| x.id == r.id)
+                {
+                    self.removed.push(r);
+                }
+            }
+        }
         if let Some(list) = public["members"].as_array() {
             for m in list {
                 let Ok(mut m) = serde_json::from_value::<Member>(m.clone()) else { continue };
+                if self.removed.iter().any(|r| r.id == m.id) {
+                    continue;
+                }
                 match self.members.iter_mut().find(|x| x.id == m.id) {
                     Some(x) => {
                         if x.engine.is_none() {
                             x.engine = m.engine.take();
+                        }
+                        if x.token_hash.is_empty() {
+                            x.token_hash = std::mem::take(&mut m.token_hash);
                         }
                     }
                     None => self.members.push(m),
                 }
             }
         }
+        self.forget_removed();
         if let Some(list) = public["peers"].as_array() {
             for p in list {
                 if let Ok(p) = serde_json::from_value::<Peer>(p.clone())
@@ -242,6 +352,9 @@ enum Wire {
         key: Option<String>,
         #[serde(default)]
         invite: Option<String>,
+        /// The member's own secret (see `Team::my_token`).
+        #[serde(default)]
+        credential: Option<String>,
     },
     Welcome {
         engine: String,
@@ -252,6 +365,8 @@ enum Wire {
         #[serde(default)]
         key: Option<String>,
         team: Value,
+        #[serde(default)]
+        credential: Option<String>,
     },
     Changes {
         changes: Vec<WireChangeSet>,
@@ -273,6 +388,23 @@ enum Wire {
     Denied {
         reason: String,
     },
+    /// Where this member is pointing and what they have selected (live only).
+    Cursor {
+        #[serde(default)]
+        selected: Option<String>,
+        #[serde(default)]
+        part: Option<String>,
+        #[serde(default)]
+        pointer: Option<[f64; 3]>,
+    },
+}
+
+/// Passes this person's cursor to every teammate online.
+pub fn cursor(app: &App, selected: Option<String>, part: Option<String>, pointer: Option<[f64; 3]>) {
+    let text = serde_json::to_string(&Wire::Cursor { selected, part, pointer }).unwrap();
+    for o in app.links.lock().unwrap().online.values() {
+        let _ = o.tx.send(text.clone());
+    }
 }
 
 /// Live peer connections of one project, by engine.
@@ -379,11 +511,16 @@ pub fn invite(server: &Server, project: &str, app: &App, name: &str, email: &str
     if team.my_name.is_empty() {
         team.my_name = whoami();
     }
+    if team.my_token.is_empty() {
+        team.my_token = secret();
+    }
     // The inviter is a member too, so others know whose engine this is.
     if !team.members.iter().any(|m| m.engine.as_deref() == Some(server.engine.as_str())) {
         let me = team.my_name.clone();
-        team.members.push(Member { id: StableId::new().to_string(), name: me, email: String::new(), role: "editor".into(), token_hash: String::new(), engine: Some(server.engine.clone()), invited_by: String::new(), created: now() });
+        let token_hash = hash(&team.my_token);
+        team.members.push(Member { id: StableId::new().to_string(), name: me, email: String::new(), role: "editor".into(), token_hash, engine: Some(server.engine.clone()), invited_by: String::new(), created: now() });
     }
+    team.ensure_credential(&server.engine);
     let by = team.my_name.clone();
     team.members.push(Member { id: StableId::new().to_string(), name: name.trim().into(), email: email.trim().into(), role: role.into(), token_hash: hash(&token), engine: None, invited_by: by.clone(), created: now() });
     team.save(&server.dir, project).map_err(|e| e.to_string())?;
@@ -427,6 +564,13 @@ pub fn join(server: &Arc<Server>, invite: &str) -> Result<Value, String> {
 pub fn start(server: Arc<Server>, project: String, app: Arc<App>) {
     if app.dialing.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
+    }
+    {
+        let mut team = app.team.lock().unwrap();
+        if !team.key.is_empty() && team.my_token.is_empty() {
+            team.ensure_credential(&server.engine);
+            let _ = team.save(&server.dir, &project);
+        }
     }
     let started = std::time::Instant::now();
     tokio::spawn(async move {
@@ -487,6 +631,7 @@ async fn dial(server: Arc<Server>, project: String, app: Arc<App>, address: Stri
             known,
             key: (!team.key.is_empty()).then(|| team.key.clone()),
             invite: if team.key.is_empty() { team.joining.clone() } else { None },
+            credential: (!team.key.is_empty() && !team.my_token.is_empty()).then(|| team.my_token.clone()),
         }
     };
     let _ = tx.send(serde_json::to_string(&hello).unwrap());
@@ -498,7 +643,7 @@ async fn dial(server: Arc<Server>, project: String, app: Arc<App>, address: Stri
             _ => break None,
         }
     };
-    let Some(Wire::Welcome { engine, name, addresses, known, key, team: team_info }) = first else {
+    let Some(Wire::Welcome { engine, name, addresses, known, key, team: team_info, credential }) = first else {
         if let Some(Wire::Denied { reason }) = first {
             eprintln!("peer {address} refused {project}: {reason}");
         }
@@ -507,9 +652,20 @@ async fn dial(server: Arc<Server>, project: String, app: Arc<App>, address: Stri
     };
     {
         let mut team = app.team.lock().unwrap();
+        // A member checks it reached a member (not someone removed) before sending anything.
+        if key.is_none() && !team.key.is_empty() && !team.admit(&engine, credential.as_deref()) {
+            let _ = team.save(&server.dir, &project);
+            drop(team);
+            eprintln!("peer {address} for {project} is not a member any more: not syncing with it");
+            writer.abort();
+            return true;
+        }
         if let Some(k) = key {
             team.key = k;
-            team.joining = None;
+            // The invite token is this member's credential from now on.
+            if let Some(t) = team.joining.take() {
+                team.my_token = t;
+            }
         }
         team.peers.retain(|p| !p.engine.is_empty() || !p.addresses.contains(&address));
         team.meet(&engine, &name, &addresses);
@@ -548,7 +704,7 @@ pub async fn accept(server: Arc<Server>, socket: WebSocket, remote: String) {
     let deny = |tx: &mpsc::UnboundedSender<String>, reason: &str| {
         let _ = tx.send(serde_json::to_string(&Wire::Denied { reason: reason.into() }).unwrap());
     };
-    let Some(Wire::Hello { project, engine, name, addresses, known, key, invite }) = first else {
+    let Some(Wire::Hello { project, engine, name, addresses, known, key, invite, credential }) = first else {
         writer.abort();
         return;
     };
@@ -563,7 +719,9 @@ pub async fn accept(server: Arc<Server>, socket: WebSocket, remote: String) {
         let mut team = app.team.lock().unwrap();
         let member = !team.key.is_empty() && key.as_deref() == Some(team.key.as_str());
         let verdict = if member {
-            Ok(None)
+            if team.admit(&engine, credential.as_deref()) { Ok(None) } else { Err("not on this project's team (removed, or not recognised)") }
+        } else if team.is_removed(&engine) {
+            Err("removed from this project's team")
         } else {
             let h = invite.as_deref().map(hash);
             let key = team.key.clone();
@@ -600,6 +758,7 @@ pub async fn accept(server: Arc<Server>, socket: WebSocket, remote: String) {
             known: app.project.lock().unwrap().known().clone(),
             key: welcome_key,
             team: team.public(),
+            credential: (!team.my_token.is_empty()).then(|| team.my_token.clone()),
         }
     };
     let _ = tx.send(serde_json::to_string(&welcome).unwrap());
@@ -686,6 +845,10 @@ async fn run(
         }
     });
     while let Some(text) = lines.next().await {
+        // Someone removed (here, or by another member) is dropped at once.
+        if app.team.lock().unwrap().is_removed(&engine) {
+            break;
+        }
         match serde_json::from_str::<Wire>(&text) {
             Ok(Wire::Changes { changes }) => {
                 let may = { app.team.lock().unwrap().clone() };
@@ -738,6 +901,13 @@ async fn run(
                     }
                 }
             }
+            Ok(Wire::Cursor { selected, part, pointer }) => {
+                let _ = app.events.send(json!({ "type": "cursor", "engine": engine, "name": name, "selected": selected, "part": part, "pointer": pointer }).to_string().into());
+            }
+            Ok(Wire::Denied { reason }) => {
+                eprintln!("{project}: {name} ended the link: {reason}");
+                break;
+            }
             Ok(Wire::Team { team }) => {
                 let changed = {
                     let mut t = app.team.lock().unwrap();
@@ -763,6 +933,7 @@ async fn run(
         links.online.remove(&engine);
         links.last.insert(engine.clone(), std::time::Instant::now());
     }
+    let _ = app.events.send(json!({ "type": "cursor", "engine": engine, "gone": true }).to_string().into());
     app.team_changed();
 }
 
@@ -795,5 +966,61 @@ pub fn status(server: &Server, app: &App) -> Value {
         "changes": project.log().len(),
         "engines": engines.len(),
         "conflicts": app.conflicts.lock().unwrap().clone(),
+        "removed": team.removed.iter().map(|r| json!({ "name": r.name, "by": r.by, "at": r.at })).collect::<Vec<_>>(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn member(id: &str, name: &str, token: &str, engine: Option<&str>) -> Member {
+        Member { id: id.into(), name: name.into(), email: String::new(), role: "editor".into(), token_hash: hash(token), engine: engine.map(str::to_string), invited_by: "Ada".into(), created: 0 }
+    }
+
+    #[test]
+    fn members_prove_who_they_are_and_removed_people_are_refused_everywhere() {
+        // Ada's engine made the team and invited Bo (token "bo") and Cy (token "cy").
+        let mut ada = Team { key: "k".into(), my_name: "Ada".into(), ..Default::default() };
+        ada.members.push(Member { engine: Some("e-ada".into()), token_hash: String::new(), ..member("1", "Ada", "", None) });
+        ada.ensure_credential("e-ada");
+        assert!(!ada.my_token.is_empty() && ada.members[0].token_hash == hash(&ada.my_token), "Ada's engine has its own credential");
+        ada.members.push(member("2", "Bo", "bo", None));
+        ada.members.push(member("3", "Cy", "cy", None));
+        // Bo's engine shows up with Bo's credential: admitted, and bound to Bo.
+        assert!(ada.admit("e-bo", Some("bo")));
+        assert_eq!(ada.members[1].engine.as_deref(), Some("e-bo"));
+        // The wrong credential, or none, is refused; so is an engine nobody knows.
+        assert!(!ada.admit("e-bo", Some("cy")) && !ada.admit("e-bo", None));
+        assert!(!ada.admit("e-stranger", Some("nope")));
+        assert!(ada.admit("e-cy", Some("cy")));
+
+        // Bo's engine learns the team from Ada (gossip): the members and their credential hashes.
+        let mut bo = Team { key: "k".into(), my_name: "Bo".into(), my_token: "bo".into(), ..Default::default() };
+        bo.learn(&ada.public(), "e-bo");
+        assert!(bo.admit("e-cy", Some("cy")), "Bo recognises Cy too");
+
+        // Ada removes Cy. Ada refuses Cy at once, whatever engine Cy claims to be.
+        assert!(ada.remove("3", "e-ada").is_ok());
+        assert!(ada.members.iter().all(|m| m.id != "3"));
+        assert!(!ada.admit("e-cy", Some("cy")));
+        assert!(!ada.admit("e-bo", Some("cy")), "Cy's credential is refused even from another engine id");
+        assert!(!ada.may_edit("e-cy"), "and changes from Cy's engine are no longer taken");
+        assert!(ada.remove("1", "e-ada").is_err(), "nobody removes themselves");
+
+        // The news reaches Bo: Bo refuses Cy too, and cannot be talked into re-adding Cy.
+        bo.learn(&ada.public(), "e-bo");
+        assert!(!bo.admit("e-cy", Some("cy")));
+        assert!(bo.members.iter().all(|m| m.id != "3"));
+        let mut stale = ada.public();
+        stale["removed"] = json!([]);
+        stale["members"].as_array_mut().unwrap().push(json!({ "id": "3", "name": "Cy", "role": "editor", "engine": "e-cy", "token_hash": hash("cy") }));
+        bo.learn(&stale, "e-bo");
+        assert!(bo.members.iter().all(|m| m.id != "3"), "old news does not bring Cy back");
+
+        // A viewer cannot remove anyone.
+        let mut viewer = bo.clone();
+        viewer.members.iter_mut().find(|m| m.id == "2").unwrap().role = "viewer".into();
+        assert!(viewer.remove("1", "e-bo").is_err());
+    }
 }

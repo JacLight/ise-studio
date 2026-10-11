@@ -93,6 +93,13 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
   const [myName, setMyName] = useState(t?.my_name ?? "");
   const [publicUrl, setPublicUrl] = useState(t?.public_url ?? "");
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [removing, setRemoving] = useState<string | null>(null);
+  const remove = async (id: string) => {
+    const r = await fetch(projectUrl("/team/remove"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ member: id }) });
+    if (!r.ok) setError(await r.text());
+    setRemoving(null);
+    props.refresh();
+  };
 
   useEffect(() => {
     if (!created) return setQr(null);
@@ -153,10 +160,34 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
                 </b>
                 <small>{m.email || (m.role === "viewer" ? "Can view" : "Can edit")}</small>
               </span>
-              <span className={`member-state ${m.online ? "on" : m.joined ? "" : "invited"}`}>{m.me ? "This computer" : m.online ? "Online" : m.joined ? "Offline" : "Invited"}</span>
+              {removing === m.id ? (
+                <span className="member-remove-ask">
+                  Remove {m.name.split(" ")[0]}?
+                  <button type="button" className="danger" onClick={() => void remove(m.id)}>
+                    Remove
+                  </button>
+                  <button type="button" className="link-button" onClick={() => setRemoving(null)}>
+                    Cancel
+                  </button>
+                </span>
+              ) : (
+                <>
+                  <span className={`member-state ${m.online ? "on" : m.joined ? "" : "invited"}`}>{m.me ? "This computer" : m.online ? "Online" : m.joined ? "Offline" : "Invited"}</span>
+                  {!m.me && !t.members.find((x) => x.me && x.role === "viewer") && (
+                    <button type="button" className="member-remove" title={`Remove ${m.name} from the team: their computer stops syncing (what they made stays)`} aria-label={`Remove ${m.name}`} onClick={() => setRemoving(m.id)}>
+                      <Icon name="close" />
+                    </button>
+                  )}
+                </>
+              )}
             </li>
           ))}
         </ul>
+      )}
+      {t && t.removed?.length > 0 && (
+        <p className="team-removed">
+          Removed: {t.removed.map((r) => `${r.name}${r.by ? ` (by ${r.by})` : ""}`).join(", ")}. Their computers no longer sync with the team.
+        </p>
       )}
 
       {!created ? (
@@ -230,7 +261,11 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
         <div className="clashes">
           <h3>Changed at the same time</h3>
           {clashes.slice(0, 6).map((c) => (
-            <Clash key={c.command_id + c.path + c.id} clash={c} entities={props.entities} run={props.run} onDone={() => setDismissed((d) => new Set(d).add(c.command_id + c.path + c.id))} />
+            <Clash key={c.command_id + c.path + c.id} clash={c} entities={props.entities} run={props.run} onDone={() => {
+                // Hidden at once; the engine forgets it for good (it was kept across restarts until now).
+                setDismissed((d) => new Set(d).add(c.command_id + c.path + c.id));
+                void fetch(projectUrl("/team/conflicts/settle"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: c.id, path: c.path, command_id: c.command_id }) });
+              }} />
           ))}
         </div>
       )}

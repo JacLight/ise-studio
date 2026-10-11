@@ -16,7 +16,7 @@
 //! Merging the same change sets in any order gives the same values wherever
 //! the edits do not conflict.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::{command::Actor, ids::StableId};
@@ -24,7 +24,7 @@ use crate::{command::Actor, ids::StableId};
 /// A field two members changed differently at the same time. Every copy keeps
 /// the later change (by stamp); the other value is reported for someone to
 /// choose instead.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Conflict {
     /// Which value every copy now holds: "theirs" or "ours" (the later change
     /// wins everywhere); the other is kept here so nothing is lost.

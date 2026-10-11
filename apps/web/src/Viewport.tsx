@@ -202,6 +202,10 @@ export type ViewportHandle = {
 type Props = {
   entities: ReadonlyMap<string, EntityView>;
   selected: string | null;
+  /** Teammates online: where each points (world mm) and what they have selected, in their colour. */
+  teammates?: { engine: string; name: string; color: string; selected: string | null; pointer: [number, number, number] | null }[];
+  /** Where the pointer is over the model (world mm), or null off it; for teammates to see. */
+  onHover3D?: (p: [number, number, number] | null) => void;
   /** Other items picked with it (Shift-click): outlined, and moved with it while it is dragged. */
   also?: string[];
   live: LiveEdit | null;
@@ -657,6 +661,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
   const host = useRef<HTMLDivElement>(null);
   const label = useRef<HTMLDivElement>(null);
   const readout = useRef<HTMLDivElement>(null);
+  const cursorLayer = useRef<HTMLDivElement>(null);
   const faceBadge = useRef<HTMLDivElement>(null);
   const labelLayer = useRef<HTMLDivElement>(null);
   const sketchLabels = useRef<HTMLDivElement>(null);
@@ -882,6 +887,17 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         const p = toScreen(at);
         tag.style.display = p.behind ? "none" : "block";
         tag.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -50%)`;
+      }
+      // Teammates' cursors, where they point on the model.
+      for (const tag of Array.from(cursorLayer.current?.children ?? []) as HTMLElement[]) {
+        const mate = callbacks.current.teammates?.find((m) => m.engine === tag.dataset.engine);
+        if (!mate?.pointer) {
+          tag.style.display = "none";
+          continue;
+        }
+        const p = toScreen(new THREE.Vector3(...mate.pointer));
+        tag.style.display = p.behind ? "none" : "block";
+        tag.style.transform = `translate(${p.x}px, ${p.y}px)`;
       }
       const s = shape.current;
       const d = drag.current;
@@ -1328,7 +1344,25 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       dirty = true;
     };
 
+    // Where the pointer is on the model, a few times a second, for teammates.
+    let hoverSent = 0;
+    let hoverWas: string | null = null;
+    const reportHover = (e: PointerEvent) => {
+      const report = callbacks.current.onHover3D;
+      const now = performance.now();
+      if (!report || now - hoverSent < 120) return;
+      hoverSent = now;
+      const bodies = [...(three.current?.parts.values() ?? [])].flatMap((p) => p.meshes.filter((m) => m.visible));
+      const hit = rayAt(e.clientX, e.clientY).intersectObjects(bodies, true)[0];
+      const at: [number, number, number] | null = hit ? [hit.point.x, hit.point.y, hit.point.z].map((v) => Math.round(v * 10) / 10) as [number, number, number] : null;
+      const key = JSON.stringify(at);
+      if (key !== hoverWas) {
+        hoverWas = key;
+        report(at);
+      }
+    };
     const onMove = (e: PointerEvent) => {
+      reportHover(e);
       if (callbacks.current.sketch) {
         sketchPointer("move", e);
         return;
@@ -1743,7 +1777,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     }
     for (const [id, part] of t.parts) {
       // A picked part shows by its glow; the whole assembly's outline would bury it.
-      part.outline.visible = (id === selected || !!props.also?.includes(id)) && !props.selectedPart && turning.current?.id !== id;
+      const mine = (id === selected || !!props.also?.includes(id)) && !props.selectedPart;
+      const mate = mine ? undefined : props.teammates?.find((m) => m.selected === id);
+      part.outline.visible = (mine || !!mate) && turning.current?.id !== id;
+      (part.outline.material as THREE.LineBasicMaterial).color.set(mate ? mate.color : OUTLINE);
       // The picked part of an assembly glows; the rest of the assembly stays as built.
       const picked = id === selected && props.selectedPart ? assemblyParts(entities.get(id)).findIndex((p) => p.name === props.selectedPart) : -1;
       if (part.shared) {
@@ -1801,7 +1838,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       cam.updateProjectionMatrix();
     }
     t.invalidate();
-  }, [entities, selected, live, props.also, props.pivotMode, props.pivotLive, props.selectedPart, props.hidden, props.isolated, props.colorBy]);
+  }, [entities, selected, live, props.also, props.pivotMode, props.pivotLive, props.selectedPart, props.hidden, props.isolated, props.colorBy, props.teammates]);
 
   // The sketch being edited: redrawn on every change; orbiting waits while sketching.
   useEffect(() => {
@@ -2175,6 +2212,16 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       <div ref={pivotTip} className="face-badge pivot-tip" aria-hidden />
       <div ref={snapTag} className="snap-tag" aria-hidden />
       <div ref={readout} className="drag-readout" aria-hidden />
+      <div ref={cursorLayer} className="team-cursors" aria-hidden>
+        {(props.teammates ?? []).map((m) => (
+          <div key={m.engine} data-engine={m.engine} className="team-cursor" style={{ "--mate": m.color } as React.CSSProperties}>
+            <svg viewBox="0 0 16 16" width="16" height="16">
+              <path d="M1 1l5.5 13 1.8-5.2L13.5 7z" />
+            </svg>
+            <span>{m.name}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 });

@@ -4170,6 +4170,56 @@ dialog h3 {
   color: #b08a3a;
 }
 
+.member-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: #b3adbf;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.team-members li:hover .member-remove,
+.member-remove:focus-visible {
+  opacity: 1;
+}
+
+.member-remove:hover {
+  background: #fdecee;
+  color: #c4453c;
+}
+
+.member-remove .icon {
+  width: 12px;
+  height: 12px;
+}
+
+.member-remove-ask {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #5b5368;
+}
+
+.member-remove-ask .danger {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: #c4453c;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.team-removed {
+  margin: 4px 8px 0;
+  font-size: 11px;
+  color: #8a8398;
+}
+
 .invite-form,
 .invite-ready {
   display: grid;
@@ -5643,4 +5693,45 @@ button.download.drawing-open small {
 
 .face-hint .hint-action:hover {
   background: #ece6ff;
+}
+
+/* ---- Teammates' live cursors ---- */
+.team-cursors {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 6;
+}
+
+.team-cursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: none;
+  transition: transform 0.12s linear;
+  will-change: transform;
+}
+
+.team-cursor svg {
+  display: block;
+  fill: var(--mate);
+  stroke: #fff;
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.25));
+}
+
+.team-cursor span {
+  position: absolute;
+  left: 13px;
+  top: 13px;
+  padding: 2px 7px;
+  border-radius: 6px 6px 6px 2px;
+  background: var(--mate);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.18);
 }

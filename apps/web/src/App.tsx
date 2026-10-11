@@ -5,7 +5,7 @@ import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
 import { RequirementsPanel } from "./RequirementsPanel";
-import { type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, mm, projectName, projectTitle, projectUrl } from "./engine";
+import { type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, type TeamCursor, mm, projectName, projectTitle, projectUrl } from "./engine";
 import { type EdgeFinish, type Frac, type LiveEdit, type Shape, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
 import { HistoryBody, ObjectsBody, ProjectBody, PropertiesBody, ToolPanel, ViewsBody } from "./Panels";
 import { useEdgeEditor } from "./EdgeEditor";
@@ -50,6 +50,10 @@ function toPlacement(patch: Partial<Shape>, part: import("./engine").EntityView 
 const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && !!t.closest("input, textarea, select, [contenteditable='true']");
 
 const fmtNum = (v: number) => Number(v.toFixed(2)).toLocaleString("en-US");
+
+
+/** Teammates' colours (cursor, name tag, selection outline): distinct from the app's own violet. */
+const MATE_COLORS = ["#e2553f", "#1f9d74", "#2f7de1", "#d4880f", "#c23d8f", "#0f9fb3"];
 
 export function App({ engine }: { engine: Engine }) {
   const state = useSyncExternalStore(engine.subscribe, engine.getState);
@@ -637,6 +641,52 @@ export function App({ engine }: { engine: Engine }) {
   // The team: members, live links to their engines, clashes.
   const { team, refresh: refreshTeam } = useTeam(engine);
 
+  // Teammates' live cursors: what each has selected and where they point. A
+  // cursor not heard from for 30 s fades out (they stepped away or dropped off).
+  const [cursors, setCursors] = useState<Map<string, TeamCursor & { at: number }>>(new Map());
+  useEffect(() => {
+    const off = engine.onCursor((c) =>
+      setCursors((m) => {
+        const next = new Map(m);
+        if (c.gone) next.delete(c.engine);
+        else next.set(c.engine, { ...c, at: Date.now() });
+        return next;
+      }),
+    );
+    const timer = window.setInterval(() => setCursors((m) => (m.size && [...m.values()].some((c) => Date.now() - c.at > 30000) ? new Map([...m].filter(([, c]) => Date.now() - c.at <= 30000)) : m)), 5000);
+    return () => {
+      off();
+      window.clearInterval(timer);
+    };
+  }, [engine]);
+  const teammates = useMemo(
+    () =>
+      [...cursors.values()].map((c) => ({
+        engine: c.engine,
+        name: c.name || "Teammate",
+        color: MATE_COLORS[[...c.engine].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7) % MATE_COLORS.length]!,
+        selected: c.selected ?? null,
+        pointer: c.pointer ?? null,
+      })),
+    [cursors],
+  );
+  // Ours: sent when the pointer moves over the model or the selection changes, and every 10 s so they know we're here.
+  const hoverAt = useRef<[number, number, number] | null>(null);
+  const sendCursor = useCallback(() => engine.sendCursor({ selected, part: selectedPartName, pointer: hoverAt.current }), [engine, selected, selectedPartName]);
+  useEffect(() => {
+    if (!team?.online.length) return;
+    sendCursor();
+    const timer = window.setInterval(sendCursor, 10000);
+    return () => window.clearInterval(timer);
+  }, [sendCursor, team?.online.length]);
+  const onHover3D = useCallback(
+    (p: [number, number, number] | null) => {
+      hoverAt.current = p;
+      if (team?.online.length) sendCursor();
+    },
+    [sendCursor, team?.online.length],
+  );
+
   // Rounding and bevelling edges of the selected part.
   const edger = useEdgeEditor({ engine, entities: state.entities, run, notify, setPreview: setShapePreview });
   useEffect(() => {
@@ -940,6 +990,8 @@ export function App({ engine }: { engine: Engine }) {
             if (frac && selected) run("solid.part.set_pivot", { target: selected, u: frac[0], v: frac[1], w: frac[2] });
           }}
           onSelect={select}
+          teammates={teammates}
+          onHover3D={onHover3D}
           selectedPart={selectedPartName}
           hidden={hiddenItems}
           isolated={isolated}
