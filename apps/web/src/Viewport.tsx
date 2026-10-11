@@ -62,6 +62,21 @@ import {
 
 export type ViewName = "perspective" | "top" | "front" | "bottom";
 
+/**
+ * Driving a mechanism by hand: pressing on one of `groups` of part `id`
+ * and dragging turns (or slides) the drive joint at `at` along `axis`
+ * (part coordinates); `onDelta` gets each step in degrees (or mm).
+ */
+export type MotionGrab = {
+  id: string;
+  groups: number[];
+  at: [number, number, number];
+  axis: [number, number, number];
+  slide: boolean;
+  onStart: () => void;
+  onDelta: (d: number) => void;
+};
+
 /** A stress study as the view shows it (part coordinates, mm). */
 export type StressView = {
   faces: { kind: "support" | "load" | "hold" | "heat"; triangles: number[]; point: [number, number, number]; force?: [number, number, number] }[];
@@ -172,6 +187,8 @@ export type ViewportHandle = {
    * `degrees` about its axis through `at` (mm, program coordinates). Null puts it back.
    */
   turn: (id: string, bodies: TurnBody[] | null, options?: { ghost?: boolean }) => void;
+  /** Lets a moving part be grabbed and dragged to drive a mechanism (null stops it). */
+  grabMotion: (spec: MotionGrab | null) => void;
   /** Shows a stress study on a part: its supports and loads, and (when solved) the stress map. Null clears it. */
   stress: (id: string, view: StressView | null) => void;
   view: (name: ViewName) => void;
@@ -645,6 +662,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
   const sketchLayer = sketchLayerRef.current;
   const edgeLayerRef = useRef<EdgeLayer | null>(null);
   const turning = useRef<Turning | null>(null);
+  const motionGrab = useRef<MotionGrab | null>(null);
   const stressShown = useRef<{ id: string; group: THREE.Group; swing?: { mesh: THREE.Mesh; base: Float32Array; delta: Float32Array } } | null>(null);
   if (!edgeLayerRef.current) edgeLayerRef.current = new EdgeLayer();
   const edgeLayer = edgeLayerRef.current;
@@ -1169,6 +1187,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     };
 
     // Capture phase on the host runs before OrbitControls sees the event.
+    // A mechanism being dragged by hand: where the pointer was last.
+    let motionDrag: { x: number; y: number } | null = null;
     const onDown = (e: PointerEvent) => {
       // Sketching: a left click draws on the plane (zoom and right-drag pan still work).
       if (callbacks.current.sketch) {
@@ -1186,6 +1206,24 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         e.preventDefault();
         callbacks.current.onEdgeClick(key);
         return;
+      }
+      // A mechanism open for driving: pressing on a moving part grabs it.
+      const mg = motionGrab.current;
+      const mpart = mg ? three.current?.parts.get(mg.id) : undefined;
+      if (mg && mpart && e.button === 0) {
+        const hit = rayAt(e.clientX, e.clientY).intersectObject(mpart.body, true)[0];
+        const groupOf = (fi: number) => mpart.body.geometry.groups.findIndex((g) => fi * 3 >= g.start && fi * 3 < g.start + g.count);
+        const moving = hit && (hit.object !== mpart.body || (hit.faceIndex != null && mg.groups.includes(groupOf(hit.faceIndex))));
+        if (moving) {
+          e.stopPropagation();
+          e.preventDefault();
+          el.setPointerCapture(e.pointerId);
+          controls.enabled = false;
+          motionDrag = { x: e.clientX, y: e.clientY };
+          el.classList.add("is-dragging");
+          mg.onStart();
+          return;
+        }
       }
       const s = shape.current;
       const id = callbacks.current.selected;
@@ -1285,6 +1323,34 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     const onMove = (e: PointerEvent) => {
       if (callbacks.current.sketch) {
         sketchPointer("move", e);
+        return;
+      }
+      const mg = motionGrab.current;
+      const mpart = mg ? three.current?.parts.get(mg.id) : undefined;
+      if (motionDrag && mg && mpart) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const pivot = mpart.body.localToWorld(new THREE.Vector3(...mg.at));
+        const axis = new THREE.Vector3(...mg.axis).transformDirection(mpart.body.matrixWorld);
+        const p0 = toScreen(pivot);
+        const [ax, ay] = [motionDrag.x - rect.left, motionDrag.y - rect.top];
+        const [bx, by] = [e.clientX - rect.left, e.clientY - rect.top];
+        if (mg.slide) {
+          // Millimetres along the axis as drawn on screen.
+          const p1 = toScreen(pivot.clone().addScaledVector(axis, 10));
+          const v = [p1.x - p0.x, p1.y - p0.y];
+          const len2 = v[0] * v[0] + v[1] * v[1];
+          if (len2 > 1) mg.onDelta((((bx - ax) * v[0] + (by - ay) * v[1]) / len2) * 10);
+        } else {
+          // The angle swept round the axis on screen (y runs down, so anticlockwise is negative),
+          // turned the right way for whether the axis points at the camera.
+          const a1 = Math.atan2(ay - p0.y, ax - p0.x);
+          const a2 = Math.atan2(by - p0.y, bx - p0.x);
+          let d = a2 - a1;
+          d = d - 2 * Math.PI * Math.floor((d + Math.PI) / (2 * Math.PI));
+          const facing = axis.dot(camera.position.clone().sub(pivot)) >= 0 ? 1 : -1;
+          mg.onDelta(THREE.MathUtils.radToDeg(-d) * facing);
+        }
+        motionDrag = { x: e.clientX, y: e.clientY };
         return;
       }
       if (callbacks.current.edges) {
@@ -1433,6 +1499,14 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     const onUp = (e: PointerEvent) => {
       if (callbacks.current.sketch) {
         if (e.button === 0) sketchPointer("up", e);
+        return;
+      }
+      if (motionDrag) {
+        motionDrag = null;
+        e.stopPropagation();
+        if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+        controls.enabled = true;
+        el.classList.remove("is-dragging");
         return;
       }
       if (!drag.current) return;
@@ -1865,6 +1939,9 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       three.current.controls.autoRotate = false;
       fitView(three.current, id, glide);
       three.current.invalidate();
+    },
+    grabMotion(spec) {
+      motionGrab.current = spec;
     },
     stress(id, view) {
       const t = three.current;

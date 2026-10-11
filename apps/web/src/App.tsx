@@ -9,7 +9,7 @@ import { type CheckReport, type Engine, type EngineError, type EntityView, type 
 import { type EdgeFinish, type Frac, type LiveEdit, type Shape, box, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
 import { HistoryBody, ObjectsBody, ProjectBody, PropertiesBody, ToolPanel, ViewsBody } from "./Panels";
 import { useEdgeEditor } from "./EdgeEditor";
-import type { ProgramFace, StressView, TurnBody } from "./Viewport";
+import type { MotionGrab, ProgramFace, StressView, TurnBody } from "./Viewport";
 import type { FaceDriver } from "./engine";
 import { SyncBanner, TeamDialog, TeamPill, useTeam } from "./Team";
 import { PlaneMenu, useSketchEditor } from "./SketchEditor";
@@ -510,6 +510,7 @@ export function App({ engine }: { engine: Engine }) {
   const [stressPick, setStressPick] = useState<{ purpose: string; take: (f: ProgramFace) => void } | null>(null);
   const requestFace = useCallback((purpose: string, take: (f: ProgramFace) => void) => setStressPick({ purpose, take }), []);
   const showStress = useCallback((id: string, view: StressView | null) => viewport.current?.stress(id, view), []);
+  const grabMotion = useCallback((spec: MotionGrab | null) => viewport.current?.grabMotion(spec), []);
   useEffect(() => {
     if (!stressPick) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setStressPick(null);
@@ -1100,6 +1101,7 @@ export function App({ engine }: { engine: Engine }) {
               run={run}
               onPickFace={requestFace}
               onShowStress={showStress}
+              onGrab={grabMotion}
               onEdges={() => selected && edger.start(selected)}
               onRemoveFinish={(i) => {
                 const prog = selectedPart && program(selectedPart);

@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { type Motion, type PartStats, projectUrl } from "./engine";
 import { Icon } from "./icons";
 import { LinkageMotion } from "./LinkageMotion";
-import type { StressView, TurnBody } from "./Viewport";
+import type { MotionGrab, StressView, TurnBody } from "./Viewport";
 
 type Pair = { a: string; b: string; gap: number; at: number };
 type Strength = {
@@ -166,6 +166,7 @@ export function GearCheck({
   parts,
   onTurn,
   onShowStress,
+  onGrab,
 }: {
   id: string;
   version: unknown;
@@ -174,6 +175,7 @@ export function GearCheck({
   parts: PartStats[];
   onTurn: (id: string, bodies: TurnBody[] | null, options?: { ghost?: boolean }) => void;
   onShowStress: (id: string, view: StressView | null) => void;
+  onGrab: (spec: MotionGrab | null) => void;
 }) {
   const [torque, setTorque] = useState("0.5");
   const [rpm, setRpm] = useState("60");
@@ -203,7 +205,7 @@ export function GearCheck({
         <h3>Motion</h3>
         <span className="section-note">{linkage ? "Solved exactly at every step" : "Turn it here, or check it through a full turn"}</span>
       </header>
-      {linkage ? <LinkageMotion id={id} version={version} parts={parts} onTurn={onTurn} onShowStress={onShowStress} /> : motion && motion.bodies.length > 0 && <Turn id={id} version={version} motion={motion} parts={parts} onTurn={onTurn} />}
+      {linkage ? <LinkageMotion id={id} version={version} parts={parts} onTurn={onTurn} onShowStress={onShowStress} onGrab={onGrab} /> : motion && motion.bodies.length > 0 && <Turn id={id} version={version} motion={motion} parts={parts} onTurn={onTurn} />}
       {(!linkage || (motion && motion.bodies.length > 0)) && (
         <>
       <div className="gear-load">

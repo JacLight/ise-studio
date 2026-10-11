@@ -33,7 +33,7 @@ import {
 } from "./model";
 import { ScrubField } from "./ScrubField";
 import type { PanelKind } from "./ui";
-import type { ProgramFace, StressView, TurnBody, ViewName } from "./Viewport";
+import type { MotionGrab, ProgramFace, StressView, TurnBody, ViewName } from "./Viewport";
 
 export type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
 
@@ -307,6 +307,8 @@ export type PropertiesProps = {
   run: (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
   /** Picks a face in the view for a stress study (purpose is shown as a hint). */
   onPickFace: (purpose: string, take: (f: ProgramFace) => void) => void;
+  /** Lets the view drive a mechanism by hand (null stops it). */
+  onGrab: (spec: MotionGrab | null) => void;
   /** Shows a stress study in the view (null clears it). */
   onShowStress: (id: string, view: StressView | null) => void;
   /** Shows a mechanism turned in the view (null puts it back). */
@@ -604,7 +606,7 @@ export function PropertiesBody(props: PropertiesProps) {
         </div>
       </div>
 
-      {prog && part.shape?.moves && <GearCheck id={part.id} version={part.mesh} motion={part.shape.motion} linkage={!!part.shape.linkage} parts={part.shape.parts ?? []} onTurn={props.onTurn} onShowStress={props.onShowStress} />}
+      {prog && part.shape?.moves && <GearCheck id={part.id} version={part.mesh} motion={part.shape.motion} linkage={!!part.shape.linkage} parts={part.shape.parts ?? []} onTurn={props.onTurn} onShowStress={props.onShowStress} onGrab={props.onGrab} />}
 
       {prog && (!part.shape?.parts?.length || props.selectedPart) && (
         <StressStudy

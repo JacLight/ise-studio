@@ -481,6 +481,11 @@ pub struct JointInfo {
     pub kind: Kind,
     /// The value's unit: "°" or "mm".
     pub unit: String,
+    /// Where and along what, as drawn (mm, unit vector).
+    pub at: V3,
+    pub axis: V3,
+    /// Its first body is the ground: turning the second one forwards counts backwards.
+    pub first_is_ground: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -544,7 +549,11 @@ impl Linkage {
     pub fn sweep(&self, steps: usize, size: f64) -> Sweep {
         let size = size.max(1.0);
         let freedom = self.freedom(size);
-        let joints = self.joints.iter().map(|j| JointInfo { name: j.name.clone(), kind: j.kind, unit: if j.kind == Kind::Slider { "mm".into() } else { "°".into() } }).collect();
+        let joints = self
+            .joints
+            .iter()
+            .map(|j| JointInfo { name: j.name.clone(), kind: j.kind, unit: if j.kind == Kind::Slider { "mm".into() } else { "°".into() }, at: j.at, axis: j.axis, first_is_ground: j.a.is_none() })
+            .collect();
         let mut out = Sweep {
             bodies: self.bodies.clone(),
             joints,

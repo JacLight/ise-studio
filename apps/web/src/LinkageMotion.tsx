@@ -6,11 +6,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type PartStats, projectUrl } from "./engine";
 import { Icon } from "./icons";
-import type { StressView, TurnBody } from "./Viewport";
+import type { MotionGrab, StressView, TurnBody } from "./Viewport";
 
 type Sweep = {
   bodies: string[][];
-  joints: { name: string; kind: "hinge" | "slider" | "cylinder" | "ball" | "fixed"; unit: string }[];
+  joints: { name: string; kind: "hinge" | "slider" | "cylinder" | "ball" | "fixed"; unit: string; at: [number, number, number]; axis: [number, number, number]; first_is_ground: boolean }[];
   drive: number | null;
   speed: number;
   freedom: number;
@@ -52,12 +52,14 @@ export function LinkageMotion({
   parts,
   onTurn,
   onShowStress,
+  onGrab,
 }: {
   id: string;
   version: unknown;
   parts: PartStats[];
   onTurn: (id: string, bodies: TurnBody[] | null, options?: { ghost?: boolean }) => void;
   onShowStress: (id: string, view: StressView | null) => void;
+  onGrab: (spec: MotionGrab | null) => void;
 }) {
   const [state, setState] = useState<{ kind: "busy" } | { kind: "done"; sweep: Sweep } | { kind: "error"; text: string }>({ kind: "busy" });
   const [at, setAt] = useState(0); // position through the frames (0 … frames − 1)
@@ -163,6 +165,34 @@ export function LinkageMotion({
   }, [id, active, pose, groups, onTurn, xray]);
   useEffect(() => () => onTurn(id, null), [id, onTurn]);
 
+  // Grab a moving part in the view and drag: the drive follows the hand.
+  useEffect(() => {
+    if (!sweep || sweep.drive === null || last < 1) {
+      onGrab(null);
+      return;
+    }
+    const j = sweep.joints[sweep.drive];
+    const step = sweep.frames[1].drive - sweep.frames[0].drive;
+    const sign = j.first_is_ground ? -1 : 1;
+    onGrab({
+      id,
+      groups: groups.flat(),
+      at: j.at,
+      axis: j.axis,
+      slide: j.kind === "slider",
+      onStart: () => {
+        setActive(true);
+        setPlaying(false);
+      },
+      onDelta: (d) =>
+        setAt((a) => {
+          const x = a + (d * sign) / step;
+          return wraps ? ((x % last) + last) % last : Math.max(0, Math.min(last, x));
+        }),
+    });
+    return () => onGrab(null);
+  }, [sweep, groups, wraps, last, id, onGrab]);
+
   // Speeds and accelerations at the drive's real speed (rpm for a turn, mm/s for a slide).
   const motion = useMemo(() => {
     if (!sweep || sweep.drive === null || sweep.frames.length < 3) return null;
@@ -247,6 +277,7 @@ export function LinkageMotion({
           </button>
         )}
       </div>
+      <p className="motion-note">Or grab a moving part in the view and turn it by hand.</p>
       <ul className="joint-list">
         {sweep.joints.map((j, k) => {
           const m = motion?.[k];
