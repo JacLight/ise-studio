@@ -49,6 +49,11 @@ pub struct PairGap {
     /// A joint joins them directly (a shaft in its bore, a horn on its spline:
     /// contact there is meant).
     pub joined: bool,
+    /// They touch the same way at every step: a part turning in contact about
+    /// the joint's axis (a pin in its bearing, a horn screw on its spline), not
+    /// a clash the motion brings. Counted as joined.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub turning: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -245,6 +250,7 @@ fn gaps(world: &World, _j: &Joint, ids: &[(StableId, String)], frames: &[Vec<Tra
     }
     let every = frames.len().div_ceil(180).max(1);
     let mut best = vec![(f64::INFINITY, 0.0, None::<[f64; 2]>); pairs.len()];
+    let mut most = vec![0.0f64; pairs.len()];
     for (n, f) in frames.iter().enumerate().step_by(every) {
         let value = out.frames[n].value;
         let posed: HashMap<usize, Vec<Manifold>> = pairs
@@ -268,6 +274,7 @@ fn gaps(world: &World, _j: &Joint, ids: &[(StableId, String)], frames: &[Vec<Tra
                 }
                 g
             };
+            most[p] = most[p].max(g);
             if g < best[p].0 {
                 best[p].0 = g;
                 best[p].1 = value;
@@ -282,9 +289,12 @@ fn gaps(world: &World, _j: &Joint, ids: &[(StableId, String)], frames: &[Vec<Tra
     let mut list: Vec<PairGap> = pairs
         .iter()
         .zip(&best)
-        .filter(|(_, (g, _, _))| *g < search)
-        .map(|((a, b), (g, at, range))| {
+        .zip(&most)
+        .filter(|((_, (g, _, _)), _)| *g < search)
+        .map(|(((a, b), (g, at, range)), most)| {
             let (ia, ib) = (ids[*a].0, ids[*b].0);
+            let turning = *most < 1e-4;
+            let joined = turning || joined.iter().any(|(x, y)| (*x == ia && *y == ib) || (*x == ib && *y == ia));
             PairGap {
                 a: ids[*a].1.clone(),
                 b: ids[*b].1.clone(),
@@ -293,7 +303,8 @@ fn gaps(world: &World, _j: &Joint, ids: &[(StableId, String)], frames: &[Vec<Tra
                 gap: round(g.max(0.0), 1e4),
                 at: *at,
                 range: *range,
-                joined: joined.iter().any(|(x, y)| (*x == ia && *y == ib) || (*x == ib && *y == ia)),
+                joined,
+                turning,
             }
         })
         .collect();

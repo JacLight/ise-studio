@@ -704,7 +704,9 @@ struct Sample {
 fn sample(l: &Local, z: f64, reach: f64) -> Option<Sample> {
     let ring = l.ring(z);
     let hits = ring.hits(reach);
-    if !ring.inside && (hits as f64) < 0.25 * RAYS as f64 {
+    // A hole closes round the axis (a slotted tab's hole still meets ~90 % of the
+    // rays); material only to one side is a part the axis passes beside, not a hole.
+    if !ring.inside && (hits as f64) < 0.75 * RAYS as f64 {
         return None;
     }
     let (center, radius) = if ring.inside { ([0.0, 0.0], 0.0) } else { ring.circle(reach).unwrap_or(([0.0, 0.0], ring.min())) };
@@ -741,6 +743,11 @@ impl Segment {
         ds.sort_by(f64::total_cmp);
         let dfit = ds[ds.len() / 2];
         let off = hs.iter().map(|s| (s.center[0].powi(2) + s.center[1].powi(2)).sqrt()).fold(0.0, f64::max);
+        if std::env::var("FORMA_FIT_DEBUG").is_ok() && off > 0.5 {
+            for s in &hs {
+                eprintln!("  z {:.2} rmin {:.2} r {:.2} c {:?} cover {:.2}", s.z, s.rmin, s.radius, s.center, s.cover);
+            }
+        }
         Some((dmin, dfit, off))
     }
 }
@@ -750,7 +757,15 @@ fn segments(host: usize, samples: Vec<Option<Sample>>) -> Vec<Segment> {
     let mut cur: Vec<Sample> = vec![];
     for s in samples {
         match s {
-            Some(s) => cur.push(s),
+            Some(s) => {
+                // A step in the hole (a counterbore, a horn's centre hole over its spline bore) starts a new segment.
+                if let Some(last) = cur.last()
+                    && (last.inside != s.inside || (!s.inside && (last.radius - s.radius).abs() > 0.3))
+                {
+                    out.push(Segment { host, samples: std::mem::take(&mut cur) });
+                }
+                cur.push(s)
+            }
             None if !cur.is_empty() => out.push(Segment { host, samples: std::mem::take(&mut cur) }),
             None => {}
         }
@@ -801,9 +816,18 @@ fn screw_item(cx: &mut Ctx, i: usize) -> FitItem {
     let step = 0.25;
     let zs = depths(-0.2, -len + 0.15, step);
     let mut segs: Vec<Segment> = vec![];
-    for (h, l) in &locals {
-        let samples: Vec<Option<Sample>> = zs.iter().map(|z| sample(l, *z, reach)).collect();
-        segs.extend(segments(*h, samples));
+    let mut per_host: Vec<(usize, Vec<Option<Sample>>)> = locals.iter().map(|(h, l)| (*h, zs.iter().map(|z| sample(l, *z, reach)).collect())).collect();
+    // Only the innermost wall at each depth is the screw's hole: a sleeve's bore, not the part round the sleeve.
+    for k in 0..zs.len() {
+        let inner = per_host.iter().filter_map(|(_, v)| v[k].as_ref()).map(|x| if x.inside { 0.0 } else { x.rmin }).fold(f64::INFINITY, f64::min);
+        for (_, v) in per_host.iter_mut() {
+            if v[k].as_ref().is_some_and(|x| !x.inside && x.rmin > inner + 0.5) {
+                v[k] = None;
+            }
+        }
+    }
+    for (h, samples) in per_host {
+        segs.extend(segments(h, samples));
     }
     segs.sort_by(|a, b| b.top().total_cmp(&a.top()));
     for s in &segs {
@@ -889,8 +913,9 @@ fn screw_item(cx: &mut Ctx, i: usize) -> FitItem {
         };
         smallest_above = smallest_above.min(dfit);
         checks.push(check("Clearance hole", st, format!("Ø{} in {}: {class}", mm(dfit), host.name)).value(dfit, "mm").target(format!("{}–{} mm", mm(fine), mm(coarse))).part(&host.name).at(at));
-        let st = if room >= -1e-3 { FitStatus::Pass } else { FitStatus::Fail };
-        let text = if room >= -1e-3 {
+        // Within the meshes' chord error a shank line-to-line with its hole fits (an M2 through a maker's Ø2 tab hole).
+        let st = if room >= -0.03 { FitStatus::Pass } else { FitStatus::Fail };
+        let text = if room >= -0.03 {
             format!("{} mm off-axis in {}; the shank clears the wall by {} mm", mm(off), host.name, mm(room))
         } else {
             format!("{} mm off-axis in {}: the shank hits the hole wall ({} mm)", mm(off), host.name, mm(-room))
@@ -1250,7 +1275,9 @@ fn round_fit(cx: &mut Ctx, i: usize) -> FitItem {
         let rings: Vec<Ring> = zs.iter().map(|z| l.ring(*z)).collect();
         // A housing: the axis outside it, its wall round the outer ring.
         let housing: Vec<&Ring> = rings.iter().filter(|r| !r.inside && r.hits(reach) as f64 > 0.6 * RAYS as f64 && r.min() > outer / 2.0 - 0.6 && r.min() < outer / 2.0 + 1.0).collect();
-        if housing.len() * 2 >= rings.len() && !housing.is_empty() {
+        // A bearing's housing covers most of its width; a pin's may hold only part of its length.
+        let enough = |n: usize| if kind == "pin" { n * 4 >= rings.len() } else { n * 2 >= rings.len() };
+        if enough(housing.len()) && !housing.is_empty() {
             let fits: Vec<([f64; 2], f64)> = housing.iter().filter_map(|r| r.circle(reach)).collect();
             if fits.is_empty() {
                 continue;
@@ -1283,7 +1310,7 @@ fn round_fit(cx: &mut Ctx, i: usize) -> FitItem {
                     (exits.len() as f64 > 0.6 * RAYS as f64).then(|| exits.iter().sum::<f64>() / exits.len() as f64)
                 })
                 .collect();
-            if shaft.len() * 2 >= rings.len() && !shaft.is_empty() {
+            if enough(shaft.len()) && !shaft.is_empty() {
                 let ds = 2.0 * shaft.iter().sum::<f64>() / shaft.len() as f64;
                 let dev = ds - bore;
                 let (st, text) = fit_words(dev, printed, machined, bore, false, &cx.profile, &host, &label);

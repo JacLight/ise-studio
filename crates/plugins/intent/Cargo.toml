@@ -13,3 +13,6 @@ de-assembly.workspace = true
 manifold-csg = "0.4"
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+de-sourcing.workspace = true
