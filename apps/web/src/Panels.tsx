@@ -65,7 +65,7 @@ const TITLES: Record<PanelKind, string> = {
   objects: "Project objects",
   properties: "Properties",
   requirements: "Requirements",
-  history: "Change history",
+  history: "History and versions",
   views: "View",
   comments: "Comments",
 };
@@ -939,18 +939,36 @@ function timeAgo(at?: number) {
   return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export function HistoryBody(props: { history: HistoryEntry[]; userId: string; onUndo: () => void; onRedo: () => void }) {
+export function HistoryBody(props: {
+  history: HistoryEntry[];
+  userId: string;
+  onUndo: () => void;
+  onRedo: () => void;
+  /** The named versions (shown above the changes). */
+  versions?: ReactNode;
+  /** Look at the project as it was after a revision (read-only). */
+  onView?: (revision: number) => void;
+  /** Name the project as it was after a revision. */
+  onMark?: (revision: number) => void;
+}) {
   const [, tick] = useState(0);
   useEffect(() => {
     const t = window.setInterval(() => tick((n) => n + 1), 30000);
     return () => window.clearInterval(t);
   }, []);
   if (props.history.length === 0) {
-    return <p className="muted">Your edits will appear here automatically. Every change is saved as a revision you can undo.</p>;
+    return (
+      <>
+        {props.versions}
+        <p className="muted">Your edits will appear here automatically. Every change is saved as a revision you can undo.</p>
+      </>
+    );
   }
   return (
     <>
-      {props.history.slice(0, 60).map((h) => (
+      {props.versions}
+      <h3 className="panel-section">Changes</h3>
+      {props.history.slice(0, 60).map((h, i) => (
         <div key={h.revision} className="history-row">
           <Icon name="history" />
           <span>
@@ -959,6 +977,20 @@ export function HistoryBody(props: { history: HistoryEntry[]; userId: string; on
               Revision {h.revision} · {h.user_id === props.userId ? "You" : h.user_id} · {timeAgo(h.at)}
             </small>
           </span>
+          {(props.onView || props.onMark) && (
+            <span className="history-actions">
+              {props.onView && i > 0 && (
+                <button type="button" className="ib" title={`See the project as it was after revision ${h.revision} (read-only)`} aria-label={`View revision ${h.revision}`} onClick={() => props.onView!(h.revision)}>
+                  <Icon name="eye" />
+                </button>
+              )}
+              {props.onMark && (
+                <button type="button" className="ib" title={`Name the project as it was after revision ${h.revision}`} aria-label={`Mark revision ${h.revision} as a version`} onClick={() => props.onMark!(h.revision)}>
+                  <Icon name="plus" />
+                </button>
+              )}
+            </span>
+          )}
         </div>
       ))}
       <div className="row-buttons">

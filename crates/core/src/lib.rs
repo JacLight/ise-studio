@@ -20,6 +20,7 @@ pub mod registry;
 pub mod tx;
 pub mod units;
 pub mod value;
+pub mod versions;
 
 pub use bevy_ecs;
 pub use command::{Actor, Command, Envelope, SCHEMA_VERSION};
@@ -34,4 +35,5 @@ pub use registry::{Persist, Registry};
 pub use schemars;
 pub use serde_json::{Value, json};
 pub use tx::Tx;
+pub use versions::{Version, Vector};
 pub use units::{Density, DensityUnit, Length, LengthUnit, Mass, MassUnit};

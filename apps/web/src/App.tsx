@@ -20,7 +20,8 @@ import { sketchOf } from "./sketchModel";
 import { ComponentTree, InstanceBody, ParameterSets, StackingPlan, parameterSet, stackingSubject } from "./Components";
 import { type AiMode, type Group, type PanelKind, type UiPrefs, loadPrefs, savePrefs } from "./ui";
 import { ProjectsHome } from "./ProjectsHome";
-import { type CommentPin, type CommentsView, type MarkupTool, type PinAnchor, type Stroke, CommentsPanel, DraftCard, ThreadCard, colorFor, initialsOf, pinsFor, placeName, useThreads } from "./Comments";
+import { VersionsSection, openVersion } from "./Versions";
+import { type CommentPin, type CommentsView, type MarkupTool, type PinAnchor, type Stroke, type ThreadMarks, CommentsPanel, DraftCard, ThreadCard, colorFor, initialsOf, pinsFor, placeName, useThreads } from "./Comments";
 import { type ViewName, Viewport, type ViewportHandle } from "./Viewport";
 
 const DIMS = ["width", "depth", "height"] as const;
@@ -759,6 +760,15 @@ export function App({ engine }: { engine: Engine }) {
   const [openThread, setOpenThread] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ anchor: PinAnchor; strokes: Stroke[] } | null>(null);
   const [markTool, setMarkTool] = useState<MarkupTool | null>(null);
+  // A revision picked in the history to name as a version.
+  const [markAt, setMarkAt] = useState<number | null>(null);
+  // Marks being drawn in the open thread (a reply's, or more on one of your messages).
+  const [threadMarks, setThreadMarks] = useState<ThreadMarks | null>(null);
+  useEffect(() => {
+    setThreadMarks(null);
+    setMarkTool((t) => (draft ? t : null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openThread]);
   const [commentFilter, setCommentFilter] = useState<"open" | "resolved" | "all">("open");
   const [pinsShown, setPinsShown] = useState(true);
   const [frameReq, setFrameReq] = useState<{ id: string } | null>(null);
@@ -822,6 +832,7 @@ export function App({ engine }: { engine: Engine }) {
         const editing = e.target instanceof HTMLElement && !!e.target.closest(".comment-message");
         if (editing) return;
         if (markTool) setMarkTool(null);
+        else if (threadMarks) setThreadMarks(null);
         else if (draft) closeDraft();
         else if (openThread) setOpenThread(null);
         else if (commenting) setCommenting(false);
@@ -838,7 +849,7 @@ export function App({ engine }: { engine: Engine }) {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [markTool, draft, openThread, commenting, closeDraft, toggleCommenting, sketcher.editing, edger.editing]);
+  }, [markTool, threadMarks, draft, openThread, commenting, closeDraft, toggleCommenting, sketcher.editing, edger.editing]);
   // Sketching or picking edges takes the clicks: comment mode steps aside.
   useEffect(() => {
     if (sketcher.editing || edger.editing) {
@@ -865,6 +876,10 @@ export function App({ engine }: { engine: Engine }) {
     // The open thread keeps its pin even when the filter would hide it.
     const active = openThread ? threads.find((t) => t.id === openThread) : undefined;
     if (active && !active.gone && !pins.some((p) => p.id === active.id)) pins = [...pins, ...pinsFor([active], true)];
+    // Marks being drawn in the open thread show on its pin, in my colour.
+    if (active && threadMarks?.strokes.length) {
+      pins = pins.map((p) => (p.id === active.id ? { ...p, markup: [...p.markup, ...threadMarks.strokes.map((s) => ({ ...s, color: colorFor(me) }))] } : p));
+    }
     if (draft) {
       pins = [
         ...pins,
@@ -883,14 +898,14 @@ export function App({ engine }: { engine: Engine }) {
         onCancel={closeDraft}
       />
     ) : active ? (
-      <ThreadCard thread={active} me={me} run={run} onClose={() => setOpenThread(null)} />
+      <ThreadCard thread={active} me={me} run={run} onClose={() => setOpenThread(null)} marks={threadMarks} tool={markTool} onMarks={setThreadMarks} onTool={setMarkTool} />
     ) : null;
     if (!pins.length && !card && !commenting) return null;
     return {
       pins,
       active: draft ? "draft" : openThread,
       placing: commenting,
-      tool: draft ? markTool : null,
+      tool: draft || (active && threadMarks) ? markTool : null,
       me: { initials: initialsOf(me), color: colorFor(me) },
       card,
       onPlace: (anchor) => {
@@ -902,9 +917,12 @@ export function App({ engine }: { engine: Engine }) {
         closeDraft();
         setOpenThread(id);
       },
-      onStroke: (s) => setDraft((d) => (d ? { ...d, strokes: [...d.strokes, s].slice(-24) } : d)),
+      onStroke: (s) => {
+        if (draft) setDraft((d) => (d ? { ...d, strokes: [...d.strokes, s].slice(-24) } : d));
+        else setThreadMarks((m) => (m ? { ...m, strokes: [...m.strokes, s].slice(-24) } : m));
+      },
     };
-  }, [threads, commentFilter, pinsShown, commenting, openThread, draft, markTool, me, state.entities, run, postComment, closeDraft]);
+  }, [threads, commentFilter, pinsShown, commenting, openThread, draft, markTool, threadMarks, me, state.entities, run, postComment, closeDraft]);
   useEffect(() => {
     // Selecting something else leaves edge picking.
     if (edger.editing && selected !== edger.editing) edger.stop();
@@ -1606,7 +1624,17 @@ export function App({ engine }: { engine: Engine }) {
               onCheck={runCheck}
             />
           )}
-          {panel === "history" && <HistoryBody history={state.history} userId={state.userId} onUndo={undo} onRedo={redo} />}
+          {panel === "history" && (
+            <HistoryBody
+              history={state.history}
+              userId={state.userId}
+              onUndo={undo}
+              onRedo={redo}
+              onView={(revision) => openVersion({ revision })}
+              onMark={setMarkAt}
+              versions={<VersionsSection revision={state.revision} me={me} run={run} entities={state.entities} markAt={markAt} onMarked={() => setMarkAt(null)} />}
+            />
+          )}
           {panel === "views" && (
             <ViewsBody
               view={view}

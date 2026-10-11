@@ -156,3 +156,36 @@ fn markup_is_kept_in_the_parts_coordinates() {
     assert!(near(th.anchor.point, [50.0, 25.0, 20.0]));
     assert!(near(th.markup[0].points[0], [10.0, 10.0, 20.0]) && th.markup[0].arrow, "strokes converted like the pin");
 }
+
+#[test]
+fn replies_carry_markup_in_the_threads_part_coordinates() {
+    let mut p = project();
+    let bracket = component_of(&mut p);
+    let inst = id(&run(&mut p, "assembly.instance.create", json!({ "of": bracket, "name": "Bracket", "at": [200, 100, 0], "rotation": 90 })).unwrap());
+    let t = id(&run(&mut p, "comment.create", json!({ "target": inst, "at": [200, 110, 5], "text": "Hole here", "author": "Ada" })).unwrap());
+
+    // Bo answers with an arrow drawn in project coordinates: stored in the instance's own.
+    let r = id(&run(&mut p, "comment.reply", json!({ "thread": t, "author": "Bo", "text": "", "markup_at": [{ "points": [[200, 100, 5], [200, 110, 5]], "arrow": true }] })).unwrap());
+    let reply = p.get::<CommentReply>(r).unwrap().clone();
+    assert_eq!(reply.text, "", "markup alone is a reply");
+    assert!(near(reply.markup[0].points[0], [0.0, 0.0, 5.0]) && near(reply.markup[0].points[1], [10.0, 0.0, 5.0]) && reply.markup[0].arrow, "{:?}", reply.markup);
+
+    // When the instance moves, the reply's drawing goes with it (same frame as the pin).
+    run(&mut p, "assembly.instance.update", json!({ "target": inst, "at": [0, 0, 0], "rotation": 0 })).unwrap();
+    let f = frame(p.world(), inst).unwrap();
+    assert!(near(f.to_world(p.get::<CommentReply>(r).unwrap().markup[0].points[1]), [10.0, 0.0, 5.0]));
+
+    // Strokes in part coordinates are kept as given; the original poster adds markup later.
+    run(&mut p, "comment.markup", json!({ "target": t, "author": "Ada", "markup": [{ "points": [[1, 2, 3], [4, 5, 6]] }] })).unwrap();
+    let th = p.get::<CommentThread>(t).unwrap();
+    assert_eq!(th.markup.len(), 1);
+    assert!(near(th.markup[0].points[1], [4.0, 5.0, 6.0]) && !th.markup[0].arrow);
+    run(&mut p, "comment.markup", json!({ "target": r, "author": "Bo", "markup_at": [{ "points": [[3, 0, 0], [3, 3, 0]] }] })).unwrap();
+    assert_eq!(p.get::<CommentReply>(r).unwrap().markup.len(), 2);
+
+    // Only the author draws on a comment; nothing to draw is refused; a reply with no text keeps a stroke.
+    assert!(run(&mut p, "comment.markup", json!({ "target": t, "author": "Bo", "markup": [{ "points": [[0, 0, 0], [1, 1, 1]] }] })).is_err());
+    assert!(run(&mut p, "comment.markup", json!({ "target": t, "author": "Ada" })).is_err());
+    assert!(run(&mut p, "comment.markup", json!({ "target": r, "author": "Bo", "replace": true })).is_err());
+    assert!(run(&mut p, "comment.reply", json!({ "thread": t, "author": "Bo", "text": " " })).is_err(), "no text and no markup");
+}

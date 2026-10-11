@@ -22,6 +22,8 @@ pub enum ErrorCode {
     UndoConflict,
     NothingToUndo,
     NothingToRedo,
+    /// A view that cannot change anything (a past version, a shared link).
+    ReadOnly,
     Internal,
 }
 

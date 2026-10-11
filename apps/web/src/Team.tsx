@@ -9,6 +9,7 @@ import { Dialog } from "./Dialog";
 import { type Engine, type EntityView, type TeamStatus, projectName, projectTitle, projectUrl } from "./engine";
 import { Icon } from "./icons";
 import { program } from "./model";
+import { ViewLinks } from "./Sharing";
 
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
 
@@ -257,6 +258,8 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
         </div>
       )}
 
+      <ViewLinks entities={props.entities} hasPublicUrl={!!t?.public_url} />
+
       {clashes.length > 0 && (
         <div className="clashes">
           <h3>Changed at the same time</h3>
@@ -285,7 +288,10 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
               Internet address <span>optional</span>
               <input value={publicUrl} onChange={(e) => setPublicUrl(e.target.value)} placeholder="https://forma.yourstudio.com" />
             </label>
-            <p>For teammates outside this network: an address that reaches this computer's Forma (port 7420), through your proxy or an opened port. Connections use HTTPS WebSockets, so they pass through proxies.</p>
+            <p>
+              For teammates and view-only links outside this network: an address that reaches this computer's Forma (port 7420), through your proxy or an opened port. Connections use HTTPS
+              WebSockets, so they pass through proxies. Only teammates' engines and view-only links are answered from outside; the rest stays on this computer.
+            </p>
             <button type="button" className="secondary" onClick={saveSettings}>
               Save
             </button>

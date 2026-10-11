@@ -8,8 +8,10 @@
 //! Clients pick a project with `?project=<name>` on `/ws` and `/export`.
 
 mod ai;
+mod history;
 mod machines;
 mod peers;
+mod share;
 
 use axum::{
     Router,
@@ -59,6 +61,10 @@ struct Server {
     /// evaluation of a big part takes a while; preview and download share one).
     drawings: Mutex<HashMap<u64, Arc<de_shape::drawing::Drawing>>>,
     machines: machines::MachineQueries,
+    /// The built web app (served to this computer, and to view-only links).
+    web: PathBuf,
+    /// View-only links this engine serves.
+    shares: Mutex<share::Shares>,
 }
 
 /// Project names are file names: lowercase letters, digits and dashes.
@@ -67,7 +73,7 @@ fn valid_name(name: &str) -> bool {
 }
 
 /// The files of a project, by what follows its name.
-const PROJECT_FILES: [&str; 5] = ["jsonl", "thumb.png", "conflicts.json", "team.json", "ai"];
+const PROJECT_FILES: [&str; 6] = ["jsonl", "thumb.png", "conflicts.json", "team.json", "ai", "branch.json"];
 
 impl Server {
     /// Takes a project out of use (before its files move): its tabs are told
@@ -89,7 +95,9 @@ impl Server {
             return Ok(app.clone());
         }
         let path = self.dir.join(format!("{name}.jsonl"));
-        let project = load(&name, &path, self.registry.clone(), &self.engine).map_err(|e| e.to_string())?;
+        // A branch stamps its changes as its own engine (see `history`).
+        let origin = history::origin_for(&self.dir, &name, &self.engine);
+        let project = load(&name, &path, self.registry.clone(), &origin).map_err(|e| e.to_string())?;
         println!("opened project {name} at revision {} ({} entities)", project.revision().0, project.entity_count());
         // The file is made with the first change: opening a name that does not
         // exist (a mistyped link, a tab left on a deleted project) leaves nothing behind.
@@ -113,6 +121,7 @@ impl Server {
             conflicts_path: self.dir.join(format!("{name}.conflicts.json")),
             closed: AtomicBool::new(false),
             assets: Mutex::new(peers::Assets::default()),
+            looks: Mutex::new(Vec::new()),
         });
         open.insert(name, app.clone());
         Ok(app)
@@ -363,6 +372,8 @@ struct App {
     closed: AtomicBool,
     /// Imported files arriving from teammates.
     assets: Mutex<peers::Assets>,
+    /// Past versions rebuilt for read-only looks (newest first; see `history`).
+    looks: Mutex<Vec<(de_core::Vector, Arc<Mutex<Project>>)>>,
 }
 
 /// Messages for this project's Forma AI.
@@ -645,8 +656,9 @@ impl App {
         Ok(())
     }
 
-    /// Takes change sets from another member's engine (merged in causal order).
-    fn receive(&self, changes: Vec<WireChangeSet>) -> Result<(), String> {
+    /// Takes change sets from another member's engine (merged in causal order),
+    /// or from a branch merging back. Returns the clashes it reported.
+    fn receive(&self, changes: Vec<WireChangeSet>) -> Result<Vec<de_core::Conflict>, String> {
         let mut project = self.project.lock().unwrap();
         let (logged, before) = (project.log().len(), project.revision());
         let mut clashes = Vec::new();
@@ -674,7 +686,7 @@ impl App {
         if project_changed(logged, &self.project) {
             self.team_changed();
         }
-        result
+        result.map(|_| clashes)
     }
 
     /// An imported file arrived from a teammate: the parts reading it are
@@ -765,10 +777,30 @@ async fn websocket(
     upgrade: WebSocketUpgrade,
 ) -> axum::response::Response {
     let user_id = query.get("user").filter(|u| !u.is_empty()).cloned().unwrap_or_else(|| "local".into());
-    match server.project(query.get("project")) {
-        Ok(app) => upgrade.on_upgrade(move |socket| session(app, socket, user_id)),
-        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+    let app = match server.project(query.get("project")) {
+        Ok(app) => app,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    };
+    // `&version=…` or `&at=<revision>`: a read-only look at the project as it was then.
+    if let Some(which) = history::Which::from_query(&query) {
+        let name = query.get("project").filter(|n| !n.is_empty()).cloned().unwrap_or_else(|| server.default.clone());
+        let a = app.clone();
+        let found = tokio::task::spawn_blocking(move || {
+            let (seen, label) = history::resolve(&a.project.lock().unwrap(), &which)?;
+            history::look(&a, &seen).map(|p| (p, label, which.version))
+        })
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
+        return match found {
+            Ok((then, label, version)) => {
+                let title = info_of(&server.dir, &name)["title"].as_str().map(str::to_string).unwrap_or_else(|| pretty_name(&name));
+                let ro = share::ReadOnly { feed: share::Feed::Frozen(then), kind: "version", label, title, version, token: None };
+                upgrade.on_upgrade(move |socket| share::session(socket, ro))
+            }
+            Err(e) => (StatusCode::UNPROCESSABLE_ENTITY, e).into_response(),
+        };
     }
+    upgrade.on_upgrade(move |socket| session(app, socket, user_id))
 }
 
 async fn session(app: Arc<App>, socket: WebSocket, user_id: String) {
@@ -1725,7 +1757,10 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
 async fn cache_policy(request: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
     let fixed = request.uri().path().starts_with("/assets/");
     let mut response = next.run(request).await;
-    let html = response.headers().get(axum::http::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("text/html"));
+    if response.headers().contains_key(axum::http::header::CACHE_CONTROL) {
+        return response; // the handler chose (a view-only page is never stored)
+    }
+    let html =response.headers().get(axum::http::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("text/html"));
     let policy = if fixed && response.status().is_success() {
         "public, max-age=31536000, immutable"
     } else if html {
@@ -2036,46 +2071,10 @@ async fn main() -> std::io::Result<()> {
     let engine = engine_id(&dir)?;
     println!("engine {engine}");
     let machines = machines::MachineQueries::new(&root);
-    let server = Arc::new(Server { engine, port, ai, dir, default: default.clone(), registry, open: Mutex::new(HashMap::new()), drawings: Mutex::new(HashMap::new()), machines });
+    let shares = Mutex::new(share::Shares::load(&dir));
+    let server = Arc::new(Server { engine, port, ai, dir, default: default.clone(), registry, open: Mutex::new(HashMap::new()), drawings: Mutex::new(HashMap::new()), machines, web: web.clone(), shares });
     server.project(None).map_err(std::io::Error::other)?;
-
-    let ui = ServeDir::new(&web).fallback(ServeFile::new(web.join("index.html")));
-    let router = Router::new()
-        .route("/ws", get(websocket))
-        .route("/export/{file}", get(export))
-        .route("/projects", get(projects))
-        .route("/projects/{name}/info", axum::routing::post(project_info))
-        .route("/projects/{name}/duplicate", axum::routing::post(project_duplicate))
-        .route("/projects/{name}/delete", axum::routing::post(project_delete))
-        .route("/projects/trash", get(trash_list))
-        .route("/projects/trash/{entry}/restore", axum::routing::post(trash_restore))
-        .route("/projects/{name}/thumbnail", get(thumbnail_get).post(thumbnail_put).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024)))
-        .route("/slicer/{file}", axum::routing::post(send_to_slicer))
-        .route("/machines/jcz/status", axum::routing::post(machines::status))
-        .route("/gears/{id}", axum::routing::post(gear_check))
-        .route("/drawing/{file}", get(drawing))
-        .route("/motion/{id}", get(motion))
-        .route("/stress/{id}", axum::routing::post(stress))
-        .route("/modes/{id}", axum::routing::post(modes))
-        .route("/study/{id}", get(study))
-        .route("/touching/{id}", get(touching))
-        .route("/motion-stress/{id}", get(motion_stress))
-        .route("/thermal/{id}", axum::routing::post(thermal))
-        .route("/team", get(team_status))
-        .route("/team/invite", axum::routing::post(team_invite))
-        .route("/team/settings", axum::routing::post(team_settings))
-        .route("/team/conflicts/settle", axum::routing::post(team_settle))
-        .route("/team/remove", axum::routing::post(team_remove))
-        // An invite link opens the join screen (the web app); joining itself is a POST.
-        .route("/join", axum::routing::get_service(ServeFile::new(web.join("index.html"))).post(team_join))
-        .route("/import/{file}", axum::routing::post(import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
-        .fallback_service(ui)
-        .layer(axum::middleware::from_fn(cache_policy))
-        // Everything above answers to this computer only.
-        .layer(axum::middleware::from_fn(local_only))
-        // Other members' engines reach /peer from the network (they prove membership first).
-        .route("/peer", get(peer_socket))
-        .with_state(server.clone());
+    let router = router(server.clone(), &web);
 
     // Peers reach /peer over the network; everything else is checked to be local.
     let address = SocketAddr::from(([0, 0, 0, 0], port));
@@ -2105,4 +2104,282 @@ async fn main() -> std::io::Result<()> {
             let _ = tokio::signal::ctrl_c().await;
         })
         .await
+}
+
+/// Every route. Only `/peer` (members' engines), `/view/<token>` (view-only
+/// links) and the web app's bundles answer the network; the rest answers this
+/// computer alone.
+fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
+    let ui = ServeDir::new(web).fallback(ServeFile::new(web.join("index.html")));
+    Router::new()
+        .route("/ws", get(websocket))
+        .route("/export/{file}", get(export))
+        .route("/projects", get(projects))
+        .route("/projects/{name}/info", axum::routing::post(project_info))
+        .route("/projects/{name}/duplicate", axum::routing::post(project_duplicate))
+        .route("/projects/{name}/delete", axum::routing::post(project_delete))
+        .route("/projects/trash", get(trash_list))
+        .route("/projects/trash/{entry}/restore", axum::routing::post(trash_restore))
+        .route("/projects/{name}/thumbnail", get(thumbnail_get).post(thumbnail_put).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024)))
+        .route("/slicer/{file}", axum::routing::post(send_to_slicer))
+        .route("/machines/jcz/status", axum::routing::post(machines::status))
+        .route("/gears/{id}", axum::routing::post(gear_check))
+        .route("/drawing/{file}", get(drawing))
+        .route("/motion/{id}", get(motion))
+        .route("/stress/{id}", axum::routing::post(stress))
+        .route("/modes/{id}", axum::routing::post(modes))
+        .route("/study/{id}", get(study))
+        .route("/touching/{id}", get(touching))
+        .route("/motion-stress/{id}", get(motion_stress))
+        .route("/thermal/{id}", axum::routing::post(thermal))
+        .route("/team", get(team_status))
+        .route("/team/invite", axum::routing::post(team_invite))
+        .route("/team/settings", axum::routing::post(team_settings))
+        .route("/team/conflicts/settle", axum::routing::post(team_settle))
+        .route("/team/remove", axum::routing::post(team_remove))
+        .route("/versions", get(history::list))
+        .route("/versions/compare", get(history::compare))
+        .route("/versions/restore", axum::routing::post(history::restore))
+        .route("/versions/branch", axum::routing::post(history::branch))
+        .route("/branch", get(history::status))
+        .route("/branch/merge", axum::routing::post(history::merge))
+        .route("/shares", get(share::list).post(share::create))
+        .route("/shares/revoke", axum::routing::post(share::revoke))
+        // An invite link opens the join screen (the web app); joining itself is a POST.
+        .route("/join", axum::routing::get_service(ServeFile::new(web.join("index.html"))).post(team_join))
+        .route("/import/{file}", axum::routing::post(import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
+        .fallback_service(ui)
+        // Everything above answers to this computer only.
+        .layer(axum::middleware::from_fn(local_only))
+        // Other members' engines reach /peer from the network (they prove membership first).
+        .route("/peer", get(peer_socket))
+        // View-only links: the page and its read-only session, for the link's project only.
+        .route("/view/{token}", get(share::page))
+        .route("/view/{token}/ws", get(share::socket))
+        // The web app's bundles (static, named by content), for the view-only page.
+        .nest_service("/assets", ServeDir::new(web.join("assets")).append_index_html_on_directories(false))
+        .layer(axum::middleware::from_fn(cache_policy))
+        .with_state(server)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_tungstenite::tungstenite::Message as Ws;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("forma-{tag}-{}", StableId::new()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn server_in(dir: &std::path::Path) -> Arc<Server> {
+        let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin]));
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let ai = Arc::new(ai::AiConfig { repo: root.clone(), port: 0, claude: None, model: None });
+        let web = dir.join("web");
+        std::fs::create_dir_all(web.join("assets")).unwrap();
+        std::fs::write(web.join("index.html"), "<!doctype html><title>Forma</title>").unwrap();
+        std::fs::write(web.join("assets/app.js"), "console.log(1)").unwrap();
+        Arc::new(Server {
+            engine: "engine-test".into(),
+            port: 0,
+            ai,
+            dir: dir.to_path_buf(),
+            default: "default".into(),
+            registry,
+            open: Mutex::new(HashMap::new()),
+            drawings: Mutex::new(HashMap::new()),
+            machines: machines::MachineQueries::new(&root),
+            web,
+            shares: Mutex::new(share::Shares::load(dir)),
+        })
+    }
+
+    async fn serve(server: Arc<Server>) -> SocketAddr {
+        let web = server.web.clone();
+        let app = router(server, &web);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let at = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap() });
+        at
+    }
+
+    fn box_part(app: &App) {
+        app.commit_here("solid.box.create", json!({ "name": "Plate", "width": { "value": 40, "unit": "mm" }, "depth": { "value": 20, "unit": "mm" }, "height": { "value": 5, "unit": "mm" } })).unwrap();
+    }
+
+    async fn next_json(ws: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>) -> Value {
+        loop {
+            let m = tokio::time::timeout(std::time::Duration::from_secs(10), ws.next()).await.expect("a message in time").expect("open").expect("ok");
+            if let Ws::Text(t) = m {
+                return serde_json::from_str(t.as_str()).unwrap();
+            }
+        }
+    }
+
+    async fn http_status(at: SocketAddr, path: &str, extra: &str) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut s = tokio::net::TcpStream::connect(at).await.unwrap();
+        s.write_all(format!("GET {path} HTTP/1.1\r\nHost: {at}\r\n{extra}Connection: close\r\n\r\n").as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        s.read_to_end(&mut buf).await.unwrap();
+        String::from_utf8_lossy(&buf).split_whitespace().nth(1).unwrap().parse().unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_view_link_shows_its_project_only_and_takes_no_changes() {
+        let dir = temp_dir("share");
+        let server = server_in(&dir);
+        let shared = server.project(Some(&"bracket".to_string())).unwrap();
+        box_part(&shared);
+        let secret_project = server.project(Some(&"secret".to_string())).unwrap();
+        box_part(&secret_project);
+        box_part(&secret_project);
+        let token = secret_like();
+        server.shares.lock().unwrap().list.push(share::Share { id: "1".into(), token: token.clone(), project: "bracket".into(), label: String::new(), created: 0, expires: None, version: None });
+        let at = serve(server.clone()).await;
+
+        // The page and the bundles open; a wrong token does not.
+        assert_eq!(http_status(at, &format!("/view/{token}"), "").await, 200);
+        assert_eq!(http_status(at, "/assets/app.js", "").await, 200);
+        assert_eq!(http_status(at, &format!("/view/{}", "0".repeat(48)), "").await, 404);
+        // The rest of the API is not reachable through the network side (a proxy, here).
+        assert_eq!(http_status(at, "/projects", "X-Forwarded-For: 203.0.113.9\r\n").await, 403);
+
+        // The session shows the link's project, whatever project is asked for.
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{at}/view/{token}/ws?project=secret")).await.unwrap();
+        let snap = next_json(&mut ws).await;
+        assert_eq!(snap["type"], "snapshot");
+        assert_eq!(snap["project_id"], "bracket");
+        assert_eq!(snap["entities"].as_array().unwrap().len(), 1);
+        assert_eq!(snap["read_only"]["kind"], "share");
+        assert!(snap["commands"].as_array().unwrap().is_empty() && snap["ai"]["chat"].as_array().unwrap().is_empty());
+
+        // Every change is refused, and nothing changes.
+        let revision = shared.project.lock().unwrap().revision();
+        for m in [
+            json!({ "type": "commit", "request_id": 7, "operation": "solid.box.create", "parameters": { "width": { "value": 1, "unit": "mm" }, "depth": { "value": 1, "unit": "mm" }, "height": { "value": 1, "unit": "mm" } }, "expected_revision": revision }),
+            json!({ "type": "undo", "request_id": 8 }),
+            json!({ "type": "ai_ask", "request_id": 9, "text": "delete everything" }),
+        ] {
+            ws.send(Ws::Text(m.to_string().into())).await.unwrap();
+            let r = next_json(&mut ws).await;
+            assert_eq!((r["ok"].clone(), r["error"]["code"].clone()), (json!(false), json!("READ_ONLY")), "{m}");
+        }
+        assert_eq!(shared.project.lock().unwrap().revision(), revision);
+
+        // Live: a change made here reaches the viewer.
+        box_part(&shared);
+        let changed = next_json(&mut ws).await;
+        assert_eq!(changed["type"], "changed");
+
+        // Turned off: the viewer is dropped, and the link no longer opens.
+        server.shares.lock().unwrap().list.clear();
+        let mut dropped = false;
+        for _ in 0..4 {
+            match tokio::time::timeout(std::time::Duration::from_secs(6), ws.next()).await {
+                Ok(Some(Ok(Ws::Close(_)))) | Ok(None) | Ok(Some(Err(_))) => {
+                    dropped = true;
+                    break;
+                }
+                Ok(Some(Ok(_))) => continue,
+                Err(_) => break,
+            }
+        }
+        assert!(dropped, "the open viewer is dropped");
+        assert_eq!(http_status(at, &format!("/view/{token}"), "").await, 404);
+        assert!(tokio_tungstenite::connect_async(format!("ws://{at}/view/{token}/ws")).await.is_err());
+
+        // An expired link does not open either.
+        server.shares.lock().unwrap().list.push(share::Share { id: "2".into(), token: token.clone(), project: "bracket".into(), label: String::new(), created: 0, expires: Some(1), version: None });
+        assert_eq!(http_status(at, &format!("/view/{token}"), "").await, 404);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn secret_like() -> String {
+        format!("{:0>48}", StableId::new().0.simple().to_string())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn versions_branch_off_and_merge_back() {
+        let dir = temp_dir("branch");
+        let server = server_in(&dir);
+        let name = "gearbox".to_string();
+        let app = server.project(Some(&name)).unwrap();
+        app.commit_here("project.set_info", json!({ "title": "Gearbox" })).unwrap();
+        box_part(&app);
+        let marked = app.commit_here("version.create", json!({ "name": "v1.2", "author": "Ada" })).unwrap();
+        let version: StableId = serde_json::from_value(marked["output"]["id"].clone()).unwrap();
+        let boxes = |a: &App| {
+            let p = a.project.lock().unwrap();
+            p.entity_ids().into_iter().filter(|id| p.get::<de_solid::BoxFeature>(*id).is_some()).collect::<Vec<_>>()
+        };
+        let plate = boxes(&app)[0];
+        // After the version: the original renames the plate.
+        app.commit_here("solid.part.rename", json!({ "target": plate, "name": "Base plate" })).ok();
+
+        // A read-only look at the version, served on this computer.
+        let at = serve(server.clone()).await;
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{at}/ws?project={name}&version={version}")).await.unwrap();
+        let snap = next_json(&mut ws).await;
+        assert_eq!(snap["read_only"]["label"], "v1.2");
+        ws.send(Ws::Text(json!({ "type": "commit", "request_id": 1, "operation": "core.entity.delete", "parameters": { "target": plate }, "expected_revision": 0 }).to_string().into())).await.unwrap();
+        assert_eq!(next_json(&mut ws).await["error"]["code"], "READ_ONLY");
+
+        // Branch from the version: a new project that remembers where it came from.
+        let (seen, _) = history::resolve(&app.project.lock().unwrap(), &history::Which { version: Some(version), revision: None }).unwrap();
+        let wires = app.project.lock().unwrap().log_within(&seen);
+        assert!(!wires.is_empty());
+        let client = |path: &str, body: Value| {
+            let url = format!("http://{at}{path}");
+            async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let u: Vec<&str> = url.splitn(4, '/').collect();
+                let mut s = tokio::net::TcpStream::connect(u[2]).await.unwrap();
+                let body = body.to_string();
+                s.write_all(format!("POST /{} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", u[3], u[2], body.len()).as_bytes()).await.unwrap();
+                let mut buf = Vec::new();
+                s.read_to_end(&mut buf).await.unwrap();
+                let text = String::from_utf8_lossy(&buf).to_string();
+                let json_start = text.find("\r\n\r\n").map(|i| i + 4).unwrap_or(0);
+                let body = &text[json_start..];
+                // Chunked or not: take the JSON object in the body.
+                let start = body.find('{').unwrap_or(0);
+                let end = body.rfind('}').map(|i| i + 1).unwrap_or(body.len());
+                serde_json::from_str::<Value>(&body[start..end]).unwrap_or(json!({ "raw": text }))
+            }
+        };
+        let made = client(&format!("/versions/branch?project={name}"), json!({ "version": version })).await;
+        let branch_name = made["name"].as_str().unwrap_or_else(|| panic!("{made}")).to_string();
+        assert_eq!(branch_name, "gearbox-v1-2");
+        let branch = server.project(Some(&branch_name)).unwrap();
+        assert!(branch.project.lock().unwrap().origin().starts_with("engine-test~"), "the branch stamps its own changes");
+        assert_eq!(info_of(&server.dir, &branch_name)["title"], "Gearbox — branch from v1.2");
+        let status = history::branch_status(&server, &branch_name);
+        assert_eq!((status["from"].clone(), status["label"].clone()), (json!("gearbox"), json!("v1.2")));
+
+        // Work on the branch: a new part. Merge back: it lands in the original, the title does not.
+        box_part(&branch);
+        assert_eq!(history::branch_status(&server, &branch_name)["ahead"], 1, "the new part (its own title stays on the branch)");
+        let parts = |a: &App| boxes(a).len();
+        assert_eq!(parts(&app), 1);
+        let merged = client(&format!("/branch/merge?project={branch_name}"), json!({})).await;
+        assert_eq!(merged["into"], "gearbox", "{merged}");
+        assert_eq!(parts(&app), 2, "the branch's part is in the original");
+        assert_eq!(info_of(&server.dir, &name)["title"], "Gearbox", "the branch's title stays on the branch");
+        assert_eq!(history::branch_status(&server, &branch_name)["ahead"], 0);
+        // Merging again brings nothing new.
+        let revision = app.project.lock().unwrap().revision();
+        let again = client(&format!("/branch/merge?project={branch_name}"), json!({})).await;
+        assert_eq!(again["changes"], 0, "{again}");
+        assert_eq!(app.project.lock().unwrap().revision(), revision);
+
+        // Restore the original to the version: the merged part goes, as one new change.
+        let restored = client(&format!("/versions/restore?project={name}"), json!({ "version": version })).await;
+        assert!(restored["changed"].as_u64().unwrap_or(0) >= 1, "{restored}");
+        assert_eq!(parts(&app), 1);
+        assert_eq!(app.project.lock().unwrap().revision().0, revision.0 + 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

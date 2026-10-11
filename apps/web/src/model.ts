@@ -255,6 +255,12 @@ const OPERATIONS: Record<string, string> = {
   "comment.reopen": "Reopened a comment",
   "comment.edit": "Edited a comment",
   "comment.delete": "Deleted a comment",
+  "comment.markup": "Drew on a comment",
+  "version.create": "Marked a version",
+  "version.update": "Changed a version",
+  "version.delete": "Removed a version name",
+  "version.restore": "Restored a version",
+  "project.set_info": "Changed the project's details",
   "core.undo": "Undid a change",
   "core.redo": "Redid a change",
 };

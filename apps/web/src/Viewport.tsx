@@ -1120,7 +1120,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         const opacity = placed.get(pin.id) && !active ? 0.3 : active ? 1 : 0.72;
         for (const st of pin.markup) {
           const pts = st.points.map((p) => project(pinWorld(pin.target, p))).filter((q): q is { x: number; y: number; behind: boolean } => !!q);
-          draw(pts, !!st.arrow, pin.color, opacity);
+          draw(pts, !!st.arrow, st.color ?? pin.color, opacity);
         }
       }
       if (liveStroke && c) {
@@ -1905,7 +1905,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         controls.enabled = true;
         dirty = true;
         const cm = callbacks.current.comments;
-        const target = cm?.pins.find((p) => p.draft)?.target ?? null;
+        const target = cm?.pins.find((p) => p.draft || p.id === cm.active)?.target ?? null;
         if (cm && st.points.length >= 2) {
           const pts = st.points.map((w) => (target ? pinLocal(target, w) : w)).filter((v): v is THREE.Vector3 => !!v);
           if (pts.length >= 2) cm.onStroke({ points: pts.map(round3), arrow: st.arrow });
