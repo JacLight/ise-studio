@@ -10,6 +10,7 @@
 mod ai;
 mod history;
 mod machines;
+mod pcb;
 mod peers;
 mod share;
 mod sourcing;
@@ -640,7 +641,15 @@ impl App {
                 return reply(request_id, result);
             }
             ClientMessage::Check { request_id } => {
-                return reply(request_id, Ok(serde_json::to_value(de_intent::check(&project)).unwrap()));
+                let mut report = serde_json::to_value(de_intent::check(&project)).unwrap();
+                let boards = pcb::findings(&project);
+                if !boards.is_empty() {
+                    report["ok"] = json!(false);
+                    if let Some(f) = report["findings"].as_array_mut() {
+                        f.extend(boards);
+                    }
+                }
+                return reply(request_id, Ok(report));
             }
             ClientMessage::Preview(r) => {
                 let envelope = envelope(&project, actor, r.command_id, r.operation, r.parameters, r.expected_revision);
@@ -2175,7 +2184,7 @@ async fn main() -> std::io::Result<()> {
     let dir = project_path.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
     std::fs::create_dir_all(&dir)?;
     let default = project_path.file_stem().and_then(|s| s.to_str()).unwrap_or("default").to_string();
-    let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin]));
+    let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
     let claude = ai::AiConfig::find_claude();
     match &claude {
         Some(p) => println!("Forma AI: Claude Code at {}", p.display()),
@@ -2272,6 +2281,14 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/join", axum::routing::get_service(ServeFile::new(web.join("index.html"))).post(team_join))
         .route("/stock", get(stock::list))
         .route("/stock/{family}/preview", get(stock::preview))
+        .route("/pcb/library", get(pcb::library))
+        .route("/pcb/boards", get(pcb::boards))
+        .route("/pcb/buy", get(pcb::buy))
+        .route("/pcb/settings", get(pcb::settings_get).post(pcb::settings_post))
+        .route("/pcb/{id}", get(pcb::show))
+        .route("/pcb/{id}/bom.json", get(pcb::bom_json))
+        .route("/pcb/{id}/fab.zip", get(pcb::zip))
+        .route("/pcb/{id}/file/{name}", get(pcb::file))
         .route("/import/{file}", axum::routing::post(import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
         .fallback_service(ui)
         // Everything above answers to this computer only.
@@ -2299,7 +2316,7 @@ mod tests {
     }
 
     fn server_in(dir: &std::path::Path) -> Arc<Server> {
-        let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin]));
+        let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let ai = Arc::new(ai::AiConfig { repo: root.clone(), port: 0, claude: None, model: None });
         let web = dir.join("web");

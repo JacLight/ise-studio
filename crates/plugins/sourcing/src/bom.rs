@@ -278,6 +278,8 @@ pub fn files_for(process: Option<&str>) -> Vec<&'static str> {
         Some("3d_print") => vec!["stl", "3mf"],
         Some(p) if fabricate::is_sheet(Some(p)) => vec!["dxf"],
         Some("buy") => vec![],
+        // Gerbers and drill files come from the PCB workspace (its fab package).
+        Some("pcb_fab") => vec![],
         _ => vec!["step", "pdf"],
     }
 }

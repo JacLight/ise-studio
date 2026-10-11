@@ -68,7 +68,7 @@ fn title(project: &Project, name: &str) -> String {
 }
 
 fn compute(project: &Project, scope: Scope, options: &bom::Options) -> Result<Bom, String> {
-    bom::compute(project.world(), scope, options, &[])
+    bom::compute(project.world(), scope, options, &[&de_pcb::sourcing::PcbBuySource])
 }
 
 /// `GET /bom/<id>`: the bill of materials, as JSON (with the process rates

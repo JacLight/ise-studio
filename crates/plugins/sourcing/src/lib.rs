@@ -56,7 +56,7 @@ impl Plugin for SourcingPlugin {
 }
 
 /// Processes a part can name (as in programs' `part(…, { process })`).
-pub const PROCESSES: [&str; 11] = ["3d_print", "cnc_mill", "lathe", "cnc_router", "laser", "sheet_metal", "weld", "cast", "extrusion", "glazing", "buy"];
+pub const PROCESSES: [&str; 12] = ["3d_print", "cnc_mill", "lathe", "cnc_router", "laser", "sheet_metal", "weld", "cast", "extrusion", "glazing", "pcb_fab", "buy"];
 
 pub(crate) fn bad(code: ErrorCode, m: impl Into<String>) -> CommandError {
     CommandError::new(code, m)

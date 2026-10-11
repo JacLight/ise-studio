@@ -16,7 +16,7 @@ type Quote = { supplier: string; rfq?: string; reference?: string; lines: QuoteL
 type Award = { line: string; name: string; supplier: string; quote?: string; prices: PriceBreak[]; currency: string; lead_days?: number };
 type Plan = { suppliers: { supplier: string; name: string; lines: { line: string; item: number; name: string; qty: number; missing: boolean }[]; files: string[]; mailto: string; letter: string }[] };
 
-const KINDS = ["3d_print", "cnc_mill", "lathe", "cnc_router", "laser", "sheet_metal", "weld", "cast", "extrusion", "glazing", "distributor"];
+const KINDS = ["3d_print", "cnc_mill", "lathe", "cnc_router", "laser", "sheet_metal", "weld", "cast", "extrusion", "glazing", "pcb_fab", "distributor"];
 const kindName = (k: string) => (k === "distributor" ? "Distributor" : processName(k));
 
 /** Unit price at an order quantity: the largest break at or below it, else the smallest. */

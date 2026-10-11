@@ -73,6 +73,7 @@ const PATHS = {
   patternCircular: "M12 2.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M19.5 15a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M4.5 15a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M12 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z",
   mirror: "M12 3v18 M9 6 3 18h6z M15 6v12h6z",
   project: "M4 8l8-4 8 4-8 4z M12 12v3 M4 20h16 M7 17.5 12 15l5 2.5",
+  chip: "M7 7h10v10H7z M10 10h4v4h-4z M9.5 7V3.5 M14.5 7V3.5 M9.5 17v3.5 M14.5 17v3.5 M7 9.5H3.5 M7 14.5H3.5 M17 9.5h3.5 M17 14.5h3.5",
   // Sketch constraints.
   cHorizontal: "M4 12h16 M4 9v6 M20 9v6",
   cVertical: "M12 4v16 M9 4h6 M9 20h6",
