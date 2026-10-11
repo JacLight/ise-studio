@@ -81,8 +81,10 @@ export function useExplode(show: (id: string, bodies: TurnBody[] | null, options
   const split = useRef(new Map<string, "motion" | "explode">());
   const latest = useRef({ show, partsOf, explode, settled });
   latest.current = { show, partsOf, explode, settled };
-  // Whether the last ease was opening, so a spread change alone does not reframe.
+  // Whether the last ease was opening, and the spread last framed: opening or
+  // shutting frames at once, a new spread once it stops changing.
   const wasOpen = useRef(false);
+  const framedSpread = useRef<number | null>(null);
 
   const apply = useCallback((id: string) => {
     const { show, partsOf, explode } = latest.current;
@@ -115,7 +117,7 @@ export function useExplode(show: (id: string, bodies: TurnBody[] | null, options
   // Ease open or shut (about half a second), each frame re-showing the shape.
   useEffect(() => {
     if (!explode) return;
-    const { id, open } = explode;
+    const { id, open, spread } = explode;
     if (amount.current && amount.current.id !== id) {
       const other = amount.current.id;
       amount.current = null;
@@ -125,17 +127,33 @@ export function useExplode(show: (id: string, bodies: TurnBody[] | null, options
     const target = open ? 1 : 0;
     if (reducedMotion()) amount.current.t = target;
     let raf = 0;
-    let last = performance.now();
+    let timer = 0;
+    let last: number | null = null;
     const step = (now: number) => {
       const a = amount.current;
       if (!a || a.id !== id) return;
-      a.t = Math.max(0, Math.min(1, a.t + Math.sign(target - a.t) * ((now - last) / 520)));
+      // Timed from the first frame and at most a frame's worth per step: in a
+      // background tab no frames run, and the ease plays once it is shown
+      // rather than jumping to the end.
+      const dt = last === null ? 0 : Math.min(now - last, 100);
       last = now;
+      a.t = Math.max(0, Math.min(1, a.t + Math.sign(target - a.t) * (dt / 520)));
       apply(id);
       if (a.t !== target) raf = requestAnimationFrame(step);
       else {
-        if (wasOpen.current !== open) latest.current.settled?.(id);
+        const turned = wasOpen.current !== open;
         wasOpen.current = open;
+        if (turned) {
+          framedSpread.current = open ? spread : null;
+          latest.current.settled?.(id);
+        } else if (open && framedSpread.current !== spread) {
+          // A new spread (the slider, or Forma AI asking again): frame the
+          // parts where they now are once it stops changing.
+          timer = window.setTimeout(() => {
+            framedSpread.current = spread;
+            latest.current.settled?.(id);
+          }, 260);
+        }
         if (!open) {
           amount.current = null;
           setExplode(null);
@@ -143,7 +161,10 @@ export function useExplode(show: (id: string, bodies: TurnBody[] | null, options
       }
     };
     raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+    };
   }, [explode, apply]);
 
   return { explode, setExplode, turn, apply };

@@ -12,7 +12,7 @@
 // • Esc steps back from face to part. Values snap to 1 mm (⇧ 10, ⌥ 0.1),
 //   preview live, and commit once on release; Esc mid-drag cancels.
 
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { EntityView, MeshData } from "./engine";
@@ -212,9 +212,21 @@ type Turning = {
   body: THREE.Mesh;
   original: THREE.BufferGeometry;
   ghosted: { m: THREE.MeshStandardMaterial; opacity: number; transparent: boolean; depthWrite: boolean }[];
-  pivots: { pivot: THREE.Group; mesh: THREE.Mesh; key: string }[];
+  pivots: { pivot: THREE.Group; mesh: THREE.Mesh; key: string; groups: number[] }[];
   trails: THREE.LineSegments | null;
 };
+
+/**
+ * How a turning (or exploded) part has moved one of its bodies (a mesh
+ * group) within the part, or null when that body sits where it was built.
+ */
+function bodyPose(m: Turning | null, id: string, group: number): THREE.Matrix4 | null {
+  const p = m?.id === id ? m.pivots.find((q) => q.groups.includes(group)) : undefined;
+  if (!p) return null;
+  p.pivot.updateMatrix();
+  p.mesh.updateMatrix();
+  return p.pivot.matrix.clone().multiply(p.mesh.matrix);
+}
 
 /** Takes away a turning part's trail lines. */
 function clearTrails(m: Turning) {
@@ -411,7 +423,8 @@ type Scene = {
 };
 
 type View3 = { position: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3 };
-type Flight = { from: View3; to: View3; start: number; ms: number };
+/** A glide; its clock starts on its first drawn frame (null until then). */
+type Flight = { from: View3; to: View3; start: number | null; ms: number };
 
 /**
  * Moves the camera to a view over a moment, swinging round the target rather
@@ -427,7 +440,7 @@ function glideTo(t: Scene, to: View3, ms = 700) {
     settleCamera(t);
     return;
   }
-  t.flight = { from: { position: t.camera.position.clone(), target: t.controls.target.clone(), up: t.camera.up.clone() }, to, start: performance.now(), ms };
+  t.flight = { from: { position: t.camera.position.clone(), target: t.controls.target.clone(), up: t.camera.up.clone() }, to, start: null, ms };
   t.invalidate();
 }
 
@@ -435,7 +448,11 @@ function glideTo(t: Scene, to: View3, ms = 700) {
 function stepFlight(t: Scene, now: number): boolean {
   const f = t.flight;
   if (!f) return false;
-  const k = Math.min(1, (now - f.start) / f.ms);
+  // Timed from the first frame that draws it: a glide asked for in a
+  // background tab (no frames there) plays when the tab is shown, instead of
+  // having already run out unseen.
+  f.start ??= now;
+  const k = Math.max(0, Math.min(1, (now - f.start) / f.ms));
   const e = k < 0.5 ? 4 * k * k * k : 1 - (-2 * k + 2) ** 3 / 2;
   const target = f.from.target.clone().lerp(f.to.target, e);
   const a = f.from.position.clone().sub(f.from.target);
@@ -780,6 +797,11 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
   const three = useRef<Scene | null>(null);
   const callbacks = useRef(props);
   callbacks.current = props;
+  /** Where a picked face's body has moved to in an exploded or turning part (null: where it was built). */
+  const facePose = useCallback((pf: ProgramFace) => {
+    const g = pf.part ? assemblyParts(callbacks.current.entities.get(pf.id)).findIndex((q) => q.name === pf.part) : 0;
+    return g < 0 ? null : bodyPose(turning.current, pf.id, g);
+  }, []);
   const shape = useRef<Shape | null>(null); // displayed shape of the selected part
   const drag = useRef<Drag | null>(null);
   const face = useRef<Face | null>(null); // selected face of the selected part
@@ -1366,6 +1388,15 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     const raycaster = new THREE.Raycaster();
     const rayAt = (clientX: number, clientY: number) => {
       const rect = renderer.domElement.getBoundingClientRect();
+      // Picking must see what is on screen now, not what was last drawn. A
+      // frame can be pending (a part just arrived, the camera just framed it)
+      // or, in a background tab, never come: no animation frames run there
+      // and resize notices wait too, so the camera and the parts' world
+      // matrices are brought up to date here before casting.
+      const size = renderer.getSize(new THREE.Vector2());
+      if (Math.round(size.x) !== el.clientWidth || Math.round(size.y) !== el.clientHeight) resize();
+      if (dirty) scene.updateMatrixWorld();
+      camera.updateMatrixWorld();
       raycaster.setFromCamera(new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1), camera);
       return raycaster;
     };
@@ -1393,7 +1424,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     };
     const hitSelectedBody = (r: THREE.Raycaster) => {
       const body = selectedBody();
-      const hit = body ? r.intersectObjects(body, false)[0] : undefined;
+      // Into turning or exploded bodies too (split out as children, drawn where they have moved).
+      const hit = body ? r.intersectObjects(body, true)[0] : undefined;
       if (!hit) return undefined;
       // Only when nothing else stands in front of it: a click on a part in front picks that part.
       const all = [...(three.current?.parts.values() ?? [])].flatMap((p) => p.meshes.filter((m) => m.visible));
@@ -1616,7 +1648,9 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         } else if (pick?.kind === "center" || (!e.shiftKey && hitSelectedBody(r))) {
           const hit = r.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -start.z), new THREE.Vector3());
           if (!hit) return;
-          drag.current = { kind: "ground", id, offset: new THREE.Vector2(hit.x - start.x, hit.y - start.y), start, downX: e.clientX, downY: e.clientY, moved: pick?.kind === "center", targets };
+          // Not moved until the pointer travels, even from the centre handle:
+          // a click that lands on the handle still picks the face or part under it.
+          drag.current = { kind: "ground", id, offset: new THREE.Vector2(hit.x - start.x, hit.y - start.y), start, downX: e.clientX, downY: e.clientY, moved: false, targets };
           if (pick) gizmo.setActive(pick);
         } else {
           return;
@@ -1967,7 +2001,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       const id = callbacks.current.selected;
       const part = id ? three.current?.parts.get(id) : undefined;
       if (!id || !part || part.shared) return undefined;
-      const hit = r.intersectObject(part.body, false)[0];
+      // Into turning or exploded bodies too: they share the part's triangle
+      // numbering, and each is drawn moved, so the hit is taken back into
+      // the part's own coordinates through the body that was hit.
+      const hit = r.intersectObject(part.body, true)[0];
       if (!hit || hit.faceIndex == null) return undefined;
       const parts = assemblyParts(callbacks.current.entities.get(id));
       let range: [number, number] | undefined;
@@ -1978,7 +2015,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         range = [p.index_start, p.index_count];
         name = p.name;
       }
-      const face = flatFaceAt(part.body.geometry, hit.faceIndex, range) ?? curvedFaceAt(part.body.geometry, hit.faceIndex, part.body.worldToLocal(hit.point.clone()), range);
+      const local = hit.object.worldToLocal(hit.point.clone());
+      const face = flatFaceAt(part.body.geometry, hit.faceIndex, range) ?? curvedFaceAt(part.body.geometry, hit.faceIndex, local, range);
       return face ? { ...face, id, part: name } : null;
     };
 
@@ -2008,7 +2046,11 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     const onCanvasUp = (e: PointerEvent) => {
       if (callbacks.current.sketch || callbacks.current.edges) return;
       renderer.domElement.classList.remove("dragging");
-      if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return;
+      // Each press makes at most one click: a press that ended elsewhere must
+      // not pair with a later release near the same spot.
+      const from = down;
+      down = null;
+      if (!from || Math.hypot(e.clientX - from.x, e.clientY - from.y) > 4) return;
       const r = rayAt(e.clientX, e.clientY);
       const cm = callbacks.current.comments;
       if (cm?.tool) return;
@@ -2215,9 +2257,9 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     const t = three.current;
     const pf = props.programFace;
     const at = pf ? (t?.parts.get(pf.id)?.group.position ?? null) : null;
-    faceLayer.show(pf, at);
+    faceLayer.show(pf, at, pf ? facePose(pf) : null);
     t?.invalidate();
-  }, [props.programFace, faceLayer]);
+  }, [props.programFace, faceLayer, facePose]);
 
   // Faces picked for a shell or draft: drawn where the part sits.
   useEffect(() => {
@@ -2497,6 +2539,12 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     turn(id, bodies, options) {
       const t = three.current;
       if (!t) return;
+      // A face picked for push and pull rides with its body as it moves.
+      const reface = () => {
+        const pf = callbacks.current.programFace;
+        const at = pf ? t.parts.get(pf.id)?.group.position : undefined;
+        if (pf && at && faceLayer.active) faceLayer.setPose(at, facePose(pf));
+      };
       const part = t.parts.get(id);
       let m = turning.current;
       // Put back what is turning when asked, or when it is another part or was rebuilt.
@@ -2508,6 +2556,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         clearTrails(m);
         for (const p of m.pivots) m.body.remove(p.pivot);
         turning.current = m = null;
+        reface();
         t.invalidate();
       }
       if (!bodies || !part || part.shared || !Array.isArray(part.body.material)) return;
@@ -2529,7 +2578,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
           }
           pivot.add(mesh);
           part.body.add(pivot);
-          return { pivot, mesh, key: key(b) };
+          return { pivot, mesh, key: key(b), groups: b.groups };
         });
         part.body.geometry = rest;
         turning.current = m = { id, body: part.body, original, pivots, ghosted: [], trails: null };
@@ -2577,6 +2626,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       }
       // The selection outline is of the parts at rest: hidden while they turn.
       part.outline.visible = false;
+      reface();
       t.invalidate();
     },
     view(name) {
