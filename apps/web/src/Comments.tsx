@@ -10,7 +10,12 @@ import { partName } from "./model";
 type Vec3 = [number, number, number];
 
 /** A freehand stroke or arrow drawn on the model (points in the pinned part's coordinates). */
-export type Stroke = { points: Vec3[]; arrow?: boolean };
+export type Stroke = {
+  points: Vec3[];
+  arrow?: boolean;
+  /** Display only: whose stroke it is (a reply's marks show in its author's colour). */
+  color?: string;
+};
 export type Anchor = { target?: string | null; part?: string | null; point: Vec3; normal?: Vec3 | null };
 export type ThreadData = {
   anchor: Anchor;
@@ -23,7 +28,10 @@ export type ThreadData = {
   edited?: number | null;
   markup?: Stroke[];
 };
-export type ReplyData = { thread: string; author: string; created: number; text: string; edited?: number | null };
+export type ReplyData = { thread: string; author: string; created: number; text: string; edited?: number | null; markup?: Stroke[] };
+
+/** Marks being drawn in an open thread: for a new reply ("reply"), or added to one of your messages (its id). */
+export type ThreadMarks = { target: string; strokes: Stroke[] };
 
 export const threadOf = (e: EntityView | undefined) => e?.components["comment.thread"] as ThreadData | undefined;
 export const replyOf = (e: EntityView | undefined) => e?.components["comment.reply"] as ReplyData | undefined;
@@ -125,7 +133,8 @@ export function pinsFor(threads: Thread[], showResolved: boolean): CommentPin[] 
       normal: t.anchor.normal ?? null,
       resolved: !!t.resolved,
       replies: t.replies.length,
-      markup: t.markup ?? [],
+      // The thread's own marks, then each reply's in its author's colour.
+      markup: [...(t.markup ?? []), ...t.replies.flatMap((r) => (r.markup ?? []).map((st) => ({ ...st, color: colorFor(r.author) })))],
     }));
 }
 
@@ -140,7 +149,17 @@ export function Avatar({ name, size = 26 }: { name: string; size?: number }) {
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
 
 /** A text box that grows with what is typed; Enter sends, Shift+Enter starts a new line. */
-function Composer(props: { placeholder: string; submit: string; onSubmit: (text: string) => Promise<boolean>; initial?: string; autoFocus?: boolean; onCancel?: () => void; extra?: React.ReactNode }) {
+function Composer(props: {
+  placeholder: string;
+  submit: string;
+  onSubmit: (text: string) => Promise<boolean>;
+  initial?: string;
+  autoFocus?: boolean;
+  onCancel?: () => void;
+  extra?: React.ReactNode;
+  /** Something else is ready to send (marks on the model): the text may stay empty. */
+  ready?: boolean;
+}) {
   const [text, setText] = useState(props.initial ?? "");
   const [sending, setSending] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -155,7 +174,7 @@ function Composer(props: { placeholder: string; submit: string; onSubmit: (text:
   }, [props.autoFocus]);
   const send = async () => {
     const t = text.trim();
-    if (!t || sending) return;
+    if ((!t && !props.ready) || sending) return;
     setSending(true);
     const ok = await props.onSubmit(t);
     setSending(false);
@@ -190,7 +209,7 @@ function Composer(props: { placeholder: string; submit: string; onSubmit: (text:
             Cancel
           </button>
         )}
-        <button type="button" className="composer-send" disabled={!text.trim() || sending} onClick={() => void send()} aria-label={props.submit} title={`${props.submit} (Enter)`}>
+        <button type="button" className="composer-send" disabled={(!text.trim() && !props.ready) || sending} onClick={() => void send()} aria-label={props.submit} title={`${props.submit} (Enter)`}>
           <Icon name="send" />
         </button>
       </div>
@@ -198,7 +217,44 @@ function Composer(props: { placeholder: string; submit: string; onSubmit: (text:
   );
 }
 
-function Message(props: { id: string; author: string; created: number; text: string; edited?: number | null; mine: boolean; run: Run; me: string; root?: boolean; onDeleted?: () => void }) {
+/** Pen, arrow and undo for marks drawn on the model. */
+function MarkupTools(props: { tool: MarkupTool | null; strokes: number; onTool: (t: MarkupTool | null) => void; onUndo: () => void }) {
+  return (
+    <span className="markup-tools" role="group" aria-label="Markup">
+      <button type="button" className={`ib ${props.tool === "pen" ? "active" : ""}`} aria-pressed={props.tool === "pen"} title="Draw on the model" aria-label="Draw on the model" onClick={() => props.onTool(props.tool === "pen" ? null : "pen")}>
+        <Icon name="pencil" />
+      </button>
+      <button type="button" className={`ib ${props.tool === "arrow" ? "active" : ""}`} aria-pressed={props.tool === "arrow"} title="Draw an arrow" aria-label="Draw an arrow" onClick={() => props.onTool(props.tool === "arrow" ? null : "arrow")}>
+        <Icon name="arrow" />
+      </button>
+      {props.strokes > 0 && (
+        <button type="button" className="ib" title="Undo last mark" aria-label="Undo last mark" onClick={props.onUndo}>
+          <Icon name="undo" />
+        </button>
+      )}
+    </span>
+  );
+}
+
+const marksText = (n: number) => `${n} ${n === 1 ? "mark" : "marks"}`;
+
+function Message(props: {
+  id: string;
+  author: string;
+  created: number;
+  text: string;
+  edited?: number | null;
+  mine: boolean;
+  run: Run;
+  me: string;
+  root?: boolean;
+  onDeleted?: () => void;
+  /** Marks it carries on the model. */
+  marks?: number;
+  readOnly?: boolean;
+  /** Start drawing more marks for it (your own messages). */
+  onDraw?: () => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [confirm, setConfirm] = useState(false);
   return (
@@ -211,8 +267,13 @@ function Message(props: { id: string; author: string; created: number; text: str
             {ago(props.created)}
             {props.edited ? " · edited" : ""}
           </time>
-          {props.mine && !editing && (
+          {props.mine && !editing && !props.readOnly && (
             <span className="comment-own">
+              {props.onDraw && (
+                <button type="button" className="ib" title="Add marks on the model" aria-label="Add marks on the model" onClick={props.onDraw}>
+                  <Icon name="arrow" />
+                </button>
+              )}
               <button type="button" className="ib" title="Edit" aria-label="Edit comment" onClick={() => setEditing(true)}>
                 <Icon name="pencil" />
               </button>
@@ -236,7 +297,12 @@ function Message(props: { id: string; author: string; created: number; text: str
             }}
           />
         ) : (
-          <p className="comment-text">{props.text}</p>
+          props.text && <p className="comment-text">{props.text}</p>
+        )}
+        {(props.marks ?? 0) > 0 && (
+          <span className="comment-marks" title="Drawn on the model, shown while the thread is open">
+            <Icon name="pencil" /> {marksText(props.marks!)} on the model
+          </span>
         )}
         {confirm && (
           <div className="comment-confirm" role="alert">
@@ -254,12 +320,47 @@ function Message(props: { id: string; author: string; created: number; text: str
   );
 }
 
-/** An open thread: the comment, its replies, a reply box, resolve. */
-export function ThreadCard(props: { thread: Thread; me: string; run: Run; onClose: () => void }) {
+/** An open thread: the comment, its replies, a reply box (with marks on the model), resolve. */
+export function ThreadCard(props: {
+  thread: Thread;
+  me: string;
+  run: Run;
+  onClose: () => void;
+  /** A view that cannot change anything: no reply box, no resolving. */
+  readOnly?: boolean;
+  /** Marks being drawn in this thread, and the tool drawing them. */
+  marks?: ThreadMarks | null;
+  tool?: MarkupTool | null;
+  onMarks?: (m: ThreadMarks | null) => void;
+  onTool?: (t: MarkupTool | null) => void;
+}) {
   const t = props.thread;
   const end = useRef<HTMLDivElement>(null);
   const count = t.replies.length;
   useEffect(() => end.current?.scrollIntoView({ block: "nearest" }), [count]);
+  const marks = props.marks ?? null;
+  const replyMarks = marks?.target === "reply" ? marks.strokes : [];
+  const addingTo = marks && marks.target !== "reply" ? marks : null;
+  const setTool = (tool: MarkupTool | null) => {
+    if (tool && !marks) props.onMarks?.({ target: "reply", strokes: [] });
+    props.onTool?.(tool);
+  };
+  const undo = () => marks && props.onMarks?.({ ...marks, strokes: marks.strokes.slice(0, -1) });
+  const draw = (id: string) => () => {
+    props.onMarks?.({ target: id, strokes: [] });
+    props.onTool?.("pen");
+  };
+  const [saving, setSaving] = useState(false);
+  const saveMarks = async () => {
+    if (!addingTo || !addingTo.strokes.length) return;
+    setSaving(true);
+    const ok = (await props.run("comment.markup", { target: addingTo.target, author: props.me, markup: addingTo.strokes.map((s) => ({ points: s.points, arrow: !!s.arrow })) })) !== null;
+    setSaving(false);
+    if (ok) {
+      props.onMarks?.(null);
+      props.onTool?.(null);
+    }
+  };
   return (
     <div className={`comment-card ${t.resolved ? "is-resolved" : ""}`} role="dialog" aria-label={`Comment ${t.number}`} onPointerDown={(e) => e.stopPropagation()}>
       <header className="comment-card-head">
@@ -267,24 +368,53 @@ export function ThreadCard(props: { thread: Thread; me: string; run: Run; onClos
           {t.number}
         </span>
         <span className="comment-where">{t.gone ? "On a deleted part" : (t.on ?? "On the model")}</span>
-        <button
-          type="button"
-          className={`comment-resolve ${t.resolved ? "on" : ""}`}
-          title={t.resolved ? `Resolved by ${t.resolved_by ?? "someone"} · reopen` : "Resolve"}
-          aria-label={t.resolved ? "Reopen thread" : "Resolve thread"}
-          aria-pressed={!!t.resolved}
-          onClick={() => void props.run(t.resolved ? "comment.reopen" : "comment.resolve", { target: t.id, author: props.me })}
-        >
-          <Icon name="check" />
-        </button>
+        {!props.readOnly && (
+          <button
+            type="button"
+            className={`comment-resolve ${t.resolved ? "on" : ""}`}
+            title={t.resolved ? `Resolved by ${t.resolved_by ?? "someone"} · reopen` : "Resolve"}
+            aria-label={t.resolved ? "Reopen thread" : "Resolve thread"}
+            aria-pressed={!!t.resolved}
+            onClick={() => void props.run(t.resolved ? "comment.reopen" : "comment.resolve", { target: t.id, author: props.me })}
+          >
+            <Icon name="check" />
+          </button>
+        )}
         <button type="button" className="ib" title="Close (Esc)" aria-label="Close comment" onClick={props.onClose}>
           <Icon name="close" />
         </button>
       </header>
       <div className="comment-thread">
-        <Message id={t.id} author={t.author} created={t.created} text={t.text} edited={t.edited} mine={t.author === props.me} run={props.run} me={props.me} root onDeleted={props.onClose} />
+        <Message
+          id={t.id}
+          author={t.author}
+          created={t.created}
+          text={t.text}
+          edited={t.edited}
+          mine={t.author === props.me}
+          run={props.run}
+          me={props.me}
+          root
+          onDeleted={props.onClose}
+          marks={t.markup?.length}
+          readOnly={props.readOnly}
+          onDraw={props.onMarks && !t.gone ? draw(t.id) : undefined}
+        />
         {t.replies.map((r) => (
-          <Message key={r.id} id={r.id} author={r.author} created={r.created} text={r.text} edited={r.edited} mine={r.author === props.me} run={props.run} me={props.me} />
+          <Message
+            key={r.id}
+            id={r.id}
+            author={r.author}
+            created={r.created}
+            text={r.text}
+            edited={r.edited}
+            mine={r.author === props.me}
+            run={props.run}
+            me={props.me}
+            marks={r.markup?.length}
+            readOnly={props.readOnly}
+            onDraw={props.onMarks && !t.gone ? draw(r.id) : undefined}
+          />
         ))}
         {t.resolved && (
           <p className="comment-resolved-note">
@@ -294,11 +424,52 @@ export function ThreadCard(props: { thread: Thread; me: string; run: Run; onClos
         )}
         <div ref={end} />
       </div>
-      <Composer
-        placeholder={t.resolved ? "Reply (thread is resolved)" : "Reply"}
-        submit="Reply"
-        onSubmit={async (text) => (await props.run("comment.reply", { thread: t.id, text, author: props.me })) !== null}
-      />
+      {props.readOnly ? (
+        <p className="comment-readonly-note">
+          <Icon name="eye" /> View only
+        </p>
+      ) : addingTo ? (
+        <div className="comment-adding" role="group" aria-label="Add marks">
+          {props.tool && <p className="markup-hint">Drag on the model to draw {props.tool === "arrow" ? "an arrow" : "a mark"} · click the tool again to orbit</p>}
+          <div className="composer-row">
+            <MarkupTools tool={props.tool ?? null} strokes={addingTo.strokes.length} onTool={(x) => props.onTool?.(x)} onUndo={undo} />
+            <span className="comment-adding-what">{addingTo.strokes.length ? marksText(addingTo.strokes.length) : addingTo.target === t.id ? "Draw on your comment" : "Draw on your reply"}</span>
+            <span className="composer-gap" />
+            <button
+              type="button"
+              className="composer-cancel"
+              onClick={() => {
+                props.onMarks?.(null);
+                props.onTool?.(null);
+              }}
+            >
+              Cancel
+            </button>
+            <button type="button" className="primary" disabled={!addingTo.strokes.length || saving} onClick={() => void saveMarks()}>
+              Add
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {props.tool && marks?.target === "reply" && <p className="markup-hint">Drag on the model to draw {props.tool === "arrow" ? "an arrow" : "a mark"} · click the tool again to orbit</p>}
+          <Composer
+            placeholder={replyMarks.length ? `Reply with ${marksText(replyMarks.length)}` : t.resolved ? "Reply (thread is resolved)" : "Reply"}
+            submit="Reply"
+            ready={replyMarks.length > 0}
+            extra={props.onMarks && !t.gone ? <MarkupTools tool={marks?.target === "reply" ? (props.tool ?? null) : null} strokes={replyMarks.length} onTool={setTool} onUndo={undo} /> : undefined}
+            onSubmit={async (text) => {
+              const markup = replyMarks.map((s) => ({ points: s.points, arrow: !!s.arrow }));
+              const ok = (await props.run("comment.reply", { thread: t.id, text, author: props.me, markup })) !== null;
+              if (ok && markup.length) {
+                props.onMarks?.(null);
+                props.onTool?.(null);
+              }
+              return ok;
+            }}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -330,21 +501,7 @@ export function DraftCard(props: {
         autoFocus
         onCancel={props.onCancel}
         onSubmit={props.onPost}
-        extra={
-          <span className="markup-tools" role="group" aria-label="Markup">
-            <button type="button" className={`ib ${props.tool === "pen" ? "active" : ""}`} aria-pressed={props.tool === "pen"} title="Draw on the model" aria-label="Draw on the model" onClick={() => props.onTool(props.tool === "pen" ? null : "pen")}>
-              <Icon name="pencil" />
-            </button>
-            <button type="button" className={`ib ${props.tool === "arrow" ? "active" : ""}`} aria-pressed={props.tool === "arrow"} title="Draw an arrow" aria-label="Draw an arrow" onClick={() => props.onTool(props.tool === "arrow" ? null : "arrow")}>
-              <Icon name="arrow" />
-            </button>
-            {props.strokes > 0 && (
-              <button type="button" className="ib" title="Undo last mark" aria-label="Undo last mark" onClick={props.onUndoStroke}>
-                <Icon name="undo" />
-              </button>
-            )}
-          </span>
-        }
+        extra={<MarkupTools tool={props.tool} strokes={props.strokes} onTool={props.onTool} onUndo={props.onUndoStroke} />}
       />
     </div>
   );
@@ -424,7 +581,7 @@ export function CommentsPanel(props: {
                         {t.replies.length} {t.replies.length === 1 ? "reply" : "replies"}
                       </span>
                     )}
-                    {(t.markup?.length ?? 0) > 0 && <span className="comment-replies">markup</span>}
+                    {(t.markup?.length ?? 0) + t.replies.reduce((n, r) => n + (r.markup?.length ?? 0), 0) > 0 && <span className="comment-replies">markup</span>}
                   </span>
                 </span>
               </button>

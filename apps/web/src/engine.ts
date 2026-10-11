@@ -201,7 +201,14 @@ export type EngineState = {
   history: HistoryEntry[];
   lastChange: { revision: number; operation: string; byMe: boolean } | null;
   ai: AiState;
+  /** Set when this session is read-only: a past version, or a view-only link. */
+  readOnly: ReadOnlyInfo | null;
+  /** Why the engine closed this session for good (a link turned off), if it did. */
+  closedWhy: string | null;
 };
+
+/** What a read-only session shows. */
+export type ReadOnlyInfo = { kind: "version" | "share"; label: string; title: string; version: string | null };
 
 type Pending = {
   resolve: (value: unknown) => void;
@@ -223,6 +230,8 @@ function sessionUser(): string {
 }
 
 export class Engine {
+  /** `wsPath`: where the session is (default: this project's live session). */
+  constructor(private wsPath?: string) {}
   private socket: WebSocket | null = null;
   private listeners = new Set<() => void>();
   private pending = new Map<number, Pending>();
@@ -237,11 +246,14 @@ export class Engine {
     history: [],
     lastChange: null,
     ai: { available: false, busy: false, chat: [], streaming: "", thinking: false },
+    readOnly: null,
+    closedWhy: null,
   };
 
   connect() {
+    if (this.state.closedWhy) return;
     const protocol = location.protocol === "https:" ? "wss" : "ws";
-    const socket = new WebSocket(`${protocol}://${location.host}${projectUrl(`/ws?user=${encodeURIComponent(this.state.userId)}`)}`);
+    const socket = new WebSocket(`${protocol}://${location.host}${this.wsPath ?? projectUrl(`/ws?user=${encodeURIComponent(this.state.userId)}`)}`);
     this.socket = socket;
     this.update({ connection: "connecting" });
     socket.onopen = () => {
@@ -420,6 +432,7 @@ export class Engine {
           entities,
           history: message.history as HistoryEntry[],
           ai: { ...this.state.ai, ...(message.ai ?? {}), streaming: "", thinking: false },
+          readOnly: (message.read_only as ReadOnlyInfo | undefined) ?? null,
         });
         break;
       }
@@ -511,6 +524,8 @@ export class Engine {
         break;
       }
       case "error":
+        // A read-only session ends for good when its link is turned off.
+        if (this.state.readOnly) this.update({ closedWhy: message.message });
         console.error("engine:", message.message);
         break;
     }

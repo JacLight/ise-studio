@@ -2234,7 +2234,11 @@ mod tests {
         box_part(&app);
         let marked = app.commit_here("version.create", json!({ "name": "v1.2", "author": "Ada" })).unwrap();
         let version: StableId = serde_json::from_value(marked["output"]["id"].clone()).unwrap();
-        let plate = app.project.lock().unwrap().entity_ids().into_iter().find(|id| app.project.lock().unwrap().get::<de_solid::BoxFeature>(*id).is_some()).unwrap();
+        let boxes = |a: &App| {
+            let p = a.project.lock().unwrap();
+            p.entity_ids().into_iter().filter(|id| p.get::<de_solid::BoxFeature>(*id).is_some()).collect::<Vec<_>>()
+        };
+        let plate = boxes(&app)[0];
         // After the version: the original renames the plate.
         app.commit_here("solid.part.rename", json!({ "target": plate, "name": "Base plate" })).ok();
 
@@ -2281,7 +2285,7 @@ mod tests {
         // Work on the branch: a new part. Merge back: it lands in the original, the title does not.
         box_part(&branch);
         assert_eq!(history::branch_status(&server, &branch_name)["ahead"], 2, "the title change and the new part");
-        let parts = |a: &App| a.project.lock().unwrap().entity_ids().into_iter().filter(|id| a.project.lock().unwrap().get::<de_solid::BoxFeature>(*id).is_some()).count();
+        let parts = |a: &App| boxes(a).len();
         assert_eq!(parts(&app), 1);
         let merged = client(&format!("/branch/merge?project={branch_name}"), json!({})).await;
         assert_eq!(merged["into"], "gearbox", "{merged}");
