@@ -291,10 +291,11 @@ function texture(c: HTMLCanvasElement, scene: Scene3D, srgb: boolean) {
 
 function faceMaterial(scene: Scene3D, side: Side, px: number) {
   const c = paint(scene, side, px);
+  const rm = texture(c.rm, scene, false);
   return new THREE.MeshPhysicalMaterial({
     map: texture(c.color, scene, true),
-    roughnessMap: texture(c.rm, scene, false),
-    metalnessMap: texture(c.rm, scene, false),
+    roughnessMap: rm,
+    metalnessMap: rm,
     bumpMap: texture(c.bump, scene, false),
     bumpScale: 1.4,
     roughness: 1,
@@ -312,7 +313,8 @@ export function buildBoard(scene: Scene3D): THREE.Group {
   group.name = "pcb-look";
   const t = scene.thickness;
   const [x0, y0, x1, y1] = scene.bounds;
-  const px = Math.min(48, 4096 / Math.max(x1 - x0, y1 - y0, 1));
+  // About 32 px/mm (a 0.15 mm track is 5 px), at most 3072 px a side.
+  const px = Math.min(32, 3072 / Math.max(x1 - x0, y1 - y0, 1));
   const shape = boardShape(scene);
   const face = new THREE.ShapeGeometry(shape, 24);
   const top = new THREE.Mesh(face, faceMaterial(scene, scene.sides.top, px));
