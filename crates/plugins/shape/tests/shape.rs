@@ -1035,3 +1035,29 @@ fn a_batch_is_one_change_and_one_undo_or_nothing_at_all() {
     assert_eq!(p.revision(), before, "nothing was recorded");
     assert!(p.entity_ids().iter().all(|id| p.get::<de_shape::ShapeProgram>(*id).map_or(true, |s| s.name != "C")), "C was rolled back");
 }
+
+#[test]
+fn a_thin_plate_bends_as_plate_theory_says_and_solves_quickly() {
+    // Steel plate 200 × 100 × 4 mm held along x = 0, 50 N down along the free edge.
+    // Two cubes through the thickness: the case plain Jacobi-CG crawls through.
+    let e = runtime::evaluate("return box(200, 100, 4);", &[], 0.01).unwrap();
+    let face = |x: f64, n: f64| de_shape::fea::Face {
+        point: [x, 50.0, 2.0],
+        normal: [n, 0.0, 0.0],
+        triangles: vec![x, 0.0, 0.0, x, 100.0, 0.0, x, 100.0, 4.0, x, 0.0, 0.0, x, 100.0, 4.0, x, 0.0, 4.0],
+    };
+    let study = de_shape::fea::Study { supports: vec![face(0.0, -1.0)], loads: vec![de_shape::fea::Load { face: face(200.0, 1.0), force: [0.0, 0.0, -50.0] }], bore_supports: vec![], bore_loads: vec![], resolution: 160 };
+    let steel = de_shape::fea::elastic("Steel").unwrap();
+    let t0 = std::time::Instant::now();
+    let r = de_shape::fea::solve(&e.positions, &e.indices, &steel, &study).unwrap();
+    let took = t0.elapsed().as_secs_f64();
+    // Between a free beam (PL³/3EI) and a plate held flat across its width (× (1 − ν²)).
+    let beam = 50.0 * 200f64.powi(3) / (3.0 * 200_000.0 * (100.0 * 4f64.powi(3) / 12.0));
+    let plate = beam * (1.0 - 0.29f64.powi(2));
+    let tip = -de_shape::fea::displacement_at(&r, [200.0, 50.0, 2.0]).unwrap()[2];
+    eprintln!("thin plate: tip {tip:.4} mm (plate {plate:.4} – beam {beam:.4}), {} cubes, {} iterations, {took:.2} s", r.elements, r.iterations);
+    assert!(tip > plate * 0.95 && tip < beam * 1.05, "tip {tip} mm, expected {plate:.4}–{beam:.4}");
+    assert!(r.notes.iter().all(|n| !n.contains("did not fully settle")), "{:?}", r.notes);
+    // Plain Jacobi-CG took over 3000 steps here; multigrid takes a few dozen.
+    assert!(r.iterations < 150, "{} iterations", r.iterations);
+}

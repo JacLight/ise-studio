@@ -12,6 +12,8 @@
 //!
 //! Units: millimetres, newtons, megapascals (N/mm²).
 
+mod multigrid;
+
 use rayon::prelude::*;
 use de_core::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
@@ -546,6 +548,8 @@ struct Model {
     /// Each cube's share of material (scales its stiffness and mass).
     weight: Vec<f64>,
     diag: Vec<f64>,
+    /// Coarse grids that speed up the solve on big or thin parts.
+    mg: Option<multigrid::Multigrid>,
 }
 
 impl Model {
@@ -595,7 +599,9 @@ impl Model {
                 }
             }
         }
-        Ok(Model { grid, corners, cells, nodes, used, fixed, ke, weight, diag })
+        let mut model = Model { grid, corners, cells, nodes, used, fixed, ke, weight, diag, mg: None };
+        model.mg = multigrid::Multigrid::build(&model);
+        Ok(model)
     }
 
     fn free(&self, i: usize) -> bool {
@@ -644,7 +650,7 @@ impl Model {
         y
     }
 
-    /// Solves K·u = f by Jacobi-preconditioned conjugate gradients from `u`;
+    /// Solves K·u = f by conjugate gradients (multigrid-preconditioned when built, else Jacobi) from `u`;
     /// returns the iterations and whether it settled.
     fn cg(&self, f: &[f64], u: &mut [f64], tol: f64) -> (usize, bool) {
         let mut r: Vec<f64> = f.to_vec();
@@ -652,7 +658,12 @@ impl Model {
         let fnorm = r.iter().map(|v| v * v).sum::<f64>().sqrt().max(1e-300);
         let ku = self.apply(u);
         r.iter_mut().zip(&ku).for_each(|(a, b)| *a -= b);
-        let precondition = |r: &[f64]| -> Vec<f64> { r.iter().zip(&self.diag).enumerate().map(|(i, (v, d))| if self.free(i) { v / d } else { 0.0 }).collect() };
+        let precondition = |r: &[f64]| -> Vec<f64> {
+            match &self.mg {
+                Some(mg) => mg.precondition(self, r),
+                None => r.iter().zip(&self.diag).enumerate().map(|(i, (v, d))| if self.free(i) { v / d } else { 0.0 }).collect(),
+            }
+        };
         let mut z = precondition(&r);
         let mut p = z.clone();
         let mut rz: f64 = r.iter().zip(&z).map(|(a, b)| a * b).sum();
