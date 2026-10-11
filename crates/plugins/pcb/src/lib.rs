@@ -136,6 +136,10 @@ pub struct NetClass {
     pub via_drill: f64,
     #[serde(default = "default_via_diameter")]
     pub via_diameter: f64,
+    /// Narrower width the autorouter may use near the net's pads (fine pitch); default
+    /// 60 % of `track_width`, never below the board's `min_track`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub neck_width: Option<f64>,
 }
 
 fn default_via_drill() -> f64 {
@@ -147,7 +151,7 @@ fn default_via_diameter() -> f64 {
 
 impl NetClass {
     pub fn default_class() -> NetClass {
-        NetClass { name: "Default".into(), nets: vec![], track_width: 0.25, clearance: 0.2, via_drill: 0.3, via_diameter: 0.6 }
+        NetClass { name: "Default".into(), nets: vec![], track_width: 0.25, clearance: 0.2, via_drill: 0.3, via_diameter: 0.6, neck_width: None }
     }
 }
 
@@ -523,6 +527,9 @@ fn check_board(b: &Board) -> Result<(), CommandError> {
         }
     }
     for c in &b.net_classes {
+        if c.neck_width.is_some_and(|n| !(n > 0.0 && n <= c.track_width)) {
+            return Err(bad(format!("net class {}: neck_width is above 0 and at most the track width", c.name)));
+        }
         if !(c.track_width > 0.0 && c.track_width <= 10.0 && c.clearance >= 0.0 && c.clearance <= 10.0 && c.via_drill > 0.0 && c.via_diameter > c.via_drill) {
             return Err(bad(format!("net class {}: a positive track width and clearance, and a via larger than its drill", c.name)));
         }

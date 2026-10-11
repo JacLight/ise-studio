@@ -206,3 +206,86 @@ fn pours_join_their_pads_through_thermal_reliefs() {
     // Nothing the pour does breaks clearance.
     assert!(!v.violations.iter().any(|x| x.code == "clearance" && x.refs.iter().any(|r| r.contains("GND"))), "{:#?}", v.violations);
 }
+
+#[test]
+fn the_autorouter_necks_down_to_leave_fine_pitch_pads() {
+    let mut p = project();
+    let board = id(&ok(&mut p, "pcb.board.create", json!({ "name": "USB power", "width": 30, "height": 24, "net_classes": [
+        { "name": "Power", "nets": ["VBUS", "GND"], "track_width": 0.8, "clearance": 0.2 }
+    ] })));
+    ok(&mut p, "pcb.component.create", json!({ "board": board, "reference": "J1", "footprint": "USB-C_16P", "at": [15, 3.5], "pins": { "A4": "VBUS", "B9": "VBUS", "B4": "VBUS", "A9": "VBUS", "A1": "GND", "B12": "GND", "B1": "GND", "A12": "GND" } }));
+    ok(&mut p, "pcb.component.create", json!({ "board": board, "reference": "C1", "footprint": "C_1206", "at": [15, 16], "pins": { "1": "VBUS", "2": "GND" } }));
+    let out = ok(&mut p, "pcb.autoroute", json!({ "board": board }));
+    assert!(out["failed"].as_array().unwrap().is_empty(), "{out}");
+    let v = de_pcb::view(p.world(), board).unwrap();
+    let errors: Vec<_> = v.violations.iter().filter(|x| x.severity == "error").collect();
+    assert!(errors.is_empty(), "{errors:#?}");
+    let vbus: Vec<_> = v.tracks.iter().filter(|t| t.net.as_deref() == Some("VBUS")).collect();
+    assert!(vbus.iter().any(|t| (t.width - 0.8).abs() < 1e-9), "full width where it fits: {:?}", vbus.iter().map(|t| t.width).collect::<Vec<_>>());
+    let necks: Vec<_> = vbus.iter().filter(|t| t.width < 0.8 - 1e-9).collect();
+    assert!(!necks.is_empty(), "necked down at the connector");
+    for t in &necks {
+        assert!(t.width >= v.rules.min_track - 1e-9);
+        // Necks stay near the pads.
+        let near_pad = t.points.iter().all(|q| v.pads.iter().filter(|p| p.net.as_deref() == Some("VBUS")).any(|p| geom::dist(*q, p.at) < 3.5));
+        assert!(near_pad, "{:?}", t.points);
+    }
+}
+
+#[test]
+fn the_autorouter_rips_up_a_net_in_the_way_and_routes_both() {
+    // A wall with one corridor: B (in a pocket on the left) must go through it, and A's
+    // short straight route, laid first, closes the corridor's mouth. A can go round.
+    let mut p = project();
+    let board = id(&ok(&mut p, "pcb.board.create", json!({ "name": "Rip-up", "width": 40, "height": 20, "cutouts": [
+        [[0.5, 12.0], [18.0, 12.0], [18.0, 10.5], [22.0, 10.5], [22.0, 19.5], [18.0, 19.5], [18.0, 13.0], [0.5, 13.0]],
+        [[0.5, 8.0], [0.5, 7.0], [18.0, 7.0], [18.0, 3.5], [22.0, 3.5], [22.0, 9.5], [18.0, 9.5], [18.0, 8.0]],
+        [[18.0, 0.5], [22.0, 0.5], [22.0, 2.5], [18.0, 2.5]]
+    ] })));
+    ok(&mut p, "pcb.footprint.define", json!({ "board": board, "footprint": { "name": "TP", "pads": [{ "number": "1", "kind": "smd", "shape": "circle", "size": [0.6, 0.6], "at": [0, 0] }], "source": "test point" } }));
+    for (r, at, net) in [("TP1", [22.8, 7.0], "A"), ("TP2", [22.8, 13.0], "A"), ("TP3", [10.0, 10.0], "B"), ("TP4", [30.0, 10.0], "B")] {
+        ok(&mut p, "pcb.component.create", json!({ "board": board, "reference": r, "footprint": "TP", "at": at, "pins": { "1": net } }));
+    }
+    let out = ok(&mut p, "pcb.autoroute", json!({ "board": board, "layers": ["top"] }));
+    assert!(out["failed"].as_array().unwrap().is_empty(), "{out}");
+    assert_eq!(out["passes"], 1, "rip-up solved it within the first pass: {out}");
+    assert!(out["ripped"].as_u64().unwrap() >= 1, "{out}");
+    let v = de_pcb::view(p.world(), board).unwrap();
+    assert!(v.nets.iter().all(|n| n.routed), "{:?}", v.nets);
+    let errors: Vec<_> = v.violations.iter().filter(|x| x.severity == "error").collect();
+    assert!(errors.is_empty(), "{errors:#?}");
+    // Without rip-up the first pass fails and only a reordered pass finishes.
+    let out = ok(&mut p, "pcb.autoroute", json!({ "board": board, "layers": ["top"], "rip_up": false }));
+    assert!(out["passes"].as_u64().unwrap() >= 2 || !out["failed"].as_array().unwrap().is_empty(), "{out}");
+}
+
+#[test]
+fn the_worked_example_routes_completely_with_few_vias() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/pcb-esp32");
+    let steps: Vec<Value> = serde_json::from_str(&std::fs::read_to_string(root.join("steps.json")).unwrap()).unwrap();
+    let mut p = project();
+    let mut outs: Vec<Value> = Vec::new();
+    for s in &steps {
+        let params = subst(&s["parameters"], &outs);
+        outs.push(ok(&mut p, s["operation"].as_str().unwrap(), params));
+    }
+    let routed = outs.iter().find(|o| o.get("routed").is_some()).unwrap();
+    assert!(routed["failed"].as_array().unwrap().is_empty(), "{routed}");
+    assert!(routed["vias"].as_u64().unwrap() <= 12, "fewer vias than the first router's 13: {routed}");
+    let board: StableId = serde_json::from_value(outs[0]["id"].clone()).unwrap();
+    let v = de_pcb::view(p.world(), board).unwrap();
+    assert_eq!(v.errors(), 0, "{:#?}", v.violations.iter().filter(|x| x.severity == "error").collect::<Vec<_>>());
+    assert!(v.nets.iter().all(|n| n.routed));
+}
+
+fn subst(v: &Value, outputs: &[Value]) -> Value {
+    match v {
+        Value::String(s) if s.starts_with('$') => {
+            let (n, path) = s[1..].split_once('.').unwrap();
+            outputs[n.parse::<usize>().unwrap()][path].clone()
+        }
+        Value::Array(a) => Value::Array(a.iter().map(|x| subst(x, outputs)).collect()),
+        Value::Object(o) => Value::Object(o.iter().map(|(k, x)| (k.clone(), subst(x, outputs))).collect()),
+        other => other.clone(),
+    }
+}
