@@ -1,0 +1,377 @@
+{
+ "id": "iso10642",
+ "name": "Countersunk socket screw",
+ "standard": "ISO 10642",
+ "category": "Fasteners",
+ "summary": "Hex socket countersunk (flat head) screw, 90° head, stainless A2-70. Head top flush at z = 0, length overall, shank down −Z.",
+ "keywords": [
+  "countersunk",
+  "flat head",
+  "CSK",
+  "DIN 7991",
+  "FHCS",
+  "allen",
+  "hex socket"
+ ],
+ "source": [
+  "common.js",
+  "iso10642.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Stainless steel A2",
+ "materials": {
+  "Stainless steel A2": 7900
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Thread diameter",
+   "value": 3,
+   "unit": "mm",
+   "min": 3,
+   "max": 8,
+   "step": 1
+  },
+  {
+   "key": "length",
+   "label": "Length (overall)",
+   "value": 10,
+   "unit": "mm",
+   "min": 4,
+   "max": 200
+  },
+  {
+   "key": "threads",
+   "label": "True helical thread (1 = on)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "d",
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "M3×6",
+   "values": {
+    "d": 3,
+    "length": 6
+   }
+  },
+  {
+   "name": "M3×8",
+   "values": {
+    "d": 3,
+    "length": 8
+   }
+  },
+  {
+   "name": "M3×10",
+   "values": {
+    "d": 3,
+    "length": 10
+   }
+  },
+  {
+   "name": "M3×12",
+   "values": {
+    "d": 3,
+    "length": 12
+   }
+  },
+  {
+   "name": "M3×16",
+   "values": {
+    "d": 3,
+    "length": 16
+   }
+  },
+  {
+   "name": "M3×20",
+   "values": {
+    "d": 3,
+    "length": 20
+   }
+  },
+  {
+   "name": "M3×25",
+   "values": {
+    "d": 3,
+    "length": 25
+   }
+  },
+  {
+   "name": "M3×30",
+   "values": {
+    "d": 3,
+    "length": 30
+   }
+  },
+  {
+   "name": "M4×8",
+   "values": {
+    "d": 4,
+    "length": 8
+   }
+  },
+  {
+   "name": "M4×10",
+   "values": {
+    "d": 4,
+    "length": 10
+   }
+  },
+  {
+   "name": "M4×12",
+   "values": {
+    "d": 4,
+    "length": 12
+   }
+  },
+  {
+   "name": "M4×16",
+   "values": {
+    "d": 4,
+    "length": 16
+   }
+  },
+  {
+   "name": "M4×20",
+   "values": {
+    "d": 4,
+    "length": 20
+   }
+  },
+  {
+   "name": "M4×25",
+   "values": {
+    "d": 4,
+    "length": 25
+   }
+  },
+  {
+   "name": "M4×30",
+   "values": {
+    "d": 4,
+    "length": 30
+   }
+  },
+  {
+   "name": "M4×35",
+   "values": {
+    "d": 4,
+    "length": 35
+   }
+  },
+  {
+   "name": "M4×40",
+   "values": {
+    "d": 4,
+    "length": 40
+   }
+  },
+  {
+   "name": "M5×10",
+   "values": {
+    "d": 5,
+    "length": 10
+   }
+  },
+  {
+   "name": "M5×12",
+   "values": {
+    "d": 5,
+    "length": 12
+   }
+  },
+  {
+   "name": "M5×16",
+   "values": {
+    "d": 5,
+    "length": 16
+   }
+  },
+  {
+   "name": "M5×20",
+   "values": {
+    "d": 5,
+    "length": 20
+   }
+  },
+  {
+   "name": "M5×25",
+   "values": {
+    "d": 5,
+    "length": 25
+   }
+  },
+  {
+   "name": "M5×30",
+   "values": {
+    "d": 5,
+    "length": 30
+   }
+  },
+  {
+   "name": "M5×40",
+   "values": {
+    "d": 5,
+    "length": 40
+   }
+  },
+  {
+   "name": "M5×50",
+   "values": {
+    "d": 5,
+    "length": 50
+   }
+  },
+  {
+   "name": "M6×12",
+   "values": {
+    "d": 6,
+    "length": 12
+   }
+  },
+  {
+   "name": "M6×16",
+   "values": {
+    "d": 6,
+    "length": 16
+   }
+  },
+  {
+   "name": "M6×20",
+   "values": {
+    "d": 6,
+    "length": 20
+   }
+  },
+  {
+   "name": "M6×25",
+   "values": {
+    "d": 6,
+    "length": 25
+   }
+  },
+  {
+   "name": "M6×30",
+   "values": {
+    "d": 6,
+    "length": 30
+   }
+  },
+  {
+   "name": "M6×40",
+   "values": {
+    "d": 6,
+    "length": 40
+   }
+  },
+  {
+   "name": "M6×50",
+   "values": {
+    "d": 6,
+    "length": 50
+   }
+  },
+  {
+   "name": "M6×60",
+   "values": {
+    "d": 6,
+    "length": 60
+   }
+  },
+  {
+   "name": "M8×16",
+   "values": {
+    "d": 8,
+    "length": 16
+   }
+  },
+  {
+   "name": "M8×20",
+   "values": {
+    "d": 8,
+    "length": 20
+   }
+  },
+  {
+   "name": "M8×25",
+   "values": {
+    "d": 8,
+    "length": 25
+   }
+  },
+  {
+   "name": "M8×30",
+   "values": {
+    "d": 8,
+    "length": 30
+   }
+  },
+  {
+   "name": "M8×40",
+   "values": {
+    "d": 8,
+    "length": 40
+   }
+  },
+  {
+   "name": "M8×50",
+   "values": {
+    "d": 8,
+    "length": 50
+   }
+  },
+  {
+   "name": "M8×60",
+   "values": {
+    "d": 8,
+    "length": 60
+   }
+  }
+ ],
+ "default": "M3×10",
+ "checks": {
+  "M3×10": {
+   "size": [
+    6.13,
+    6.13,
+    10
+   ],
+   "connectors": [
+    "Head top",
+    "Countersink seat",
+    "Axis",
+    "Socket"
+   ],
+   "metrics": {
+    "Hex key": 2,
+    "Countersink diameter": 6.72
+   },
+   "partNumber": "ISO 10642 M3×10 A2-70",
+   "connector_at": {
+    "Axis": [
+     0,
+     0,
+     -10
+    ]
+   }
+  },
+  "M8×40": {
+   "size": [
+    16.58,
+    16.58,
+    40
+   ],
+   "metrics": {
+    "Hex key": 5
+   }
+  }
+ }
+}

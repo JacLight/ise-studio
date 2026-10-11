@@ -1,0 +1,359 @@
+{
+ "id": "linear_rod",
+ "name": "Linear shaft",
+ "standard": null,
+ "category": "Bearings & motion",
+ "summary": "Hardened, hard-chrome-plated linear shaft (h6), chamfered ends, cut to length. Axis +Z from z = 0",
+ "keywords": [
+  "linear rod",
+  "smooth rod",
+  "chrome rod",
+  "shaft",
+  "guide rod",
+  "8mm rod",
+  "SFJ"
+ ],
+ "source": [
+  "common.js",
+  "linear_rod.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Hardened chrome steel (CF53)",
+ "materials": {
+  "Hardened chrome steel (CF53)": 7850
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Diameter",
+   "value": 8,
+   "unit": "mm",
+   "min": 3,
+   "max": 50
+  },
+  {
+   "key": "length",
+   "label": "Length",
+   "value": 300,
+   "unit": "mm",
+   "min": 10,
+   "max": 3000
+  }
+ ],
+ "columns": [
+  "d",
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "Ø6×100",
+   "values": {
+    "d": 6,
+    "length": 100
+   }
+  },
+  {
+   "name": "Ø6×150",
+   "values": {
+    "d": 6,
+    "length": 150
+   }
+  },
+  {
+   "name": "Ø6×200",
+   "values": {
+    "d": 6,
+    "length": 200
+   }
+  },
+  {
+   "name": "Ø6×250",
+   "values": {
+    "d": 6,
+    "length": 250
+   }
+  },
+  {
+   "name": "Ø6×300",
+   "values": {
+    "d": 6,
+    "length": 300
+   }
+  },
+  {
+   "name": "Ø6×330",
+   "values": {
+    "d": 6,
+    "length": 330
+   }
+  },
+  {
+   "name": "Ø6×350",
+   "values": {
+    "d": 6,
+    "length": 350
+   }
+  },
+  {
+   "name": "Ø6×400",
+   "values": {
+    "d": 6,
+    "length": 400
+   }
+  },
+  {
+   "name": "Ø6×450",
+   "values": {
+    "d": 6,
+    "length": 450
+   }
+  },
+  {
+   "name": "Ø6×500",
+   "values": {
+    "d": 6,
+    "length": 500
+   }
+  },
+  {
+   "name": "Ø8×100",
+   "values": {
+    "d": 8,
+    "length": 100
+   }
+  },
+  {
+   "name": "Ø8×150",
+   "values": {
+    "d": 8,
+    "length": 150
+   }
+  },
+  {
+   "name": "Ø8×200",
+   "values": {
+    "d": 8,
+    "length": 200
+   }
+  },
+  {
+   "name": "Ø8×250",
+   "values": {
+    "d": 8,
+    "length": 250
+   }
+  },
+  {
+   "name": "Ø8×300",
+   "values": {
+    "d": 8,
+    "length": 300
+   }
+  },
+  {
+   "name": "Ø8×330",
+   "values": {
+    "d": 8,
+    "length": 330
+   }
+  },
+  {
+   "name": "Ø8×350",
+   "values": {
+    "d": 8,
+    "length": 350
+   }
+  },
+  {
+   "name": "Ø8×400",
+   "values": {
+    "d": 8,
+    "length": 400
+   }
+  },
+  {
+   "name": "Ø8×450",
+   "values": {
+    "d": 8,
+    "length": 450
+   }
+  },
+  {
+   "name": "Ø8×500",
+   "values": {
+    "d": 8,
+    "length": 500
+   }
+  },
+  {
+   "name": "Ø10×100",
+   "values": {
+    "d": 10,
+    "length": 100
+   }
+  },
+  {
+   "name": "Ø10×150",
+   "values": {
+    "d": 10,
+    "length": 150
+   }
+  },
+  {
+   "name": "Ø10×200",
+   "values": {
+    "d": 10,
+    "length": 200
+   }
+  },
+  {
+   "name": "Ø10×250",
+   "values": {
+    "d": 10,
+    "length": 250
+   }
+  },
+  {
+   "name": "Ø10×300",
+   "values": {
+    "d": 10,
+    "length": 300
+   }
+  },
+  {
+   "name": "Ø10×330",
+   "values": {
+    "d": 10,
+    "length": 330
+   }
+  },
+  {
+   "name": "Ø10×350",
+   "values": {
+    "d": 10,
+    "length": 350
+   }
+  },
+  {
+   "name": "Ø10×400",
+   "values": {
+    "d": 10,
+    "length": 400
+   }
+  },
+  {
+   "name": "Ø10×450",
+   "values": {
+    "d": 10,
+    "length": 450
+   }
+  },
+  {
+   "name": "Ø10×500",
+   "values": {
+    "d": 10,
+    "length": 500
+   }
+  },
+  {
+   "name": "Ø12×100",
+   "values": {
+    "d": 12,
+    "length": 100
+   }
+  },
+  {
+   "name": "Ø12×150",
+   "values": {
+    "d": 12,
+    "length": 150
+   }
+  },
+  {
+   "name": "Ø12×200",
+   "values": {
+    "d": 12,
+    "length": 200
+   }
+  },
+  {
+   "name": "Ø12×250",
+   "values": {
+    "d": 12,
+    "length": 250
+   }
+  },
+  {
+   "name": "Ø12×300",
+   "values": {
+    "d": 12,
+    "length": 300
+   }
+  },
+  {
+   "name": "Ø12×330",
+   "values": {
+    "d": 12,
+    "length": 330
+   }
+  },
+  {
+   "name": "Ø12×350",
+   "values": {
+    "d": 12,
+    "length": 350
+   }
+  },
+  {
+   "name": "Ø12×400",
+   "values": {
+    "d": 12,
+    "length": 400
+   }
+  },
+  {
+   "name": "Ø12×450",
+   "values": {
+    "d": 12,
+    "length": 450
+   }
+  },
+  {
+   "name": "Ø12×500",
+   "values": {
+    "d": 12,
+    "length": 500
+   }
+  }
+ ],
+ "default": "Ø8×300",
+ "checks": {
+  "Ø8×300": {
+   "size": [
+    8,
+    8,
+    300
+   ],
+   "connectors": [
+    "Axis",
+    "End A",
+    "End B"
+   ],
+   "connector_at": {
+    "End B": [
+     0,
+     0,
+     300
+    ]
+   },
+   "partNumber": "Linear shaft Ø8×300 h6 hard chrome"
+  },
+  "Ø12×500": {
+   "size": [
+    12,
+    12,
+    500
+   ]
+  }
+ }
+}

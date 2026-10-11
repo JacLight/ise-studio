@@ -26,7 +26,18 @@ A program is a JavaScript function body. It reads parameters from `p` (mm, degre
 
 Processes: 3d_print, cnc_mill, lathe, cnc_router, laser, sheet_metal, weld, cast, extrusion, glazing, buy. Sheet processes export a layered DXF; all parts export STL.
 
-Material names in parts map to material entities through the shape's `materials` table (`{"Steel": "<material id>"}`); create materials with `solid.material.create` (realistic densities). Bought-in parts are envelopes: give them a material whose density yields the catalogue mass.
+Material names in parts map to material entities through the shape's `materials` table (`{"Steel": "<material id>"}`); create materials with `solid.material.create` (realistic densities).
+
+## Stock parts
+
+Every item in a product is either a part we make or a bought one, then assembled; never a stand-in block. Bought parts come from the stock library: real catalogue items as programs with their true geometry (head, socket, thread, raceways, balls, mounting tabs, spline, slot profile), what a buyer orders (`stock()`: part number, standard, typical price, pack, catalogue mass, suppliers) and connectors where things attach. Sizes are configurations, and the part number follows the size.
+
+- `./forma stock` lists the families; `./forma stock M3×12`, `./forma stock 608`, `./forma stock servo` show the matching sizes with part number, price, mass, overall size, metrics (hex key, printed hole for an insert, spline teeth) and connectors.
+- `stock.insert { family, size, parent?, at?, rotation?, name? }` brings it in: the first time, the family becomes a shape definition with every size in its configuration table and its materials at realistic densities (modelled mass within 10 % of the catalogue's); after that the same definition is reused, so twelve screws of three lengths are one definition and twelve instances. It places an instance showing `size` (returns `id`, `definition`); `place: false` only adds the definition. Change size later with `assembly.instance.update { target, config }`.
+- Families: ISO 4762 socket head, ISO 10642 countersunk, ISO 7380 button head screws (M2–M8), ISO 4032 nuts, ISO 7089 washers, heat-set inserts M2–M5 (printed hole as a metric), ISO 8734 dowel pins, deep-groove ball bearings (623–626, 608, 688, 6000–6005, 6700, 6800, 6900 series), LMxUU linear bearings, linear rod, shaft collars, GT2 pulleys and idlers, SG90 / MG90S / MG996R servos, NEMA 17 steppers, 2020 / 2040 T-slot extrusion. The person browses the same library (the package tool, or I).
+- How each item stands: fasteners have the head's bearing face on z = 0 with the shank down −Z (a countersunk head's top on z = 0); nuts, washers, bearings and pulleys sit on z = 0 along +Z; a stepper's mounting face is on z = 0, shaft up +Z, body down −Z; a servo stands on its case bottom with the output shaft on the Z axis; extrusion runs from z = 0 to its length. Its connectors (`./forma get <definition>` shows them under `declared`) are the frames to join: a screw's Head seat to a hole's face, a bearing's Bore to a shaft, a servo's Output shaft to a horn, a stepper's Pilot into a bore.
+- Real threads are heavy: screws and nuts show ISO thread rings by default (true volume, exact in STEP); set the definition's `threads` parameter to 1 only where the helix matters.
+- An item the library lacks: model it as true geometry in its own program with `stock({ … })` and connectors, the way the library's programs do (read them), and say what you could not confirm from a datasheet. Never a box with a density.
 
 ## Sketches
 
