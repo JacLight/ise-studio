@@ -1066,6 +1066,36 @@ async fn stress(State(server): State<Arc<Server>>, Path(id): Path<String>, Query
     }
 }
 
+/// A moving part checked for strength at the worst moment of its motion.
+async fn motion_stress(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let fail = |code: StatusCode, message: String| (code, message).into_response();
+    let app = match server.project(query.get("project")) {
+        Ok(app) => app,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let Some(part) = query.get("part").cloned() else { return fail(StatusCode::BAD_REQUEST, "name the part to check".into()) };
+    let found = {
+        let project = app.project.lock().unwrap();
+        serde_json::from_value::<StableId>(json!(id)).ok().and_then(|sid| {
+            let e = project.entity(sid)?;
+            let program = de_shape::resolved_program(project.world(), e)?;
+            let masses = de_shape::part_masses(project.world(), e).unwrap_or_default();
+            let material = project.get::<ShapeSolid>(sid)?.stats.parts.iter().find(|p| p.name == part).and_then(|p| p.material.clone()).or_else(|| {
+                let m = project.get::<de_solid::MaterialRef>(sid)?;
+                project.get::<de_solid::Material>(m.0).map(|m| m.name.clone())
+            });
+            Some((program, masses, material))
+        })
+    };
+    let Some((program, masses, material)) = found else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
+    let Some(material) = material else { return fail(StatusCode::UNPROCESSABLE_ENTITY, format!("give “{part}” a material first")) };
+    match tokio::task::spawn_blocking(move || de_shape::motion_stress(&program, &part, &masses, &material).map(|r| (r, material))).await {
+        Ok(Ok((r, material))) => axum::Json(json!({ "check": r, "material": material })).into_response(),
+        Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
 /// A part's saved study with its faces found on the shape as it is now
 /// (a face that no longer exists comes back null).
 async fn study(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
@@ -1551,6 +1581,7 @@ async fn main() -> std::io::Result<()> {
         .route("/stress/{id}", axum::routing::post(stress))
         .route("/modes/{id}", axum::routing::post(modes))
         .route("/study/{id}", get(study))
+        .route("/motion-stress/{id}", get(motion_stress))
         .route("/team", get(team_status))
         .route("/team/invite", axum::routing::post(team_invite))
         .route("/team/settings", axum::routing::post(team_settings))

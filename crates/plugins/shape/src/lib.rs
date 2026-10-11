@@ -709,6 +709,67 @@ pub fn stress_study(program: &ShapeProgram, part: Option<&str>, material: &str, 
     fea::solve(&e.positions, &e.indices[start..start + count], &props, study)
 }
 
+/// A moving part checked at the worst moment of its motion.
+#[derive(Clone, Debug, Serialize)]
+pub struct MotionStress {
+    pub result: fea::Result_,
+    /// The drive's value at that moment (degrees or mm).
+    pub at: f64,
+    /// The joint whose seat holds the part.
+    pub held_by: String,
+    /// The joints whose forces load it then, and how hard (N).
+    pub loads: Vec<(String, f64)>,
+}
+
+/// A part of a linkage checked for strength at the moment its joints pull
+/// hardest: held at one joint's seat (the one to the ground if it has one),
+/// loaded at the others' seats with the forces the motion puts through them.
+/// The part's own inertia is left out (small beside its joint forces in a
+/// slender member). `masses` per part (kg), `material` its name.
+pub fn motion_stress(program: &ShapeProgram, part: &str, masses: &[Option<f64>], material: &str) -> Result<MotionStress, String> {
+    let props = fea::elastic(material).ok_or_else(|| format!("no stiffness figures for “{material}”"))?;
+    let sweep = motion_with_forces(program, 360, Some(masses), true)?;
+    let forces = sweep.forces.as_ref().ok_or("forces need every moving part's material")?;
+    let e = evaluated_at(program, program.display_tolerance())?;
+    let m = e.mechanism.as_ref().ok_or("the program declares no joints")?;
+    let linkage = mechanism::Linkage::parse(m).ok_or("the program declares no joints")??;
+    let body = linkage.body_of(part).ok_or_else(|| format!("“{part}” is not a moving part"))?;
+    let touching: Vec<usize> = (0..linkage.joints.len()).filter(|&q| linkage.joints[q].a == Some(body) || linkage.joints[q].b == Some(body)).collect();
+    if touching.len() < 2 {
+        return Err(format!("“{part}” needs two joints: one to hold it and one to load it"));
+    }
+    let held = touching.iter().copied().find(|&q| linkage.joints[q].a.is_none() || linkage.joints[q].b.is_none()).unwrap_or(touching[0]);
+    let loaded: Vec<usize> = touching.iter().copied().filter(|&q| q != held).collect();
+    // The force a joint puts on this body at frame k, in the body's drawn axes.
+    let on_body = |q: usize, k: usize| {
+        let v = forces.vectors[q][k];
+        let v = if forces.on[q] == Some(body) { v } else { v.map(|c| -c) };
+        mechanism::to_drawn(&sweep.frames[k], body, v)
+    };
+    let size = |v: [f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let worst = (0..sweep.frames.len()).max_by(|&a, &b| {
+        let peak = |k: usize| loaded.iter().map(|&q| size(on_body(q, k))).fold(0.0, f64::max);
+        peak(a).total_cmp(&peak(b))
+    }).ok_or("the motion has no positions")?;
+    let bore = |q: usize| fea::Bore { at: linkage.joints[q].at, axis: linkage.joints[q].axis };
+    let study = fea::Study {
+        supports: vec![],
+        loads: vec![],
+        bore_supports: vec![bore(held)],
+        bore_loads: loaded.iter().map(|&q| fea::BoreLoad { bore: bore(q), force: on_body(q, worst) }).collect(),
+        resolution: 56,
+    };
+    let k = e.parts.iter().find(|p| p.name == part).ok_or_else(|| format!("no part called “{part}”"))?;
+    let mut result = fea::solve(&e.positions, &e.indices[k.index_start..k.index_start + k.index_count], &props, &study)?;
+    result.notes.push("Held at one joint's seat, loaded at the others; the part's own inertia is left out.".into());
+    Ok(MotionStress {
+        result,
+        at: sweep.frames[worst].drive,
+        held_by: linkage.joints[held].name.clone(),
+        loads: loaded.iter().map(|&q| (linkage.joints[q].name.clone(), size(on_body(q, worst)))).collect(),
+    })
+}
+
 /// Natural frequencies of a program's solid (or one part), held at `supports`.
 pub fn vibration_study(program: &ShapeProgram, part: Option<&str>, material: &str, density: f64, supports: &[fea::Face], count: usize, resolution: usize) -> Result<fea::Modes, String> {
     let props = fea::elastic(material).ok_or_else(|| format!("no stiffness figures for “{material}”"))?;

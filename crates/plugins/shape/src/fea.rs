@@ -123,6 +123,20 @@ impl LoadPick {
     }
 }
 
+/// A joint's seat on a part: the material nearest an axis (the skin of a
+/// bore, or the core of a shaft along it).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Bore {
+    pub at: [f64; 3],
+    pub axis: [f64; 3],
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BoreLoad {
+    pub bore: Bore,
+    pub force: [f64; 3],
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Load {
     pub face: Face,
@@ -134,6 +148,12 @@ pub struct Load {
 pub struct Study {
     pub supports: Vec<Face>,
     pub loads: Vec<Load>,
+    /// Bores (a joint's seat: a pin's hole or a shaft) held still.
+    #[serde(default)]
+    pub bore_supports: Vec<Bore>,
+    /// Forces spread over bores.
+    #[serde(default)]
+    pub bore_loads: Vec<BoreLoad>,
     /// Cubes along the part's longest side.
     #[serde(default = "default_resolution")]
     pub resolution: usize,
@@ -314,7 +334,8 @@ struct Grid {
     h: f64,
     origin: [f64; 3],
     n: [usize; 3],
-    filled: Vec<bool>,
+    /// How much of each cube is material (0–1).
+    fill: Vec<f32>,
 }
 
 impl Grid {
@@ -339,7 +360,10 @@ impl Grid {
     }
 }
 
-/// Cubes whose centres are inside a closed mesh (rays along x, by parity).
+/// Cubes less full than this are left out (slivers add nothing but trouble).
+const MIN_FILL: f32 = 0.12;
+
+/// How full of material each cube is (rays along x, by parity).
 fn voxelize(positions: &[f32], triangles: &[u32], resolution: usize) -> Grid {
     let p = |i: u32| {
         let i = i as usize * 3;
@@ -359,7 +383,7 @@ fn voxelize(positions: &[f32], triangles: &[u32], resolution: usize) -> Grid {
     let n = [0, 1, 2].map(|k| (((hi[k] - lo[k]) / h) - 1e-9).ceil().max(1.0) as usize);
     // Centre the grid on the part.
     let origin = [0, 1, 2].map(|k| (lo[k] + hi[k]) / 2.0 - n[k] as f64 * h / 2.0);
-    let mut grid = Grid { h, origin, n, filled: vec![false; n[0] * n[1] * n[2]] };
+    let mut grid = Grid { h, origin, n, fill: vec![0.0; n[0] * n[1] * n[2]] };
     // Triangles binned by the (j, k) columns their y–z boxes cover.
     let mut bins: Vec<Vec<usize>> = vec![vec![]; n[1] * n[2]];
     let tris: Vec<[[f64; 3]; 3]> = triangles.chunks_exact(3).map(|t| [p(t[0]), p(t[1]), p(t[2])]).collect();
@@ -375,36 +399,57 @@ fn voxelize(positions: &[f32], triangles: &[u32], resolution: usize) -> Grid {
             }
         }
     }
+    // Each column: 4 × 4 rays along x; each cube's fill is the share of its
+    // length inside the part, averaged over the rays (exact along x).
+    const RAYS: usize = 4;
     for k in 0..n[2] {
         for j in 0..n[1] {
-            // A ray through the column's centre, nudged off any edge it might graze.
-            let (y, z) = (origin[1] + (j as f64 + 0.5) * h + h * 1.234e-7, origin[2] + (k as f64 + 0.5) * h + h * 2.345e-7);
-            let mut xs: Vec<f64> = vec![];
-            for &ti in &bins[j + n[1] * k] {
-                let [a, b, c] = tris[ti];
-                let det = (b[1] - a[1]) * (c[2] - a[2]) - (c[1] - a[1]) * (b[2] - a[2]);
-                if det.abs() < 1e-18 {
-                    continue;
+            for (ry, rz) in (0..RAYS).flat_map(|a| (0..RAYS).map(move |b| (a, b))) {
+                // Nudged off any edge it might graze.
+                let y = origin[1] + (j as f64 + (ry as f64 + 0.5) / RAYS as f64) * h + h * 1.234e-7;
+                let z = origin[2] + (k as f64 + (rz as f64 + 0.5) / RAYS as f64) * h + h * 2.345e-7;
+                let mut xs: Vec<f64> = vec![];
+                for &ti in &bins[j + n[1] * k] {
+                    let [a, b, c] = tris[ti];
+                    let det = (b[1] - a[1]) * (c[2] - a[2]) - (c[1] - a[1]) * (b[2] - a[2]);
+                    if det.abs() < 1e-18 {
+                        continue;
+                    }
+                    let u = ((y - a[1]) * (c[2] - a[2]) - (c[1] - a[1]) * (z - a[2])) / det;
+                    let v = ((b[1] - a[1]) * (z - a[2]) - (y - a[1]) * (b[2] - a[2])) / det;
+                    if u >= 0.0 && v >= 0.0 && u + v <= 1.0 {
+                        xs.push(a[0] + u * (b[0] - a[0]) + v * (c[0] - a[0]));
+                    }
                 }
-                let u = ((y - a[1]) * (c[2] - a[2]) - (c[1] - a[1]) * (z - a[2])) / det;
-                let v = ((b[1] - a[1]) * (z - a[2]) - (y - a[1]) * (b[2] - a[2])) / det;
-                if u >= 0.0 && v >= 0.0 && u + v <= 1.0 {
-                    xs.push(a[0] + u * (b[0] - a[0]) + v * (c[0] - a[0]));
-                }
-            }
-            xs.sort_by(f64::total_cmp);
-            for pair in xs.chunks_exact(2) {
-                for i in 0..n[0] {
-                    let x = origin[0] + (i as f64 + 0.5) * h;
-                    if x > pair[0] && x < pair[1] {
+                xs.sort_by(f64::total_cmp);
+                for pair in xs.chunks_exact(2) {
+                    let (i0, i1) = (((pair[0] - origin[0]) / h).floor().max(0.0) as usize, (((pair[1] - origin[0]) / h).ceil() as usize).min(n[0]));
+                    for i in i0..i1 {
+                        let (x0, x1) = (origin[0] + i as f64 * h, origin[0] + (i + 1) as f64 * h);
+                        let inside = (pair[1].min(x1) - pair[0].max(x0)).max(0.0) / h;
                         let c = grid.cell(i, j, k);
-                        grid.filled[c] = true;
+                        grid.fill[c] += (inside / (RAYS * RAYS) as f64) as f32;
                     }
                 }
             }
         }
     }
     grid
+}
+
+/// Grid nodes the part uses nearest an axis: within a cube and a half of the closest.
+fn nodes_on_bore(grid: &Grid, used: &[bool], bore: &Bore) -> Vec<usize> {
+    let l = (bore.axis[0] * bore.axis[0] + bore.axis[1] * bore.axis[1] + bore.axis[2] * bore.axis[2]).sqrt().max(1e-12);
+    let u = bore.axis.map(|c| c / l);
+    let off = |id: usize| {
+        let q = grid.position(id);
+        let d = [q[0] - bore.at[0], q[1] - bore.at[1], q[2] - bore.at[2]];
+        let t = d[0] * u[0] + d[1] * u[1] + d[2] * u[2];
+        ((d[0] - t * u[0]).powi(2) + (d[1] - t * u[1]).powi(2) + (d[2] - t * u[2]).powi(2)).sqrt()
+    };
+    let near: Vec<(usize, f64)> = (0..used.len()).filter(|&id| used[id]).map(|id| (id, off(id))).collect();
+    let closest = near.iter().map(|(_, d)| *d).fold(f64::INFINITY, f64::min);
+    near.into_iter().filter(|(_, d)| *d <= closest + 1.5 * grid.h).map(|(id, _)| id).collect()
 }
 
 /// Grid nodes the part uses that lie on a picked face.
@@ -452,16 +497,18 @@ struct Model {
     used: Vec<bool>,
     fixed: Vec<bool>,
     ke: Vec<f64>,
+    /// Each cube's share of material (scales its stiffness and mass).
+    weight: Vec<f64>,
     diag: Vec<f64>,
 }
 
 impl Model {
-    fn build(positions: &[f32], triangles: &[u32], material: &Elastic, supports: &[Face], resolution: usize) -> Result<Model, String> {
-        if supports.is_empty() {
+    fn build(positions: &[f32], triangles: &[u32], material: &Elastic, supports: &[Face], bores: &[Bore], resolution: usize) -> Result<Model, String> {
+        if supports.is_empty() && bores.is_empty() {
             return Err("add a support: a face the part is held by".into());
         }
         let grid = voxelize(positions, triangles, resolution.clamp(8, 160));
-        let cells: Vec<[usize; 3]> = (0..grid.n[2]).flat_map(|k| (0..grid.n[1]).flat_map(move |j| (0..grid.n[0]).map(move |i| [i, j, k]))).filter(|&[i, j, k]| grid.filled[grid.cell(i, j, k)]).collect();
+        let cells: Vec<[usize; 3]> = (0..grid.n[2]).flat_map(|k| (0..grid.n[1]).flat_map(move |j| (0..grid.n[0]).map(move |i| [i, j, k]))).filter(|&[i, j, k]| grid.fill[grid.cell(i, j, k)] >= MIN_FILL).collect();
         if cells.is_empty() {
             return Err("the part is too thin for this resolution: raise it".into());
         }
@@ -484,15 +531,25 @@ impl Model {
                 fixed[3 * n..3 * n + 3].fill(true);
             }
         }
+        for (s, bore) in bores.iter().enumerate() {
+            let on = nodes_on_bore(&grid, &used, bore);
+            if on.is_empty() {
+                return Err(format!("bore {} touches no part of the part", s + 1));
+            }
+            for n in on {
+                fixed[3 * n..3 * n + 3].fill(true);
+            }
+        }
+        let weight: Vec<f64> = cells.iter().map(|&[i, j, k]| (grid.fill[grid.cell(i, j, k)] as f64).min(1.0)).collect();
         let mut diag = vec![0.0; 3 * nodes];
-        for c in &corners {
+        for (c, w) in corners.iter().zip(&weight) {
             for (r, &n) in c.iter().enumerate() {
                 for d in 0..3 {
-                    diag[3 * n + d] += ke[(3 * r + d) * 24 + 3 * r + d];
+                    diag[3 * n + d] += w * ke[(3 * r + d) * 24 + 3 * r + d];
                 }
             }
         }
-        Ok(Model { grid, corners, cells, nodes, used, fixed, ke, diag })
+        Ok(Model { grid, corners, cells, nodes, used, fixed, ke, weight, diag })
     }
 
     fn free(&self, i: usize) -> bool {
@@ -514,10 +571,11 @@ impl Model {
         let mut y = self
             .corners
             .par_chunks(4096)
+            .zip(self.weight.par_chunks(4096))
             .fold(
                 || vec![0.0; n3],
-                |mut y, chunk| {
-                    for c in chunk {
+                |mut y, (chunk, weights)| {
+                    for (c, w) in chunk.iter().zip(weights) {
                         let mut xe = [0.0; 24];
                         for (a, &n) in c.iter().enumerate() {
                             xe[3 * a..3 * a + 3].copy_from_slice(&x[3 * n..3 * n + 3]);
@@ -525,7 +583,7 @@ impl Model {
                         for (r, &n) in c.iter().enumerate() {
                             for d in 0..3 {
                                 let row = &ke[(3 * r + d) * 24..(3 * r + d + 1) * 24];
-                                y[3 * n + d] += row.iter().zip(&xe).map(|(a, b)| a * b).sum::<f64>();
+                                y[3 * n + d] += w * row.iter().zip(&xe).map(|(a, b)| a * b).sum::<f64>();
                             }
                         }
                     }
@@ -579,10 +637,10 @@ impl Model {
 
 /// Runs a study on a closed mesh (part coordinates, mm).
 pub fn solve(positions: &[f32], triangles: &[u32], material: &Elastic, study: &Study) -> Result<Result_, String> {
-    if study.loads.is_empty() {
+    if study.loads.is_empty() && study.bore_loads.is_empty() {
         return Err("add a load: a face and the force on it".into());
     }
-    let model = Model::build(positions, triangles, material, &study.supports, study.resolution)?;
+    let model = Model::build(positions, triangles, material, &study.supports, &study.bore_supports, study.resolution)?;
     let (grid, cells, corners, nodes, used, fixed) = (&model.grid, &model.cells, &model.corners, model.nodes, &model.used, &model.fixed);
     let h = grid.h;
     let mut notes = vec![];
@@ -591,6 +649,17 @@ pub fn solve(positions: &[f32], triangles: &[u32], material: &Elastic, study: &S
         let on: Vec<usize> = nodes_on(grid, used, &load.face).into_iter().filter(|&n| !fixed[3 * n]).collect();
         if on.is_empty() {
             return Err(format!("load {} touches no free part of the part", l + 1));
+        }
+        for &n in &on {
+            for d in 0..3 {
+                f[3 * n + d] += load.force[d] / on.len() as f64;
+            }
+        }
+    }
+    for (l, load) in study.bore_loads.iter().enumerate() {
+        let on: Vec<usize> = nodes_on_bore(grid, used, &load.bore).into_iter().filter(|&n| !fixed[3 * n]).collect();
+        if on.is_empty() {
+            return Err(format!("bore load {} touches no free part of the part", l + 1));
         }
         for &n in &on {
             for d in 0..3 {
@@ -730,7 +799,7 @@ fn symmetric_eigen(mut a: Vec<Vec<f64>>) -> (Vec<f64>, Vec<Vec<f64>>) {
 /// step solving K·z = M·x by conjugate gradients from the last answer.
 /// `density` in kg/m³.
 pub fn modes(positions: &[f32], triangles: &[u32], material: &Elastic, density: f64, supports: &[Face], count: usize, resolution: usize) -> Result<Modes, String> {
-    let model = Model::build(positions, triangles, material, supports, resolution)?;
+    let model = Model::build(positions, triangles, material, supports, &[], resolution)?;
     let count = count.clamp(1, 8);
     let p = count + 3;
     let n3 = 3 * model.nodes;
@@ -738,10 +807,10 @@ pub fn modes(positions: &[f32], triangles: &[u32], material: &Elastic, density: 
     // Lumped mass: each cube's mass (kg) shared by its 8 corners.
     let cube = density * 1e-9 * h * h * h;
     let mut mass = vec![0.0; n3];
-    for c in &model.corners {
+    for (c, w) in model.corners.iter().zip(&model.weight) {
         for &n in c {
             for d in 0..3 {
-                mass[3 * n + d] += cube / 8.0;
+                mass[3 * n + d] += cube * w / 8.0;
             }
         }
     }
@@ -860,7 +929,7 @@ pub fn modes(positions: &[f32], triangles: &[u32], material: &Elastic, density: 
         cells: model.cells.iter().map(|c| c.map(|v| v as u32)).collect(),
         nodes: nodes.iter().map(|&n| model.grid.node_at(n).map(|v| v as u32)).collect(),
         modes,
-        mass: cube * model.cells.len() as f64,
+        mass: cube * model.weight.iter().sum::<f64>(),
         notes,
     })
 }

@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type PartStats, projectUrl } from "./engine";
 import { Icon } from "./icons";
-import type { TurnBody } from "./Viewport";
+import type { StressView, TurnBody } from "./Viewport";
 
 type Sweep = {
   bodies: string[][];
@@ -51,11 +51,13 @@ export function LinkageMotion({
   version,
   parts,
   onTurn,
+  onShowStress,
 }: {
   id: string;
   version: unknown;
   parts: PartStats[];
   onTurn: (id: string, bodies: TurnBody[] | null, options?: { ghost?: boolean }) => void;
+  onShowStress: (id: string, view: StressView | null) => void;
 }) {
   const [state, setState] = useState<{ kind: "busy" } | { kind: "done"; sweep: Sweep } | { kind: "error"; text: string }>({ kind: "busy" });
   const [at, setAt] = useState(0); // position through the frames (0 … frames − 1)
@@ -64,6 +66,30 @@ export function LinkageMotion({
   const [active, setActive] = useState(false);
   const [xray, setXray] = useState(true);
   const [gravity, setGravity] = useState(true);
+  // A moving part checked for strength at its hardest moment.
+  type Check = { result: NonNullable<StressView["result"]> & { safety: number; yield_strength: number; notes: string[] }; at: number; held_by: string; loads: [string, number][] };
+  const [checkPart, setCheckPart] = useState("");
+  const [strength, setStrength] = useState<{ kind: "busy" } | { kind: "done"; check: Check; material: string; shown: boolean } | { kind: "error"; text: string } | null>(null);
+  useEffect(() => {
+    setStrength(null);
+    onShowStress(id, null);
+  }, [id, version, onShowStress]);
+  useEffect(() => () => onShowStress(id, null), [id, onShowStress]);
+  const checkStrength = async (part: string) => {
+    setStrength({ kind: "busy" });
+    // Back to as drawn: the map is of the part where it was designed.
+    setPlaying(false);
+    setActive(false);
+    try {
+      const r = await fetch(projectUrl(`/motion-stress/${id}?part=${encodeURIComponent(part)}`));
+      if (!r.ok) return setStrength({ kind: "error", text: await r.text() });
+      const out = (await r.json()) as { check: Check; material: string };
+      setStrength({ kind: "done", check: out.check, material: out.material, shown: true });
+      onShowStress(id, { faces: [], result: out.check.result });
+    } catch {
+      setStrength({ kind: "error", text: "The engine did not answer" });
+    }
+  };
   const dir = useRef(1);
 
   useEffect(() => {
@@ -288,6 +314,54 @@ export function LinkageMotion({
             <label className="xray-toggle" title="Include the parts' weight (gravity down the z axis)">
               <input type="checkbox" checked={gravity} onChange={(e) => setGravity(e.target.checked)} /> Gravity
             </label>
+          </div>
+        );
+      })()}
+      {sweep.forces && (() => {
+        // The moving parts (the engine says if one has too few joints to check).
+        const movers = sweep.bodies.flat();
+        const pick = checkPart || movers[0] || "";
+        const s = strength;
+        return (
+          <div className="force-block">
+            <div className="joint-head">
+              <span className="joint-name">Strength at its hardest moment</span>
+            </div>
+            <div className="strength-row">
+              <select value={pick} onChange={(e) => (setCheckPart(e.target.value), setStrength(null), onShowStress(id, null))} aria-label="Which moving part">
+                {movers.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+              <button type="button" className="secondary" disabled={!pick || s?.kind === "busy"} onClick={() => checkStrength(pick)}>
+                <Icon name="weight" /> {s?.kind === "busy" ? "Checking…" : "Check"}
+              </button>
+            </div>
+            {s?.kind === "error" && <p className="print-note bad">{s.text}</p>}
+            {s?.kind === "done" && (
+              <>
+                <div className={`stress-verdict ${s.check.result.safety >= 2 ? "ok" : s.check.result.safety >= 1.2 ? "warn" : "bad"}`}>
+                  <b>Safety ×{n(s.check.result.safety, 2)}</b> · {n(s.check.result.max_stress, 1)} MPa at {n(s.check.at, turning ? 0 : 1)}
+                  {driveJoint?.unit} ({s.material}, yield {n(s.check.result.yield_strength, 0)} MPa)
+                </div>
+                <small className="joint-facts">
+                  Held at {s.check.held_by}; {s.check.loads.map(([j, f]) => `${j} ${n(f, 0)} N`).join(", ")}. {s.check.result.notes.slice(-1)[0]}
+                </small>
+                <label className="xray-toggle">
+                  <input
+                    type="checkbox"
+                    checked={s.shown}
+                    onChange={(e) => {
+                      setStrength({ ...s, shown: e.target.checked });
+                      onShowStress(id, e.target.checked ? { faces: [], result: s.check.result } : null);
+                    }}
+                  />{" "}
+                  Show the stress map
+                </label>
+              </>
+            )}
           </div>
         );
       })()}

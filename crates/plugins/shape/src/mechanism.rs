@@ -712,6 +712,11 @@ pub fn mesh_mass(positions: &[f32], triangles: &[u32], density: f64) -> MassProp
     MassProps { mass, center, inertia }
 }
 
+/// A frame's rotation of body `b` applied backwards: world vector to the body's drawn axes.
+pub fn to_drawn(frame: &Frame, b: usize, v: V3) -> V3 {
+    mul(&transpose(&from_quaternion(frame.bodies[b].1)), v)
+}
+
 fn from_quaternion(q: [f64; 4]) -> M3 {
     let [x, y, z, w] = q;
     [
@@ -732,6 +737,12 @@ pub struct Forces {
     pub drive: Vec<f64>,
     /// Per joint, per frame: the force it carries (N).
     pub joints: Vec<Vec<f64>>,
+    /// Per joint, per frame: that force as a vector (N, world axes), as it
+    /// acts on the body `on` names (the other body feels the opposite).
+    #[serde(skip)]
+    pub vectors: Vec<Vec<V3>>,
+    #[serde(skip)]
+    pub on: Vec<Option<usize>>,
     /// Per frame: the force the moving parts shake the ground with (N, inertia only).
     pub shaking: Vec<f64>,
     /// The drive's average power over the range (W): about zero for a
@@ -786,7 +797,16 @@ impl Linkage {
             let w = matmul(&d, &transpose(&rot[mid][b]));
             [(w[2][1] - w[1][2]) / 2.0, (w[0][2] - w[2][0]) / 2.0, (w[1][0] - w[0][1]) / 2.0]
         };
-        let mut out = Forces { drive: vec![], joints: vec![vec![]; self.joints.len()], shaking: vec![], mean_power: 0.0, masses: bodies.iter().map(|b| b.mass).collect(), gravity };
+        let mut out = Forces {
+            drive: vec![],
+            joints: vec![vec![]; self.joints.len()],
+            vectors: vec![vec![]; self.joints.len()],
+            on: self.joints.iter().map(|j| j.a.or(j.b)).collect(),
+            shaking: vec![],
+            mean_power: 0.0,
+            masses: bodies.iter().map(|b| b.mass).collect(),
+            gravity,
+        };
         let g = if gravity { [0.0, 0.0, -9.81] } else { [0.0; 3] };
         for k in 0..n {
             let (i, mid, j) = triple(k);
@@ -852,6 +872,7 @@ impl Linkage {
                     }
                 }
                 out.joints[q].push(norm(f));
+                out.vectors[q].push(f);
                 row += count;
             }
             row += self.couplings.len();

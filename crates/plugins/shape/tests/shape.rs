@@ -862,7 +862,7 @@ fn a_cantilever_bends_and_is_stressed_as_beam_theory_says() {
         normal: [n, 0.0, 0.0],
         triangles: vec![x, 0.0, 0.0, x, 20.0, 0.0, x, 20.0, 20.0, x, 0.0, 0.0, x, 20.0, 20.0, x, 0.0, 20.0],
     };
-    let study = de_shape::fea::Study { supports: vec![face(0.0, -1.0)], loads: vec![de_shape::fea::Load { face: face(200.0, 1.0), force: [0.0, 0.0, -1000.0] }], resolution: 80 };
+    let study = de_shape::fea::Study { supports: vec![face(0.0, -1.0)], loads: vec![de_shape::fea::Load { face: face(200.0, 1.0), force: [0.0, 0.0, -1000.0] }], bore_supports: vec![], bore_loads: vec![], resolution: 80 };
     let steel = de_shape::fea::elastic("Steel").unwrap();
     let r = de_shape::fea::solve(&e.positions, &e.indices, &steel, &study).unwrap();
     // Tip deflection: PL³/3EI (1.000 mm) plus shear PL/κGA (0.008 mm).
@@ -933,4 +933,39 @@ fn a_saved_study_finds_its_faces_again_after_the_part_changes() {
     // Clearing both lists removes the study.
     run(&mut p, "shape.set_study", json!({ "target": part, "study": { "part": null, "supports": [], "loads": [] } })).unwrap();
     assert!(p.get::<de_shape::ShapeStudies>(part).is_none());
+}
+
+#[test]
+fn a_connecting_rod_is_checked_at_its_hardest_moment() {
+    // Slider-crank, r 30, rod 100 (10 × 8 shank between two eyes), all the mass in a 0.5 kg piston, 3000 rpm.
+    let program = linkage_program(
+        r#"
+        joint("hinge", "Crank", "ground", { at: [0, 0, 0], axis: [0, 1, 0], name: "Main bearing" });
+        joint("hinge", "Rod", "Crank", { at: [30, 0, 0], axis: [0, 1, 0], name: "Big end" });
+        joint("hinge", "Rod", "Piston", { at: [130, 0, 0], axis: [0, 1, 0], name: "Small end" });
+        joint("slider", "Piston", "ground", { at: [130, 0, 0], axis: [1, 0, 0], name: "Bore" });
+        drive("Main bearing", { speed: 3000 });
+        const eye = (x) => cylinder(8, 9).rotate(-90, 0, 0).translate(x, -4, 0).subtract(cylinder(10, 5).rotate(-90, 0, 0).translate(x, -5, 0));
+        const rod = box(80, 8, 10).translate(40, -4, -5).add(eye(30), eye(130));
+        return [
+            part("Crank", box(40, 10, 10).translate(-5, 10, -5)),
+            part("Rod", rod, { material: "Steel" }),
+            part("Piston", cylinder(20, 12).rotate(0, 90, 0).translate(120, 20, 0)),
+            part("Block", box(10, 10, 10).translate(-40, 40, -5)),
+        ];
+    "#,
+    );
+    let r = de_shape::motion_stress(&program, "Rod", &[Some(1e-9), Some(1e-9), Some(0.5), Some(1.0)], "Steel").unwrap();
+    let w = 3000.0 * std::f64::consts::TAU / 60.0;
+    let peak = 0.5 * 0.030 * w * w * (1.0 + 0.3);
+    eprintln!("rod: at {}°, held by {}, loads {:?}, max {:.1} MPa, safety {:.2}", r.at, r.held_by, r.loads, r.result.max_stress, r.result.safety);
+    assert!(r.at.rem_euclid(360.0) < 1.0 || r.at.rem_euclid(360.0) > 359.0, "top dead centre: {}", r.at);
+    assert_eq!(r.held_by, "Big end");
+    assert_eq!(r.loads[0].0, "Small end");
+    assert!((r.loads[0].1 - peak).abs() < peak * 0.01, "{} N vs m·r·ω²(1 + r/L) = {peak:.0} N", r.loads[0].1);
+    // Mid-shank: the rod is pulled straight, so σ = F/A.
+    let mid = de_shape::fea::stress_at(&r.result, [80.0, 0.0, 0.0]).unwrap();
+    let want = peak / 80.0;
+    eprintln!("rod mid-shank {mid:.2} MPa vs F/A {want:.2} MPa");
+    assert!((mid - want).abs() < want * 0.1, "mid-shank {mid:.1} MPa vs F/A = {want:.1} MPa");
 }
