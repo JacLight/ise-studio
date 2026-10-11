@@ -1335,6 +1335,7 @@ async fn assembly_motion(State(server): State<Arc<Server>>, Path(id): Path<Strin
     let num = |k: &str| query.get(k).and_then(|v| v.parse::<f64>().ok());
     let steps = query.get("steps").and_then(|v| v.parse::<usize>().ok()).unwrap_or(120);
     let key = query.get("key").cloned();
+    let gaps = query.get("gaps").is_none_or(|g| g != "off");
     let (from, to) = (num("from"), num("to"));
     let set: HashMap<String, Value> = match query.get("set").filter(|s| !s.is_empty()) {
         Some(s) => match serde_json::from_str(s) {
@@ -1372,7 +1373,7 @@ async fn assembly_motion(State(server): State<Arc<Server>>, Path(id): Path<Strin
             }
             values.insert(j, base);
         }
-        de_assembly::motion::sweep(world, joint, key.as_deref(), from, to, steps, &values)
+        de_assembly::motion::sweep(world, joint, key.as_deref(), from, to, steps, &values, gaps)
     })
     .await
     .unwrap_or_else(|e| Err(e.to_string()));

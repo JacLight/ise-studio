@@ -181,7 +181,7 @@ if (command === "run") {
       const defName = def?.components["shape.program"]?.name ?? def?.components["assembly.definition"]?.name ?? "?";
       const users = s.entities.filter((x) => inst(x)?.of === i.of).length;
       const props = Object.entries(i.properties ?? {}).map(([k, v]) => `${k}=${v}`).join(" ");
-      return `${i.name}  [${defName}${users > 1 ? `, shared ×${users}` : ""}] at ${i.at.map((v) => Math.round(v)).join(",")}${i.rotation ? ` rot ${i.rotation}°` : ""}${props ? `  {${props}}` : ""}  (${e.id})`;
+      return `${i.name}  [${defName}${users > 1 ? `, shared ×${users}` : ""}] at ${i.at.map((v) => Math.round(v)).join(",")}${(Array.isArray(i.rotation) ? i.rotation.some((v) => v) : i.rotation) ? ` rot ${[].concat(i.rotation).join(",")}°` : ""}${props ? `  {${props}}` : ""}  (${e.id})`;
     }
     if (c["shape.program"]) return `${c["shape.program"].name}${e.shape?.parts?.length ? ` (${e.shape.parts.length} parts)` : ""}  (${e.id})`;
     if (c["solid.box"]) return `Box  (${e.id})`;

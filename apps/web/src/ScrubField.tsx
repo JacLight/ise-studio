@@ -15,6 +15,7 @@ type Props = {
   value: number;
   unit?: string;
   min?: number;
+  max?: number;
   /** Size of one scrub step in value units. */
   step?: number;
   onLive: (value: number | null) => void;
@@ -34,7 +35,7 @@ function modifier(e: { shiftKey: boolean; altKey: boolean }) {
   return e.shiftKey ? 10 : e.altKey ? 0.1 : 1;
 }
 
-export function ScrubField({ label, chip, tone, value, unit = "mm", min, step = 1, onLive, onCommit, formula, onFormula }: Props) {
+export function ScrubField({ label, chip, tone, value, unit = "mm", min, max, step = 1, onLive, onCommit, formula, onFormula }: Props) {
   const [draft, setDraft] = useState<string | null>(null);
   const [scrubbing, setScrubbing] = useState(false);
   const [invalid, setInvalid] = useState(false);
@@ -44,7 +45,7 @@ export function ScrubField({ label, chip, tone, value, unit = "mm", min, step = 
   const nudgeTimer = useRef<number>(undefined);
   const live = useRef<number | null>(null);
 
-  const clamp = (v: number) => (min !== undefined ? Math.max(min, v) : v);
+  const clamp = (v: number) => Math.min(max ?? Infinity, min !== undefined ? Math.max(min, v) : v);
 
   const preview = (v: number | null) => {
     live.current = v;
@@ -128,7 +129,7 @@ export function ScrubField({ label, chip, tone, value, unit = "mm", min, step = 
       return true;
     }
     const v = evaluate(draft, value);
-    if (v === null || (min !== undefined && v < min)) {
+    if (v === null || (min !== undefined && v < min) || (max !== undefined && v > max)) {
       setInvalid(true);
       setShake((n) => n + 1);
       return false;

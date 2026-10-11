@@ -130,7 +130,7 @@ fn default_range(kind: JointKind, key: &str, set: &ParameterSet, value: f64) -> 
 /// Sweeps joint `joint`'s value `key` (default its main one) from `from` to
 /// `to` (default its limits) in `steps` steps, other joints held at their
 /// values or at `set` (joint id → values) when given.
-pub fn sweep(world: &World, joint: StableId, key: Option<&str>, from: Option<f64>, to: Option<f64>, steps: usize, set: &HashMap<StableId, Vec<f64>>) -> Result<AssemblySweep, String> {
+pub fn sweep(world: &World, joint: StableId, key: Option<&str>, from: Option<f64>, to: Option<f64>, steps: usize, set: &HashMap<StableId, Vec<f64>>, gaps_too: bool) -> Result<AssemblySweep, String> {
     let je = entity(world, joint).ok_or_else(|| format!("joint {joint} does not exist"))?;
     let j: Joint = world.get::<Joint>(je).cloned().ok_or_else(|| format!("{joint} is not a joint"))?;
     let params = world.get::<ParameterSet>(je).cloned().ok_or("the joint has no values")?;
@@ -213,7 +213,9 @@ pub fn sweep(world: &World, joint: StableId, key: Option<&str>, from: Option<f64
         out.notes.push(format!("Nothing moves when {} turns or slides: no instance hangs from it.", params.name));
         return Ok(out);
     }
-    gaps(world, &j, &ids, &poses_per_frame, &mut out)?;
+    if gaps_too {
+        gaps(world, &j, &ids, &poses_per_frame, &mut out)?;
+    }
     Ok(out)
 }
 

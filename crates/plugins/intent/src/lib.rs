@@ -321,7 +321,7 @@ fn no_collisions(ps: &[PartView]) -> RequirementResult {
 }
 
 fn clear_in_motion(world: &World, joint: StableId, ids: &[StableId], steps: usize) -> Result<RequirementResult, String> {
-    let s = de_assembly::motion::sweep(world, joint, None, None, None, steps, &Default::default())?;
+    let s = de_assembly::motion::sweep(world, joint, None, None, None, steps, &Default::default(), true)?;
     let covered = |id: StableId| ids.is_empty() || ids.contains(&id) || s.assembly.is_some_and(|a| ids.contains(&a));
     let unit = |v: f64| format!("{}{}", fmt(v), if s.unit == "°" { "°" } else { " mm" });
     let watched: Vec<&de_assembly::motion::PairGap> = s.pairs.iter().filter(|p| !p.joined && (covered(p.a_id) || covered(p.b_id))).collect();

@@ -97,7 +97,8 @@ export type InstanceData = {
   of: string;
   parent: string | null;
   at: [number, number, number];
-  rotation: number;
+  /** Degrees about X, then Y, then Z. */
+  rotation: [number, number, number];
   properties?: Record<string, string>;
   /** The configuration of its shape it shows (none: the definition as it is). */
   config?: string | null;
@@ -124,31 +125,91 @@ export function childrenOf(defId: string, entities: ReadonlyMap<string, EntityVi
 /** How many instances use this definition. */
 export const usesOf = (defId: string, entities: ReadonlyMap<string, EntityView>) => [...entities.values()].filter((e) => instance(e)?.of === defId).length;
 
-export type Transform = { at: [number, number, number]; rotation: number };
+export type V3 = [number, number, number];
+export type Quat = [number, number, number, number];
+/** A rigid placement: a point p goes to q·p + at (q a unit quaternion [x, y, z, w]). */
+export type Transform = { at: V3; q: Quat };
+export const IDENTITY: Transform = { at: [0, 0, 0], q: [0, 0, 0, 1] };
 
-/** `inner` placed inside `outer` (rotation about Z, then translation). */
+export function qmul(a: Quat, b: Quat): Quat {
+  const [ax, ay, az, aw] = a;
+  const [bx, by, bz, bw] = b;
+  return [aw * bx + ax * bw + ay * bz - az * by, aw * by - ax * bz + ay * bw + az * bx, aw * bz + ax * by - ay * bx + az * bw, aw * bw - ax * bx - ay * by - az * bz];
+}
+
+export function qrotate(q: Quat, v: V3): V3 {
+  const [x, y, z, w] = q;
+  // v + 2w(u×v) + 2u×(u×v), u = (x, y, z)
+  const cx = y * v[2] - z * v[1], cy = z * v[0] - x * v[2], cz = x * v[1] - y * v[0];
+  return [v[0] + 2 * (w * cx + y * cz - z * cy), v[1] + 2 * (w * cy + z * cx - x * cz), v[2] + 2 * (w * cz + x * cy - y * cx)];
+}
+
+/** Degrees about X, then Y, then Z (fixed axes), as a quaternion. */
+export function quatFromEuler(deg: readonly number[]): Quat {
+  const half = deg.map((d) => (d * Math.PI) / 360);
+  const qx: Quat = [Math.sin(half[0]), 0, 0, Math.cos(half[0])];
+  const qy: Quat = [0, Math.sin(half[1]), 0, Math.cos(half[1])];
+  const qz: Quat = [0, 0, Math.sin(half[2]), Math.cos(half[2])];
+  return qmul(qz, qmul(qy, qx));
+}
+
+export const applyT = (t: Transform, p: V3): V3 => {
+  const r = qrotate(t.q, p);
+  return [r[0] + t.at[0], r[1] + t.at[1], r[2] + t.at[2]];
+};
+
+export const invertT = (t: Transform): Transform => {
+  const q: Quat = [-t.q[0], -t.q[1], -t.q[2], t.q[3]];
+  const r = qrotate(q, t.at);
+  return { at: [-r[0], -r[1], -r[2]], q };
+};
+
+/** `inner` placed inside `outer` (a point goes through inner, then outer). */
 export function compose(inner: Transform, outer: Transform): Transform {
-  const r = (outer.rotation * Math.PI) / 180;
-  const [x, y, z] = inner.at;
-  return {
-    at: [Math.cos(r) * x - Math.sin(r) * y + outer.at[0], Math.sin(r) * x + Math.cos(r) * y + outer.at[1], z + outer.at[2]],
-    rotation: outer.rotation + inner.rotation,
-  };
+  return { at: applyT(outer, inner.at), q: qmul(outer.q, inner.q) };
+}
+
+/** Where an instance sits in its parent now: where its joints put it, else its own position and rotation. */
+export function placedOf(e: EntityView | undefined): Transform {
+  const inst = instance(e);
+  if (!inst) return IDENTITY;
+  if (e?.placed) return { at: e.placed.at, q: e.placed.quaternion };
+  const r = Array.isArray(inst.rotation) ? inst.rotation : [0, 0, Number(inst.rotation) || 0];
+  return { at: inst.at, q: quatFromEuler(r) };
+}
+
+/** An instance in its own definition's coordinates, placed in the project (through every assembly above it). */
+export function worldOf(id: string, entities: ReadonlyMap<string, EntityView>, parent = false): Transform {
+  let t = IDENTITY;
+  let current = id;
+  for (let i = 0; i < 32; i++) {
+    const e = entities.get(current);
+    const inst = instance(e);
+    if (!inst) break;
+    // `parent`: where it and its siblings are placed, without its own placement.
+    if (!(parent && i === 0)) t = compose(t, placedOf(e));
+    if (!inst.parent) break;
+    const owner = [...entities.values()].find((x) => instance(x)?.of === inst.parent);
+    if (!owner) break;
+    current = owner.id;
+  }
+  return t;
 }
 
 /** One shape somewhere inside an instance: which component, where, and the instance path to it
  * (and, when its instance shows a configuration, that configuration evaluated). */
 export type Occurrence = { shape: string; path: string[]; transform: Transform; configured?: Configured };
 
-/** Every shape under an instance (or assembly definition), in the instance's parent coordinates. */
-export function occurrences(id: string, entities: ReadonlyMap<string, EntityView>): Occurrence[] {
+/** Every shape under an instance (or assembly definition), in the instance's parent coordinates.
+ * `poses` stands in for instances' own placements (a joint being scrubbed). */
+export function occurrences(id: string, entities: ReadonlyMap<string, EntityView>, poses?: ReadonlyMap<string, Transform> | null): Occurrence[] {
   const out: Occurrence[] = [];
   const walk = (eid: string, t: Transform, path: string[], depth: number) => {
     if (depth > 32) return;
     const e = entities.get(eid);
     if (!e) return;
     const inst = instance(e);
-    if (inst) return walk(inst.of, compose({ at: inst.at, rotation: inst.rotation }, t), [...path, eid], depth + 1);
+    if (inst) return walk(inst.of, compose(poses?.get(eid) ?? placedOf(e), t), [...path, eid], depth + 1);
     if (assemblyDef(e)) {
       for (const c of childrenOf(eid, entities)) walk(c.id, t, path, depth + 1);
       return;
@@ -159,7 +220,7 @@ export function occurrences(id: string, entities: ReadonlyMap<string, EntityView
       out.push({ shape: eid, path, transform: t, configured });
     }
   };
-  walk(id, { at: [0, 0, 0], rotation: 0 }, [], 0);
+  walk(id, IDENTITY, [], 0);
   return out;
 }
 

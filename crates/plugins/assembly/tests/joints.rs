@@ -190,7 +190,7 @@ fn the_clash_sweep_finds_the_post_where_the_arm_hits_it() {
     let a = place(&mut p, arm, None, "Arm", [0.0; 3], [0.0; 3]);
     place(&mut p, post, None, "Post", [-5.0, 40.0, 0.0], [0.0; 3]);
     let j = id(&run(&mut p, "assembly.joint.create", json!({ "type": "hinge", "name": "Swing", "a": "ground", "b": { "instance": a, "connector": "Pivot" } })).unwrap());
-    let s = de_assembly::motion::sweep(p.world(), j, None, Some(0.0), Some(180.0), 180, &Default::default()).unwrap();
+    let s = de_assembly::motion::sweep(p.world(), j, None, Some(0.0), Some(180.0), 180, &Default::default(), true).unwrap();
     assert_eq!(s.frames.len(), 181);
     // The arm's leading face (5 mm off its centre line) meets the post's near
     // corner (5, 40) where 40 cos θ − 5 sin θ = 5: θ = 75.75°; its trailing
@@ -201,7 +201,7 @@ fn the_clash_sweep_finds_the_post_where_the_arm_hits_it() {
     assert_eq!((first, last), (76.0, 104.0), "{c:?}");
     assert!(s.instances.iter().any(|i| i.name == "Arm" && i.moves) && s.instances.iter().any(|i| i.name == "Post" && !i.moves));
     // Through 0–70° it clears; the closest gap is at 70°.
-    let s = de_assembly::motion::sweep(p.world(), j, None, Some(0.0), Some(70.0), 70, &Default::default()).unwrap();
+    let s = de_assembly::motion::sweep(p.world(), j, None, Some(0.0), Some(70.0), 70, &Default::default(), true).unwrap();
     assert!(s.clashes.is_empty());
     let g = &s.pairs[0];
     let want = 40.0 * 70f64.to_radians().cos() - 5.0 * 70f64.to_radians().sin() - 5.0;
