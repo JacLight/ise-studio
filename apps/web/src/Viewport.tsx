@@ -78,9 +78,33 @@ export type MotionGrab = {
   onDelta: (d: number) => void;
 };
 
+/**
+ * Where to draw a pressure's arrows: up to `count` triangles spread over the
+ * face (the largest of each run of triangles, in the order they come), each
+ * arrow at its middle pointing in along its normal.
+ */
+function pressureArrows(triangles: number[], count: number): { at: THREE.Vector3; dir: THREE.Vector3 }[] {
+  const n = Math.floor(triangles.length / 9);
+  const run = Math.max(1, Math.ceil(n / count));
+  const out: { at: THREE.Vector3; dir: THREE.Vector3 }[] = [];
+  const p = (t: number, k: number) => new THREE.Vector3(triangles[9 * t + 3 * k], triangles[9 * t + 3 * k + 1], triangles[9 * t + 3 * k + 2]);
+  for (let first = 0; first < n; first += run) {
+    let best: { at: THREE.Vector3; dir: THREE.Vector3; area: number } | null = null;
+    for (let t = first; t < Math.min(n, first + run); t++) {
+      const [a, b, c] = [p(t, 0), p(t, 1), p(t, 2)];
+      const cross = new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a));
+      const area = cross.length();
+      if (area > 0 && (!best || area > best.area)) best = { at: a.add(b).add(c).divideScalar(3), dir: cross.normalize().negate(), area };
+    }
+    if (best) out.push(best);
+  }
+  return out;
+}
+
 /** A stress study as the view shows it (part coordinates, mm). */
 export type StressView = {
-  faces: { kind: "support" | "load" | "hold" | "heat"; triangles: number[]; point: [number, number, number]; force?: [number, number, number] }[];
+  /** `pressure`: a load pushing every bit of its face straight in (drawn as arrows square to it all over). */
+  faces: { kind: "support" | "load" | "hold" | "heat"; triangles: number[]; point: [number, number, number]; force?: [number, number, number]; pressure?: boolean }[];
   result?: {
     cell: number;
     origin: [number, number, number];
@@ -2477,21 +2501,22 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         );
         tint.renderOrder = 960;
         group.add(tint);
-        if (f.kind === "load" && f.force) {
+        // Each arrow ends on the face, pointing the way the load pushes there.
+        const arrowAt = (tip: THREE.Vector3, dir: THREE.Vector3, len: number) => {
+          const arrow = new THREE.ArrowHelper(dir, tip.clone().addScaledVector(dir, -len), len, 0xe0761f, len * 0.28, len * 0.14);
+          arrow.traverse((o) => {
+            o.renderOrder = 961;
+            const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+            if (m) m.depthTest = false;
+          });
+          group.add(arrow);
+        };
+        if (f.kind === "load" && f.pressure) {
+          // A pressure: short arrows square to the face, spread over it (into a bore they fan out to its wall).
+          for (const { at, dir } of pressureArrows(f.triangles, 12)) arrowAt(at, dir, size * 0.08);
+        } else if (f.kind === "load" && f.force) {
           const dir = new THREE.Vector3(...f.force);
-          if (dir.lengthSq() > 0) {
-            dir.normalize();
-            const len = size * 0.18;
-            // The arrow ends on the face, pointing the way the force pushes.
-            const tip = new THREE.Vector3(...f.point);
-            const arrow = new THREE.ArrowHelper(dir, tip.clone().addScaledVector(dir, -len), len, 0xe0761f, len * 0.28, len * 0.14);
-            arrow.traverse((o) => {
-              o.renderOrder = 961;
-              const m = (o as THREE.Mesh).material as THREE.Material | undefined;
-              if (m) m.depthTest = false;
-            });
-            group.add(arrow);
-          }
+          if (dir.lengthSq() > 0) arrowAt(new THREE.Vector3(...f.point), dir.normalize(), size * 0.18);
         }
       }
       let swing: { mesh: THREE.Mesh; base: Float32Array; delta: Float32Array } | undefined;

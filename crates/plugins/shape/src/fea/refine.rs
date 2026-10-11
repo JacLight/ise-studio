@@ -55,10 +55,11 @@ const REACH: i64 = 5;
 const BUDGET: usize = 600_000;
 
 /// Re-solves the most stressed spot of a solved single-part model.
-pub(super) fn sharpen(m: &Model, u: &[f64], f: &[f64], vm: &[f64], ctx: &Context) -> Result<(Peak, Vec<String>), String> {
+pub(super) fn sharpen(m: &Model, u: &[f64], pointed: &[bool], vm: &[f64], ctx: &Context) -> Result<(Peak, Vec<String>), String> {
     let h = m.grid.h;
-    // Cubes touching a held node or a loaded one: their peaks are the hold's and the load's, not the part's.
-    let near_hold = |e: usize| m.corners[e].iter().any(|&n| m.fixed[3 * n] || f[3 * n..3 * n + 3].iter().any(|v| *v != 0.0));
+    // Cubes touching a held node or a loaded one: their peaks are the hold's and the load's, not the part's
+    // (a pressure all over a curved face makes none: a pressed bore's peak is the part's own).
+    let near_hold = |e: usize| m.corners[e].iter().any(|&n| m.fixed[3 * n] || pointed[n]);
     let hot = (0..m.cells.len()).filter(|&e| !near_hold(e) && m.weight[e] > 0.5).max_by(|&a, &b| vm[a].total_cmp(&vm[b])).ok_or("Peak: every cube touches a support or a load, so there is no spot to sharpen.")?;
     let top = (0..m.cells.len()).max_by(|&a, &b| vm[a].total_cmp(&vm[b])).unwrap();
     let at_support = top != hot && vm[top] > vm[hot] * 1.02;
@@ -225,9 +226,21 @@ fn solve_box(m: &Model, u: &[f64], ctx: &Context, lo: [i64; 3], hi: [i64; 3], fa
         }
     };
     for load in &ctx.study.loads {
-        let coarse_on: Vec<usize> = nodes_on_face(m.part_nodes(0), |id| m.position(id), h, &load.face).into_iter().filter(|&k| !m.fixed[3 * k]).collect();
         let fine_on = nodes_on_face(fine.part_nodes(0), |id| fine.position(id), hf, &load.face);
-        put(coarse_on, fine_on, load.force, &mut rhs);
+        if load.face.curved {
+            // The bits of the face inside the box, each pushing where it is.
+            let on: Vec<usize> = fine_on.into_iter().filter(|&k| !fine.fixed[3 * k]).collect();
+            for (k, v) in load_forces(&on, |id| fine.position(id), hf, &fine_share, load, |x| inside(x) > 0.0) {
+                for d in 0..3 {
+                    rhs[3 * k + d] += v[d];
+                }
+            }
+            continue;
+        }
+        let coarse_on: Vec<usize> = nodes_on_face(m.part_nodes(0), |id| m.position(id), h, &load.face).into_iter().filter(|&k| !m.fixed[3 * k]).collect();
+        let n = load.face.normal;
+        let push = load.pressure * load.face.area() / (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-12);
+        put(coarse_on, fine_on, std::array::from_fn(|d| load.force[d] - push * n[d]), &mut rhs);
     }
     for load in &ctx.study.bore_loads {
         let coarse_on: Vec<usize> = nodes_near_axis(m.part_nodes(0), |id| m.position(id), h, &load.bore).into_iter().filter(|&k| !m.fixed[3 * k]).collect();

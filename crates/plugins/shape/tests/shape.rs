@@ -1088,8 +1088,9 @@ fn a_cantilever_bends_and_is_stressed_as_beam_theory_says() {
         normal: [n, 0.0, 0.0],
         triangles: vec![x, 0.0, 0.0, x, 20.0, 0.0, x, 20.0, 20.0, x, 0.0, 0.0, x, 20.0, 20.0, x, 0.0, 20.0],
         part: None,
+        curved: false,
     };
-    let study = de_shape::fea::Study { supports: vec![face(0.0, -1.0)], loads: vec![de_shape::fea::Load { face: face(200.0, 1.0), force: [0.0, 0.0, -1000.0] }], bore_supports: vec![], bore_loads: vec![], resolution: 80, ..Default::default() };
+    let study = de_shape::fea::Study { supports: vec![face(0.0, -1.0)], loads: vec![de_shape::fea::Load { face: face(200.0, 1.0), force: [0.0, 0.0, -1000.0], pressure: 0.0 }], bore_supports: vec![], bore_loads: vec![], resolution: 80, ..Default::default() };
     let steel = de_shape::fea::elastic("Steel").unwrap();
     let r = de_shape::fea::solve(&e.positions, &e.indices, &steel, &study).unwrap();
     // Tip deflection: PL³/3EI (1.000 mm) plus shear PL/κGA (0.008 mm).
@@ -1113,7 +1114,7 @@ fn a_cantilever_bends_and_is_stressed_as_beam_theory_says() {
 fn a_cantilever_rings_at_the_frequency_beam_theory_says() {
     // Steel 200 × 20 × 20 mm held at one end: f₁ = (1.875²/2π)·√(EI/ρAL⁴) ≈ 407.7 Hz, twice (square section).
     let e = runtime::evaluate("return box(200, 20, 20);", &[], 0.01).unwrap();
-    let held = de_shape::fea::Face { point: [0.0, 10.0, 10.0], normal: [-1.0, 0.0, 0.0], triangles: vec![0.0, 0.0, 0.0, 0.0, 20.0, 0.0, 0.0, 20.0, 20.0, 0.0, 0.0, 0.0, 0.0, 20.0, 20.0, 0.0, 0.0, 20.0], part: None };
+    let held = de_shape::fea::Face { point: [0.0, 10.0, 10.0], normal: [-1.0, 0.0, 0.0], triangles: vec![0.0, 0.0, 0.0, 0.0, 20.0, 0.0, 0.0, 20.0, 20.0, 0.0, 0.0, 0.0, 0.0, 20.0, 20.0, 0.0, 0.0, 20.0], part: None, curved: false };
     let steel = de_shape::fea::elastic("Steel").unwrap();
     let m = de_shape::fea::modes(&e.positions, &e.indices, &steel, 7850.0, &[held], 3, 60).unwrap();
     let (ei, rho_a, l) = (200e9 * 0.02f64.powi(4) / 12.0, 7850.0 * 0.0004, 0.2f64);
@@ -1203,7 +1204,7 @@ fn a_connecting_rod_is_checked_at_its_hardest_moment() {
 }
 
 fn end_face(x: f64, n: f64, s: f64) -> de_shape::fea::Face {
-    de_shape::fea::Face { point: [x, s / 2.0, s / 2.0], normal: [n, 0.0, 0.0], triangles: vec![x, 0.0, 0.0, x, s, 0.0, x, s, s, x, 0.0, 0.0, x, s, s, x, 0.0, s], part: None }
+    de_shape::fea::Face { point: [x, s / 2.0, s / 2.0], normal: [n, 0.0, 0.0], triangles: vec![x, 0.0, 0.0, x, s, 0.0, x, s, s, x, 0.0, 0.0, x, s, s, x, 0.0, s], part: None, curved: false }
 }
 
 #[test]
@@ -1278,8 +1279,9 @@ fn a_thin_plate_bends_as_plate_theory_says_and_solves_quickly() {
         normal: [n, 0.0, 0.0],
         triangles: vec![x, 0.0, 0.0, x, 100.0, 0.0, x, 100.0, 4.0, x, 0.0, 0.0, x, 100.0, 4.0, x, 0.0, 4.0],
         part: None,
+        curved: false,
     };
-    let study = de_shape::fea::Study { supports: vec![face(0.0, -1.0)], loads: vec![de_shape::fea::Load { face: face(200.0, 1.0), force: [0.0, 0.0, -50.0] }], bore_supports: vec![], bore_loads: vec![], resolution: 160, ..Default::default() };
+    let study = de_shape::fea::Study { supports: vec![face(0.0, -1.0)], loads: vec![de_shape::fea::Load { face: face(200.0, 1.0), force: [0.0, 0.0, -50.0], pressure: 0.0 }], bore_supports: vec![], bore_loads: vec![], resolution: 160, ..Default::default() };
     let steel = de_shape::fea::elastic("Steel").unwrap();
     let t0 = std::time::Instant::now();
     let r = de_shape::fea::solve(&e.positions, &e.indices, &steel, &study).unwrap();
@@ -1630,11 +1632,12 @@ fn rect_face(axis: usize, at: f64, sign: f64, a: [f64; 2], b: [f64; 2], part: Op
         normal,
         triangles: [q[0], q[1], q[2], q[0], q[2], q[3]].iter().flatten().copied().collect(),
         part: part.map(String::from),
+        curved: false,
     }
 }
 
 fn load(face: de_shape::fea::Face, force: [f64; 3]) -> de_shape::fea::Load {
-    de_shape::fea::Load { face, force }
+    de_shape::fea::Load { face, force, pressure: 0.0 }
 }
 
 fn study(supports: Vec<de_shape::fea::Face>, loads: Vec<de_shape::fea::Load>, resolution: usize, contacts: Vec<de_shape::fea::ContactSpec>) -> de_shape::fea::Study {
@@ -2449,7 +2452,7 @@ fn a_pin_pressed_into_a_hub_presses_as_lame_says() {
     let src = "return [part('Hub', cylinder(10, 20, { segments: 96 }).subtract(cylinder(12, 10, { segments: 96 }).translate(0, 0, -1))), part('Pin', cylinder(10, 10.05, { segments: 96 }))];";
     let e = runtime::evaluate(src, &[], 0.01).unwrap();
     // Held by a small patch of the hub's foot, near its rim: enough to keep it from drifting, too little to stop it swelling.
-    let patch = de_shape::fea::Face { point: [19.0, 0.0, 0.0], normal: [0.0, 0.0, -1.0], triangles: vec![18.5, -0.5, 0.0, 19.5, -0.5, 0.0, 19.5, 0.5, 0.0, 18.5, -0.5, 0.0, 19.5, 0.5, 0.0, 18.5, 0.5, 0.0], part: Some("Hub".into()) };
+    let patch = de_shape::fea::Face { point: [19.0, 0.0, 0.0], normal: [0.0, 0.0, -1.0], triangles: vec![18.5, -0.5, 0.0, 19.5, -0.5, 0.0, 19.5, 0.5, 0.0, 18.5, -0.5, 0.0, 19.5, 0.5, 0.0, 18.5, 0.5, 0.0], part: Some("Hub".into()), curved: false };
     let mut fit = contact("Hub", "Pin", Frictionless, 0.0);
     fit.press_fit = true;
     // Lamé, same material, solid pin: p = E·δ·(c² − b²) / (2·b·c²).
@@ -2487,4 +2490,168 @@ fn a_sharp_inside_corner_is_called_singular_not_given_a_number() {
     assert!((p.at[0] - 10.0).abs() < 2.0 && (p.at[2] - 10.0).abs() < 2.0, "{:?}", p.at);
     // No number from it drives the verdict: the coarse cubes' largest stands.
     assert!(r.max_stress < p.stress && r.notes.iter().any(|n| n.contains("no finite value") && n.contains("fillet")));
+}
+
+// ---- Curved faces in studies ----------------------------------------------------
+
+/// A curved face picked on a program's part at `point`, facing `normal` (kept as fractions of the part's bounds, as the app keeps it).
+fn curved_pick(e: &runtime::Evaluated, point: [f64; 3], normal: [f64; 3]) -> de_shape::fea::FacePick {
+    let frac = std::array::from_fn(|k| if e.bounds_max[k] > e.bounds_min[k] { (point[k] - e.bounds_min[k]) / (e.bounds_max[k] - e.bounds_min[k]) } else { 0.5 });
+    de_shape::fea::FacePick { at: frac, probe: frac, normal, part: None, curved: true }
+}
+
+/// The corners of a face's triangles.
+fn face_points(f: &de_shape::fea::Face) -> Vec<[f64; 3]> {
+    f.triangles.chunks_exact(3).map(|v| [v[0], v[1], v[2]]).collect()
+}
+
+/// The centre of the cube of a result's grid that holds a point.
+fn cube_centre(origin: [f64; 3], cell: f64, at: [f64; 3]) -> [f64; 3] {
+    [0, 1, 2].map(|k| origin[k] + (((at[k] - origin[k]) / cell - 0.5).round() + 0.5) * cell)
+}
+
+const TUBE: &str = "return cylinder(40, 20, { segments: 96 }).subtract(cylinder(42, 10, { segments: 96 }).translate(0, 0, -1));";
+
+#[test]
+fn a_curved_face_is_its_whole_smooth_surface_and_no_more() {
+    // A tube (bore 20, outside 40, 40 long): the bore and the outside are each one face, the ends part of neither.
+    let program = linkage_program(TUBE);
+    let e = de_shape::evaluated_at(&program, 0.01).unwrap();
+    let perimeter = |r: f64| 2.0 * 96.0 * r * (std::f64::consts::PI / 96.0).sin();
+    for (r, n) in [(10.0, -1.0), (20.0, 1.0)] {
+        let f = de_shape::resolve_face(&program, None, &curved_pick(&e, [0.0, r, 13.0], [0.0, n, 0.0])).expect("found");
+        assert!(f.curved);
+        let radii = face_points(&f).iter().map(|p| (p[0] * p[0] + p[1] * p[1]).sqrt()).fold((f64::INFINITY, 0.0f64), |(a, b), q| (a.min(q), b.max(q)));
+        assert!(radii.0 > r - 0.05 && radii.1 < r + 0.05, "radius {r}: every corner on it, none on the ends: {radii:?}");
+        assert!((f.area() - perimeter(r) * 40.0).abs() < 1e-3 * f.area(), "the whole side: {} mm² vs {}", f.area(), perimeter(r) * 40.0);
+        assert!((f.normal[1] - n).abs() < 0.01, "facing out of the material: {:?}", f.normal);
+    }
+    // A filleted box: the fillet alone, not the flat sides it runs into.
+    let program = linkage_program("return box(40, 30, 20).fillet(5, { parallel: \"z\" });");
+    let e = de_shape::evaluated_at(&program, 0.01).unwrap();
+    let s = std::f64::consts::FRAC_1_SQRT_2;
+    let f = de_shape::resolve_face(&program, None, &curved_pick(&e, [35.0 + 5.0 * s, 25.0 + 5.0 * s, 10.0], [s, s, 0.0])).expect("found");
+    assert!(face_points(&f).iter().all(|p| p[0] >= 35.0 - 1e-6 && p[1] >= 25.0 - 1e-6), "only that corner's fillet");
+    let quarter = std::f64::consts::FRAC_PI_2 * 5.0 * 20.0;
+    assert!((f.area() - quarter).abs() < quarter * 0.01, "a quarter cylinder: {} mm² vs {quarter}", f.area());
+    // A sphere: all of it.
+    let program = linkage_program("return sphere(10);");
+    let e = de_shape::evaluated_at(&program, 0.01).unwrap();
+    let f = de_shape::resolve_face(&program, None, &curved_pick(&e, [0.0, 0.0, 10.0], [0.0, 0.0, 1.0])).expect("found");
+    assert!((f.area() - e.area).abs() < 1e-6 * e.area, "the whole sphere: {} of {} mm²", f.area(), e.area);
+}
+
+#[test]
+fn a_tube_pressed_inside_is_stressed_as_lame_says() {
+    // Steel tube, bore 20, outside 40, 40 long, 100 MPa in its bore; open ends, so σz = 0 and Lamé holds all along.
+    let program = linkage_program(TUBE);
+    let e = de_shape::evaluated_at(&program, 0.01).unwrap();
+    let steel = de_shape::fea::elastic("Steel").unwrap();
+    let bore = de_shape::resolve_face(&program, None, &curved_pick(&e, [10.0, 0.0, 20.0], [-1.0, 0.0, 0.0])).unwrap();
+    let p = 100.0;
+    let pick = |magnitude: f64, direction: &str| de_shape::fea::LoadPick { face: curved_pick(&e, [10.0, 0.0, 20.0], [-1.0, 0.0, 0.0]), magnitude, direction: direction.into() };
+    let pressed = pick(p, "pressure").on(bore.clone());
+    assert_eq!((pressed.pressure, pressed.force), (p, [0.0; 3]));
+    // "Into the face" on a curved face: the newtons spread over its area, each bit pushing straight in.
+    let into = pick(p * bore.area(), "into").on(bore.clone());
+    assert!((into.pressure - p).abs() < 1e-9 && into.force == [0.0; 3]);
+    // Held by a small patch of its foot near the rim: that keeps it from drifting, not from swelling.
+    let patch = rect_face(2, 0.0, -1.0, [18.5, 19.5], [-0.5, 0.5], None);
+    let mut s = study(vec![patch], vec![pressed], 64, vec![]);
+    s.refine = true;
+    let t0 = std::time::Instant::now();
+    let r = de_shape::fea::solve(&e.positions, &e.indices, &steel, &s).unwrap();
+    let (a, b, nu) = (10.0f64, 20.0f64, steel.nu);
+    let (big_a, big_b) = (p * a * a / (b * b - a * a), p * a * a * b * b / (b * b - a * a));
+    let lame = |r: f64| {
+        let (hoop, radial) = (big_a + big_b / (r * r), big_a - big_b / (r * r));
+        (hoop * hoop - hoop * radial + radial * radial).sqrt()
+    };
+    let swell = |r: f64| ((1.0 - nu) * big_a * r + (1.0 + nu) * big_b / r) / steel.e;
+    // Through the wall at mid-length, all round: von Mises at cube centres, and how far it swells at nodes.
+    let (mut worst_s, mut worst_u) = (0.0f64, 0.0f64);
+    for deg in [0.0f64, 30.0, 45.0, 60.0, 135.0, 250.0] {
+        let (c, sn) = (deg.to_radians().cos(), deg.to_radians().sin());
+        for rr in [12.5, 15.0, 17.5] {
+            let at = [rr * c, rr * sn, 20.0];
+            let centre = cube_centre(r.origin, r.cell, at);
+            let want = lame((centre[0] * centre[0] + centre[1] * centre[1]).sqrt());
+            let got = de_shape::fea::stress_at(&r, at).unwrap();
+            worst_s = worst_s.max((got - want).abs() / want);
+            let node = [0, 1, 2].map(|k| r.origin[k] + ((at[k] - r.origin[k]) / r.cell).round() * r.cell);
+            let rn = (node[0] * node[0] + node[1] * node[1]).sqrt();
+            // Across the bore, to leave out how the whole tube shifts about its small patch of hold.
+            let (d, o) = (de_shape::fea::displacement_at(&r, node).unwrap(), de_shape::fea::displacement_at(&r, [-node[0], -node[1], node[2]]).unwrap());
+            let radial = ((d[0] - o[0]) * node[0] + (d[1] - o[1]) * node[1]) / (2.0 * rn);
+            worst_u = worst_u.max((radial - swell(rn)).abs() / swell(rn));
+        }
+    }
+    let peak = r.peak.as_ref().unwrap_or_else(|| panic!("no peak: {:?}", r.notes));
+    eprintln!(
+        "pressed tube at 64: mid-wall von Mises within {:.2} %, swelling within {:.2} % of Lamé (σ {:.1} MPa, u {:.5} mm at r 15); bore peak {:.1} MPa (cube centres {:.1}) at {:?} vs Lamé {:.1} MPa; {:.1} s; {:?}",
+        worst_s * 100.0, worst_u * 100.0, lame(15.0), swell(15.0), peak.stress, peak.coarse, peak.at, lame(10.0), t0.elapsed().as_secs_f64(), r.notes
+    );
+    assert!(worst_s < 0.03, "von Mises off Lamé by {:.1} %", worst_s * 100.0);
+    assert!(worst_u < 0.03, "swelling off Lamé by {:.1} %", worst_u * 100.0);
+    // A pressure all over the bore makes no peak of its own: the re-solve reads the bore itself. The
+    // cubes where the bore meets an end read highest (about 6 % over Lamé, the staircase's corner).
+    let at_bore = (peak.at[0] * peak.at[0] + peak.at[1] * peak.at[1]).sqrt();
+    assert!(!peak.singular && !peak.at_support && (at_bore - a).abs() < 0.5, "at the bore: r = {at_bore}");
+    assert!((peak.stress - lame(a)).abs() < lame(a) * 0.08, "bore peak {} MPa vs {} MPa", peak.stress, lame(a));
+}
+
+#[test]
+fn a_round_bar_held_by_its_round_side_bends_as_beam_theory_says() {
+    // Steel: a collar (r 15, 20 long) held all round its side, a bar (r 5, 100 long) out of it, 100 N sideways on its end.
+    let program = linkage_program("return cylinder(20, 15, { segments: 96 }).add(cylinder(100, 5, { segments: 96 }).translate(0, 0, 20));");
+    let e = de_shape::evaluated_at(&program, 0.01).unwrap();
+    let steel = de_shape::fea::elastic("Steel").unwrap();
+    let collar = de_shape::resolve_face(&program, None, &curved_pick(&e, [0.0, -15.0, 10.0], [0.0, -1.0, 0.0])).unwrap();
+    assert!(face_points(&collar).iter().all(|p| ((p[0] * p[0] + p[1] * p[1]).sqrt() - 15.0).abs() < 0.05 && p[2] > -1e-6 && p[2] < 20.0 + 1e-6), "the collar's side alone, not its shoulder or the bar");
+    let end = rect_face(2, 120.0, 1.0, [-5.0, 5.0], [-5.0, 5.0], None);
+    let r = de_shape::fea::solve(&e.positions, &e.indices, &steel, &study(vec![collar], vec![load(end, [100.0, 0.0, 0.0])], 96, vec![])).unwrap();
+    // Away from both ends, half way out from the axis on the bending side: σ = M·x/I, with the shear 4V/3A·(1 − x²/r²).
+    let i = std::f64::consts::PI * 5f64.powi(4) / 4.0;
+    let area = std::f64::consts::PI * 25.0;
+    let mut worst = 0.0f64;
+    for z in [50.0, 70.0, 90.0] {
+        for x in [-2.5, 2.5] {
+            let c = cube_centre(r.origin, r.cell, [x, 0.0, z]);
+            let sigma = 100.0 * (120.0 - c[2]) * c[0] / i;
+            let tau = 4.0 * 100.0 / (3.0 * area) * (1.0 - c[0] * c[0] / 25.0);
+            let want = (sigma * sigma + 3.0 * tau * tau).sqrt();
+            let got = de_shape::fea::stress_at(&r, [x, 0.0, z]).unwrap();
+            worst = worst.max((got - want).abs() / want);
+        }
+    }
+    eprintln!("round bar held by its collar: bending stress within {:.2} % of beam theory, {} cubes, {} iterations", worst * 100.0, r.elements, r.iterations);
+    assert!(worst < 0.05, "off beam theory by {:.1} %", worst * 100.0);
+}
+
+#[test]
+fn heat_through_a_tube_wall_follows_the_log_of_the_radius() {
+    // Aluminium tube, bore 20 held at 20 °C, outside 40 heated with 50 W, 20 long, ends insulated:
+    // T(r) = 20 + Q·ln(r/a) / (2π·k·L).
+    let program = linkage_program("return cylinder(20, 20, { segments: 96 }).subtract(cylinder(22, 10, { segments: 96 }).translate(0, 0, -1));");
+    let e = de_shape::evaluated_at(&program, 0.01).unwrap();
+    let k = de_shape::fea::conductivity("Aluminium").unwrap();
+    let bore = de_shape::resolve_face(&program, None, &curved_pick(&e, [-10.0, 0.0, 10.0], [1.0, 0.0, 0.0])).unwrap();
+    let outside = de_shape::resolve_face(&program, None, &curved_pick(&e, [20.0, 0.0, 10.0], [1.0, 0.0, 0.0])).unwrap();
+    let study = de_shape::fea::ThermalStudy { holds: vec![de_shape::fea::Hold { face: bore, temperature: 20.0 }], heats: vec![de_shape::fea::Heat { face: outside, watts: 50.0 }], convection: None, resolution: 64 };
+    let r = de_shape::fea::thermal(&e.positions, &e.indices, k, &study).unwrap();
+    let at = |rr: f64| 20.0 + 50.0 * (rr / 10.0).ln() / (std::f64::consts::TAU * k * 0.02);
+    let mut worst = 0.0f64;
+    for deg in [0.0f64, 40.0, 90.0, 200.0] {
+        for rr in [12.5, 15.0, 17.5] {
+            let p = [rr * deg.to_radians().cos(), rr * deg.to_radians().sin(), 10.0];
+            let c = cube_centre(r.origin, r.cell, p);
+            let want = at((c[0] * c[0] + c[1] * c[1]).sqrt());
+            let got = de_shape::fea::temperature_at(&r, p).unwrap();
+            worst = worst.max((got - want).abs() / (at(20.0) - 20.0));
+        }
+    }
+    eprintln!("tube wall: within {:.2} % of the rise across it from Q·ln(r/a)/2πkL (outside {:.3} K above the bore, hottest {:.3} K), {:.3} W out through the bore", worst * 100.0, at(20.0) - 20.0, r.max - 20.0, r.to_holds);
+    assert!(worst < 0.02, "off by {:.1} %", worst * 100.0);
+    assert!((r.to_holds - 50.0).abs() < 1e-3, "all 50 W leave through the bore: {}", r.to_holds);
+    assert!((r.max - at(20.0)).abs() < (at(20.0) - 20.0) * 0.05, "hottest {} vs {}", r.max, at(20.0));
 }

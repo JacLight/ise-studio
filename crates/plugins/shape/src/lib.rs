@@ -528,8 +528,14 @@ pub fn resolve_face(program: &ShapeProgram, part: Option<&str>, pick: &fea::Face
         None => (e.bounds_min, e.bounds_max),
     };
     let at = |f: [f64; 3]| [0, 1, 2].map(|k| lo[k] + f[k] * (hi[k] - lo[k]));
+    let flatten = |tris: &[[[f64; 3]; 3]]| tris.iter().flat_map(|t| t.iter().flat_map(|p| p.iter().copied())).collect();
+    if pick.curved {
+        // Its point and normal come from where the probe lands now (the surface may have moved).
+        let (tris, point, normal) = smooth_face(&e, part, at(pick.probe), pick.normal)?;
+        return Some(fea::Face { point, normal, triangles: flatten(&tris), part: pick.part.clone(), curved: true });
+    }
     let tris = flat_face(&e, part, at(pick.probe), pick.normal)?;
-    Some(fea::Face { point: at(pick.at), normal: pick.normal, triangles: tris.iter().flat_map(|t| t.iter().flat_map(|p| p.iter().copied())).collect(), part: pick.part.clone() })
+    Some(fea::Face { point: at(pick.at), normal: pick.normal, triangles: flatten(&tris), part: pick.part.clone(), curved: false })
 }
 
 /// Derived: the evaluated solid (millimeters, program coordinates).
@@ -808,6 +814,103 @@ pub fn flat_face(e: &runtime::Evaluated, part: Option<&str>, point: [f64; 3], n:
         }
     }
     Some(out)
+}
+
+/// Facets of one smooth surface meet at under about 20° (cos 0.94); a real edge is sharper.
+const SMOOTH: f64 = 0.94;
+
+/// The whole smooth curved surface nearest `point` that faces about `n` (a
+/// cylinder's side, a bore, a fillet, a sphere): every triangle reached from
+/// the one under the point across edges that bend gently, but not into
+/// facets of another size (a flat face a fillet runs into, or a fillet a
+/// shaft runs into), each surface's facets being alike. Also the point on
+/// it nearest `point` and its outward normal there. The web app's
+/// `curvedFaceAt` walks the same way, so what is shown is what is held.
+pub fn smooth_face(e: &runtime::Evaluated, part: Option<&str>, point: [f64; 3], n: [f64; 3]) -> Option<(Vec<[[f64; 3]; 3]>, [f64; 3], [f64; 3])> {
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let sub = |a: [f64; 3], b: [f64; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let cross = |a: [f64; 3], b: [f64; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    let tris: Vec<[[f64; 3]; 3]> = part_triangles(e, part).collect();
+    let (normals, areas): (Vec<[f64; 3]>, Vec<f64>) = tris
+        .iter()
+        .map(|t| {
+            let c = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+            let len = dot(c, c).sqrt();
+            (if len > 1e-12 { c.map(|v| v / len) } else { [0.0; 3] }, len / 2.0)
+        })
+        .unzip();
+    let nl = dot(n, n).sqrt().max(1e-12);
+    let n = n.map(|c| c / nl);
+    // The triangle under the point: the nearest one facing about the same way.
+    let (start, near) = (0..tris.len())
+        .filter(|&i| areas[i] > 0.0 && dot(normals[i], n) > 0.5)
+        .map(|i| (i, fea::nearest_on_triangle(point, tris[i][0], tris[i][1], tris[i][2])))
+        .min_by(|a, b| {
+            let d = |q: [f64; 3]| dot(sub(q, point), sub(q, point));
+            d(a.1).total_cmp(&d(b.1))
+        })?;
+    // Neighbours across each edge (two shared vertex positions).
+    let key = |p: [f64; 3]| p.map(|c| (c * 1e4).round() as i64);
+    let edge = |a: [f64; 3], b: [f64; 3]| {
+        let (ka, kb) = (key(a), key(b));
+        if ka < kb { (ka, kb) } else { (kb, ka) }
+    };
+    let mut across: HashMap<([i64; 3], [i64; 3]), Vec<usize>> = HashMap::new();
+    for (i, t) in tris.iter().enumerate() {
+        for k in 0..3 {
+            across.entry(edge(t[k], t[(k + 1) % 3])).or_default().push(i);
+        }
+    }
+    let (across, all) = (&across, &tris);
+    let neighbours = |i: usize| {
+        let t = all[i];
+        (0..3).flat_map(move |k| across.get(&edge(t[k], t[(k + 1) % 3])).into_iter().flatten().copied()).filter(move |&j| j != i)
+    };
+    // Each triangle's flat group (coplanar neighbours), and how wide the group is: area over its box's diagonal.
+    let mut group = vec![usize::MAX; tris.len()];
+    let mut width = vec![];
+    for i in 0..tris.len() {
+        if group[i] != usize::MAX {
+            continue;
+        }
+        let g = width.len();
+        group[i] = g;
+        let (mut queue, mut area, mut lo, mut hi) = (vec![i], 0.0, [f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        while let Some(t) = queue.pop() {
+            area += areas[t];
+            for p in tris[t] {
+                for d in 0..3 {
+                    lo[d] = lo[d].min(p[d]);
+                    hi[d] = hi[d].max(p[d]);
+                }
+            }
+            for j in neighbours(t) {
+                if group[j] == usize::MAX && dot(normals[j], normals[t]) > 0.9999 {
+                    group[j] = g;
+                    queue.push(j);
+                }
+            }
+        }
+        let diag = dot(sub(hi, lo), sub(hi, lo)).sqrt();
+        width.push(if diag > 0.0 { area / diag } else { 0.0 });
+    }
+    let alike = |j: usize| {
+        let (a, b) = (width[group[j]], width[group[start]]);
+        a <= 3.0 * b && b <= 3.0 * a
+    };
+    let mut seen = vec![false; tris.len()];
+    seen[start] = true;
+    let (mut queue, mut out) = (vec![start], vec![]);
+    while let Some(i) = queue.pop() {
+        out.push(tris[i]);
+        for j in neighbours(i) {
+            if !seen[j] && areas[j] > 0.0 && dot(normals[j], normals[i]) > SMOOTH && alike(j) {
+                seen[j] = true;
+                queue.push(j);
+            }
+        }
+    }
+    Some((out, near, normals[start]))
 }
 
 /// Where the flat face facing `n` under `point` sits along `n` (its plane's

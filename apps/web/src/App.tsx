@@ -614,8 +614,8 @@ export function App({ engine }: { engine: Engine }) {
   const pickFace = useCallback(
     (f: ProgramFace | null, why?: "curved") => {
       if (stressPick) {
-        if (why === "curved" || f?.curved) return notify("Supports and loads go on flat faces: pick a flat face");
-        if (!f) return;
+        // Flat or curved (a cylinder's side, a bore, a fillet): either goes to the study.
+        if (!f) return why === "curved" ? notify("That surface could not be picked: try another spot on it") : undefined;
         stressPick.take(f);
         setStressPick(null);
         return;

@@ -19,6 +19,7 @@ mod refine;
 pub use refine::Peak;
 
 use rayon::prelude::*;
+use std::collections::HashMap;
 use de_core::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
@@ -115,7 +116,7 @@ pub fn expansion(material: &str) -> Option<f64> {
     Some(per_million * 1e-6)
 }
 
-/// A flat face as picked: a point on it, its outward normal, and its
+/// A face as picked: a point on it, its outward normal there, and its
 /// triangles (x y z per vertex, 9 numbers per triangle), in part coordinates.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Face {
@@ -125,6 +126,37 @@ pub struct Face {
     /// The part of a several-part study it is on (none: the first part).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub part: Option<String>,
+    /// A curved surface (a cylinder's side, a bore, a fillet): each triangle
+    /// faces its own way, and loads spread over it by area.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub curved: bool,
+}
+
+impl Face {
+    fn tris(&self) -> impl Iterator<Item = [[f64; 3]; 3]> + '_ {
+        self.triangles.chunks_exact(9).map(|t| [[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]])
+    }
+
+    /// Its area (mm²).
+    pub fn area(&self) -> f64 {
+        self.tris().map(|t| v_norm(v_cross(v_sub(t[1], t[0]), v_sub(t[2], t[0]))) / 2.0).sum()
+    }
+}
+
+fn v_sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn v_dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn v_cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+fn v_norm(a: [f64; 3]) -> f64 {
+    v_dot(a, a).sqrt()
 }
 
 /// A face as kept with a study: where on the part it sits (fractions of the
@@ -139,6 +171,11 @@ pub struct FacePick {
     /// studied with it); fractions are of that part's bounds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub part: Option<String>,
+    /// The whole smooth curved surface under the probe (a cylinder's side,
+    /// a bore, a fillet, a sphere), not a flat face; `normal` is the
+    /// surface's where it was picked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub curved: bool,
 }
 
 /// How two parts studied together act where they touch.
@@ -172,9 +209,16 @@ pub struct ContactSpec {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
 pub struct LoadPick {
     pub face: FacePick,
-    /// Newtons.
+    /// Newtons; MPa with direction "pressure".
     pub magnitude: f64,
-    /// "into" (the face) or an axis: "-z", "+z", "-x", "+x", "-y", "+y".
+    /// "into" (the face), "pressure", or an axis: "-z", "+z", "-x", "+x", "-y", "+y".
+    ///
+    /// "into" on a flat face is a force square to it; on a curved face it is
+    /// the newtons spread evenly over its area, each bit pushing straight in
+    /// along its own normal (a pressure of magnitude ÷ area), so pushes on
+    /// opposite sides of a bore cancel and the net force is less. "pressure"
+    /// is that pressure given in MPa (N/mm²), on any face. An axis spreads
+    /// the force over the face by area, all one way.
     pub direction: String,
 }
 
@@ -269,6 +313,17 @@ impl LoadPick {
         };
         unit.map(|c| c * self.magnitude)
     }
+
+    /// The load it puts on the face as found now.
+    pub fn on(&self, face: Face) -> Load {
+        let pressure = match self.direction.as_str() {
+            "pressure" => self.magnitude,
+            "into" if face.curved => self.magnitude / face.area().max(1e-12),
+            _ => 0.0,
+        };
+        let force = if pressure != 0.0 { [0.0; 3] } else { self.force(face.normal) };
+        Load { face, force, pressure }
+    }
 }
 
 /// A joint's seat on a part: the material nearest an axis (the skin of a
@@ -290,6 +345,14 @@ pub struct Load {
     pub face: Face,
     /// Total force (N), spread evenly over the face.
     pub force: [f64; 3],
+    /// Pressure (MPa) besides: every bit of the face pushed straight in
+    /// along its own normal.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub pressure: f64,
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -717,6 +780,9 @@ fn nodes_near_axis(ids: impl Iterator<Item = usize>, position: impl Fn(usize) ->
 
 /// Nodes among `ids` that lie on a picked face.
 fn nodes_on_face(ids: impl Iterator<Item = usize>, position: impl Fn(usize) -> [f64; 3], h: f64, face: &Face) -> Vec<usize> {
+    if face.curved {
+        return nodes_on_surface(ids, position, h, face);
+    }
     let n = face.normal;
     let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-12);
     let n = n.map(|c| c / len);
@@ -745,6 +811,175 @@ fn nodes_on_face(ids: impl Iterator<Item = usize>, position: impl Fn(usize) -> [
         d.abs() <= margin && inside(q)
     })
     .collect()
+}
+
+/// Nodes among `ids` that lie on a curved face: within half a cube of one
+/// of its triangles (square to it, and past its edges), each triangle in its
+/// own plane. Triangles are binned in boxes so each node meets only those near it.
+fn nodes_on_surface(ids: impl Iterator<Item = usize>, position: impl Fn(usize) -> [f64; 3], h: f64, face: &Face) -> Vec<usize> {
+    let margin = h * 0.55;
+    let tris: Vec<([[f64; 3]; 3], [f64; 3])> = face
+        .tris()
+        .filter_map(|t| {
+            let c = v_cross(v_sub(t[1], t[0]), v_sub(t[2], t[0]));
+            let l = v_norm(c);
+            (l > 1e-12).then(|| (t, c.map(|v| v / l)))
+        })
+        .collect();
+    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for (t, _) in &tris {
+        for p in t {
+            for d in 0..3 {
+                lo[d] = lo[d].min(p[d] - margin);
+                hi[d] = hi[d].max(p[d] + margin);
+            }
+        }
+    }
+    let size = (hi[0] - lo[0]).max(hi[1] - lo[1]).max(hi[2] - lo[2]);
+    let s = (2.0 * h).max(size / 48.0);
+    let bin = |q: [f64; 3]| [0, 1, 2].map(|d| ((q[d] - lo[d]) / s).floor() as i64);
+    let mut bins: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
+    for (i, (t, _)) in tris.iter().enumerate() {
+        let a = bin([0, 1, 2].map(|d| t[0][d].min(t[1][d]).min(t[2][d]) - margin));
+        let b = bin([0, 1, 2].map(|d| t[0][d].max(t[1][d]).max(t[2][d]) + margin));
+        for x in a[0]..=b[0] {
+            for y in a[1]..=b[1] {
+                for z in a[2]..=b[2] {
+                    bins.entry([x, y, z]).or_default().push(i);
+                }
+            }
+        }
+    }
+    let on = |q: [f64; 3]| {
+        bins.get(&bin(q)).is_some_and(|list| {
+            list.iter().any(|&i| {
+                let (t, n) = tris[i];
+                v_dot(v_sub(q, t[0]), n).abs() <= margin
+                    && (0..3).all(|k| {
+                        let (a, b) = (t[k], t[(k + 1) % 3]);
+                        let out = v_cross(v_sub(b, a), n);
+                        v_dot(v_sub(q, a), out) / v_norm(out).max(1e-12) <= margin
+                    })
+            })
+        })
+    };
+    ids.filter(|&id| {
+        let q = position(id);
+        (0..3).all(|d| q[d] >= lo[d] && q[d] <= hi[d]) && on(q)
+    })
+    .collect()
+}
+
+/// How a curved face's area falls to the nodes `on` it: each triangle cut
+/// into pieces under half a cube across, each piece going to the node of
+/// `on` nearest it, with its area and its area times its outward normal.
+/// Only pieces whose middle is `within` count (a re-solved piece of the part).
+fn area_on_nodes(on: &[usize], position: impl Fn(usize) -> [f64; 3], h: f64, face: &Face, within: impl Fn([f64; 3]) -> bool) -> Vec<(usize, f64, [f64; 3])> {
+    let Some(&first) = on.first() else { return vec![] };
+    // The nodes are on a lattice of spacing h: key them by where they sit on it.
+    let base = position(first);
+    let key = |q: [f64; 3]| [0, 1, 2].map(|d| ((q[d] - base[d]) / h + 0.5).floor() as i64);
+    let mut at: HashMap<[i64; 3], usize> = HashMap::with_capacity(on.len());
+    for (k, &id) in on.iter().enumerate() {
+        at.insert(key(position(id)), k);
+    }
+    let places: Vec<[f64; 3]> = on.iter().map(|&id| position(id)).collect();
+    let nearest = |c: [f64; 3]| -> usize {
+        let g = key(c);
+        let mut best: Option<(f64, usize)> = None;
+        for r in 1..=3i64 {
+            for x in -r..=r {
+                for y in -r..=r {
+                    for z in -r..=r {
+                        if let Some(&k) = at.get(&[g[0] + x, g[1] + y, g[2] + z]) {
+                            let d = v_sub(places[k], c);
+                            let d = v_dot(d, d);
+                            if best.is_none_or(|(b, _)| d < b) {
+                                best = Some((d, k));
+                            }
+                        }
+                    }
+                }
+            }
+            if best.is_some() {
+                break;
+            }
+        }
+        // Rarely, no node within three cubes: the nearest of all.
+        best.map(|(_, k)| k).unwrap_or_else(|| {
+            (0..places.len())
+                .min_by(|&a, &b| {
+                    let (da, db) = (v_sub(places[a], c), v_sub(places[b], c));
+                    v_dot(da, da).total_cmp(&v_dot(db, db))
+                })
+                .unwrap_or(0)
+        })
+    };
+    let mut area = vec![0.0; on.len()];
+    let mut vector = vec![[0.0; 3]; on.len()];
+    for t in face.tris() {
+        let c = v_cross(v_sub(t[1], t[0]), v_sub(t[2], t[0]));
+        let whole = v_norm(c) / 2.0;
+        if whole <= 0.0 {
+            continue;
+        }
+        let n = c.map(|v| v / (2.0 * whole));
+        let longest = (0..3).map(|k| v_norm(v_sub(t[(k + 1) % 3], t[k]))).fold(0.0, f64::max);
+        let m = ((longest / (0.5 * h)).ceil() as usize).clamp(1, 64);
+        let piece = whole / (m * m) as f64;
+        let point = |u: f64, v: f64| [0, 1, 2].map(|d| t[0][d] + u * (t[1][d] - t[0][d]) + v * (t[2][d] - t[0][d]));
+        let mut put = |c: [f64; 3]| {
+            if within(c) {
+                let k = nearest(c);
+                area[k] += piece;
+                for d in 0..3 {
+                    vector[k][d] += piece * n[d];
+                }
+            }
+        };
+        // m² equal pieces: m(m+1)/2 upright, m(m−1)/2 upside down.
+        let mf = m as f64;
+        for i in 0..m {
+            for j in 0..m - i {
+                put(point((i as f64 + 1.0 / 3.0) / mf, (j as f64 + 1.0 / 3.0) / mf));
+                if i + j + 1 < m {
+                    put(point((i as f64 + 2.0 / 3.0) / mf, (j as f64 + 2.0 / 3.0) / mf));
+                }
+            }
+        }
+    }
+    on.iter().enumerate().filter(|(k, _)| area[*k] > 0.0).map(|(k, &id)| (id, area[k], vector[k])).collect()
+}
+
+/// The forces a load puts on the nodes `on` its face (free nodes, part
+/// coordinates). A flat face shares its force by the nodes' shares, its
+/// pressure as a force square to it; a curved face spreads its force by
+/// area and pushes its pressure in along each bit's own normal. `within`
+/// picks out the part of a curved face that counts.
+fn load_forces(on: &[usize], position: impl Fn(usize) -> [f64; 3], h: f64, share: &[f64], load: &Load, within: impl Fn([f64; 3]) -> bool) -> Vec<(usize, [f64; 3])> {
+    if !load.face.curved {
+        let n = load.face.normal;
+        let n = n.map(|c| c / v_norm(n).max(1e-12));
+        let push = load.pressure * load.face.area();
+        let total: [f64; 3] = std::array::from_fn(|d| load.force[d] - push * n[d]);
+        let mut out: Vec<(usize, [f64; 3])> = on.iter().map(|&id| (id, [0.0; 3])).collect();
+        for d in 0..3 {
+            for (k, (_, v)) in spread(on, share, total[d]).into_iter().enumerate() {
+                out[k].1[d] = v;
+            }
+        }
+        return out;
+    }
+    let whole = load.face.area().max(1e-12);
+    area_on_nodes(on, position, h, &load.face, within)
+        .into_iter()
+        .map(|(id, a, av)| (id, std::array::from_fn(|d| load.force[d] * a / whole - load.pressure * av[d])))
+        .collect()
+}
+
+/// The pushes in a load, added up regardless of direction (N): the scale it is judged by.
+fn load_size(load: &Load) -> f64 {
+    v_norm(load.force) + load.pressure.abs() * load.face.area()
 }
 
 /// Grid nodes the part uses that lie on a picked face.
@@ -1193,6 +1428,9 @@ pub fn solve_parts(bodies: &[Body], study: &Study) -> Result<Result_, String> {
     let (nodes, h) = (model.nodes, model.grid.h);
     let mut notes = vec![];
     let mut f = vec![0.0; 3 * nodes];
+    // Where loads make a sharp peak of their own (every load but a pressure
+    // all over a curved face, which ends nowhere): the re-solve keeps off them.
+    let mut pointed = vec![false; nodes];
     let share = node_shares(nodes, &model.corners, &model.weight);
     let mut applied = 0.0;
     for (l, load) in study.loads.iter().enumerate() {
@@ -1201,12 +1439,14 @@ pub fn solve_parts(bodies: &[Body], study: &Study) -> Result<Result_, String> {
         if on.is_empty() {
             return Err(format!("load {} touches no free part of the part", l + 1));
         }
-        for d in 0..3 {
-            for (n, v) in spread(&on, &share, load.force[d]) {
-                f[3 * n + d] += v;
+        let smooth = load.face.curved && load.force == [0.0; 3];
+        for (n, v) in load_forces(&on, |id| model.position(id), h, &share, load, |_| true) {
+            for d in 0..3 {
+                f[3 * n + d] += v[d];
             }
+            pointed[n] |= !smooth;
         }
-        applied += load.force.iter().map(|c| c * c).sum::<f64>().sqrt();
+        applied += load_size(load);
     }
     for (l, load) in study.bore_loads.iter().enumerate() {
         let on: Vec<usize> = nodes_near_axis(model.part_nodes(0), |id| model.position(id), h, &load.bore).into_iter().filter(|&n| !model.fixed[3 * n]).collect();
@@ -1218,6 +1458,7 @@ pub fn solve_parts(bodies: &[Body], study: &Study) -> Result<Result_, String> {
                 f[3 * n + d] += v;
             }
         }
+        on.iter().for_each(|&n| pointed[n] = true);
         applied += load.force.iter().map(|c| c * c).sum::<f64>().sqrt();
     }
     let mechanical = applied > 0.0;
@@ -1327,7 +1568,7 @@ pub fn solve_parts(bodies: &[Body], study: &Study) -> Result<Result_, String> {
     if study.refine && !several {
         let warm = |x: [f64; 3]| warmth.as_ref().map_or(0.0, |w| w.at(0, x));
         let ctx = refine::Context { positions: bodies[0].positions, triangles: bodies[0].triangles, material: materials[0], study, warm: &warm };
-        match refine::sharpen(&model, &u, &f, &stresses, &ctx) {
+        match refine::sharpen(&model, &u, &pointed, &stresses, &ctx) {
             Ok((p, more)) => {
                 notes.extend(more);
                 if !p.singular && p.stress > max_stress {
@@ -1914,8 +2155,16 @@ pub fn thermal(positions: &[f32], triangles: &[u32], k: f64, study: &ThermalStud
         if on.is_empty() {
             return Err(format!("heated face {} touches no free part of the part", s + 1));
         }
-        for (n, v) in spread(&on, &share, heat.watts) {
-            q[n] += v;
+        if heat.face.curved {
+            // By area: the same heat through every square millimetre.
+            let whole = heat.face.area().max(1e-12);
+            for (n, a, _) in area_on_nodes(&on, |id| grid.position(id), h, &heat.face, |_| true) {
+                q[n] += heat.watts * a / whole;
+            }
+        } else {
+            for (n, v) in spread(&on, &share, heat.watts) {
+                q[n] += v;
+            }
         }
         heat_in += heat.watts;
     }
@@ -2019,7 +2268,7 @@ pub fn temperature_at(r: &Temperatures, point: [f64; 3]) -> Option<f64> {
 // ---- Distance to a surface -----------------------------------------------------
 
 /// The point of triangle (a, b, c) nearest p (Ericson, Real-Time Collision Detection 5.1.5).
-fn nearest_on_triangle(p: [f64; 3], a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> [f64; 3] {
+pub(crate) fn nearest_on_triangle(p: [f64; 3], a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> [f64; 3] {
     let sub = |u: [f64; 3], v: [f64; 3]| [u[0] - v[0], u[1] - v[1], u[2] - v[2]];
     let dot = |u: [f64; 3], v: [f64; 3]| u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
     let along = |o: [f64; 3], d: [f64; 3], t: f64| [o[0] + t * d[0], o[1] + t * d[1], o[2] + t * d[2]];
