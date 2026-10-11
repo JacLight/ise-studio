@@ -68,7 +68,7 @@ fn depth(prim: &Prim, p: P) -> f64 {
 }
 
 const DIRS: [(i32, i32); 8] = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)];
-const MARGIN: f64 = 0.03;
+const MARGIN: f64 = 0.01;
 
 struct Grid {
     x0: f64,
@@ -92,6 +92,7 @@ impl Grid {
 }
 
 /// Copper that is fixed while one net routes.
+#[derive(Clone)]
 struct Obstacle {
     prim: Prim,
     layers: u8,
@@ -187,11 +188,22 @@ impl Command for Autoroute {
             }
         }
 
+        // Passes: a net that fails goes first next time, everything this
+        // command made is ripped up between passes; the best order is kept.
+        const PASSES: usize = 5;
+        let base = obstacles;
+        let mut order = todo;
+        let mut best: Option<(usize, Vec<String>)> = None;
+        let mut pass = 0;
+        let (routed, failed, made_tracks, made_vias) = loop {
+        pass += 1;
+        let mut obstacles = base.clone();
+        let mut created: Vec<StableId> = Vec::new();
         let mut routed = Vec::new();
-        let mut failed = Vec::new();
+        let mut failed: Vec<Value> = Vec::new();
         let mut made_tracks = 0;
         let mut made_vias = 0;
-        for net in todo {
+        for net in order.clone() {
             let class = board.class_of(Some(&net));
             let w = class.track_width;
             let clear = class.clearance.max(board.rules.min_space);
@@ -291,9 +303,9 @@ impl Command for Autoroute {
                 failed.push(json!({ "net": net, "reason": format!("no grid point fits a {w} mm track inside {} (try a finer grid or a narrower net class)", small.join(", ")) }));
                 continue;
             }
-            let mut reached = vec![false; pads.len()];
-            reached[0] = true;
             let mut connected: Vec<usize> = pad_cells[0].clone();
+            // Pads sharing a land (USB-C's paired contacts) are reached together.
+            let mut reached: Vec<bool> = pad_cells.iter().map(|cells| cells.iter().any(|c| connected.contains(c))).collect();
             let mut new_obstacles: Vec<Obstacle> = Vec::new();
             let mut ok = true;
             while reached.iter().any(|r| !r) {
@@ -307,6 +319,21 @@ impl Command for Autoroute {
                 }
                 let goals: Vec<P> = pads.iter().enumerate().filter(|(i, _)| !reached[*i]).map(|(_, p)| p.at).collect();
                 let Some(path) = search(&grid, nl, &open, &via_ok, &connected, &target, &goals, ncell) else {
+                    if std::env::var("FORMA_ROUTE_DEBUG").is_ok() {
+                        let q = pads.iter().zip(&reached).find(|(_, r)| !**r).unwrap().0.at;
+                        for jj in (0..40).rev() {
+                            let mut line = String::new();
+                            for ii in 0..40 {
+                                let x = q[0] - 5.0 + ii as f64 * g;
+                                let y = q[1] - 5.0 + jj as f64 * g;
+                                let i = ((x - grid.x0) / g).round() as usize;
+                                let j = ((y - grid.y0) / g).round() as usize;
+                                let k = j * grid.nx + i;
+                                line.push(if pad_cells.iter().any(|c| c.contains(&k)) { 'P' } else if inside_own[0][k] { 'o' } else if open[0][k] { '.' } else { '#' });
+                            }
+                            eprintln!("{line}");
+                        }
+                    }
                     let missing: Vec<String> = pads.iter().zip(&reached).filter(|(_, r)| !**r).map(|(p, _)| format!("{}.{}", p.reference, p.number)).collect();
                     failed.push(json!({ "net": net, "reason": format!("no path to {}", missing.join(", ")) }));
                     ok = false;
@@ -329,9 +356,9 @@ impl Command for Autoroute {
                     let p = grid.at(k % grid.nx, k / grid.nx);
                     if l != run_layer {
                         if run.len() >= 2 {
-                            made_tracks += emit_track(tx, self.board, &net, &all_layers[run_layer], w, &run, &mut new_obstacles, run_layer)?;
+                            made_tracks += emit_track(tx, self.board, &net, &all_layers[run_layer], w, &run, &mut new_obstacles, run_layer, &mut created)?;
                         }
-                        made_vias += emit_via(tx, self.board, &net, p, class.via_drill, class.via_diameter, &mut new_obstacles, nl)?;
+                        made_vias += emit_via(tx, self.board, &net, p, class.via_drill, class.via_diameter, &mut new_obstacles, nl, &mut created)?;
                         run = vec![p];
                         run_layer = l;
                     } else {
@@ -340,7 +367,7 @@ impl Command for Autoroute {
                     let _ = idx;
                 }
                 if run.len() >= 2 {
-                    made_tracks += emit_track(tx, self.board, &net, &all_layers[run_layer], w, &run, &mut new_obstacles, run_layer)?;
+                    made_tracks += emit_track(tx, self.board, &net, &all_layers[run_layer], w, &run, &mut new_obstacles, run_layer, &mut created)?;
                 }
                 connected.extend(path.iter().copied());
                 for (pi, cells) in pad_cells.iter().enumerate() {
@@ -350,13 +377,42 @@ impl Command for Autoroute {
                 }
                 connected.sort_unstable();
                 connected.dedup();
+                for (pi, cells) in pad_cells.iter().enumerate() {
+                    if !reached[pi] && cells.iter().any(|c| connected.binary_search(c).is_ok()) {
+                        reached[pi] = true;
+                    }
+                }
             }
             obstacles.extend(new_obstacles);
             if ok {
                 routed.push(net);
             }
         }
-        Ok(json!({ "board": self.board, "routed": routed, "failed": failed, "tracks": made_tracks, "vias": made_vias, "grid": g }))
+        if failed.is_empty() {
+            break (routed, failed, made_tracks, made_vias);
+        }
+        let better = best.as_ref().is_none_or(|(n, _)| failed.len() < *n);
+        if better {
+            best = Some((failed.len(), order.clone()));
+        }
+        let best_order = best.as_ref().map(|b| b.1.clone()).unwrap();
+        if pass >= PASSES && order == best_order {
+            break (routed, failed, made_tracks, made_vias);
+        }
+        for id in created {
+            tx.remove_dependency(self.board, id)?;
+            tx.delete(id)?;
+        }
+        if pass >= PASSES {
+            order = best_order;
+        } else {
+            let bad: Vec<String> = failed.iter().filter_map(|f| f["net"].as_str().map(String::from)).collect();
+            let mut next: Vec<String> = bad.clone();
+            next.extend(order.iter().filter(|n| !bad.contains(n)).cloned());
+            order = next;
+        }
+        };
+        Ok(json!({ "board": self.board, "routed": routed, "failed": failed, "tracks": made_tracks, "vias": made_vias, "grid": g, "passes": pass }))
     }
 }
 
@@ -389,7 +445,7 @@ fn simplify(points: &[P]) -> Vec<P> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn emit_track(tx: &mut Tx, board: StableId, net: &str, layer: &str, w: f64, run: &[P], obstacles: &mut Vec<Obstacle>, li: usize) -> Result<usize, CommandError> {
+fn emit_track(tx: &mut Tx, board: StableId, net: &str, layer: &str, w: f64, run: &[P], obstacles: &mut Vec<Obstacle>, li: usize, created: &mut Vec<StableId>) -> Result<usize, CommandError> {
     let points = simplify(run);
     if points.len() < 2 {
         return Ok(0);
@@ -399,14 +455,17 @@ fn emit_track(tx: &mut Tx, board: StableId, net: &str, layer: &str, w: f64, run:
     }
     let id = tx.create();
     tx.set(id, Track { board, net: Some(net.to_string()), layer: layer.to_string(), width: w, points, auto: true })?;
+    created.push(id);
     tx.add_dependency(board, id)?;
     Ok(1)
 }
 
-fn emit_via(tx: &mut Tx, board: StableId, net: &str, at: P, drill: f64, diameter: f64, obstacles: &mut Vec<Obstacle>, nl: usize) -> Result<usize, CommandError> {
+#[allow(clippy::too_many_arguments)]
+fn emit_via(tx: &mut Tx, board: StableId, net: &str, at: P, drill: f64, diameter: f64, obstacles: &mut Vec<Obstacle>, nl: usize, created: &mut Vec<StableId>) -> Result<usize, CommandError> {
     obstacles.push(Obstacle { prim: Prim::circle(at, diameter / 2.0), layers: ((1u16 << nl) - 1) as u8, net: Some(net.to_string()) });
     let id = tx.create();
     tx.set(id, Via { board, net: Some(net.to_string()), at, drill, diameter, auto: true })?;
+    created.push(id);
     tx.add_dependency(board, id)?;
     Ok(1)
 }

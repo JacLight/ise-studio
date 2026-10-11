@@ -1,0 +1,24 @@
+M48
+; DRILL file: ESP32 USB-C board rev A (not plated)
+; FORMAT={-:-/ absolute / metric / decimal}
+; #@! TF.GenerationSoftware,Forma,PCB,0.1.0
+; #@! TF.FileFunction,NonPlated,1,2,NPTH
+FMAT,2
+METRIC
+; #@! TA.AperFunction,NonPlated,NPTH,ComponentDrill
+T1C0.600
+; #@! TA.AperFunction,NonPlated,NPTH,ComponentDrill
+T2C2.200
+%
+G90
+G05
+T1
+X9.110Y5.655
+X14.890Y5.655
+T2
+X3.500Y3.500
+X50.500Y3.500
+X3.500Y36.500
+X50.500Y36.500
+T0
+M30

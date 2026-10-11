@@ -646,8 +646,9 @@ fn usb_c_16() -> Footprint {
     }
     let slot = |at: [f64; 2], pad: [f64; 2], hole: [f64; 2]| Pad { number: "S1".into(), kind: PadKind::Tht, shape: PadShape::Oval, size: pad, at, rotation: 0.0, drill: Some(hole), corner: None, paste: vec![] };
     for x in [-4.325, 4.325] {
-        pads.push(slot([x, 3.13], [0.9, 2.0], [0.6, 1.7]));
-        pads.push(slot([x, 3.13 - 4.18], [0.9, 1.7], [0.6, 1.4]));
+        // The drawing's pads are 0.9 mm wide (a 0.15 mm ring); 1.0 mm gives 0.2 mm, above JLCPCB's 0.18 mm minimum.
+        pads.push(slot([x, 3.13], [1.0, 2.1], [0.6, 1.7]));
+        pads.push(slot([x, 3.13 - 4.18], [1.0, 1.8], [0.6, 1.4]));
     }
     for x in [-2.89, 2.89] {
         pads.push(Pad { number: "".into(), kind: PadKind::Npth, shape: PadShape::Circle, size: [0.6, 0.6], at: [x, 2.6], rotation: 0.0, drill: Some([0.6, 0.6]), corner: None, paste: vec![] });
@@ -655,7 +656,7 @@ fn usb_c_16() -> Footprint {
     let f = Footprint {
         name: "USB-C_16P".into(),
         description: "USB Type-C receptacle, 16 pins (USB 2.0: VBUS, GND, CC1/CC2, D+/D−, SBU), HRO TYPE-C-31-M-12 (LCSC C165948), horizontal, shell slots plated (S1); the mouth faces −y and should overhang the board edge slightly".into(),
-        source: "HRO TYPE-C-31-M-12 drawing, recommended PCB layout: pads 0.6/0.3 mm at 0.5 mm pitch (wide pads at ±2.40, ±3.20), shell slots on 8.65 mm (0.6 × 1.7 / 0.6 × 1.4 holes, 4.18 mm apart), locating holes ø0.6 on 5.78 mm".into(),
+        source: "HRO TYPE-C-31-M-12 drawing, recommended PCB layout: pads 0.6/0.3 mm at 0.5 mm pitch (wide pads at ±2.40, ±3.20), shell slots on 8.65 mm (0.6 × 1.7 / 0.6 × 1.4 holes, 4.18 mm apart; slot pads widened from 0.9 to 1.0 mm for a 0.2 mm ring), locating holes ø0.6 on 5.78 mm".into(),
         pads,
         courtyard: None,
         silk: vec![],
