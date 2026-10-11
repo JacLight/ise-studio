@@ -1,0 +1,712 @@
+[
+ {
+  "operation": "pcb.board.create",
+  "parameters": {
+   "name": "ESP32 USB-C board",
+   "width": 54,
+   "height": 40,
+   "corner_radius": 2,
+   "layers": 2,
+   "thickness": 1.6,
+   "finish": "HASL lead-free",
+   "mask": "black",
+   "silk": "white",
+   "revision": "A",
+   "quantity": 5,
+   "rules": {
+    "min_track": 0.15,
+    "min_space": 0.15,
+    "min_drill": 0.3,
+    "min_annular": 0.13,
+    "edge_clearance": 0.3,
+    "hole_to_hole": 0.5,
+    "silk_width": 0.15,
+    "silk_height": 1.0,
+    "mask_expansion": 0.05,
+    "courtyards": true
+   },
+   "net_classes": [
+    {
+     "name": "Default",
+     "nets": [],
+     "track_width": 0.25,
+     "clearance": 0.2,
+     "via_drill": 0.3,
+     "via_diameter": 0.6
+    },
+    {
+     "name": "Power",
+     "nets": [
+      "VBUS",
+      "3V3",
+      "GND"
+     ],
+     "track_width": 0.35,
+     "clearance": 0.2,
+     "via_drill": 0.4,
+     "via_diameter": 0.8
+    }
+   ]
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "U1",
+   "footprint": "ESP32-WROOM-32",
+   "value": "ESP32-WROOM-32E",
+   "at": [
+    27,
+    30.25
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {
+    "1": "GND",
+    "15": "GND",
+    "38": "GND",
+    "39": "GND",
+    "2": "3V3",
+    "3": "EN",
+    "25": "IO0",
+    "24": "IO2",
+    "34": "RXD0",
+    "35": "TXD0",
+    "33": "SDA",
+    "36": "SCL"
+   },
+   "description": "Wi-Fi + Bluetooth module, 4 MB flash; antenna over the top edge",
+   "mpn": "ESP32-WROOM-32E-N4",
+   "manufacturer": "Espressif",
+   "lcsc": "C701341",
+   "pin_names": {
+    "1": "GND",
+    "2": "3V3",
+    "3": "EN",
+    "4": "SENSOR_VP",
+    "5": "SENSOR_VN",
+    "6": "IO34",
+    "7": "IO35",
+    "8": "IO32",
+    "9": "IO33",
+    "10": "IO25",
+    "11": "IO26",
+    "12": "IO27",
+    "13": "IO14",
+    "14": "IO12",
+    "15": "GND",
+    "16": "IO13",
+    "23": "IO15",
+    "24": "IO2",
+    "25": "IO0",
+    "26": "IO4",
+    "27": "IO16",
+    "28": "IO17",
+    "29": "IO5",
+    "30": "IO18",
+    "31": "IO19",
+    "33": "IO21",
+    "34": "RXD0",
+    "35": "TXD0",
+    "36": "IO22",
+    "37": "IO23",
+    "38": "GND",
+    "39": "GND"
+   }
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "J1",
+   "footprint": "USB-C_16P",
+   "value": "USB-C",
+   "at": [
+    12,
+    3.055
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {
+    "A1": "GND",
+    "B12": "GND",
+    "B1": "GND",
+    "A12": "GND",
+    "A4": "VBUS",
+    "B9": "VBUS",
+    "B4": "VBUS",
+    "A9": "VBUS",
+    "A5": "CC1",
+    "B5": "CC2",
+    "S1": "GND"
+   },
+   "description": "USB-C power input (5 V)",
+   "mpn": "TYPE-C-31-M-12",
+   "manufacturer": "HRO",
+   "lcsc": "C165948",
+   "pin_names": {
+    "A4": "VBUS",
+    "A5": "CC1",
+    "B5": "CC2",
+    "A6": "D+",
+    "A7": "D-",
+    "A1": "GND"
+   }
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "R1",
+   "footprint": "R_0603",
+   "value": "5.1k",
+   "at": [
+    9,
+    11
+   ],
+   "rotation": 90,
+   "side": "top",
+   "pins": {
+    "1": "CC1",
+    "2": "GND"
+   },
+   "description": "CC1 pull-down: asks the source for 5 V",
+   "mpn": "0603WAF5101T5E",
+   "manufacturer": "UNI-ROYAL",
+   "lcsc": "C23186"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "R2",
+   "footprint": "R_0603",
+   "value": "5.1k",
+   "at": [
+    15,
+    11
+   ],
+   "rotation": 90,
+   "side": "top",
+   "pins": {
+    "1": "CC2",
+    "2": "GND"
+   },
+   "description": "CC2 pull-down",
+   "mpn": "0603WAF5101T5E",
+   "manufacturer": "UNI-ROYAL",
+   "lcsc": "C23186"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "C1",
+   "footprint": "C_0805",
+   "value": "10uF",
+   "at": [
+    19.5,
+    5
+   ],
+   "rotation": 90,
+   "side": "top",
+   "pins": {
+    "1": "VBUS",
+    "2": "GND"
+   },
+   "description": "LDO input",
+   "mpn": "CL21A106KAYNNNE",
+   "manufacturer": "Samsung",
+   "lcsc": "C15850"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "U2",
+   "footprint": "SOT-23-5",
+   "value": "ME6211C33",
+   "at": [
+    24.5,
+    6
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {
+    "1": "VBUS",
+    "2": "GND",
+    "3": "VBUS",
+    "5": "3V3"
+   },
+   "description": "3.3 V 500 mA LDO",
+   "mpn": "ME6211C33M5G-N",
+   "manufacturer": "MICRONE",
+   "lcsc": "C82942",
+   "pin_names": {
+    "1": "VIN",
+    "2": "GND",
+    "3": "EN",
+    "4": "NC",
+    "5": "VOUT"
+   }
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "C2",
+   "footprint": "C_0805",
+   "value": "10uF",
+   "at": [
+    29,
+    5
+   ],
+   "rotation": 90,
+   "side": "top",
+   "pins": {
+    "1": "3V3",
+    "2": "GND"
+   },
+   "description": "LDO output",
+   "mpn": "CL21A106KAYNNNE",
+   "manufacturer": "Samsung",
+   "lcsc": "C15850"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "C3",
+   "footprint": "C_0603",
+   "value": "100nF",
+   "at": [
+    14.5,
+    33.5
+   ],
+   "rotation": 90,
+   "side": "top",
+   "pins": {
+    "1": "3V3",
+    "2": "GND"
+   },
+   "description": "Module decoupling",
+   "mpn": "CC0603KRX7R9BB104",
+   "manufacturer": "YAGEO",
+   "lcsc": "C14663"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "R3",
+   "footprint": "R_0603",
+   "value": "10k",
+   "at": [
+    14.5,
+    30
+   ],
+   "rotation": 90,
+   "side": "top",
+   "pins": {
+    "1": "3V3",
+    "2": "EN"
+   },
+   "description": "EN pull-up",
+   "mpn": "0603WAF1002T5E",
+   "manufacturer": "UNI-ROYAL",
+   "lcsc": "C25804"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "C4",
+   "footprint": "C_0603",
+   "value": "1uF",
+   "at": [
+    14.5,
+    26.5
+   ],
+   "rotation": 90,
+   "side": "top",
+   "pins": {
+    "1": "EN",
+    "2": "GND"
+   },
+   "description": "EN delay (power-on reset)",
+   "mpn": "CL10A105KB8NNNC",
+   "manufacturer": "Samsung",
+   "lcsc": "C15849"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "SW2",
+   "footprint": "SW_Tactile_6x6",
+   "value": "RESET",
+   "at": [
+    8,
+    27
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {
+    "1": "EN",
+    "2": "GND"
+   },
+   "description": "Reset button",
+   "mpn": "B3F-1000",
+   "manufacturer": "Omron"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "SW1",
+   "footprint": "SW_Tactile_6x6",
+   "value": "BOOT",
+   "at": [
+    44,
+    12
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {
+    "1": "IO0",
+    "2": "GND"
+   },
+   "description": "Boot button (hold at reset to flash)",
+   "mpn": "B3F-1000",
+   "manufacturer": "Omron"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "D1",
+   "footprint": "LED_0603",
+   "value": "Red",
+   "at": [
+    41.5,
+    4
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {
+    "1": "GND",
+    "2": "LED_PWR"
+   },
+   "description": "Power LED",
+   "mpn": "KT-0603R",
+   "manufacturer": "Hubei KENTO",
+   "lcsc": "C2286",
+   "pin_names": {
+    "1": "K",
+    "2": "A"
+   }
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "R4",
+   "footprint": "R_0603",
+   "value": "1k",
+   "at": [
+    44.5,
+    4
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {
+    "1": "LED_PWR",
+    "2": "3V3"
+   },
+   "description": "Power LED resistor",
+   "mpn": "0603WAF1001T5E",
+   "manufacturer": "UNI-ROYAL",
+   "lcsc": "C21190"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "D2",
+   "footprint": "LED_0805",
+   "value": "Green",
+   "at": [
+    32.7,
+    14
+   ],
+   "rotation": 90,
+   "side": "top",
+   "pins": {
+    "1": "GND",
+    "2": "LED_IO2"
+   },
+   "description": "Status LED on IO2",
+   "mpn": "KT-0805G",
+   "manufacturer": "Hubei KENTO",
+   "lcsc": "C2297",
+   "pin_names": {
+    "1": "K",
+    "2": "A"
+   }
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "R5",
+   "footprint": "R_0603",
+   "value": "1k",
+   "at": [
+    35.5,
+    14
+   ],
+   "rotation": 90,
+   "side": "top",
+   "pins": {
+    "1": "LED_IO2",
+    "2": "IO2"
+   },
+   "description": "Status LED resistor",
+   "mpn": "0603WAF1001T5E",
+   "manufacturer": "UNI-ROYAL",
+   "lcsc": "C21190"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "J2",
+   "footprint": "PinHeader_1x06_2.54",
+   "value": "UART",
+   "at": [
+    50.5,
+    31
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {
+    "1": "GND",
+    "2": "3V3",
+    "3": "TXD0",
+    "4": "RXD0",
+    "5": "EN",
+    "6": "IO0"
+   },
+   "description": "Programming header: GND 3V3 TX RX EN IO0"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "J3",
+   "footprint": "JST_XH_2",
+   "value": "5V IN",
+   "at": [
+    34,
+    3.5
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {
+    "1": "VBUS",
+    "2": "GND"
+   },
+   "description": "Alternative 5 V input",
+   "mpn": "B2B-XH-A",
+   "manufacturer": "JST",
+   "lcsc": "C158012"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "J4",
+   "footprint": "PinHeader_1x04_2.54",
+   "value": "I2C",
+   "at": [
+    3,
+    21
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {
+    "1": "3V3",
+    "2": "GND",
+    "3": "SDA",
+    "4": "SCL"
+   },
+   "description": "I2C sensor header"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "R6",
+   "footprint": "R_0603",
+   "value": "10k",
+   "at": [
+    7.5,
+    18
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {
+    "1": "3V3",
+    "2": "SDA"
+   },
+   "description": "SDA pull-up",
+   "mpn": "0603WAF1002T5E",
+   "manufacturer": "UNI-ROYAL",
+   "lcsc": "C25804"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "R7",
+   "footprint": "R_0603",
+   "value": "10k",
+   "at": [
+    7.5,
+    15
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {
+    "1": "3V3",
+    "2": "SCL"
+   },
+   "description": "SCL pull-up",
+   "mpn": "0603WAF1002T5E",
+   "manufacturer": "UNI-ROYAL",
+   "lcsc": "C25804"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "H1",
+   "footprint": "MountingHole_M2",
+   "value": "M2",
+   "at": [
+    3.5,
+    3.5
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {},
+   "description": "Mounting hole"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "H2",
+   "footprint": "MountingHole_M2",
+   "value": "M2",
+   "at": [
+    50.5,
+    3.5
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {},
+   "description": "Mounting hole"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "H3",
+   "footprint": "MountingHole_M2",
+   "value": "M2",
+   "at": [
+    3.5,
+    36.5
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {},
+   "description": "Mounting hole"
+  }
+ },
+ {
+  "operation": "pcb.component.create",
+  "parameters": {
+   "board": "$0.id",
+   "reference": "H4",
+   "footprint": "MountingHole_M2",
+   "value": "M2",
+   "at": [
+    50.5,
+    36.5
+   ],
+   "rotation": 0,
+   "side": "top",
+   "pins": {},
+   "description": "Mounting hole"
+  }
+ },
+ {
+  "operation": "pcb.autoroute",
+  "parameters": {
+   "board": "$0.id",
+   "grid": 0.25
+  }
+ },
+ {
+  "operation": "pcb.zone.create",
+  "parameters": {
+   "board": "$0.id",
+   "net": "GND",
+   "layer": "bottom",
+   "outline": [
+    [
+     0,
+     0
+    ],
+    [
+     54,
+     0
+    ],
+    [
+     54,
+     36
+    ],
+    [
+     0,
+     36
+    ]
+   ]
+  }
+ }
+]

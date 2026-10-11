@@ -74,6 +74,7 @@ export const PROCESS_NAMES: Record<string, string> = {
   cast: "Cast",
   extrusion: "Cut extrusion",
   glazing: "Glazing",
+  pcb_fab: "PCB fab",
   buy: "Bought in",
 };
 
@@ -370,6 +371,26 @@ export const describeOperation = (op: string) => {
 export type Look = { color: string; metalness: number; roughness: number; opacity?: number };
 
 const LOOKS: Record<string, Look> = {
+  // Printed circuit boards (the PCB workspace's 3D part): exact names, matched before any family.
+  "fr4 green mask": { color: "#2b6e45", metalness: 0.05, roughness: 0.42 },
+  "fr4 black mask": { color: "#1d2024", metalness: 0.05, roughness: 0.4 },
+  "fr4 blue mask": { color: "#1f4f8a", metalness: 0.05, roughness: 0.42 },
+  "fr4 red mask": { color: "#8c2a2a", metalness: 0.05, roughness: 0.42 },
+  "fr4 white mask": { color: "#e9e9e4", metalness: 0.02, roughness: 0.5 },
+  "fr4 purple mask": { color: "#4b2a78", metalness: 0.05, roughness: 0.42 },
+  "fr4 yellow mask": { color: "#c2a42a", metalness: 0.05, roughness: 0.45 },
+  "epoxy moulding (black)": { color: "#25262a", metalness: 0.05, roughness: 0.6 },
+  "ceramic (mlcc)": { color: "#b8996a", metalness: 0.05, roughness: 0.6 },
+  "black plastic (pbt)": { color: "#202125", metalness: 0, roughness: 0.65 },
+  "nylon (pa66, connector)": { color: "#efe8d6", metalness: 0, roughness: 0.7 },
+  "gold-plated pins": { color: "#d4af37", metalness: 0.85, roughness: 0.25 },
+  "led epoxy red": { color: "#e8392f", metalness: 0, roughness: 0.2, opacity: 0.88 },
+  "led epoxy green": { color: "#3cc76a", metalness: 0, roughness: 0.2, opacity: 0.88 },
+  "led epoxy blue": { color: "#3a6ff0", metalness: 0, roughness: 0.2, opacity: 0.88 },
+  "led epoxy yellow": { color: "#f2c230", metalness: 0, roughness: 0.2, opacity: 0.88 },
+  "led epoxy orange": { color: "#f28a2a", metalness: 0, roughness: 0.2, opacity: 0.88 },
+  "led epoxy white": { color: "#f4f4ef", metalness: 0, roughness: 0.2, opacity: 0.9 },
+  "led epoxy clear": { color: "#e8eef2", metalness: 0, roughness: 0.1, opacity: 0.7 },
   // Stock-library bodies (lumped materials named for the item).
   "sg90 body": { color: "#2f62d4", metalness: 0, roughness: 0.38 },
   "mg90s body": { color: "#232428", metalness: 0.05, roughness: 0.42 },

@@ -502,6 +502,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "de-pcb"
+version = "0.1.0"
+dependencies = [
+ "de-core",
+ "de-shape",
+ "de-solid",
+ "de-sourcing",
+ "manifold-csg",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "de-server"
 version = "0.1.0"
 dependencies = [
@@ -511,6 +524,7 @@ dependencies = [
  "de-core",
  "de-intent",
  "de-occt",
+ "de-pcb",
  "de-shape",
  "de-solid",
  "de-sourcing",

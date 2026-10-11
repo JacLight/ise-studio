@@ -4,6 +4,7 @@ import { type Proposal, interpret } from "./assistant";
 import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
 import { StockBrowser } from "./StockBrowser";
+import { PcbWorkspace } from "./Pcb";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
 import { type Bench, Workbench } from "./Bom";
 import { RequirementsPanel } from "./RequirementsPanel";
@@ -68,6 +69,7 @@ export function App({ engine }: { engine: Engine }) {
   const [prefs, setPrefs] = useState<UiPrefs>(loadPrefs);
   const [selected, setSelected] = useState<string | null>(null);
   const [stockOpen, setStockOpen] = useState(false);
+  const [pcbOpen, setPcbOpen] = useState(false);
   // More items picked with Shift: they move and delete together with the selected one.
   const [also, setAlso] = useState<string[]>([]);
   const alsoRef = useRef<string[]>([]);
@@ -954,7 +956,10 @@ export function App({ engine }: { engine: Engine }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key.toLowerCase() === "b" && !sketcher.editing) {
+      if (e.key.toLowerCase() === "l" && !sketcher.editing) {
+        e.preventDefault();
+        setPcbOpen((o) => !o);
+      } else if (e.key.toLowerCase() === "b" && !sketcher.editing) {
         e.preventDefault();
         setBench((b) => (b === "bom" ? null : "bom"));
       } else if (e.key.toLowerCase() === "e" && selected && !edger.editing && !sketcher.editing) {
@@ -1448,6 +1453,8 @@ export function App({ engine }: { engine: Engine }) {
               onComment={toggleCommenting}
               bench={bench}
               onBench={(b) => setBench((current) => (current === b ? null : b))}
+              pcbOpen={pcbOpen}
+              onPcb={() => setPcbOpen((o) => !o)}
             />
           )}
           {hidden.view ? (
@@ -1729,6 +1736,20 @@ export function App({ engine }: { engine: Engine }) {
 
       {dialog === "share" && <TeamDialog team={team} entities={state.entities} run={run} refresh={refreshTeam} onClose={() => setDialog(null)} />}
       {dialog === "storage" && <StorageDialog revision={state.revision} onClose={() => setDialog(null)} />}
+      {pcbOpen && !focus && (
+        <PcbWorkspace
+          revision={state.revision}
+          run={run}
+          notify={notify}
+          canEdit={state.connection === "online"}
+          onClose={() => setPcbOpen(false)}
+          onShow3D={(model) => {
+            setPcbOpen(false);
+            select(model);
+            viewport.current?.frame(model, true);
+          }}
+        />
+      )}
       {stockOpen && (
         <StockBrowser
           entities={state.entities}

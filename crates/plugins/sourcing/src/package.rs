@@ -218,6 +218,7 @@ fn process_words(p: Option<&str>) -> &str {
         Some("cast") => "Cast",
         Some("extrusion") => "Cut extrusion",
         Some("glazing") => "Glazing",
+        Some("pcb_fab") => "PCB fabrication",
         Some("") | None => "—",
         Some(other) => other,
     }
