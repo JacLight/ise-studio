@@ -318,6 +318,8 @@ struct Inst {
     world: Vec<(Manifold, V3, V3)>,
     lo: V3,
     hi: V3,
+    /// The assembly step it goes in at (instance property "step"), if given.
+    step: Option<f64>,
 }
 
 fn entity(world: &World, id: StableId) -> Option<de_core::bevy_ecs::entity::Entity> {
@@ -835,6 +837,7 @@ fn screw_item(cx: &mut Ctx, i: usize) -> FitItem {
     }
     // Holes in the parts it passes through.
     let mut tapped: Vec<(usize, f64, f64)> = vec![]; // host, length, length needed
+    let mut smallest_above = f64::INFINITY; // the smallest hole the screw has passed (a washer under the head)
     let mut bottomed: Option<(usize, f64)> = None;
     for s in segs.iter().filter(|s| !is_thread(s)) {
         let host = &cx.insts[s.host];
@@ -868,7 +871,8 @@ fn screw_item(cx: &mut Ctx, i: usize) -> FitItem {
             }
             continue;
         }
-        let room = dmin / 2.0 - off - d / 2.0;
+        // Room round the shank: the true (fitted) wall, less how far off-axis it is.
+        let room = dfit.min(dmin + 0.05) / 2.0 - off - d / 2.0;
         let [fine, medium, coarse] = iso273(d).unwrap_or([d + 0.2, d + 0.4, d + 0.6]);
         let (st, class) = if dfit + 0.02 < fine {
             (if host.kind.bought() { FitStatus::Pass } else { FitStatus::Warn }, format!("close fit, under ISO 273 fine (Ø{}){}", mm(fine), if host.kind.bought() { ": the maker's hole for this screw" } else { "" }))
@@ -878,14 +882,15 @@ fn screw_item(cx: &mut Ctx, i: usize) -> FitItem {
             (FitStatus::Pass, "ISO 273 medium".to_string())
         } else if dfit <= coarse + 0.1 {
             (FitStatus::Pass, "ISO 273 coarse".to_string())
-        } else if dk > 0.0 && (dfit < dk - 0.6 || seg.top() < -0.6) {
+        } else if dk > 0.0 && (dfit < dk - 0.6 || smallest_above < dk - 0.6) {
             (if host.kind.bought() { FitStatus::Pass } else { FitStatus::Warn }, format!("loose, over ISO 273 coarse (Ø{}); the head still covers it", mm(coarse)))
         } else {
             (FitStatus::Fail, format!("so big the Ø{} head can pull through", mm(dk)))
         };
+        smallest_above = smallest_above.min(dfit);
         checks.push(check("Clearance hole", st, format!("Ø{} in {}: {class}", mm(dfit), host.name)).value(dfit, "mm").target(format!("{}–{} mm", mm(fine), mm(coarse))).part(&host.name).at(at));
-        let st = if room >= 0.0 { FitStatus::Pass } else { FitStatus::Fail };
-        let text = if room >= 0.0 {
+        let st = if room >= -1e-3 { FitStatus::Pass } else { FitStatus::Fail };
+        let text = if room >= -1e-3 {
             format!("{} mm off-axis in {}; the shank clears the wall by {} mm", mm(off), host.name, mm(room))
         } else {
             format!("{} mm off-axis in {}: the shank hits the hole wall ({} mm)", mm(off), host.name, mm(-room))
@@ -1029,37 +1034,51 @@ fn screw_lengths(family: &str, d: f64) -> Vec<f64> {
     out
 }
 
+/// Whether a hex key reaches the socket: straight along the screw's axis for
+/// the key's long arm, else a ball-end key tilted up to 25° (eight ways
+/// round). Parts that go in at a later assembly step (instance property
+/// "step") are not there yet when the screw is tightened.
 fn key_reach(cx: &Ctx, i: usize, key: f64, top: f64) -> FitCheck {
     let (long, short) = key_arms(key);
     let frame = cx.insts[i].place;
     let r = key / 3f64.sqrt() + 0.25;
-    let lo = [-r, -r, top + 0.05];
-    let hi = [r, r, top + long];
-    let rod = Manifold::cylinder(long - 0.05, r, r, 24, false).translate(0.0, 0.0, top + 0.05);
-    let mut first: Option<(usize, f64)> = None;
-    for h in near(&cx.insts, &frame, lo, hi, i) {
-        let l = local(&cx.insts[h], &frame, lo, hi);
-        for leaf in &l.leaves {
-            let x = leaf.intersection(&rod);
-            if x.is_empty() || x.volume() < 1e-4 {
-                continue;
-            }
-            let z = x.bounding_box().map(|b| b.min()[2]).unwrap_or(top);
-            if first.is_none_or(|(_, f)| z < f) {
-                first = Some((h, z));
+    let reach = long * 0.5 + r + 1.0;
+    let lo = [-reach, -reach, top + 0.05];
+    let hi = [reach, reach, top + long + 1.0];
+    let later = |h: usize| matches!((cx.insts[i].step, cx.insts[h].step), (Some(a), Some(b)) if b > a);
+    let locals: Vec<(usize, Local)> = near(&cx.insts, &frame, lo, hi, i).into_iter().filter(|h| !later(*h)).map(|h| (h, local(&cx.insts[h], &frame, lo, hi))).filter(|(_, l)| !l.is_empty()).collect();
+    // The first thing a key along direction `tilt` (degrees from the axis, toward azimuth `az`) meets.
+    let blocked = |tilt: f64, az: f64| -> Option<(usize, f64)> {
+        let rod = Manifold::cylinder(long - 0.05, r, r, 16, false).translate(0.0, 0.0, 0.05).rotate(0.0, tilt, az).translate(0.0, 0.0, top);
+        let mut first: Option<(usize, f64)> = None;
+        for (h, l) in &locals {
+            for leaf in &l.leaves {
+                let x = leaf.intersection(&rod);
+                if x.is_empty() || x.volume() < 1e-4 {
+                    continue;
+                }
+                let z = x.bounding_box().map(|b| b.min()[2]).unwrap_or(top);
+                if first.is_none_or(|(_, f)| z < f) {
+                    first = Some((*h, z));
+                }
             }
         }
-    }
-    match first {
-        None => check("Hex key", FitStatus::Pass, format!("A {} mm key reaches straight in: {} mm clear above the socket (its long arm)", mm(key), mm(long))).value(long, "mm").target(format!("{} mm", mm(long))),
-        Some((h, z)) => {
-            let clear = z - top;
-            let moves = cx.rigid[h] != cx.rigid[i];
-            let st = if moves { FitStatus::Warn } else { FitStatus::Fail };
-            let how = if moves { "it moves on a joint: turn it out of the way to reach the screw" } else { "tighten it before that part goes on, or open an access hole" };
-            check("Hex key", st, format!("A {} mm key is blocked by {} {} mm above the socket: {how}", mm(key), cx.insts[h].name, mm(clear))).value(clear, "mm").target(format!("{} mm (long arm) or {} mm (short)", mm(long), mm(short))).part(&cx.insts[h].name).at(cx.at(i, [0.0, 0.0, z]))
+        first
+    };
+    let straight = blocked(0.0, 0.0);
+    let Some((h, z)) = straight else {
+        return check("Hex key", FitStatus::Pass, format!("A {} mm key reaches straight in: {} mm clear above the socket (its long arm)", mm(key), mm(long))).value(long, "mm").target(format!("{} mm", mm(long)));
+    };
+    for az in (0..8).map(|k| k as f64 * 45.0) {
+        if blocked(25.0, az).is_none() {
+            return check("Hex key", FitStatus::Pass, format!("A {} mm ball-end key reaches at 25° (straight in, {} is {} mm above the socket)", mm(key), cx.insts[h].name, mm(z - top))).value(z - top, "mm").target(format!("{} mm", mm(long)));
         }
     }
+    let clear = z - top;
+    let moves = cx.rigid[h] != cx.rigid[i];
+    let st = if moves { FitStatus::Warn } else { FitStatus::Fail };
+    let how = if moves { "it moves on a joint: turn it out of the way to reach the screw" } else { "tighten it before that part goes on (give the instances a \"step\"), or open an access hole" };
+    check("Hex key", st, format!("A {} mm key is blocked by {} {} mm above the socket, straight or tilted 25°: {how}", mm(key), cx.insts[h].name, mm(clear))).value(clear, "mm").target(format!("{} mm (long arm) or {} mm (short)", mm(long), mm(short))).part(&cx.insts[h].name).at(cx.at(i, [0.0, 0.0, z]))
 }
 
 fn insert_item(cx: &mut Ctx, i: usize) -> FitItem {
@@ -1230,7 +1249,7 @@ fn round_fit(cx: &mut Ctx, i: usize) -> FitItem {
         let machined = !printed && !cx.insts[h].kind.bought();
         let rings: Vec<Ring> = zs.iter().map(|z| l.ring(*z)).collect();
         // A housing: the axis outside it, its wall round the outer ring.
-        let housing: Vec<&Ring> = rings.iter().filter(|r| !r.inside && r.hits(reach) as f64 > 0.6 * RAYS as f64 && r.min() > outer / 2.0 - 0.6).collect();
+        let housing: Vec<&Ring> = rings.iter().filter(|r| !r.inside && r.hits(reach) as f64 > 0.6 * RAYS as f64 && r.min() > outer / 2.0 - 0.6 && r.min() < outer / 2.0 + 1.0).collect();
         if housing.len() * 2 >= rings.len() && !housing.is_empty() {
             let fits: Vec<([f64; 2], f64)> = housing.iter().filter_map(|r| r.circle(reach)).collect();
             if fits.is_empty() {
@@ -1258,7 +1277,7 @@ fn round_fit(cx: &mut Ctx, i: usize) -> FitItem {
                     let exits: Vec<f64> = (0..RAYS)
                         .filter_map(|n| {
                             let e = if r.inside { r.first[n] } else { r.second[n] };
-                            (e < bore / 2.0 + 0.6 && (r.inside || r.first[n] < bore / 2.0)).then_some(e)
+                            ((e - bore / 2.0).abs() < 0.6 && (r.inside || r.first[n] < bore / 2.0)).then_some(e)
                         })
                         .collect();
                     (exits.len() as f64 > 0.6 * RAYS as f64).then(|| exits.iter().sum::<f64>() / exits.len() as f64)
@@ -1428,7 +1447,7 @@ fn joined_item(cx: &mut Ctx, joint: StableId, j: &joints::Joint, a: usize, b: us
             };
             let lift = 0.5;
             let shift = axis.map(|c| c * lift);
-            let g1 = min_gap(ia, ib, shift, search).min(min_gap(ia, ib, shift.map(|c| -c), search));
+            let g1 = min_gap(ia, ib, shift, search);
             let side_words = if g1 >= lift - 0.01 { format!("≥ {} mm", mm(lift)) } else { format!("{} mm", mm(g1)) };
             let want = if moving { cx.profile.slide[0] } else { 0.1 };
             let st = if g1 + 1e-6 >= want || !printed { FitStatus::Pass } else if g1 > 1e-3 { FitStatus::Warn } else { FitStatus::Warn };
@@ -1502,7 +1521,8 @@ pub fn report(world: &World, scope: Option<StableId>, options: &FitOptions) -> R
                 w.push((m, a, b));
             }
         }
-        insts.push(Inst { id: *id, name: inst.name.clone(), kind: kind_of(world, *id, inst), place, body, world: w, lo, hi });
+        let step = inst.properties.get("step").and_then(|v| v.trim().parse::<f64>().ok());
+        insts.push(Inst { id: *id, name: inst.name.clone(), kind: kind_of(world, *id, inst), place, body, world: w, lo, hi, step });
     }
     // Rigid groups: union of instances held by fixed joints (the ground is its own member).
     let index: HashMap<StableId, usize> = insts.iter().enumerate().map(|(n, i)| (i.id, n)).collect();

@@ -171,6 +171,12 @@ fn a_cap_over_the_head_blocks_the_key() {
     assert_eq!(c.part.as_deref(), Some("Cap"));
     // Socket top at 13 + 3 = 16; the cap's underside at 30.
     assert!((c.measured.unwrap() - 14.0).abs() < 0.1, "{}", c.text);
+    // The cap goes on at a later assembly step: the screw is tightened before it is there.
+    let caps: Vec<StableId> = j.p.entity_ids().into_iter().filter(|e| j.p.get::<de_assembly::Instance>(*e).is_some_and(|i| i.name == "Cap")).collect();
+    run(&mut j.p, "assembly.instance.update", json!({ "target": caps[0], "properties": { "step": "5" } })).unwrap();
+    run(&mut j.p, "assembly.instance.update", json!({ "target": j.screw, "properties": { "step": "2" } })).unwrap();
+    let r = report(&j);
+    assert_eq!(check(find(&r, "screw"), "Hex key").status, FitStatus::Pass);
 }
 
 /// A 608 in a printed housing of bore `bore`, on a printed shaft of `shaft`.
