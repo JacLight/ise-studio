@@ -150,8 +150,27 @@ export type TurnBody =
   | { groups: number[]; at: [number, number, number]; axis: [number, number, number]; degrees: number }
   | { groups: number[]; position: [number, number, number]; quaternion: [number, number, number, number] };
 
+/** Options for showing a part turned: still parts see-through, and trail lines (part coordinates, from → to) behind moved bodies. */
+export type TurnOptions = { ghost?: boolean; trails?: [[number, number, number], [number, number, number]][] };
+
 /** A part drawn turning: its moving bodies split out of its mesh, each on a pivot. */
-type Turning = { id: string; body: THREE.Mesh; original: THREE.BufferGeometry; ghosted: { m: THREE.MeshStandardMaterial; opacity: number; transparent: boolean; depthWrite: boolean }[]; pivots: { pivot: THREE.Group; mesh: THREE.Mesh; key: string }[] };
+type Turning = {
+  id: string;
+  body: THREE.Mesh;
+  original: THREE.BufferGeometry;
+  ghosted: { m: THREE.MeshStandardMaterial; opacity: number; transparent: boolean; depthWrite: boolean }[];
+  pivots: { pivot: THREE.Group; mesh: THREE.Mesh; key: string }[];
+  trails: THREE.LineSegments | null;
+};
+
+/** Takes away a turning part's trail lines. */
+function clearTrails(m: Turning) {
+  if (!m.trails) return;
+  m.body.remove(m.trails);
+  m.trails.geometry.dispose();
+  (m.trails.material as THREE.Material).dispose();
+  m.trails = null;
+}
 
 /** Puts see-through still parts back as they were. */
 function unghost(m: Turning) {
@@ -170,8 +189,13 @@ function groupsOf(g: THREE.BufferGeometry, keep: (i: number) => boolean) {
   if (g.index) out.setIndex(g.index);
   for (const [name, attr] of Object.entries(g.attributes)) out.setAttribute(name, attr);
   g.groups.forEach((gr, i) => keep(i) && out.addGroup(gr.start, gr.count, gr.materialIndex));
-  out.boundingSphere = g.boundingSphere;
-  out.boundingBox = g.boundingBox;
+  // Bounds of only what it draws, so framing and picking fit the bodies kept.
+  const pos = g.getAttribute("position");
+  const box = new THREE.Box3();
+  const p = new THREE.Vector3();
+  for (const gr of out.groups) for (let k = gr.start; k < gr.start + gr.count; k++) box.expandByPoint(p.fromBufferAttribute(pos, g.index ? g.index.getX(k) : k));
+  out.boundingBox = box;
+  out.boundingSphere = box.isEmpty() ? new THREE.Sphere(new THREE.Vector3(), -1) : box.getBoundingSphere(new THREE.Sphere());
   return out;
 }
 
@@ -187,7 +211,7 @@ export type ViewportHandle = {
    * Shows a part's mechanism turned: each body (its mesh groups) rotated by
    * `degrees` about its axis through `at` (mm, program coordinates). Null puts it back.
    */
-  turn: (id: string, bodies: TurnBody[] | null, options?: { ghost?: boolean }) => void;
+  turn: (id: string, bodies: TurnBody[] | null, options?: TurnOptions) => void;
   /** Lets a moving part be grabbed and dragged to drive a mechanism (null stops it). */
   grabMotion: (spec: MotionGrab | null) => void;
   /** Shows a stress study on a part: its supports and loads, and (when solved) the stress map. Null clears it. */
@@ -2406,6 +2430,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         // disposing would free under the part itself.
         m.body.geometry = m.original;
         unghost(m);
+        clearTrails(m);
         for (const p of m.pivots) m.body.remove(p.pivot);
         turning.current = m = null;
         t.invalidate();
@@ -2432,7 +2457,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
           return { pivot, mesh, key: key(b) };
         });
         part.body.geometry = rest;
-        turning.current = m = { id, body: part.body, original, pivots, ghosted: [] };
+        turning.current = m = { id, body: part.body, original, pivots, ghosted: [], trails: null };
       }
       bodies.forEach((b, i) => {
         const pivot = m!.pivots[i].pivot;
@@ -2456,6 +2481,25 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
           mat.needsUpdate = true;
         });
       } else if (!options?.ghost && m.ghosted.length) unghost(m);
+      // Trails: thin dashed lines from where each moved body sits at rest.
+      const trails = (options?.trails ?? []).filter(([a, b]) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) > 1e-3);
+      if (!trails.length) clearTrails(m);
+      else {
+        const flat = trails.flatMap(([a, b]) => [...a, ...b]);
+        if (!m.trails || m.trails.geometry.getAttribute("position").count !== trails.length * 2) {
+          clearTrails(m);
+          const longest = Math.max(...trails.map(([a, b]) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2])));
+          const dash = Math.max(longest / 28, 0.2);
+          const material = new THREE.LineDashedMaterial({ color: "#7352d6", dashSize: dash, gapSize: dash * 0.7, transparent: true, opacity: 0.7, depthWrite: false });
+          m.trails = new THREE.LineSegments(new THREE.BufferGeometry(), material);
+          m.trails.renderOrder = 2;
+          m.trails.raycast = () => {}; // never picked: clicks reach the parts
+          m.body.add(m.trails);
+        }
+        m.trails.geometry.setAttribute("position", new THREE.Float32BufferAttribute(flat, 3));
+        m.trails.geometry.computeBoundingSphere();
+        m.trails.computeLineDistances();
+      }
       // The selection outline is of the parts at rest: hidden while they turn.
       part.outline.visible = false;
       t.invalidate();

@@ -218,6 +218,30 @@ pub struct Drawing {
     /// Where each of the person's dimensions landed: its index in
     /// `Options::dimensions` and its box on the sheet.
     pub marks: Vec<DimMark>,
+    /// Where the isometric view is, when there is room for one.
+    pub iso: Option<IsoFrame>,
+    /// The item balloons on the isometric view, one per row of the parts list.
+    pub balloons: Vec<Balloon>,
+}
+
+/// Where the isometric view sits: a model point p shows at
+/// `at + iso_point(p) · scale`.
+#[derive(Clone, Debug, Serialize)]
+pub struct IsoFrame {
+    pub at: [f64; 2],
+    pub scale: f64,
+    /// Its outline on the sheet: [x0, y0, x1, y1].
+    pub bounds: [f64; 4],
+}
+
+/// A numbered balloon (ISO 6433): its parts-list item, the circle, and the
+/// point on the part its leader ends on (sheet mm).
+#[derive(Clone, Debug, Serialize)]
+pub struct Balloon {
+    pub item: usize,
+    pub centre: [f64; 2],
+    pub radius: f64,
+    pub anchor: [f64; 2],
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -284,19 +308,53 @@ pub fn drawing(program: &ShapeProgram, options: &Options, title: &Title) -> Resu
     let values = program.values();
     let tolerance = program.display_tolerance();
     let (mut arena, exact) = crate::exact::evaluate_exact_in(Arena::new(), &program.name, &program.source, &values, tolerance, &program.inputs).map_err(|(_, e)| e)?;
-    let parts: Vec<Shape> = exact.parts.iter().filter(|p| options.part.as_ref().is_none_or(|n| &p.name == n)).map(|p| p.shape).collect();
+    let parts: Vec<(String, Shape)> = exact.parts.iter().filter(|p| options.part.as_ref().is_none_or(|n| &p.name == n)).map(|p| (p.name.clone(), p.shape)).collect();
     if parts.is_empty() {
         return Err(match &options.part {
             Some(n) => format!("no part called “{n}”"),
             None => "the program made nothing to draw".into(),
         });
     }
-    let shape = if parts.len() == 1 { parts[0] } else { arena.compound(&parts)? };
-    layout(&mut arena, shape, options, title)
+    let shape = if parts.len() == 1 { parts[0].1 } else { arena.compound(&parts.iter().map(|p| p.1).collect::<Vec<_>>())? };
+    layout(&mut arena, shape, &parts, options, title)
 }
 
-/// Lays out the views of `shape` on the sheet.
-pub fn layout(arena: &mut Arena, shape: Shape, options: &Options, title: &Title) -> Result<Drawing, String> {
+/// The isometric view's direction and up (the view looks down at the front right).
+fn iso_frame() -> ([f64; 3], [f64; 3]) {
+    let k = 1.0 / 3f64.sqrt();
+    ([-k, k, -k], [0.0, 0.0, 1.0])
+}
+
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+fn unit(a: [f64; 3]) -> [f64; 3] {
+    let l = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+    [a[0] / l, a[1] / l, a[2] / l]
+}
+
+/// Where a model point lands in a hidden-line view looking along `dir` with
+/// `up` up the page, in the frame [`Arena::hlr_view`] draws in: x across and
+/// y up the view (mm), and how near the eye it is (larger is nearer).
+pub fn view_point(dir: [f64; 3], up: [f64; 3], p: [f64; 3]) -> [f64; 3] {
+    let toward_eye = unit([-dir[0], -dir[1], -dir[2]]);
+    let right = unit(cross(up, toward_eye));
+    let upward = cross(toward_eye, right);
+    let dot = |a: [f64; 3]| a[0] * p[0] + a[1] * p[1] + a[2] * p[2];
+    [dot(right), dot(upward), dot(toward_eye)]
+}
+
+/// Where the isometric view shows a model point (view mm, as [`view_point`]).
+pub fn iso_point(p: [f64; 3]) -> [f64; 2] {
+    let (dir, up) = iso_frame();
+    let v = view_point(dir, up, p);
+    [v[0], v[1]]
+}
+
+/// Lays out the views of `shape` on the sheet. `parts` are its parts by
+/// name, for the balloons that key the isometric to the parts list.
+pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], options: &Options, title: &Title) -> Result<Drawing, String> {
     let b = arena.bounds(shape)?;
     let size3 = [b[3] - b[0], b[4] - b[1], b[5] - b[2]];
     let deflection = (size3.iter().cloned().fold(0.0, f64::max) / 2000.0).clamp(0.005, 1.0);
@@ -317,17 +375,20 @@ pub fn layout(arena: &mut Arena, shape: Shape, options: &Options, title: &Title)
     };
     let top = view(arena, [0.0, 0.0, -1.0], [0.0, 1.0, 0.0])?;
     let right = view(arena, [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0])?;
-    let k = 1.0 / 3f64.sqrt();
-    let iso = view(arena, [-k, k, -k], [0.0, 0.0, 1.0])?;
+    let (iso_dir, iso_up) = iso_frame();
+    let iso = view(arena, iso_dir, iso_up)?;
 
     let [w, h] = options.sheet.size();
-    let mut d = Drawing { width: w, height: h, scale: 1.0, scale_text: String::new(), strokes: vec![], fills: vec![], texts: vec![], views: vec![], marks: vec![] };
+    let mut d = Drawing { width: w, height: h, scale: 1.0, scale_text: String::new(), strokes: vec![], fills: vec![], texts: vec![], views: vec![], marks: vec![], iso: None, balloons: vec![] };
     // Frame: 20 mm binding margin on the left, 10 mm elsewhere (ISO 5457).
     let (fx0, fy0, fx1, fy1) = (20.0, 10.0, w - 10.0, h - 10.0);
     d.strokes.push(Stroke { pen: Pen::Frame, points: vec![[fx0, fy0], [fx1, fy0], [fx1, fy1], [fx0, fy1], [fx0, fy0]] });
     let block = [180.0f64.min(fx1 - fx0), 32.0];
     // The parts list sits on the title block, one row per part plus a header.
     let list_h = if title.parts.len() >= 2 { 6.0 * (title.parts.len() + 1) as f64 } else { 0.0 };
+    // With a parts list, the isometric keeps a margin round it for its balloons.
+    let ballooned = list_h > 0.0 && parts.len() >= 2;
+    let room = if ballooned { BALLOON_GAP + BALLOON_R + 2.0 } else { 0.0 };
 
     // The views in a grid: front in the middle, the others where the projection puts them.
     let gap = 22.0; // sheet mm between views: room for a dimension
@@ -352,7 +413,7 @@ pub fn layout(arena: &mut Arena, shape: Shape, options: &Options, title: &Title)
     // The isometric goes where it comes out largest: the empty corner of the
     // grid (beside the top view, under or over the side view), or a column
     // right of the views. Its scale is the largest standard one that fits.
-    let iso_fit = |w: f64, h: f64| SCALES.iter().find(|(k, _)| *k <= s && iw * k <= w && ih * k <= h - 8.0).copied();
+    let iso_fit = |w: f64, h: f64| SCALES.iter().find(|(k, _)| *k <= s && iw * k <= w - 2.0 * room && ih * k <= h - 8.0 - 2.0 * room).copied();
     let corner = iso_fit(rw * s, th * s);
     let column = iso_fit(area[0] - main_w - gap, area[1]);
     let in_corner = match (corner, column) {
@@ -401,13 +462,21 @@ pub fn layout(arena: &mut Arena, shape: Shape, options: &Options, title: &Title)
     }
     holes(&mut d, arena, shape, deflection, s, [(at_front, 1), (at_top, 2), (at_right, 0)]);
     if let Some((k, k_text)) = iso_scale {
-        let at = place(&iso, [iso_cell[0], iso_cell[1] + 8.0], iso_cell[2] - iso_cell[0], iso_cell[3] - iso_cell[1] - 8.0, k);
+        let at = place(&iso, [iso_cell[0] + room, iso_cell[1] + 8.0 + room], iso_cell[2] - iso_cell[0] - 2.0 * room, iso_cell[3] - iso_cell[1] - 8.0 - 2.0 * room, k);
         // Hidden lines are left out of the isometric.
         for l in iso.lines.iter().filter(|l| !l.hidden) {
             d.strokes.push(Stroke { pen: Pen::Visible, points: l.points.iter().map(|p| [at[0] + p[0] * k, at[1] + p[1] * k]).collect() });
         }
+        let outline = [at[0] + iso.min[0] * k, at[1] + iso.min[1] * k, at[0] + iso.max[0] * k, at[1] + iso.max[1] * k];
+        d.iso = Some(IsoFrame { at, scale: k, bounds: outline });
+        let mut label_y = outline[1] - 6.0;
+        if ballooned {
+            balloons(&mut d, arena, parts, &title.parts, deflection, &iso, at, k, outline);
+            // Under the ring of balloons.
+            label_y = label_y.min(outline[1] - BALLOON_GAP - BALLOON_R - 6.0);
+        }
         let text = if k == s { "ISOMETRIC".to_string() } else { format!("ISOMETRIC {k_text}") };
-        d.texts.push(Text { at: [at[0] + (iso.min[0] + iso.max[0]) / 2.0 * k, at[1] + iso.min[1] * k - 6.0], size: 2.5, text, anchor: Anchor::Middle, angle: 0.0, bold: false });
+        d.texts.push(Text { at: [(outline[0] + outline[2]) / 2.0, label_y], size: 2.5, text, anchor: Anchor::Middle, angle: 0.0, bold: false });
     }
     // Overall dimensions: width over the front view, height beside it, depth beside the top view.
     let box_of = |v: &View, at: [f64; 2]| ([at[0] + v.min[0] * s, at[1] + v.min[1] * s], [at[0] + v.max[0] * s, at[1] + v.max[1] * s]);
@@ -466,6 +535,253 @@ pub fn layout(arena: &mut Arena, shape: Shape, options: &Options, title: &Title)
         bold: false,
     });
     Ok(d)
+}
+
+/// Balloon radius and how far balloon centres stand off the view (sheet mm).
+const BALLOON_R: f64 = 4.0;
+const BALLOON_GAP: f64 = 10.0;
+
+/// Item balloons round the isometric view, one per row of the parts list:
+/// each leader ends on the part where it shows widest, the balloons ring
+/// the view in the order their parts lie round it so no two leaders cross.
+#[allow(clippy::too_many_arguments)]
+fn balloons(d: &mut Drawing, arena: &mut Arena, parts: &[(String, Shape)], rows: &[PartRow], deflection: f64, iso: &View, at: [f64; 2], k: f64, outline: [f64; 4]) {
+    let (dir, up) = iso_frame();
+    let shapes: Vec<Shape> = parts.iter().map(|p| p.1).collect();
+    let seen = visible_points(arena, &shapes, deflection, dir, up, iso.min, iso.max);
+    let mut items: Vec<(usize, [f64; 2])> = vec![];
+    for (i, row) in rows.iter().enumerate() {
+        let copies: Vec<usize> = (0..parts.len()).filter(|&j| parts[j].0 == row.name).collect();
+        // The copy that shows most; one hidden behind the others gets its middle.
+        let best = copies.iter().filter_map(|&j| seen[j]).max_by(|a, b| a.1.total_cmp(&b.1)).map(|v| v.0);
+        let point = best.or_else(|| {
+            let b = arena.bounds(parts[*copies.first()?].1).ok()?;
+            Some(iso_point([(b[0] + b[3]) / 2.0, (b[1] + b[4]) / 2.0, (b[2] + b[5]) / 2.0]))
+        });
+        if let Some(p) = point {
+            items.push((i + 1, [at[0] + p[0] * k, at[1] + p[1] * k]));
+        }
+    }
+    let anchors: Vec<[f64; 2]> = items.iter().map(|i| i.1).collect();
+    let centres = balloon_ring(&anchors, outline, BALLOON_R, BALLOON_GAP);
+    for ((item, a), c) in items.into_iter().zip(centres) {
+        let (dx, dy) = (c[0] - a[0], c[1] - a[1]);
+        let len = dx.hypot(dy);
+        if len > BALLOON_R {
+            d.strokes.push(Stroke { pen: Pen::Thin, points: vec![a, [c[0] - dx / len * BALLOON_R, c[1] - dy / len * BALLOON_R]] });
+        }
+        // The leader ends in a dot on the part (ISO 128-22).
+        d.fills.push((0..12).map(|i| circle_point(a, 0.75, i as f64 / 12.0)).collect());
+        d.strokes.push(Stroke { pen: Pen::Thin, points: (0..=48).map(|i| circle_point(c, BALLOON_R, i as f64 / 48.0)).collect() });
+        d.texts.push(Text { at: [c[0], c[1] - 1.75], size: 3.5, text: item.to_string(), anchor: Anchor::Middle, angle: 0.0, bold: false });
+        d.balloons.push(Balloon { item, centre: c, radius: BALLOON_R, anchor: a });
+    }
+}
+
+fn circle_point(c: [f64; 2], r: f64, turn: f64) -> [f64; 2] {
+    let (s, co) = (turn * std::f64::consts::TAU).sin_cos();
+    [c[0] + r * co, c[1] + r * s]
+}
+
+/// Each shape's most visible point in a view, and how far it is from the
+/// edge of what shows of it (view mm); None when nothing of it shows. A depth
+/// buffer over the view (the meshes projected as the hidden-line view
+/// projects them), then per shape the pixel deepest inside one of its faces
+/// as they show (so a leader lands on a face, not on the edge between two).
+fn visible_points(arena: &mut Arena, shapes: &[Shape], deflection: f64, dir: [f64; 3], up: [f64; 3], min: [f64; 2], max: [f64; 2]) -> Vec<Option<([f64; 2], f64)>> {
+    let px = ((max[0] - min[0]).max(max[1] - min[1]) / 360.0).max(1e-6);
+    let origin = [min[0] - 2.0 * px, min[1] - 2.0 * px];
+    let (nx, ny) = (((max[0] - min[0]) / px) as usize + 5, ((max[1] - min[1]) / px) as usize + 5);
+    let mut depth = vec![f64::NEG_INFINITY; nx * ny];
+    let mut owner = vec![usize::MAX; nx * ny];
+    let mut normal = vec![[0.0f64; 3]; nx * ny];
+    for (i, &s) in shapes.iter().enumerate() {
+        let Ok(mesh) = arena.mesh(s, deflection) else { continue };
+        let v: Vec<[f64; 3]> = mesh
+            .positions
+            .chunks_exact(3)
+            .map(|p| {
+                let q = view_point(dir, up, [p[0], p[1], p[2]]);
+                [(q[0] - origin[0]) / px, (q[1] - origin[1]) / px, q[2]]
+            })
+            .collect();
+        for t in mesh.triangles.chunks_exact(3) {
+            let [a, b, c] = [v[t[0] as usize], v[t[1] as usize], v[t[2] as usize]];
+            let corner = |k: u32| [mesh.positions[k as usize * 3], mesh.positions[k as usize * 3 + 1], mesh.positions[k as usize * 3 + 2]];
+            let (p0, p1, p2) = (corner(t[0]), corner(t[1]), corner(t[2]));
+            let facing = cross([p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]], [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]]);
+            let area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+            if area.abs() < 1e-12 {
+                continue; // seen edge on
+            }
+            let x0 = a[0].min(b[0]).min(c[0]).floor().max(0.0) as usize;
+            let x1 = (a[0].max(b[0]).max(c[0]).ceil().max(0.0) as usize).min(nx - 1);
+            let y0 = a[1].min(b[1]).min(c[1]).floor().max(0.0) as usize;
+            let y1 = (a[1].max(b[1]).max(c[1]).ceil().max(0.0) as usize).min(ny - 1);
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let p = [x as f64 + 0.5, y as f64 + 0.5];
+                    // Barycentric weights of the pixel centre.
+                    let wa = ((b[0] - p[0]) * (c[1] - p[1]) - (b[1] - p[1]) * (c[0] - p[0])) / area;
+                    let wb = ((c[0] - p[0]) * (a[1] - p[1]) - (c[1] - p[1]) * (a[0] - p[0])) / area;
+                    let wc = 1.0 - wa - wb;
+                    if wa < 0.0 || wb < 0.0 || wc < 0.0 {
+                        continue;
+                    }
+                    let z = wa * a[2] + wb * b[2] + wc * c[2];
+                    let k = y * nx + x;
+                    if z > depth[k] {
+                        depth[k] = z;
+                        owner[k] = i;
+                        normal[k] = facing;
+                    }
+                }
+            }
+        }
+    }
+    for n in normal.iter_mut().filter(|n| n.iter().any(|v| *v != 0.0)) {
+        *n = unit(*n);
+    }
+    // Faces meet where the surface turns sharply (more than 30°); a curved
+    // face's facets turn far less from one to the next.
+    let other = |a: usize, b: usize| owner[a] != owner[b] || normal[a][0] * normal[b][0] + normal[a][1] * normal[b][1] + normal[a][2] * normal[b][2] < 0.866;
+    // Distance (pixels) to the nearest pixel showing another face: a
+    // two-pass chamfer transform from the edges of every region at once.
+    let mut dist = vec![f64::INFINITY; nx * ny];
+    for y in 0..ny {
+        for x in 0..nx {
+            let k = y * nx + x;
+            if x == 0 || y == 0 || x == nx - 1 || y == ny - 1 || [k - 1, k + 1, k - nx, k + nx].iter().any(|&n| other(n, k)) {
+                dist[k] = 0.0;
+            }
+        }
+    }
+    let diag = std::f64::consts::SQRT_2;
+    for y in 1..ny - 1 {
+        for x in 1..nx - 1 {
+            let k = y * nx + x;
+            dist[k] = dist[k].min(dist[k - 1] + 1.0).min(dist[k - nx] + 1.0).min(dist[k - nx - 1] + diag).min(dist[k - nx + 1] + diag);
+        }
+    }
+    for y in (1..ny - 1).rev() {
+        for x in (1..nx - 1).rev() {
+            let k = y * nx + x;
+            dist[k] = dist[k].min(dist[k + 1] + 1.0).min(dist[k + nx] + 1.0).min(dist[k + nx + 1] + diag).min(dist[k + nx - 1] + diag);
+        }
+    }
+    let mut best: Vec<Option<([f64; 2], f64)>> = vec![None; shapes.len()];
+    for (k, &o) in owner.iter().enumerate() {
+        if o == usize::MAX || best[o].is_some_and(|b| b.1 >= dist[k] * px) {
+            continue;
+        }
+        let (x, y) = (k % nx, k / nx);
+        best[o] = Some(([origin[0] + (x as f64 + 0.5) * px, origin[1] + (y as f64 + 0.5) * px], dist[k] * px));
+    }
+    best
+}
+
+/// Where the balloons for `anchors` go: on a ring `gap` outside `outline`
+/// ([x0, y0, x1, y1]), each first where the ray from the view's middle
+/// through its anchor meets the ring, then spread apart along it (keeping
+/// their order round it), and any two whose leaders still cross swapped.
+pub fn balloon_ring(anchors: &[[f64; 2]], outline: [f64; 4], r: f64, gap: f64) -> Vec<[f64; 2]> {
+    let n = anchors.len();
+    if n == 0 {
+        return vec![];
+    }
+    let ring = [outline[0] - gap, outline[1] - gap, outline[2] + gap, outline[3] + gap];
+    let (w, h) = (ring[2] - ring[0], ring[3] - ring[1]);
+    let perimeter = 2.0 * (w + h);
+    let centre = [(ring[0] + ring[2]) / 2.0, (ring[1] + ring[3]) / 2.0];
+    // A point round the ring, by its distance anticlockwise from the lower left corner.
+    let point = |t: f64| {
+        let t = t.rem_euclid(perimeter);
+        if t < w {
+            [ring[0] + t, ring[1]]
+        } else if t < w + h {
+            [ring[2], ring[1] + t - w]
+        } else if t < 2.0 * w + h {
+            [ring[2] - (t - w - h), ring[3]]
+        } else {
+            [ring[0], ring[3] - (t - 2.0 * w - h)]
+        }
+    };
+    let ideal: Vec<f64> = anchors
+        .iter()
+        .map(|a| {
+            let (mut dx, mut dy) = (a[0] - centre[0], a[1] - centre[1]);
+            if dx.hypot(dy) < 1e-9 {
+                (dx, dy) = (-1.0, 1.0);
+            }
+            // Out along the ray to whichever side it meets first.
+            let (sx, sy) = (w / 2.0 / dx.abs().max(1e-12), h / 2.0 / dy.abs().max(1e-12));
+            if sx <= sy {
+                let y = centre[1] + dy * sx;
+                if dx > 0.0 { w + y - ring[1] } else { 2.0 * w + h + ring[3] - y }
+            } else {
+                let x = centre[0] + dx * sy;
+                if dy < 0.0 { x - ring[0] } else { w + h + ring[2] - x }
+            }
+        })
+        .collect();
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| ideal[a].total_cmp(&ideal[b]));
+    // Spread them along the ring; round a corner the straight distance is
+    // shorter than the distance along, so widen the spacing until it is enough.
+    let mut spacing = 2.0 * r + 2.0;
+    let mut t = ideal.clone();
+    for _ in 0..12 {
+        let space = spacing.min(perimeter / n as f64);
+        t = ideal.clone();
+        if n > 1 {
+            for _ in 0..1000 {
+                let mut moved = false;
+                for j in 0..n {
+                    let (a, b) = (order[j], order[(j + 1) % n]);
+                    let between = if j + 1 == n { t[b] + perimeter - t[a] } else { t[b] - t[a] };
+                    if between < space - 1e-6 {
+                        let push = (space - between) / 2.0 + 1e-7;
+                        t[a] -= push;
+                        t[b] += push;
+                        moved = true;
+                    }
+                }
+                if !moved {
+                    break;
+                }
+            }
+        }
+        let pts: Vec<[f64; 2]> = t.iter().map(|&v| point(v)).collect();
+        let clear = (0..n).all(|i| (i + 1..n).all(|j| (pts[i][0] - pts[j][0]).hypot(pts[i][1] - pts[j][1]) >= 2.0 * r + 1.0));
+        if clear || space < spacing {
+            break;
+        }
+        spacing *= 1.15;
+    }
+    let mut out: Vec<[f64; 2]> = t.iter().map(|&v| point(v)).collect();
+    // Swapping the ends of two crossing leaders always shortens them, so this ends.
+    for _ in 0..100 {
+        let mut swapped = false;
+        for i in 0..n {
+            for j in i + 1..n {
+                if segments_cross(anchors[i], out[i], anchors[j], out[j]) {
+                    out.swap(i, j);
+                    swapped = true;
+                }
+            }
+        }
+        if !swapped {
+            break;
+        }
+    }
+    out
+}
+
+/// Whether segments pq and rs cross (properly, not just touching).
+pub fn segments_cross(p: [f64; 2], q: [f64; 2], r: [f64; 2], s: [f64; 2]) -> bool {
+    let side = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    let (d1, d2, d3, d4) = (side(p, q, r), side(p, q, s), side(r, s, p), side(r, s, q));
+    d1 * d2 < 0.0 && d3 * d4 < 0.0
 }
 
 /// Holes and round bosses facing a view: centre marks in that view, and one
@@ -1003,14 +1319,14 @@ pub fn dxf(d: &Drawing) -> String {
     }
     for f in &d.fills {
         // Arrowheads: SOLID wants four corners (the last repeated for a triangle).
-        if f.len() < 3 {
-            continue;
-        }
-        pair(0, "SOLID");
-        pair(8, "DIMENSIONS");
-        for (k, p) in [f[0], f[1], f[2], f[2]].iter().enumerate() {
-            pair(10 + k as i32, &format!("{:.4}", p[0]));
-            pair(20 + k as i32, &format!("{:.4}", p[1]));
+        // Rounder fills (leader dots) as a fan of them.
+        for i in 1..f.len().saturating_sub(1) {
+            pair(0, "SOLID");
+            pair(8, "DIMENSIONS");
+            for (k, p) in [f[0], f[i], f[i + 1], f[i + 1]].iter().enumerate() {
+                pair(10 + k as i32, &format!("{:.4}", p[0]));
+                pair(20 + k as i32, &format!("{:.4}", p[1]));
+            }
         }
     }
     for t in &d.texts {

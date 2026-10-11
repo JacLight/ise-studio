@@ -13,6 +13,7 @@
 //   node tools/forma.mjs view <action> [what] show something in the person's view (not saved):
 //        select L26 · frame L26 · isolate L26 · show_all · hide L19 · show L19
 //        color status|material · camera top|front|bottom|perspective
+//        explode Bracket [spread] · explode Bracket off
 //
 // steps.json is an array of { "operation": "...", "parameters": { ... } }.
 // Any string "$N.path" in parameters is replaced by step N's output at that
@@ -204,9 +205,15 @@ if (command === "run") {
   }
 } else if (command === "view") {
   const action = file;
-  const arg = args.slice(2).join(" ").trim();
+  let arg = args.slice(2).join(" ").trim();
   let target = null;
   let value = null;
+  // explode: how far apart (a number, 1 by default) or "off", after the name.
+  const how = action === "explode" ? arg.match(/\s+(off|\d*\.?\d+)$/) : null;
+  if (how) {
+    value = how[1];
+    arg = arg.slice(0, how.index).trim();
+  }
   if (action === "color" || action === "camera") value = arg;
   else if (arg) {
     // An id, or a name: an instance (L26), a shape, an assembly or a parameter set.

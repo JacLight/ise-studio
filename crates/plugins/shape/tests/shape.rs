@@ -766,6 +766,117 @@ fn a_drawing_sections_dimensions_and_lists_parts() {
 }
 
 #[test]
+fn an_assembly_drawing_balloons_every_listed_part() {
+    use de_shape::drawing::{iso_point, segments_cross, Options, PartRow, Pen, Sheet, Title};
+    // A base, a housing on it, two bolts at opposite corners and a pin on top.
+    let source = r#"return [
+        part("Base", box(120, 80, 10)),
+        part("Housing", box(40, 40, 30).translate([40, 20, 10])),
+        part("Bolt 1", cylinder(20, 4).translate([12, 12, 10])),
+        part("Bolt 2", cylinder(20, 4).translate([108, 68, 10])),
+        part("Pin", cylinder(40, 3).translate([60, 40, 40])),
+    ];"#;
+    let program = de_shape::ShapeProgram {
+        name: "Bracket".into(),
+        description: String::new(),
+        source: source.into(),
+        params: vec![],
+        display_tolerance: None,
+        levels: vec![],
+        uses: Default::default(),
+        finishes: vec![],
+        inputs: String::new(),
+    };
+    // The isometric projection the balloons use is the one the view is drawn
+    // in: the base's eight corners land exactly on the view's outline.
+    let (mut arena, exact) = de_shape::exact::evaluate_exact_in(de_occt::Arena::new(), "Bracket", source, &[], 0.01, "").map_err(|(_, e)| e).unwrap();
+    let k = 1.0 / 3f64.sqrt();
+    let lines = arena.hlr_view(exact.parts[0].shape, [-k, k, -k], [0.0, 0.0, 1.0], 0.01).unwrap();
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for p in lines.iter().flat_map(|l| &l.points) {
+        (lo, hi) = ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]);
+    }
+    let (mut plo, mut phi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for c in 0..8 {
+        let q = iso_point([if c & 1 > 0 { 120.0 } else { 0.0 }, if c & 2 > 0 { 80.0 } else { 0.0 }, if c & 4 > 0 { 10.0 } else { 0.0 }]);
+        (plo, phi) = ([plo[0].min(q[0]), plo[1].min(q[1])], [phi[0].max(q[0]), phi[1].max(q[1])]);
+    }
+    for i in 0..2 {
+        assert!((lo[i] - plo[i]).abs() < 1e-6 && (hi[i] - phi[i]).abs() < 1e-6, "iso outline {lo:?}–{hi:?} vs projected {plo:?}–{phi:?}");
+    }
+    // Isometric foreshortening: each axis shows at √(2/3) of its length, 30°
+    // off the horizontal, so the 120 × 80 base spans (120 + 80)·√(2/3)·cos 30° across.
+    assert!(((hi[0] - lo[0]) - 200.0 * (2.0f64 / 3.0).sqrt() * 30f64.to_radians().cos()).abs() < 1e-6, "{} across", hi[0] - lo[0]);
+
+    let row = |name: &str, quantity| PartRow { name: name.into(), quantity, material: "Steel".into(), mass: "—".into() };
+    let rows = vec![row("Base", 1), row("Housing", 1), row("Bolt 1", 1), row("Bolt 2", 1), row("Pin", 1)];
+    let title = Title { title: "Bracket".into(), number: "B-1".into(), material: "Steel".into(), mass: "1 kg".into(), drawn_by: "F".into(), date: "2026-10-11".into(), parts: rows.clone() };
+    for sheet in [Sheet::A3, Sheet::A4] {
+        let d = de_shape::drawing::drawing(&program, &Options { sheet, ..Default::default() }, &title).unwrap();
+        let iso = d.iso.clone().expect("an isometric view");
+        // One balloon per row of the parts list, numbered as it is.
+        let mut items: Vec<usize> = d.balloons.iter().map(|b| b.item).collect();
+        items.sort();
+        assert_eq!(items, vec![1, 2, 3, 4, 5], "{sheet:?}: balloons {items:?}");
+        for b in &d.balloons {
+            assert!(d.texts.iter().any(|t| t.text == b.item.to_string() && (t.at[0] - b.centre[0]).abs() < 1e-9), "balloon {} is numbered", b.item);
+            // Inside the frame (20 mm binding margin, 10 elsewhere).
+            assert!(b.centre[0] - b.radius >= 20.0 && b.centre[0] + b.radius <= d.width - 10.0 && b.centre[1] - b.radius >= 10.0 && b.centre[1] + b.radius <= d.height - 10.0, "{sheet:?}: balloon {} off the sheet at {:?}", b.item, b.centre);
+            // Clear of every view: no visible edge comes within its circle.
+            for s in d.strokes.iter().filter(|s| s.pen == Pen::Visible) {
+                for w in s.points.windows(2) {
+                    let (a, q, c) = (w[0], w[1], b.centre);
+                    let (dx, dy) = (q[0] - a[0], q[1] - a[1]);
+                    let t = (((c[0] - a[0]) * dx + (c[1] - a[1]) * dy) / (dx * dx + dy * dy).max(1e-12)).clamp(0.0, 1.0);
+                    let gap = (a[0] + t * dx - c[0]).hypot(a[1] + t * dy - c[1]);
+                    assert!(gap > b.radius, "{sheet:?}: balloon {} overlaps a view edge ({gap:.2} mm from its centre)", b.item);
+                }
+            }
+            // Its leader ends on its own part: inside that part's isometric outline.
+            let name = &rows[b.item - 1].name;
+            let p = [(b.anchor[0] - iso.at[0]) / iso.scale, (b.anchor[1] - iso.at[1]) / iso.scale];
+            let on_part = exact.parts.iter().filter(|q| &q.name == name).any(|q| {
+                let bb = arena.bounds(q.shape).unwrap();
+                let corners: Vec<[f64; 2]> = (0..8).map(|c| iso_point([bb[if c & 1 > 0 { 3 } else { 0 }], bb[if c & 2 > 0 { 4 } else { 1 }], bb[if c & 4 > 0 { 5 } else { 2 }]])).collect();
+                let (x0, x1) = (corners.iter().map(|c| c[0]).fold(f64::INFINITY, f64::min), corners.iter().map(|c| c[0]).fold(f64::NEG_INFINITY, f64::max));
+                let (y0, y1) = (corners.iter().map(|c| c[1]).fold(f64::INFINITY, f64::min), corners.iter().map(|c| c[1]).fold(f64::NEG_INFINITY, f64::max));
+                p[0] > x0 && p[0] < x1 && p[1] > y0 && p[1] < y1
+            });
+            assert!(on_part, "{sheet:?}: balloon {}'s leader ends on the {name}", b.item);
+            // The anchor is on the view; the balloon outside it.
+            let o = iso.bounds;
+            assert!(b.anchor[0] > o[0] && b.anchor[0] < o[2] && b.anchor[1] > o[1] && b.anchor[1] < o[3]);
+            assert!(b.centre[0] + b.radius < o[0] || b.centre[0] - b.radius > o[2] || b.centre[1] + b.radius < o[1] || b.centre[1] - b.radius > o[3], "{sheet:?}: balloon {} sits on the view", b.item);
+        }
+        for (i, a) in d.balloons.iter().enumerate() {
+            for b in &d.balloons[i + 1..] {
+                let apart = (a.centre[0] - b.centre[0]).hypot(a.centre[1] - b.centre[1]);
+                assert!(apart >= a.radius + b.radius, "{sheet:?}: balloons {} and {} overlap ({apart:.1} mm apart)", a.item, b.item);
+                assert!(!segments_cross(a.anchor, a.centre, b.anchor, b.centre), "{sheet:?}: the leaders of {} and {} cross", a.item, b.item);
+            }
+        }
+        // The isometric's caption stays clear of the balloons.
+        let caption = d.texts.iter().find(|t| t.text.starts_with("ISOMETRIC")).unwrap();
+        assert!(d.balloons.iter().all(|b| caption.at[1] + caption.size * 1.2 < b.centre[1] - b.radius), "{sheet:?}: caption under the balloons");
+        if let Ok(dir) = std::env::var("DRAWING_OUT") {
+            std::fs::write(format!("{dir}/bracket-{sheet:?}.pdf"), de_shape::drawing::pdf(&d)).unwrap();
+            std::fs::write(format!("{dir}/bracket-{sheet:?}.dxf"), de_shape::drawing::dxf(&d)).unwrap();
+        }
+    }
+
+    // The ring on its own: a dozen anchors bunched in one corner still get
+    // balloons that neither overlap nor cross.
+    let anchors: Vec<[f64; 2]> = (0..12).map(|i| [10.0 + (i % 4) as f64 * 3.0, 10.0 + (i / 4) as f64 * 3.0]).collect();
+    let ring = de_shape::drawing::balloon_ring(&anchors, [0.0, 0.0, 100.0, 60.0], 4.0, 10.0);
+    for i in 0..12 {
+        for j in i + 1..12 {
+            assert!((ring[i][0] - ring[j][0]).hypot(ring[i][1] - ring[j][1]) >= 8.0, "ring balloons {i} and {j} overlap");
+            assert!(!segments_cross(anchors[i], ring[i], anchors[j], ring[j]), "ring leaders {i} and {j} cross");
+        }
+    }
+}
+
+#[test]
 fn a_slider_crank_moves_exactly_as_the_textbook_says() {
     // Crank 30 mm about y at the origin, rod 100 mm, piston sliding along x.
     let (r, l) = (30.0, 100.0);
