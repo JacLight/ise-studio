@@ -3,7 +3,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useDraggable } from "./drag";
 import { AXIS_COLORS } from "./gizmo";
-import { type EntityView, type HistoryEntry, type PartStats, type ProjectInfo, type ShapeStats, projectName, projectTitle, projectUrl } from "./engine";
+import { type EntityView, type HistoryEntry, type PartStats, type ProjectEntry, type ShapeStats, projectName, projectTitle, projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { type DrawingSetup, DrawingView } from "./DrawingView";
@@ -64,7 +64,7 @@ export function ToolPanel(props: { kind: PanelKind; title?: string; onClose: () 
 
 /** Every project in the engine's folder; each opens in its own scene. */
 function ProjectSwitcher() {
-  const [list, setList] = useState<ProjectInfo[] | null>(null);
+  const [list, setList] = useState<ProjectEntry[] | null>(null);
   const [draft, setDraft] = useState("");
   const [home, setHome] = useState(false);
   useEffect(() => {
@@ -80,7 +80,7 @@ function ProjectSwitcher() {
     location.assign(url.toString());
   };
   const slug = draft.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
-  const current = (p: ProjectInfo) => (projectName ? p.name === projectName : p.default);
+  const current = (p: ProjectEntry) => (projectName ? p.name === projectName : p.default);
   return (
     <div className="project-switcher">
       <h3 className="panel-section">Projects</h3>
@@ -93,7 +93,7 @@ function ProjectSwitcher() {
         <button type="button" key={p.name} className={`list-row ${current(p) ? "active" : ""}`} onClick={() => !current(p) && open(p.name, p.default)}>
           <Icon name="layers" />
           <span>
-            {projectTitle(p.default ? "" : p.name)}
+            {p.info?.title || projectTitle(p.default ? null : p.name)}
             <small className="row-count">{p.revisions} revisions</small>
           </span>
           {current(p) ? <Icon name="check" /> : <Icon name="chevron" />}

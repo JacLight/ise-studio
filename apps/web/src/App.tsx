@@ -5,7 +5,7 @@ import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
 import { RequirementsPanel } from "./RequirementsPanel";
-import { type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, type TeamCursor, mm, projectName, projectTitle, projectUrl } from "./engine";
+import { type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, type TeamCursor, mm, projectInfo, projectName, projectTitle, projectUrl } from "./engine";
 import { type EdgeFinish, type Frac, type LiveEdit, type Shape, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
 import { HistoryBody, ObjectsBody, ProjectBody, PropertiesBody, ToolPanel, ViewsBody } from "./Panels";
 import { useEdgeEditor } from "./EdgeEditor";
@@ -252,6 +252,16 @@ export function App({ engine }: { engine: Engine }) {
     },
     [engine, notify],
   );
+
+  // A new project opened from the projects page brings its title (?title=…): kept in the project once it is up.
+  useEffect(() => {
+    const url = new URL(location.href);
+    const title = url.searchParams.get("title");
+    if (!title || state.connection !== "online") return;
+    url.searchParams.delete("title");
+    history.replaceState(null, "", url.toString());
+    if (!projectInfo()?.title) void run("project.set_info", { title });
+  }, [state.connection, run]);
 
   // The projects page: opened with ?home, or from the project menu.
   const [home, setHome] = useState(() => new URLSearchParams(location.search).has("home"));

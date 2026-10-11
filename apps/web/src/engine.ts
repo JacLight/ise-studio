@@ -150,7 +150,16 @@ export type Quantity = { value: number; unit: string };
 export const projectName = new URLSearchParams(location.search).get("project") ?? "";
 
 /** "miami-tower" → "Miami tower"; the default project reads "Default project". */
-export const projectTitle = (name = projectName) => (name ? name.charAt(0).toUpperCase() + name.slice(1).replace(/-/g, " ") : "Default project");
+/** What a project's name reads as when it has no title yet. */
+export const prettyName = (name: string | null) => (name ? name.charAt(0).toUpperCase() + name.slice(1).replace(/-/g, " ") : "Default project");
+
+/** The open project's title, description and tags (kept in the project; see `project.set_info`). */
+export type ProjectInfo = { title: string; description: string; tags: string[] };
+let openInfo: ProjectInfo | null = null;
+export const projectInfo = () => openInfo;
+
+/** A project's title: the open one's own, else its name made readable. */
+export const projectTitle = (name: string | null = projectName) => (name === projectName && openInfo?.title ? openInfo.title : prettyName(name));
 
 /** An engine URL scoped to the open project. */
 export function projectUrl(path: string) {
@@ -158,7 +167,7 @@ export function projectUrl(path: string) {
   return `${path}${path.includes("?") ? "&" : "?"}project=${encodeURIComponent(projectName)}`;
 }
 
-export type ProjectInfo = { name: string; modified: number | null; revisions: number; default: boolean };
+export type ProjectEntry = { name: string; modified: number | null; revisions: number; default: boolean; info?: { title: string | null; description: string; tags: string[] } };
 
 export type EngineError = { code: string; message: string };
 
@@ -475,6 +484,17 @@ export class Engine {
       case "conflicts":
         for (const l of this.teamListeners) l();
         break;
+      case "moved": {
+        // This project was deleted (or closed) from the projects page: go where it went.
+        const url = new URL(location.href);
+        if (message.to) url.searchParams.set("project", message.to);
+        else {
+          url.searchParams.delete("project");
+          url.searchParams.set("home", "1");
+        }
+        location.assign(url.toString());
+        break;
+      }
       case "cursor":
         for (const l of this.cursorListeners) l(message as TeamCursor);
         break;
@@ -498,6 +518,10 @@ export class Engine {
 
   private update(patch: Partial<EngineState>) {
     this.state = { ...this.state, ...patch };
+    if (patch.entities) {
+      const e = [...patch.entities.values()].find((x) => x.components["core.project"]);
+      openInfo = (e?.components["core.project"] as ProjectInfo | undefined) ?? null;
+    }
     for (const listener of this.listeners) listener();
   }
 }
