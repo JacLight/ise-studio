@@ -119,6 +119,77 @@ impl Command for DeleteEntity {
     }
 }
 
+/// What a project is: its title, a description, and tags to find it by.
+/// Its name never changes (files, links and teammates' computers know it by
+/// that); these do, like any other part of the design (synced, undoable).
+#[derive(Component, Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectInfo {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+impl Persist for ProjectInfo {
+    const KIND: &'static str = "core.project";
+}
+
+/// `project.set_info`: changes the project's title, description or tags
+/// (what is left out stays as it was).
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct SetProjectInfo {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+}
+
+impl Command for SetProjectInfo {
+    const NAME: &'static str = "project.set_info";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        let bad = |m: &str| CommandError::new(crate::ErrorCode::InvalidParameters, m.to_string());
+        let existing = tx.world().resource::<crate::IdIndex>().iter().find(|(_, e)| tx.world().get::<ProjectInfo>(*e).is_some()).map(|(id, _)| id);
+        let mut info = existing.and_then(|id| tx.get::<ProjectInfo>(id).cloned()).unwrap_or_default();
+        if let Some(t) = self.title {
+            let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
+            if t.is_empty() || t.chars().count() > 120 {
+                return Err(bad("a title is 1 to 120 characters"));
+            }
+            info.title = t;
+        }
+        if let Some(d) = self.description {
+            if d.chars().count() > 4000 {
+                return Err(bad("a description is up to 4000 characters"));
+            }
+            info.description = d.trim().to_string();
+        }
+        if let Some(tags) = self.tags {
+            let mut clean: Vec<String> = vec![];
+            for t in tags {
+                let t = t.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+                if !t.is_empty() && t.chars().count() <= 40 && !clean.contains(&t) {
+                    clean.push(t);
+                }
+            }
+            if clean.len() > 30 {
+                return Err(bad("up to 30 tags"));
+            }
+            info.tags = clean;
+        }
+        let id = match existing {
+            Some(id) => id,
+            None => tx.create(),
+        };
+        tx.set(id, info.clone())?;
+        Ok(json!({ "id": id, "title": info.title, "description": info.description, "tags": info.tags }))
+    }
+}
+
 /// One step of a batch: an operation and its parameters.
 #[derive(Deserialize, JsonSchema)]
 pub(crate) struct BatchStep {

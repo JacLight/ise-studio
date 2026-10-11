@@ -66,7 +66,19 @@ fn valid_name(name: &str) -> bool {
     !name.is_empty() && name.len() <= 64 && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') && !name.starts_with('-')
 }
 
+/// The files of a project, by what follows its name.
+const PROJECT_FILES: [&str; 5] = ["jsonl", "thumb.png", "conflicts.json", "team.json", "ai"];
+
 impl Server {
+    /// Takes a project out of use (before its files move): its tabs are told
+    /// where it went, and it stops writing and syncing.
+    fn close(&self, name: &str, to: Option<&str>) {
+        if let Some(app) = self.open.lock().unwrap().remove(name) {
+            app.closed.store(true, Ordering::SeqCst);
+            let _ = app.events.send(json!({ "type": "moved", "to": to }).to_string().into());
+        }
+    }
+
     fn project(&self, name: Option<&String>) -> Result<Arc<App>, String> {
         let name = name.filter(|n| !n.is_empty()).cloned().unwrap_or_else(|| self.default.clone());
         if !valid_name(&name) {
@@ -96,11 +108,175 @@ impl Server {
             dialing: AtomicBool::new(false),
             conflicts: Mutex::new(std::fs::read_to_string(self.dir.join(format!("{name}.conflicts.json"))).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()),
             conflicts_path: self.dir.join(format!("{name}.conflicts.json")),
+            closed: AtomicBool::new(false),
             assets: Mutex::new(peers::Assets::default()),
         });
         open.insert(name, app.clone());
         Ok(app)
     }
+}
+
+#[derive(Deserialize, Default)]
+struct ProjectTo {
+    #[serde(default)]
+    to: Option<String>,
+}
+
+/// How a name reads when no title was given ("miami-tower" → "Miami tower").
+fn pretty_name(name: &str) -> String {
+    let s = name.replace('-', " ");
+    let mut c = s.chars();
+    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+}
+
+fn bad_request(text: impl Into<String>) -> axum::response::Response {
+    (StatusCode::UNPROCESSABLE_ENTITY, text.into()).into_response()
+}
+
+/// A project's files that exist: (suffix, path).
+fn project_files(dir: &std::path::Path, name: &str) -> Vec<(&'static str, PathBuf)> {
+    PROJECT_FILES.iter().map(|s| (*s, dir.join(format!("{name}.{s}")))).filter(|(_, p)| p.exists()).collect()
+}
+
+
+/// `POST /projects/{name}/info` `{ title?, description?, tags? }`. The name
+/// (the project's files, links, and how teammates' computers know it) never
+/// changes; these are kept in the project, so they sync and undo.
+async fn project_info(State(server): State<Arc<Server>>, Path(name): Path<String>, axum::Json(body): axum::Json<Value>) -> axum::response::Response {
+    if !valid_name(&name) || !server.dir.join(format!("{name}.jsonl")).exists() {
+        return bad_request(format!("no project called {name}"));
+    }
+    let app = match server.project(Some(&name)) {
+        Ok(app) => app,
+        Err(e) => return bad_request(e),
+    };
+    match tokio::task::spawn_blocking(move || app.commit_here("project.set_info", body)).await {
+        Ok(Ok(_)) => axum::Json(json!({ "name": name })).into_response(),
+        Ok(Err(e)) => bad_request(e),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// A project's title, description and tags, read from its log without opening it.
+fn info_of(dir: &std::path::Path, name: &str) -> Value {
+    let mut info = json!({ "title": null, "description": "", "tags": [] });
+    let Ok(file) = File::open(dir.join(format!("{name}.jsonl"))) else { return info };
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        if !line.contains("\"core.project\"") {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+        for op in v["ops"].as_array().into_iter().flatten() {
+            if op["kind"] == "core.project" && op["after"].is_object() {
+                info = json!({ "title": op["after"]["title"], "description": op["after"]["description"], "tags": op["after"]["tags"] });
+            }
+        }
+    }
+    info
+}
+
+/// `POST /projects/{name}/duplicate` `{ to? }`: a private copy (no team, no chat).
+async fn project_duplicate(State(server): State<Arc<Server>>, Path(name): Path<String>, body: Option<axum::Json<ProjectTo>>) -> axum::response::Response {
+    if !valid_name(&name) || !server.dir.join(format!("{name}.jsonl")).exists() {
+        return bad_request(format!("no project called {name}"));
+    }
+    let to = match body.and_then(|b| b.0.to) {
+        Some(to) if valid_name(&to) => to,
+        Some(_) => return bad_request("use lowercase letters, digits and dashes"),
+        None => {
+            let stem = format!("{}-copy", name.trim_end_matches("-copy"));
+            let mut n = 1;
+            let mut to = stem.clone();
+            while server.dir.join(format!("{to}.jsonl")).exists() {
+                n += 1;
+                to = format!("{stem}-{n}");
+            }
+            to
+        }
+    };
+    if server.dir.join(format!("{to}.jsonl")).exists() {
+        return bad_request("there is already a project called that");
+    }
+    // The log is append-only and synced line by line: a copy taken now is whole.
+    for suffix in ["jsonl", "thumb.png"] {
+        let from = server.dir.join(format!("{name}.{suffix}"));
+        if from.exists()
+            && let Err(e) = std::fs::copy(&from, server.dir.join(format!("{to}.{suffix}")))
+        {
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+    }
+    // The copy says it is one.
+    let title = info_of(&server.dir, &name)["title"].as_str().map(str::to_string).unwrap_or_else(|| pretty_name(&name));
+    if let Ok(app) = server.project(Some(&to)) {
+        let _ = tokio::task::spawn_blocking(move || app.commit_here("project.set_info", json!({ "title": format!("{title} copy") }))).await;
+    }
+    axum::Json(json!({ "name": to })).into_response()
+}
+
+/// `POST /projects/{name}/delete`: into `.trash`, from where it can be restored.
+async fn project_delete(State(server): State<Arc<Server>>, Path(name): Path<String>) -> axum::response::Response {
+    if !valid_name(&name) || !server.dir.join(format!("{name}.jsonl")).exists() {
+        return bad_request(format!("no project called {name}"));
+    }
+    if name == server.default {
+        return bad_request("the starting project cannot be deleted");
+    }
+    let bin = server.dir.join(".trash").join(format!("{name}~{}", peers::now()));
+    if let Err(e) = std::fs::create_dir_all(&bin) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+    }
+    server.close(&name, None);
+    for (suffix, path) in project_files(&server.dir, &name) {
+        if let Err(e) = std::fs::rename(&path, bin.join(format!("{name}.{suffix}"))) {
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+    }
+    axum::Json(json!({ "trashed": bin.file_name().and_then(|f| f.to_str()) })).into_response()
+}
+
+/// `GET /projects/trash`: deleted projects, newest first.
+async fn trash_list(State(server): State<Arc<Server>>) -> impl IntoResponse {
+    let mut list: Vec<Value> = std::fs::read_dir(server.dir.join(".trash"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let entry = e.file_name().to_str()?.to_string();
+            let (name, at) = entry.rsplit_once('~')?;
+            let at: u64 = at.parse().ok()?;
+            let revisions = std::fs::read(e.path().join(format!("{name}.jsonl"))).map(|b| b.iter().filter(|c| **c == b'\n').count()).unwrap_or(0);
+            Some(json!({ "entry": entry, "name": name, "deleted": at * 1000, "revisions": revisions, "taken": server.dir.join(format!("{name}.jsonl")).exists() }))
+        })
+        .collect();
+    list.sort_by_key(|v| std::cmp::Reverse(v["deleted"].as_u64().unwrap_or(0)));
+    axum::Json(list)
+}
+
+/// `POST /projects/trash/{entry}/restore` `{ to? }`: back where it was (or under a new name).
+async fn trash_restore(State(server): State<Arc<Server>>, Path(entry): Path<String>, body: Option<axum::Json<ProjectTo>>) -> axum::response::Response {
+    let Some((name, _)) = entry.rsplit_once('~') else { return bad_request("not a deleted project") };
+    let bin = server.dir.join(".trash").join(&entry);
+    if !valid_name(name) || entry.contains('/') || !bin.join(format!("{name}.jsonl")).exists() {
+        return bad_request("not a deleted project");
+    }
+    let to = body.and_then(|b| b.0.to).unwrap_or_else(|| name.to_string());
+    if !valid_name(&to) {
+        return bad_request("use lowercase letters, digits and dashes");
+    }
+    if server.dir.join(format!("{to}.jsonl")).exists() {
+        return bad_request("a project with that name exists: restore it under another name");
+    }
+    for suffix in PROJECT_FILES {
+        let from = bin.join(format!("{name}.{suffix}"));
+        if from.exists()
+            && let Err(e) = std::fs::rename(&from, server.dir.join(format!("{to}.{suffix}")))
+        {
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+    }
+    let _ = std::fs::remove_dir(&bin);
+    axum::Json(json!({ "name": to })).into_response()
 }
 
 /// `GET /projects`: every project in the folder, most recently changed first.
@@ -130,7 +306,7 @@ async fn projects(State(server): State<Arc<Server>>) -> impl IntoResponse {
                 })
             });
             let thumbnail = server.dir.join(format!("{name}.thumb.png")).exists();
-            list.push(json!({ "name": name, "modified": modified, "created": created, "revisions": revisions, "default": name == server.default, "team": team, "thumbnail": thumbnail }));
+            list.push(json!({ "name": name, "modified": modified, "created": created, "revisions": revisions, "default": name == server.default, "team": team, "thumbnail": thumbnail, "info": info_of(&server.dir, &name) }));
         }
     }
     list.sort_by_key(|p| std::cmp::Reverse(p["modified"].as_u64().unwrap_or(0)));
@@ -178,6 +354,8 @@ struct App {
     /// kept in `<project>.conflicts.json` until someone settles them.
     conflicts: Mutex<Vec<de_core::Conflict>>,
     conflicts_path: PathBuf,
+    /// Renamed or deleted while open: nothing more is written or synced.
+    closed: AtomicBool,
     /// Imported files arriving from teammates.
     assets: Mutex<peers::Assets>,
 }
@@ -367,6 +545,9 @@ fn changed(project: &Project, change: &ChangeSet) -> String {
 
 impl App {
     fn handle(&self, actor: &Actor, text: &str) -> String {
+        if self.closed.load(Ordering::SeqCst) {
+            return json!({ "type": "error", "message": "this project was renamed or deleted: open it again from the projects page" }).to_string();
+        }
         let message: ClientMessage = match serde_json::from_str(text) {
             Ok(m) => m,
             Err(e) => return json!({ "type": "error", "message": format!("bad message: {e}") }).to_string(),
@@ -501,6 +682,17 @@ impl App {
     }
 
     /// Tells open views the team or its connections changed.
+    /// Runs one command on behalf of this engine (not from a browser).
+    fn commit_here(&self, operation: &str, parameters: Value) -> Result<Value, String> {
+        let mut project = self.project.lock().unwrap();
+        let (logged, before) = (project.log().len(), project.revision());
+        let actor = Actor { user_id: "local".into(), session_id: StableId::new().to_string() };
+        let e = envelope(&project, &actor, None, operation.into(), parameters, project.revision());
+        let out = project.commit(e).map_err(|e| e.message.clone())?;
+        self.publish(&project, logged, before).map_err(|e| e.to_string())?;
+        Ok(serde_json::to_value(out).unwrap_or_default())
+    }
+
     fn save_conflicts(&self, list: &[de_core::Conflict]) {
         let _ = if list.is_empty() { std::fs::remove_file(&self.conflicts_path).or(Ok(())) } else { std::fs::write(&self.conflicts_path, serde_json::to_string_pretty(list).unwrap()) };
     }
@@ -1717,6 +1909,11 @@ async fn main() -> std::io::Result<()> {
         .route("/ws", get(websocket))
         .route("/export/{file}", get(export))
         .route("/projects", get(projects))
+        .route("/projects/{name}/info", axum::routing::post(project_info))
+        .route("/projects/{name}/duplicate", axum::routing::post(project_duplicate))
+        .route("/projects/{name}/delete", axum::routing::post(project_delete))
+        .route("/projects/trash", get(trash_list))
+        .route("/projects/trash/{entry}/restore", axum::routing::post(trash_restore))
         .route("/projects/{name}/thumbnail", get(thumbnail_get).post(thumbnail_put).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024)))
         .route("/slicer/{file}", axum::routing::post(send_to_slicer))
         .route("/machines/jcz/status", axum::routing::post(machines::status))

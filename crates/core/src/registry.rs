@@ -1,6 +1,6 @@
 use crate::{
     command::Command,
-    derived::{BatchCommand, DeleteEntity, DependsOn, Derived, DerivedInfo},
+    derived::{BatchCommand, DeleteEntity, DependsOn, Derived, DerivedInfo, ProjectInfo, SetProjectInfo},
     error::{CommandError, ErrorCode},
     journal::{ChangeSet, Op, WireChangeSet, WireOp},
     plugin::Plugin,
@@ -63,7 +63,7 @@ impl Registry {
             plugins: vec!["core"],
             current_plugin: "core",
         };
-        registry.component::<DependsOn>().command::<DeleteEntity>().command::<BatchCommand>();
+        registry.component::<DependsOn>().command::<DeleteEntity>().command::<BatchCommand>().component::<ProjectInfo>().command::<SetProjectInfo>();
         registry
     }
 

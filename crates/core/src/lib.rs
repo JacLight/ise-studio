@@ -23,7 +23,7 @@ pub mod value;
 
 pub use bevy_ecs;
 pub use command::{Actor, Command, Envelope, SCHEMA_VERSION};
-pub use derived::{DependsOn, Derived, Status};
+pub use derived::{DependsOn, Derived, ProjectInfo, Status};
 pub use error::{CommandError, ErrorCode};
 pub use ids::{IdIndex, Revision, StableId};
 pub use journal::{ChangeSet, Op, Stamp, WireChangeSet, WireOp};
