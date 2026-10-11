@@ -263,9 +263,37 @@ const OPERATIONS: Record<string, string> = {
   "project.set_info": "Changed the project's details",
   "core.undo": "Undid a change",
   "core.redo": "Redid a change",
+  "core.batch": "Made several changes",
+  "assembly.group.create": "Grouped parts",
+  "assembly.group.update": "Changed a group",
+  "parameters.create": "Added parameters",
+  "parameters.set": "Changed parameters",
+  "shape.link_param": "Linked a parameter",
+  "shape.rename_datum": "Renamed a datum",
+  "shape.set_drawing": "Edited a drawing",
+  "shape.set_study": "Changed a stress or heat study",
+  "sketch.create": "Started a sketch",
+  "sketch.update": "Edited a sketch",
+  "sketch.combine": "Combined sketch outlines",
+  "sketch.offset": "Offset a sketch outline",
+  "sketch.trim": "Trimmed sketch lines",
+  "sketch.extend": "Extended sketch lines",
+  "sketch.fillet": "Rounded sketch corners",
+  "sketch.chamfer": "Bevelled sketch corners",
+  "sketch.pattern": "Patterned sketch geometry",
+  "sketch.mirror": "Mirrored sketch geometry",
+  "sketch.project": "Projected a part into a sketch",
 };
 
-export const describeOperation = (op: string) => OPERATIONS[op] ?? op;
+/** What a change did, in words: "shape.set_study" → "Changed a stress or heat study"; an
+ * operation without a label still reads as words ("solid.thing.set_size" → "Set size (thing)"). */
+export const describeOperation = (op: string) => {
+  if (OPERATIONS[op]) return OPERATIONS[op];
+  const parts = op.split(".");
+  const verb = (parts.pop() ?? op).replace(/_/g, " ");
+  const what = parts.length > 1 ? ` (${parts.slice(1).join(" ").replace(/_/g, " ")})` : "";
+  return verb.charAt(0).toUpperCase() + verb.slice(1) + what;
+};
 
 export type Look = { color: string; metalness: number; roughness: number; opacity?: number };
 
