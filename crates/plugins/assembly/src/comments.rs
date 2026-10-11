@@ -93,6 +93,10 @@ pub struct CommentReply {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edited: Option<u64>,
+    /// Markup drawn on the model with the reply, in the thread's part
+    /// coordinates (like the thread's own).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markup: Vec<Stroke>,
 }
 
 impl Persist for CommentReply {
@@ -330,23 +334,111 @@ impl Command for CreateComment {
 }
 
 /// `comment.reply`: answer in a thread (a reply reopens nothing; resolve or reopen separately).
+///
+/// A reply can carry markup too, drawn on the thread's part: give strokes in
+/// the part's own coordinates (`markup`) or in project coordinates
+/// (`markup_at`, converted). With markup, the text may be left empty.
 #[derive(Deserialize, JsonSchema)]
 pub struct ReplyComment {
     pub thread: StableId,
+    #[serde(default)]
     pub text: String,
     pub author: String,
+    /// Strokes in the thread's part coordinates.
+    #[serde(default)]
+    pub markup: Vec<Stroke>,
+    /// Strokes in project coordinates.
+    #[serde(default)]
+    pub markup_at: Vec<Stroke>,
+}
+
+/// Strokes given for a thread, in its part's coordinates.
+fn thread_markup(tx: &Tx, t: &CommentThread, markup: Vec<Stroke>, markup_at: Vec<Stroke>) -> Result<Vec<Stroke>, CommandError> {
+    let frame = t.anchor.target.and_then(|id| frame(tx.world(), id));
+    if t.anchor.target.is_some() && frame.is_none() && !markup_at.is_empty() {
+        return Err(bad(ErrorCode::InvalidParameters, "the part this thread is pinned to is gone: give markup in its own coordinates (markup)"));
+    }
+    let mut out = markup_of(markup, frame, false)?;
+    out.extend(markup_of(markup_at, frame, true)?);
+    if out.len() > MAX_STROKES {
+        return Err(bad(ErrorCode::InvalidParameters, format!("at most {MAX_STROKES} markup strokes")));
+    }
+    Ok(out)
 }
 
 impl Command for ReplyComment {
     const NAME: &'static str = "comment.reply";
 
     fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
-        thread(tx, self.thread)?;
-        let text = text_of(self.text)?;
+        let t = thread(tx, self.thread)?;
+        let markup = thread_markup(tx, &t, self.markup, self.markup_at)?;
+        let text = if markup.is_empty() || !self.text.trim().is_empty() { text_of(self.text)? } else { String::new() };
         let author = author_of(&self.author)?;
         let id = tx.create();
-        tx.set(id, CommentReply { thread: self.thread, author, created: now_ms(), text, edited: None })?;
+        tx.set(id, CommentReply { thread: self.thread, author, created: now_ms(), text, edited: None, markup })?;
         Ok(json!({ "id": id }))
+    }
+}
+
+/// `comment.markup`: add pen or arrow strokes to your own comment or reply
+/// after posting it (or, with `replace`, swap its markup for these; an empty
+/// list with `replace` clears it). Coordinates as for `comment.reply`.
+#[derive(Deserialize, JsonSchema)]
+pub struct MarkupComment {
+    /// A thread or a reply.
+    pub target: StableId,
+    /// Who is drawing: only the author may.
+    pub author: String,
+    #[serde(default)]
+    pub markup: Vec<Stroke>,
+    #[serde(default)]
+    pub markup_at: Vec<Stroke>,
+    #[serde(default)]
+    pub replace: bool,
+}
+
+impl Command for MarkupComment {
+    const NAME: &'static str = "comment.markup";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        let (thread_id, reply) = match (tx.get::<CommentThread>(self.target), tx.get::<CommentReply>(self.target)) {
+            (Some(_), _) => (self.target, None),
+            (None, Some(r)) => (r.thread, Some(r.clone())),
+            _ => return Err(bad(ErrorCode::UnresolvedReference, format!("{} is not a comment", self.target))),
+        };
+        let t = thread(tx, thread_id)?;
+        let strokes = thread_markup(tx, &t, self.markup, self.markup_at)?;
+        if strokes.is_empty() && !self.replace {
+            return Err(bad(ErrorCode::InvalidParameters, "draw at least one stroke (markup or markup_at)"));
+        }
+        let replace = self.replace;
+        let merged = |old: &[Stroke]| -> Result<Vec<Stroke>, CommandError> {
+            let all: Vec<Stroke> = if replace { strokes.clone() } else { old.iter().cloned().chain(strokes.iter().cloned()).collect() };
+            if all.len() > MAX_STROKES {
+                return Err(bad(ErrorCode::InvalidParameters, format!("at most {MAX_STROKES} markup strokes on one comment")));
+            }
+            Ok(all)
+        };
+        match reply {
+            Some(mut r) => {
+                own(&r.author, &self.author, "draw on")?;
+                r.markup = merged(&r.markup)?;
+                if r.markup.is_empty() && r.text.is_empty() {
+                    return Err(bad(ErrorCode::InvalidParameters, "a reply with no text keeps at least one stroke (delete it instead)"));
+                }
+                let n = r.markup.len();
+                tx.set(self.target, r)?;
+                Ok(json!({ "id": self.target, "strokes": n }))
+            }
+            None => {
+                let mut t = t;
+                own(&t.author, &self.author, "draw on")?;
+                t.markup = merged(&t.markup)?;
+                let n = t.markup.len();
+                tx.set(self.target, t)?;
+                Ok(json!({ "id": self.target, "strokes": n }))
+            }
+        }
     }
 }
 

@@ -50,6 +50,7 @@ impl Plugin for AssemblyPlugin {
             .component::<CommentReply>()
             .command::<comments::CreateComment>()
             .command::<comments::ReplyComment>()
+            .command::<comments::MarkupComment>()
             .command::<comments::ResolveComment>()
             .command::<comments::ReopenComment>()
             .command::<comments::EditComment>()

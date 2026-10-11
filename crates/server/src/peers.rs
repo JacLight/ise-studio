@@ -454,7 +454,7 @@ pub fn my_addresses(port: u16, team: &Team) -> Vec<String> {
 }
 
 /// This machine's network addresses (the one the default route uses, first).
-fn lan_ips() -> Vec<String> {
+pub(crate) fn lan_ips() -> Vec<String> {
     let mut ips = Vec::new();
     // Connecting a UDP socket sends nothing; it only picks the outgoing interface.
     if let Ok(s) = std::net::UdpSocket::bind("0.0.0.0:0")

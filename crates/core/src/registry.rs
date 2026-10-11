@@ -65,6 +65,11 @@ impl Registry {
         };
         registry.component::<DependsOn>().command::<DeleteEntity>().command::<BatchCommand>().component::<ProjectInfo>().command::<SetProjectInfo>();
         registry
+            .component::<crate::versions::Version>()
+            .command::<crate::versions::CreateVersion>()
+            .command::<crate::versions::UpdateVersion>()
+            .command::<crate::versions::DeleteVersion>();
+        registry
     }
 
     pub fn with_plugins(plugins: &[&dyn Plugin]) -> Self {

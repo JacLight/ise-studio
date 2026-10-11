@@ -95,6 +95,7 @@ impl Project {
     pub fn new(id: impl Into<String>, registry: Arc<Registry>) -> Self {
         let mut world = World::new();
         world.insert_resource(IdIndex::default());
+        world.insert_resource(crate::versions::Clocks { after: vec![BTreeMap::new()] });
         Self {
             id: id.into(),
             world,
@@ -542,6 +543,120 @@ impl Project {
             .collect()
     }
 
+    /// The changes this copy held right after `revision` (a version vector).
+    pub fn vector_at(&self, revision: Revision) -> Option<crate::versions::Vector> {
+        self.world.resource::<crate::versions::Clocks>().at(revision).cloned()
+    }
+
+    /// This copy's revision holding exactly the changes `seen` names, if any.
+    pub fn revision_of(&self, seen: &crate::versions::Vector) -> Option<Revision> {
+        self.world.resource::<crate::versions::Clocks>().revision_of(seen)
+    }
+
+    /// Log entries inside the state `seen` names, in this copy's order.
+    pub fn log_within(&self, seen: &crate::versions::Vector) -> Vec<WireChangeSet> {
+        self.log.iter().filter(|w| Self::inside(w, seen)).cloned().collect()
+    }
+
+    /// Log entries beyond the state `seen` names (made or taken after it).
+    pub fn log_beyond(&self, seen: &crate::versions::Vector) -> Vec<WireChangeSet> {
+        self.log.iter().filter(|w| !Self::inside(w, seen)).cloned().collect()
+    }
+
+    fn inside(w: &WireChangeSet, seen: &crate::versions::Vector) -> bool {
+        match &w.stamp {
+            Some(s) => crate::versions::covers(seen, &s.origin, s.clock),
+            None => true,
+        }
+    }
+
+    /// The project as it was when it held exactly the changes `seen` names:
+    /// a separate copy, rebuilt by replaying those changes from this copy's
+    /// log (this one is untouched). Works for any version, including one
+    /// marked on a teammate's copy, as long as its changes have arrived here.
+    pub fn as_of(&self, seen: &crate::versions::Vector) -> Result<Project, CommandError> {
+        Self::rebuild(self.id.clone(), Arc::clone(&self.registry), &self.origin, self.log_within(seen))
+    }
+
+    /// A project rebuilt from log entries (all of a log, or the part of one
+    /// that a version covers, as [`Project::log_within`] gives it).
+    pub fn rebuild(id: String, registry: Arc<Registry>, origin: &str, wires: Vec<WireChangeSet>) -> Result<Project, CommandError> {
+        let mut then = Project::new(id, registry);
+        then.set_origin(origin);
+        for wire in wires {
+            if wire.merged {
+                then.merge_remote(wire)?;
+            } else if wire.base_revision == then.revision {
+                then.apply_remote(wire)?;
+            } else {
+                // Built on changes this state leaves out (cannot happen for a vector
+                // taken from a log, but a hand-made one might): merge it instead.
+                then.merge_remote(WireChangeSet { merged: true, ..wire })?;
+            }
+        }
+        Ok(then)
+    }
+
+    /// Sets the design back to the state of `then` (from [`Project::as_of`])
+    /// as one new change: history is kept, and the restore can be undone like
+    /// any edit. Entities holding any of `keep` kinds (versions, comments) are
+    /// left as they are now.
+    pub fn restore(&mut self, then: &Project, actor: &Actor, keep: &[&str], output: Value) -> Result<Committed, CommandError> {
+        let infos = self.registry.component_infos();
+        let held = |p: &Project, id: StableId| -> Vec<(&'static str, crate::value::CompValue)> {
+            match p.entity(id) {
+                Some(e) => infos.iter().filter_map(|i| (i.capture)(&p.world, e).map(|v| (i.kind, v))).collect(),
+                None => Vec::new(),
+            }
+        };
+        let kept = |state: &[(&'static str, crate::value::CompValue)]| state.iter().any(|(k, _)| keep.contains(k));
+        let mut ids: Vec<StableId> = self.entity_ids();
+        for id in then.entity_ids() {
+            if self.entity(id).is_none() {
+                ids.push(id);
+            }
+        }
+        ids.sort();
+        let mut ops: Vec<Op> = Vec::new();
+        for id in ids {
+            let (now, was) = (held(self, id), held(then, id));
+            if kept(&now) || kept(&was) {
+                continue;
+            }
+            let exists_now = self.entity(id).is_some();
+            let existed = then.entity(id).is_some();
+            if exists_now && !existed {
+                for (kind, v) in now {
+                    ops.push(Op::Set { id, kind, before: Some(v), after: None });
+                }
+                ops.push(Op::Delete { id });
+            } else if !exists_now && existed {
+                ops.push(Op::Create { id });
+                for (kind, v) in was {
+                    ops.push(Op::Set { id, kind, before: None, after: Some(v) });
+                }
+            } else {
+                for info in infos {
+                    let a = now.iter().find(|(k, _)| *k == info.kind).map(|(_, v)| v.clone());
+                    let b = was.iter().find(|(k, _)| *k == info.kind).map(|(_, v)| v.clone());
+                    if !crate::value::same(a.as_ref(), b.as_ref()) {
+                        ops.push(Op::Set { id, kind: info.kind, before: a, after: b });
+                    }
+                }
+            }
+        }
+        // Creations first, so anything restored can be referred to by what follows.
+        ops.sort_by_key(|o| match o {
+            Op::Create { .. } => 0,
+            Op::Set { after: Some(_), .. } => 1,
+            Op::Set { .. } => 2,
+            Op::Delete { .. } => 3,
+        });
+        apply_atomic(&mut self.world, &self.registry, &ops, true)?;
+        let command_id = format!("version.restore-{}", StableId::new());
+        Ok(self.record(command_id, "version.restore".into(), actor.clone(), ops, output, Origin::Command))
+    }
+
     fn check(&self, envelope: &Envelope) -> Result<(), CommandError> {
         if envelope.schema_version != SCHEMA_VERSION {
             return Err(CommandError::new(
@@ -647,6 +762,8 @@ impl Project {
         let seen = self.incoming_seen.take().unwrap_or_else(|| self.known.clone());
         let k = self.known.entry(stamp.origin.clone()).or_default();
         *k = (*k).max(stamp.clock);
+        let after = self.known.clone();
+        self.world.resource_mut::<crate::versions::Clocks>().after.push(after);
         let committed = Committed { revision: self.revision, output, op_count: ops.len() };
         self.committed.insert(command_id.clone(), committed.clone());
         self.journal.push(ChangeSet { revision: self.revision, base_revision, command_id, operation, actor, ops, stamp, seen });
