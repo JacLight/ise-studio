@@ -22,6 +22,14 @@ delete globalThis.__tolerance;
 const __inputs = JSON.parse(globalThis.__inputs || "{}");
 const __sketches = __inputs.sketches ?? {};
 const __finishes = __inputs.finishes ?? [];
+/**
+ * The configuration the shape is evaluated in ("Basic", "M8×30"), or null
+ * when none is active: a program can branch on it, e.g.
+ *   if (config === "Pro") list.push(part("Fan", fan));
+ */
+const config = typeof __inputs.config === "string" ? __inputs.config : null;
+/** Parts that configuration leaves out, by name: dropped from the result. */
+const __partsOff = Array.isArray(__inputs.parts_off) ? __inputs.parts_off : [];
 delete globalThis.__inputs;
 delete globalThis.Date;
 Math.random = () => {
@@ -486,8 +494,9 @@ function metric(name, value, unit = "") {
 }
 
 /** Edge finishes picked in the view, applied in order after the program. */
-function __finish(out, p) {
+function __finish(out, p, off) {
   for (const f of __finishes) {
+    if (f.part !== undefined && off.has(f.part)) continue; // its part is left out
     const size = p[f.key];
     if (typeof size !== "number") throw new Error(`edge finish: the shape has no parameter “${f.key}”`);
     const apply = (s) => {
@@ -581,21 +590,94 @@ function couple(fromJoint, toJoint, ratio) {
   __mechanism.couplings.push({ from: fromJoint, to: toJoint, ratio });
 }
 
+/**
+ * Drops the parts the configuration leaves out, and with them every hinge,
+ * joint, gear mesh, drive and coupling that only they held; says what went.
+ */
+function __leaveOut(list) {
+  const report = { parts: [], all: [], missing: [], dropped: [] };
+  const names = new Set(list.map((x) => x.name));
+  const off = new Set(__partsOff.filter((n) => names.has(n)));
+  report.missing = __partsOff.filter((n) => !names.has(n));
+  if (!off.size) return { list, off, report };
+  const kept = list.filter((x) => !off.has(x.name));
+  report.parts = list.filter((x) => off.has(x.name)).map((x) => x.name);
+  report.all = list.map((x) => x.name);
+  const q = (ns) => ns.map((n) => `“${n}”`).join(", ");
+  const m = __mechanism;
+  const notes = report.dropped;
+  // A group of parts moving together loses the ones left out; it goes once none is left.
+  const trim = (group, what) => {
+    const gone = group.filter((n) => off.has(n));
+    const rest = group.filter((n) => !off.has(n));
+    if (gone.length && rest.length) notes.push(`${what} goes on without ${q(gone)}`);
+    return { gone, rest };
+  };
+  m.bodies = m.bodies.filter((b, i) => {
+    const { gone, rest } = trim(b.parts, `Hinge ${i + 1}`);
+    if (gone.length && !rest.length) {
+      notes.push(`Hinge ${i + 1} (${q(gone)}) is left out with ${gone.length > 1 ? "them" : "it"}`);
+      return false;
+    }
+    b.parts = rest;
+    return true;
+  });
+  m.meshes = m.meshes.filter((g) => {
+    const gone = [g.driver, g.driven].filter((n) => off.has(n));
+    if (gone.length) notes.push(`Gear mesh ${q([g.driver])} → ${q([g.driven])} is left out with ${q(gone)}`);
+    return !gone.length;
+  });
+  const lost = new Set();
+  m.joints = m.joints.filter((j) => {
+    const a = trim(j.a, `Joint “${j.name}”`);
+    const b = trim(j.b, `Joint “${j.name}”`);
+    if ((a.gone.length && !a.rest.length) || (b.gone.length && !b.rest.length)) {
+      notes.push(`Joint “${j.name}” is left out with ${q([...a.gone, ...b.gone])}`);
+      lost.add(j.name);
+      return false;
+    }
+    j.a = a.rest;
+    j.b = b.rest;
+    return true;
+  });
+  if (m.drive && lost.has(m.drive.joint)) {
+    notes.push(`The drive on “${m.drive.joint}” is left out with its joint`);
+    m.drive = null;
+  }
+  m.couplings = m.couplings.filter((c) => {
+    const gone = lost.has(c.from) || lost.has(c.to);
+    if (gone) notes.push(`The coupling “${c.from}” → “${c.to}” is left out with its joint`);
+    return !gone;
+  });
+  return { list: kept, off, report };
+}
+
 function __result(out, p) {
-  if (__finishes.length) out = __finish(out, p);
+  let list = null;
+  let off = new Set();
+  let left_out;
+  if (!(out instanceof Solid)) {
+    list = Array.isArray(out) ? out.flat(Infinity) : null;
+    if (!list || !list.length || !list.every((x) => x instanceof Part)) {
+      throw new TypeError("the program must return a Solid or a list of part()s (got " + typeof out + ")");
+    }
+    const seen = new Set();
+    for (const x of list) {
+      if (seen.has(x.name)) throw new Error(`two parts are named "${x.name}": part names must be unique`);
+      seen.add(x.name);
+    }
+    if (__partsOff.length) ({ list, off, report: left_out } = __leaveOut(list));
+    out = list;
+  } else if (__partsOff.length) {
+    // One solid has no parts to leave out: every name is reported as missing.
+    left_out = { parts: [], all: [], missing: [...__partsOff], dropped: [] };
+  }
+  if (__finishes.length) out = __finish(out, p, off);
   const m = __mechanism;
   const mechanism = m.bodies.length || m.meshes.length || m.joints.length ? m : undefined;
-  if (out instanceof Solid) return JSON.stringify({ solid: out.h, metrics: __metrics, mechanism });
-  const list = Array.isArray(out) ? out.flat(Infinity) : null;
-  if (!list || !list.length || !list.every((x) => x instanceof Part)) {
-    throw new TypeError("the program must return a Solid or a list of part()s (got " + typeof out + ")");
-  }
-  const seen = new Set();
-  for (const x of list) {
-    if (seen.has(x.name)) throw new Error(`two parts are named "${x.name}": part names must be unique`);
-    seen.add(x.name);
-  }
-  return JSON.stringify({ parts: list.map((x) => ({ name: x.name, h: x.solid.h, material: x.material ?? null, process: x.process ?? null })), metrics: __metrics, mechanism });
+  if (out instanceof Solid) return JSON.stringify({ solid: out.h, metrics: __metrics, mechanism, left_out });
+  list = out.flat(Infinity);
+  return JSON.stringify({ parts: list.map((x) => ({ name: x.name, h: x.solid.h, material: x.material ?? null, process: x.process ?? null })), metrics: __metrics, mechanism, left_out });
 }
 
 /**

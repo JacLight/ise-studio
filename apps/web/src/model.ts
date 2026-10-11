@@ -42,8 +42,8 @@ export type EdgeFinish = {
 /** An AI-made shape's program, if this entity is one. */
 export const program = (e: EntityView) => e.components["shape.program"] as Program | undefined;
 
-/** One configuration of a shape: a value for each column, and finishes it leaves off (by size parameter). */
-export type ConfigRow = { name: string; values: Record<string, number>; description?: string; suppress?: string[] };
+/** One configuration of a shape: a value for each column, finishes it leaves off (by size parameter) and parts it leaves out (by name). */
+export type ConfigRow = { name: string; values: Record<string, number>; description?: string; suppress?: string[]; parts_off?: string[] };
 /** A shape's configuration table: columns (parameter keys), rows, and the one the shape shows. */
 export type Configurations = { params: string[]; rows: ConfigRow[]; active?: string | null };
 export const configurations = (e: EntityView | undefined) => e?.components["shape.configurations"] as Configurations | undefined;

@@ -24,6 +24,8 @@ pub struct Exact {
     pub mechanism: Option<serde_json::Value>,
     /// The program returned one solid rather than a list of parts.
     pub single: bool,
+    /// What the configuration it was evaluated in left out.
+    pub left_out: crate::runtime::LeftOut,
 }
 
 pub struct ExactPart {
@@ -76,7 +78,7 @@ fn exact_within(arena: Arena, name: &str, source: &str, params: &[(String, f64)]
     let mut faceted = state.faceted;
     faceted.sort();
     faceted.dedup();
-    Ok((state.arena, Exact { arena: Arena::empty(), parts, faceted, metrics: output.metrics, mechanism: output.mechanism, single }))
+    Ok((state.arena, Exact { arena: Arena::empty(), parts, faceted, metrics: output.metrics, mechanism: output.mechanism, single, left_out: output.left_out.unwrap_or_default() }))
 }
 
 /// The view of a program that uses operations only the exact kernel has
@@ -91,6 +93,7 @@ pub(crate) fn evaluate_meshed(source: &str, params: &[(String, f64)], tolerance:
     let mut e = if exact.single { crate::runtime::finish(list.pop().expect("one solid").3)? } else { crate::runtime::finish_parts(list)? };
     e.metrics = exact.metrics;
     e.mechanism = exact.mechanism;
+    e.left_out = exact.left_out;
     Ok(e)
 }
 

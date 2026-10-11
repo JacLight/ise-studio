@@ -573,7 +573,10 @@ pub struct ShapeStats {
     pub motion: Option<gears::Motion>,
     /// The program joins its parts with joint(): its motion is solved as a linkage.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub linkage: bool,
+    pub linkage: bool,    /// What the configuration it is shown in leaves out: parts, and the
+    /// hinges, joints and gear meshes that went with them.
+    #[serde(skip_serializing_if = "runtime::LeftOut::is_empty")]
+    pub left_out: runtime::LeftOut,
 }
 
 /// One part of an assembly, in millimeters (program coordinates).
@@ -1055,7 +1058,7 @@ pub fn stress_study(program: &ShapeProgram, part: Option<&str>, material: &str, 
     let e = evaluated_at(program, program.display_tolerance())?;
     let (start, count) = match part {
         Some(name) => {
-            let p = e.parts.iter().find(|p| p.name == name).ok_or_else(|| format!("no part called “{name}”"))?;
+            let p = e.part(name)?;
             (p.index_start, p.index_count)
         }
         None if e.parts.len() > 1 => return Err("pick one part of the assembly to study".into()),
@@ -1089,7 +1092,7 @@ pub fn assembly_stress(program: &ShapeProgram, parts: &[(String, String)], study
         .iter()
         .map(|(name, material)| {
             let props = fea::elastic(material).ok_or_else(|| format!("no stiffness figures for “{material}” (on “{name}”)"))?;
-            let p = e.parts.iter().find(|p| &p.name == name).ok_or_else(|| format!("no part called “{name}”"))?;
+            let p = e.part(name)?;
             Ok(fea::Body { name: name.clone(), positions: &e.positions, triangles: &e.indices[p.index_start..p.index_start + p.index_count], material: props })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -1104,7 +1107,7 @@ pub fn assembly_stress(program: &ShapeProgram, parts: &[(String, String)], study
 /// a cube of a normal-resolution study of the two).
 pub fn touching_parts(program: &ShapeProgram, part: &str) -> Result<Vec<String>, String> {
     let e = evaluated_at(program, program.display_tolerance())?;
-    let me = e.parts.iter().find(|p| p.name == part).ok_or_else(|| format!("no part called “{part}”"))?;
+    let me = e.part(part)?;
     let mesh = |p: &runtime::EvaluatedPart| (&e.positions[..], &e.indices[p.index_start..p.index_start + p.index_count], p.bounds_min, p.bounds_max);
     Ok(e.parts.iter().filter(|p| p.name != part && fea::touching(mesh(me), mesh(p))).map(|p| p.name.clone()).collect())
 }
@@ -1115,7 +1118,7 @@ pub fn thermal_study(program: &ShapeProgram, part: Option<&str>, material: &str,
     let e = evaluated_at(program, program.display_tolerance())?;
     let (start, count) = match part {
         Some(name) => {
-            let p = e.parts.iter().find(|p| p.name == name).ok_or_else(|| format!("no part called “{name}”"))?;
+            let p = e.part(name)?;
             (p.index_start, p.index_count)
         }
         None if e.parts.len() > 1 => return Err("pick one part of the assembly to study".into()),
@@ -1175,7 +1178,7 @@ pub fn motion_stress(program: &ShapeProgram, part: &str, masses: &[Option<f64>],
         resolution: 56,
         ..Default::default()
     };
-    let k = e.parts.iter().find(|p| p.name == part).ok_or_else(|| format!("no part called “{part}”"))?;
+    let k = e.part(part)?;
     let mut result = fea::solve(&e.positions, &e.indices[k.index_start..k.index_start + k.index_count], &props, &study)?;
     result.notes.push("Held at one joint's seat, loaded at the others; the part's own inertia is left out.".into());
     Ok(MotionStress {
@@ -1192,7 +1195,7 @@ pub fn vibration_study(program: &ShapeProgram, part: Option<&str>, material: &st
     let e = evaluated_at(program, program.display_tolerance())?;
     let (start, count_idx) = match part {
         Some(name) => {
-            let p = e.parts.iter().find(|p| p.name == name).ok_or_else(|| format!("no part called “{name}”"))?;
+            let p = e.part(name)?;
             (p.index_start, p.index_count)
         }
         None if e.parts.len() > 1 => return Err("pick one part of the assembly to study".into()),
@@ -1236,6 +1239,7 @@ pub(crate) fn stats_of(e: &runtime::Evaluated) -> ShapeStats {
         moves: e.mechanism.is_some(),
         motion: e.mechanism.as_ref().and_then(|m| gears::Mechanism::parse(m).ok()).and_then(|m| m.motion().ok()),
         linkage: e.mechanism.as_ref().is_some_and(|m| m.get("joints").and_then(serde_json::Value::as_array).is_some_and(|j| !j.is_empty())),
+        left_out: e.left_out.clone(),
     }
 }
 
@@ -1355,6 +1359,12 @@ pub(crate) fn check_params(params: &[Param]) -> Result<(), CommandError> {
 /// Rejects programs that do not produce a valid solid, before anything is stored.
 /// Linked parameters are evaluated with their formulas worked out.
 pub(crate) fn validate(world: &World, program: &ShapeProgram, materials: &PartMaterials) -> Result<(), CommandError> {
+    validate_in(world, program, materials, None).map(|_| ())
+}
+
+/// As [`validate`], in a configuration (its name and the parts it leaves
+/// out reach the program), returning what it evaluated to.
+pub(crate) fn validate_in(world: &World, program: &ShapeProgram, materials: &PartMaterials, row: Option<&ConfigRow>) -> Result<runtime::Evaluated, CommandError> {
     check_params(&program.params)?;
     if program.display_tolerance.is_some_and(|t| !(t.is_finite() && t > 0.0 && t <= 100.0)) {
         return Err(CommandError::new(ErrorCode::InvalidParameters, "display tolerance must be between 0 and 100 mm"));
@@ -1390,6 +1400,10 @@ pub(crate) fn validate(world: &World, program: &ShapeProgram, materials: &PartMa
         }
     }
     let inputs = program_inputs(world, program).map_err(|e| CommandError::new(ErrorCode::UnresolvedReference, e))?;
+    let inputs = match row {
+        Some(r) => configs::with_row(&inputs, r),
+        None => inputs,
+    };
     let e = runtime::evaluate_in(&program.source, &values, program.display_tolerance(), &inputs)
         .map_err(|e| CommandError::new(ErrorCode::InvalidGeometry, e))?;
     for p in &e.parts {
@@ -1402,7 +1416,7 @@ pub(crate) fn validate(world: &World, program: &ShapeProgram, materials: &PartMa
             ));
         }
     }
-    Ok(())
+    Ok(e)
 }
 
 /// Replaces a shape's material table, keeping its dependencies in step.

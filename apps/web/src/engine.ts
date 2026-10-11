@@ -53,6 +53,20 @@ export type ShapeStats = {
   linkage?: boolean;
   /** For assemblies: every fabricable part, each owning a range of the mesh's indices. */
   parts?: PartStats[];
+  /** What the configuration shown leaves out (absent when nothing). */
+  left_out?: LeftOut;
+};
+
+/** Parts a configuration leaves out, and the motion that went with them. */
+export type LeftOut = {
+  /** Parts left out, in the program's order. */
+  parts?: string[];
+  /** Every part the program made, left out or not (only when some are). */
+  all?: string[];
+  /** Parts it leaves out that the program no longer makes (renamed?). */
+  missing?: string[];
+  /** Hinges, joints, gear meshes, drives and couplings that went with them, in words. */
+  dropped?: string[];
 };
 
 export type Motion = {
@@ -310,11 +324,11 @@ export class Engine {
   }
 
   /** Evaluates a shape with changed parameters without committing (for live dragging). */
-  shapePreview(target: string, values: Record<string, number>, finishes?: EdgeFinish[]): Promise<{ target: string; stats: ShapeStats; mesh: MeshData }> {
+  shapePreview(target: string, values: Record<string, number>, finishes?: EdgeFinish[], config?: string): Promise<{ target: string; stats: ShapeStats; mesh: MeshData }> {
     return new Promise((resolve, reject) => {
       const requestId = this.nextRequest++;
       this.pending.set(requestId, { resolve: resolve as (v: unknown) => void, reject, retry: null });
-      this.send({ type: "shape_preview", request_id: requestId, target, values, finishes });
+      this.send({ type: "shape_preview", request_id: requestId, target, values, finishes, config });
     });
   }
 

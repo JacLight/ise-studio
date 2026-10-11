@@ -2655,3 +2655,80 @@ fn heat_through_a_tube_wall_follows_the_log_of_the_radius() {
     assert!((r.to_holds - 50.0).abs() < 1e-3, "all 50 W leave through the bore: {}", r.to_holds);
     assert!((r.max - at(20.0)).abs() < (at(20.0) - 20.0) * 0.05, "hottest {} vs {}", r.max, at(20.0));
 }
+
+/// Inputs for a program evaluated in a configuration that leaves `off` out.
+fn leaving_out(config: &str, off: &[&str]) -> String {
+    let row: de_shape::ConfigRow = serde_json::from_value(json!({ "name": config, "values": {}, "parts_off": off })).unwrap();
+    de_shape::configs::with_row(r#"{"sketches":{},"finishes":[]}"#, &row)
+}
+
+#[test]
+fn gear_meshes_and_hinges_go_with_the_parts_a_configuration_leaves_out() {
+    let (src, params) = example("gearbox", "gearbox.js");
+    let full = runtime::evaluate(&src, &params, 0.05).unwrap();
+
+    // The whole output stage out: its hinge and its mesh go, said plainly; the first stage still checks.
+    let e = runtime::evaluate_in(&src, &params, 0.05, &leaving_out("Single stage", &["Output wheel", "Output shaft"])).unwrap();
+    assert_eq!(e.parts.len(), full.parts.len() - 2);
+    assert!(e.parts.iter().all(|p| p.name != "Output wheel" && p.name != "Output shaft"));
+    let mut out = e.left_out.parts.clone();
+    out.sort();
+    assert_eq!(out, ["Output shaft", "Output wheel"], "both reported");
+    assert_eq!(e.left_out.all.len(), full.parts.len(), "with every part the program made");
+    let m = e.mechanism.as_ref().unwrap();
+    assert_eq!(m["meshes"].as_array().unwrap().len(), 1, "the second mesh is gone");
+    assert_eq!(m["bodies"].as_array().unwrap().len(), 2, "and the output hinge");
+    assert!(e.left_out.dropped.iter().any(|d| d.contains("Gear mesh") && d.contains("Output wheel")), "{:?}", e.left_out.dropped);
+    assert!(e.left_out.dropped.iter().any(|d| d.starts_with("Hinge 3")), "{:?}", e.left_out.dropped);
+    let c = de_shape::gears::check(&e, None, None).expect("the gear check runs on what is left");
+    assert_eq!(c.meshes.len(), 1);
+
+    // Only the wheel out: its shaft still turns on the hinge, which says it goes on without it.
+    let e = runtime::evaluate_in(&src, &params, 0.05, &leaving_out("No wheel", &["Output wheel"])).unwrap();
+    assert!(e.left_out.dropped.iter().any(|d| d.contains("goes on without “Output wheel”")), "{:?}", e.left_out.dropped);
+    assert_eq!(e.mechanism.as_ref().unwrap()["bodies"].as_array().unwrap().len(), 3);
+}
+
+#[test]
+fn a_configuration_leaving_parts_out_is_what_exports_and_drawings_get() {
+    use de_shape::drawing::{Options, PartRow, Sheet, Title};
+    let source = r#"
+        joint("hinge", "Lid", "Base", { at: [0, 0, 10], axis: [1, 0, 0], name: "Lid hinge" });
+        joint("fixed", ["Fan", "Fan guard"], "Base", { name: "Fan mount" });
+        couple("Lid hinge", "Fan mount", 1);
+        return [
+            part("Base", box(100, 60, 10)),
+            part("Lid", box(100, 60, 4).translate(0, 0, 10)),
+            part("Fan", box(20, 20, 5).translate(40, 20, 14)),
+            part("Fan guard", box(20, 20, 1).translate(40, 20, 19)),
+        ];
+    "#;
+    let program = de_shape::ShapeProgram {
+        name: "Enclosure (Basic)".into(),
+        description: String::new(),
+        source: source.into(),
+        params: vec![],
+        display_tolerance: None,
+        levels: vec![],
+        uses: Default::default(),
+        finishes: vec![],
+        inputs: leaving_out("Basic", &["Fan", "Fan guard", "Grille"]),
+    };
+    // STEP: only the base and the lid are written.
+    let (_, exact) = de_shape::exact::evaluate_exact_in(de_occt::Arena::new(), &program.name, &program.source, &[], 0.01, &program.inputs).map_err(|(_, e)| e).unwrap();
+    assert_eq!(exact.parts.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Base", "Lid"]);
+    // The fixed joint holding both fan parts goes, and the coupling with it; a name the program lacks is reported.
+    assert!(exact.left_out.dropped.iter().any(|d| d.contains("Fan mount")), "{:?}", exact.left_out.dropped);
+    assert!(exact.left_out.dropped.iter().any(|d| d.contains("coupling")), "{:?}", exact.left_out.dropped);
+    assert_eq!(exact.left_out.missing, ["Grille"]);
+    // The view and mass come from the same evaluation.
+    let e = de_shape::evaluated_at(&program, 0.05).unwrap();
+    assert!((e.volume - (60000.0 + 24000.0)).abs() < 1e-6);
+    // The drawing balloons the two parts its parts list has.
+    let row = |name: &str| PartRow { name: name.into(), quantity: 1, material: "Steel".into(), mass: "—".into() };
+    let title = Title { title: "Enclosure".into(), parts: vec![row("Base"), row("Lid")], ..Default::default() };
+    let d = de_shape::drawing::drawing(&program, &Options { sheet: Sheet::A3, ..Default::default() }, &title).unwrap();
+    let mut items: Vec<usize> = d.balloons.iter().map(|b| b.item).collect();
+    items.sort();
+    assert_eq!(items, [1, 2]);
+}

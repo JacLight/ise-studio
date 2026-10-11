@@ -93,7 +93,7 @@ export function App({ engine }: { engine: Engine }) {
   const [pivotLive, setPivotLive] = useState<Frac | null>(null);
   // Live parameter preview of an AI-made shape, evaluated by the engine without committing.
   const [shapePreview, setShapePreview] = useState<{ id: string; stats: ShapeStats; mesh: MeshData } | null>(null);
-  const previewNext = useRef<{ id: string; values: Record<string, number>; finishes?: EdgeFinish[] } | null>(null);
+  const previewNext = useRef<{ id: string; values: Record<string, number>; finishes?: EdgeFinish[]; config?: string } | null>(null);
   const previewBusy = useRef(false);
   const previewSeq = useRef(0);
   const liveRef = useRef<LiveEdit | null>(null);
@@ -487,7 +487,7 @@ export function App({ engine }: { engine: Engine }) {
     previewBusy.current = true;
     const seq = ++previewSeq.current;
     try {
-      const r = await engine.shapePreview(job.id, job.values, job.finishes);
+      const r = await engine.shapePreview(job.id, job.values, job.finishes, job.config);
       if (seq === previewSeq.current) setShapePreview({ id: job.id, stats: r.stats, mesh: r.mesh });
     } catch (e) {
       if (seq === previewSeq.current) notify((e as EngineError).message);
@@ -513,7 +513,7 @@ export function App({ engine }: { engine: Engine }) {
     [selected, pumpPreview],
   );
 
-  // A configuration hovered in the switcher: its values (and finishes) shown without committing.
+  // A configuration hovered in the switcher: its values, finishes and parts shown without committing.
   const previewConfig = useCallback(
     (row: ConfigRow | null) => {
       const prog = selected ? program(state.entities.get(selected)!) : undefined;
@@ -524,8 +524,8 @@ export function App({ engine }: { engine: Engine }) {
         setShapePreview(null);
         return;
       }
-      const finishes = row.suppress?.length ? (prog.finishes ?? []).filter((f) => !row.suppress!.includes(f.key)) : undefined;
-      previewNext.current = { id: selected, values: row.values, finishes };
+      // Evaluated in that configuration (its parts left out, `config` for the program).
+      previewNext.current = { id: selected, values: row.values, config: row.name };
       void pumpPreview();
     },
     [selected, state.entities, pumpPreview],
