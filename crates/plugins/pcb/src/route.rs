@@ -47,7 +47,7 @@ pub struct Autoroute {
     pub layers: Option<Vec<String>>,
     /// Rip up and reroute nets in the way of one that cannot finish (default true).
     pub rip_up: Option<bool>,
-    /// What a via costs, in millimetres of track (default 3).
+    /// What a via costs, in millimetres of track (default 5).
     pub via_cost: Option<f64>,
 }
 
@@ -423,7 +423,7 @@ impl Command for Autoroute {
         if !(0.05..=2.0).contains(&g) {
             return Err(CommandError::new(ErrorCode::InvalidParameters, "grid is 0.05 to 2 mm"));
         }
-        let via_cost = self.via_cost.unwrap_or(8.0);
+        let via_cost = self.via_cost.unwrap_or(5.0);
         if !(0.0..=100.0).contains(&via_cost) {
             return Err(CommandError::new(ErrorCode::InvalidParameters, "via_cost is 0 to 100 mm"));
         }
