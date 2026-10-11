@@ -513,6 +513,7 @@ dependencies = [
  "de-occt",
  "de-shape",
  "de-solid",
+ "de-sourcing",
  "futures-util",
  "getrandom 0.3.4",
  "manifold-csg",
@@ -543,6 +544,19 @@ name = "de-solid"
 version = "0.1.0"
 dependencies = [
  "de-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "de-sourcing"
+version = "0.1.0"
+dependencies = [
+ "de-assembly",
+ "de-core",
+ "de-shape",
+ "de-solid",
+ "manifold-csg",
  "serde",
  "serde_json",
 ]

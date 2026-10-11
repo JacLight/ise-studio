@@ -12,6 +12,7 @@ mod history;
 mod machines;
 mod peers;
 mod share;
+mod sourcing;
 mod stock;
 
 use axum::{
@@ -2174,7 +2175,7 @@ async fn main() -> std::io::Result<()> {
     let dir = project_path.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
     std::fs::create_dir_all(&dir)?;
     let default = project_path.file_stem().and_then(|s| s.to_str()).unwrap_or("default").to_string();
-    let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin]));
+    let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin]));
     let claude = ai::AiConfig::find_claude();
     match &claude {
         Some(p) => println!("Forma AI: Claude Code at {}", p.display()),
@@ -2249,6 +2250,10 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/touching/{id}", get(touching))
         .route("/motion-stress/{id}", get(motion_stress))
         .route("/thermal/{id}", axum::routing::post(thermal))
+        .route("/bom/{id}", get(sourcing::bom))
+        .route("/bom/{id}/file", get(sourcing::line_file))
+        .route("/rfq/{file}", get(sourcing::rfq))
+        .route("/rates", get(sourcing::rates))
         .route("/team", get(team_status))
         .route("/team/invite", axum::routing::post(team_invite))
         .route("/team/settings", axum::routing::post(team_settings))
@@ -2294,7 +2299,7 @@ mod tests {
     }
 
     fn server_in(dir: &std::path::Path) -> Arc<Server> {
-        let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin]));
+        let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin]));
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let ai = Arc::new(ai::AiConfig { repo: root.clone(), port: 0, claude: None, model: None });
         let web = dir.join("web");
