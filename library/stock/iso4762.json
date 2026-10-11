@@ -1,0 +1,643 @@
+{
+ "id": "iso4762",
+ "name": "Socket head cap screw",
+ "standard": "ISO 4762",
+ "category": "Fasteners",
+ "summary": "Hex socket (Allen) cap screw, stainless A2-70. Head seat on z = 0, shank down −Z.",
+ "keywords": [
+  "SHCS",
+  "cap screw",
+  "allen",
+  "DIN 912",
+  "bolt",
+  "hex socket"
+ ],
+ "source": [
+  "common.js",
+  "iso4762.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Stainless steel A2",
+ "materials": {
+  "Stainless steel A2": 7900
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Thread diameter",
+   "value": 3,
+   "unit": "mm",
+   "min": 2,
+   "max": 8,
+   "step": 0.5
+  },
+  {
+   "key": "length",
+   "label": "Length",
+   "value": 12,
+   "unit": "mm",
+   "min": 3,
+   "max": 200
+  },
+  {
+   "key": "threads",
+   "label": "True helical thread (1 = on)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "d",
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "M2×4",
+   "values": {
+    "d": 2,
+    "length": 4
+   }
+  },
+  {
+   "name": "M2×5",
+   "values": {
+    "d": 2,
+    "length": 5
+   }
+  },
+  {
+   "name": "M2×6",
+   "values": {
+    "d": 2,
+    "length": 6
+   }
+  },
+  {
+   "name": "M2×8",
+   "values": {
+    "d": 2,
+    "length": 8
+   }
+  },
+  {
+   "name": "M2×10",
+   "values": {
+    "d": 2,
+    "length": 10
+   }
+  },
+  {
+   "name": "M2×12",
+   "values": {
+    "d": 2,
+    "length": 12
+   }
+  },
+  {
+   "name": "M2×16",
+   "values": {
+    "d": 2,
+    "length": 16
+   }
+  },
+  {
+   "name": "M2×20",
+   "values": {
+    "d": 2,
+    "length": 20
+   }
+  },
+  {
+   "name": "M2.5×4",
+   "values": {
+    "d": 2.5,
+    "length": 4
+   }
+  },
+  {
+   "name": "M2.5×5",
+   "values": {
+    "d": 2.5,
+    "length": 5
+   }
+  },
+  {
+   "name": "M2.5×6",
+   "values": {
+    "d": 2.5,
+    "length": 6
+   }
+  },
+  {
+   "name": "M2.5×8",
+   "values": {
+    "d": 2.5,
+    "length": 8
+   }
+  },
+  {
+   "name": "M2.5×10",
+   "values": {
+    "d": 2.5,
+    "length": 10
+   }
+  },
+  {
+   "name": "M2.5×12",
+   "values": {
+    "d": 2.5,
+    "length": 12
+   }
+  },
+  {
+   "name": "M2.5×16",
+   "values": {
+    "d": 2.5,
+    "length": 16
+   }
+  },
+  {
+   "name": "M2.5×20",
+   "values": {
+    "d": 2.5,
+    "length": 20
+   }
+  },
+  {
+   "name": "M2.5×25",
+   "values": {
+    "d": 2.5,
+    "length": 25
+   }
+  },
+  {
+   "name": "M3×4",
+   "values": {
+    "d": 3,
+    "length": 4
+   }
+  },
+  {
+   "name": "M3×5",
+   "values": {
+    "d": 3,
+    "length": 5
+   }
+  },
+  {
+   "name": "M3×6",
+   "values": {
+    "d": 3,
+    "length": 6
+   }
+  },
+  {
+   "name": "M3×8",
+   "values": {
+    "d": 3,
+    "length": 8
+   }
+  },
+  {
+   "name": "M3×10",
+   "values": {
+    "d": 3,
+    "length": 10
+   }
+  },
+  {
+   "name": "M3×12",
+   "values": {
+    "d": 3,
+    "length": 12
+   }
+  },
+  {
+   "name": "M3×14",
+   "values": {
+    "d": 3,
+    "length": 14
+   }
+  },
+  {
+   "name": "M3×16",
+   "values": {
+    "d": 3,
+    "length": 16
+   }
+  },
+  {
+   "name": "M3×18",
+   "values": {
+    "d": 3,
+    "length": 18
+   }
+  },
+  {
+   "name": "M3×20",
+   "values": {
+    "d": 3,
+    "length": 20
+   }
+  },
+  {
+   "name": "M3×25",
+   "values": {
+    "d": 3,
+    "length": 25
+   }
+  },
+  {
+   "name": "M3×30",
+   "values": {
+    "d": 3,
+    "length": 30
+   }
+  },
+  {
+   "name": "M3×35",
+   "values": {
+    "d": 3,
+    "length": 35
+   }
+  },
+  {
+   "name": "M3×40",
+   "values": {
+    "d": 3,
+    "length": 40
+   }
+  },
+  {
+   "name": "M4×6",
+   "values": {
+    "d": 4,
+    "length": 6
+   }
+  },
+  {
+   "name": "M4×8",
+   "values": {
+    "d": 4,
+    "length": 8
+   }
+  },
+  {
+   "name": "M4×10",
+   "values": {
+    "d": 4,
+    "length": 10
+   }
+  },
+  {
+   "name": "M4×12",
+   "values": {
+    "d": 4,
+    "length": 12
+   }
+  },
+  {
+   "name": "M4×14",
+   "values": {
+    "d": 4,
+    "length": 14
+   }
+  },
+  {
+   "name": "M4×16",
+   "values": {
+    "d": 4,
+    "length": 16
+   }
+  },
+  {
+   "name": "M4×20",
+   "values": {
+    "d": 4,
+    "length": 20
+   }
+  },
+  {
+   "name": "M4×25",
+   "values": {
+    "d": 4,
+    "length": 25
+   }
+  },
+  {
+   "name": "M4×30",
+   "values": {
+    "d": 4,
+    "length": 30
+   }
+  },
+  {
+   "name": "M4×35",
+   "values": {
+    "d": 4,
+    "length": 35
+   }
+  },
+  {
+   "name": "M4×40",
+   "values": {
+    "d": 4,
+    "length": 40
+   }
+  },
+  {
+   "name": "M4×45",
+   "values": {
+    "d": 4,
+    "length": 45
+   }
+  },
+  {
+   "name": "M4×50",
+   "values": {
+    "d": 4,
+    "length": 50
+   }
+  },
+  {
+   "name": "M5×8",
+   "values": {
+    "d": 5,
+    "length": 8
+   }
+  },
+  {
+   "name": "M5×10",
+   "values": {
+    "d": 5,
+    "length": 10
+   }
+  },
+  {
+   "name": "M5×12",
+   "values": {
+    "d": 5,
+    "length": 12
+   }
+  },
+  {
+   "name": "M5×16",
+   "values": {
+    "d": 5,
+    "length": 16
+   }
+  },
+  {
+   "name": "M5×20",
+   "values": {
+    "d": 5,
+    "length": 20
+   }
+  },
+  {
+   "name": "M5×25",
+   "values": {
+    "d": 5,
+    "length": 25
+   }
+  },
+  {
+   "name": "M5×30",
+   "values": {
+    "d": 5,
+    "length": 30
+   }
+  },
+  {
+   "name": "M5×35",
+   "values": {
+    "d": 5,
+    "length": 35
+   }
+  },
+  {
+   "name": "M5×40",
+   "values": {
+    "d": 5,
+    "length": 40
+   }
+  },
+  {
+   "name": "M5×45",
+   "values": {
+    "d": 5,
+    "length": 45
+   }
+  },
+  {
+   "name": "M5×50",
+   "values": {
+    "d": 5,
+    "length": 50
+   }
+  },
+  {
+   "name": "M6×10",
+   "values": {
+    "d": 6,
+    "length": 10
+   }
+  },
+  {
+   "name": "M6×12",
+   "values": {
+    "d": 6,
+    "length": 12
+   }
+  },
+  {
+   "name": "M6×16",
+   "values": {
+    "d": 6,
+    "length": 16
+   }
+  },
+  {
+   "name": "M6×20",
+   "values": {
+    "d": 6,
+    "length": 20
+   }
+  },
+  {
+   "name": "M6×25",
+   "values": {
+    "d": 6,
+    "length": 25
+   }
+  },
+  {
+   "name": "M6×30",
+   "values": {
+    "d": 6,
+    "length": 30
+   }
+  },
+  {
+   "name": "M6×35",
+   "values": {
+    "d": 6,
+    "length": 35
+   }
+  },
+  {
+   "name": "M6×40",
+   "values": {
+    "d": 6,
+    "length": 40
+   }
+  },
+  {
+   "name": "M6×45",
+   "values": {
+    "d": 6,
+    "length": 45
+   }
+  },
+  {
+   "name": "M6×50",
+   "values": {
+    "d": 6,
+    "length": 50
+   }
+  },
+  {
+   "name": "M6×60",
+   "values": {
+    "d": 6,
+    "length": 60
+   }
+  },
+  {
+   "name": "M8×12",
+   "values": {
+    "d": 8,
+    "length": 12
+   }
+  },
+  {
+   "name": "M8×16",
+   "values": {
+    "d": 8,
+    "length": 16
+   }
+  },
+  {
+   "name": "M8×20",
+   "values": {
+    "d": 8,
+    "length": 20
+   }
+  },
+  {
+   "name": "M8×25",
+   "values": {
+    "d": 8,
+    "length": 25
+   }
+  },
+  {
+   "name": "M8×30",
+   "values": {
+    "d": 8,
+    "length": 30
+   }
+  },
+  {
+   "name": "M8×35",
+   "values": {
+    "d": 8,
+    "length": 35
+   }
+  },
+  {
+   "name": "M8×40",
+   "values": {
+    "d": 8,
+    "length": 40
+   }
+  },
+  {
+   "name": "M8×45",
+   "values": {
+    "d": 8,
+    "length": 45
+   }
+  },
+  {
+   "name": "M8×50",
+   "values": {
+    "d": 8,
+    "length": 50
+   }
+  },
+  {
+   "name": "M8×60",
+   "values": {
+    "d": 8,
+    "length": 60
+   }
+  },
+  {
+   "name": "M8×70",
+   "values": {
+    "d": 8,
+    "length": 70
+   }
+  },
+  {
+   "name": "M8×80",
+   "values": {
+    "d": 8,
+    "length": 80
+   }
+  }
+ ],
+ "default": "M3×12",
+ "checks": {
+  "M3×12": {
+   "size": [
+    5.5,
+    5.5,
+    15
+   ],
+   "tolerance": 0.06,
+   "connectors": [
+    "Head seat",
+    "Axis",
+    "Socket"
+   ],
+   "connector_at": {
+    "Head seat": [
+     0,
+     0,
+     0
+    ],
+    "Socket": [
+     0,
+     0,
+     3
+    ]
+   },
+   "metrics": {
+    "Hex key": 2.5
+   },
+   "partNumber": "ISO 4762 M3×12 A2-70"
+  },
+  "M8×40": {
+   "size": [
+    13,
+    13,
+    48
+   ]
+  }
+ }
+}

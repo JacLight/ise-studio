@@ -1,0 +1,401 @@
+{
+ "id": "bearing_deep_groove",
+ "name": "Deep groove ball bearing",
+ "standard": "ISO 15",
+ "category": "Bearings & motion",
+ "summary": "Single-row deep groove ball bearing, rubber sealed both sides (-2RS): inner and outer rings with true raceways, balls and seals. Axis +Z, face A on z = 0",
+ "keywords": [
+  "ball bearing",
+  "608",
+  "skate bearing",
+  "6000",
+  "6800",
+  "6900",
+  "thin section",
+  "2RS",
+  "radial bearing"
+ ],
+ "source": [
+  "common.js",
+  "bearing_deep_groove.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Bearing steel 52100": 7810,
+  "Nitrile rubber (NBR)": 1300,
+  "Steel (cage)": 7850
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Bore",
+   "value": 8,
+   "unit": "mm",
+   "min": 1,
+   "max": 100
+  },
+  {
+   "key": "D",
+   "label": "Outside diameter",
+   "value": 22,
+   "unit": "mm",
+   "min": 3,
+   "max": 200
+  },
+  {
+   "key": "B",
+   "label": "Width",
+   "value": 7,
+   "unit": "mm",
+   "min": 1,
+   "max": 50
+  }
+ ],
+ "columns": [
+  "d",
+  "D",
+  "B"
+ ],
+ "rows": [
+  {
+   "name": "623-2RS",
+   "values": {
+    "d": 3,
+    "D": 10,
+    "B": 4
+   },
+   "description": "3×10×4 mm"
+  },
+  {
+   "name": "624-2RS",
+   "values": {
+    "d": 4,
+    "D": 13,
+    "B": 5
+   },
+   "description": "4×13×5 mm"
+  },
+  {
+   "name": "625-2RS",
+   "values": {
+    "d": 5,
+    "D": 16,
+    "B": 5
+   },
+   "description": "5×16×5 mm"
+  },
+  {
+   "name": "626-2RS",
+   "values": {
+    "d": 6,
+    "D": 19,
+    "B": 6
+   },
+   "description": "6×19×6 mm"
+  },
+  {
+   "name": "608-2RS",
+   "values": {
+    "d": 8,
+    "D": 22,
+    "B": 7
+   },
+   "description": "8×22×7 mm"
+  },
+  {
+   "name": "688-2RS",
+   "values": {
+    "d": 8,
+    "D": 16,
+    "B": 5
+   },
+   "description": "8×16×5 mm"
+  },
+  {
+   "name": "6000-2RS",
+   "values": {
+    "d": 10,
+    "D": 26,
+    "B": 8
+   },
+   "description": "10×26×8 mm"
+  },
+  {
+   "name": "6001-2RS",
+   "values": {
+    "d": 12,
+    "D": 28,
+    "B": 8
+   },
+   "description": "12×28×8 mm"
+  },
+  {
+   "name": "6002-2RS",
+   "values": {
+    "d": 15,
+    "D": 32,
+    "B": 9
+   },
+   "description": "15×32×9 mm"
+  },
+  {
+   "name": "6003-2RS",
+   "values": {
+    "d": 17,
+    "D": 35,
+    "B": 10
+   },
+   "description": "17×35×10 mm"
+  },
+  {
+   "name": "6004-2RS",
+   "values": {
+    "d": 20,
+    "D": 42,
+    "B": 12
+   },
+   "description": "20×42×12 mm"
+  },
+  {
+   "name": "6005-2RS",
+   "values": {
+    "d": 25,
+    "D": 47,
+    "B": 12
+   },
+   "description": "25×47×12 mm"
+  },
+  {
+   "name": "6700-2RS",
+   "values": {
+    "d": 10,
+    "D": 15,
+    "B": 4
+   },
+   "description": "10×15×4 mm"
+  },
+  {
+   "name": "6701-2RS",
+   "values": {
+    "d": 12,
+    "D": 18,
+    "B": 4
+   },
+   "description": "12×18×4 mm"
+  },
+  {
+   "name": "6702-2RS",
+   "values": {
+    "d": 15,
+    "D": 21,
+    "B": 4
+   },
+   "description": "15×21×4 mm"
+  },
+  {
+   "name": "6703-2RS",
+   "values": {
+    "d": 17,
+    "D": 23,
+    "B": 4
+   },
+   "description": "17×23×4 mm"
+  },
+  {
+   "name": "6704-2RS",
+   "values": {
+    "d": 20,
+    "D": 27,
+    "B": 4
+   },
+   "description": "20×27×4 mm"
+  },
+  {
+   "name": "6705-2RS",
+   "values": {
+    "d": 25,
+    "D": 32,
+    "B": 4
+   },
+   "description": "25×32×4 mm"
+  },
+  {
+   "name": "6800-2RS",
+   "values": {
+    "d": 10,
+    "D": 19,
+    "B": 5
+   },
+   "description": "10×19×5 mm"
+  },
+  {
+   "name": "6801-2RS",
+   "values": {
+    "d": 12,
+    "D": 21,
+    "B": 5
+   },
+   "description": "12×21×5 mm"
+  },
+  {
+   "name": "6802-2RS",
+   "values": {
+    "d": 15,
+    "D": 24,
+    "B": 5
+   },
+   "description": "15×24×5 mm"
+  },
+  {
+   "name": "6803-2RS",
+   "values": {
+    "d": 17,
+    "D": 26,
+    "B": 5
+   },
+   "description": "17×26×5 mm"
+  },
+  {
+   "name": "6804-2RS",
+   "values": {
+    "d": 20,
+    "D": 32,
+    "B": 7
+   },
+   "description": "20×32×7 mm"
+  },
+  {
+   "name": "6805-2RS",
+   "values": {
+    "d": 25,
+    "D": 37,
+    "B": 7
+   },
+   "description": "25×37×7 mm"
+  },
+  {
+   "name": "6900-2RS",
+   "values": {
+    "d": 10,
+    "D": 22,
+    "B": 6
+   },
+   "description": "10×22×6 mm"
+  },
+  {
+   "name": "6901-2RS",
+   "values": {
+    "d": 12,
+    "D": 24,
+    "B": 6
+   },
+   "description": "12×24×6 mm"
+  },
+  {
+   "name": "6902-2RS",
+   "values": {
+    "d": 15,
+    "D": 28,
+    "B": 7
+   },
+   "description": "15×28×7 mm"
+  },
+  {
+   "name": "6903-2RS",
+   "values": {
+    "d": 17,
+    "D": 30,
+    "B": 7
+   },
+   "description": "17×30×7 mm"
+  },
+  {
+   "name": "6904-2RS",
+   "values": {
+    "d": 20,
+    "D": 37,
+    "B": 9
+   },
+   "description": "20×37×9 mm"
+  },
+  {
+   "name": "6905-2RS",
+   "values": {
+    "d": 25,
+    "D": 42,
+    "B": 9
+   },
+   "description": "25×42×9 mm"
+  }
+ ],
+ "default": "608-2RS",
+ "checks": {
+  "608-2RS": {
+   "size": [
+    22,
+    22,
+    7
+   ],
+   "connectors": [
+    "Bore",
+    "Outer seat",
+    "Face A",
+    "Face B"
+   ],
+   "connector_at": {
+    "Face B": [
+     0,
+     0,
+     7
+    ],
+    "Outer seat": [
+     11,
+     0,
+     3.5
+    ]
+   },
+   "metrics": {
+    "Bore": 8,
+    "Balls": 7
+   },
+   "partNumber": "608-2RS",
+   "massG": 12
+  },
+  "6000-2RS": {
+   "size": [
+    26,
+    26,
+    8
+   ],
+   "massG": 19
+  },
+  "625-2RS": {
+   "size": [
+    16,
+    16,
+    5
+   ]
+  },
+  "6705-2RS": {
+   "size": [
+    32,
+    32,
+    4
+   ]
+  },
+  "6805-2RS": {
+   "size": [
+    37,
+    37,
+    7
+   ]
+  },
+  "6905-2RS": {
+   "size": [
+    42,
+    42,
+    9
+   ]
+  }
+ }
+}

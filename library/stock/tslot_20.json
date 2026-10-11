@@ -1,0 +1,212 @@
+{
+ "id": "tslot_20",
+ "name": "T-slot extrusion",
+ "standard": "20 series 6 mm slot",
+ "category": "Structural",
+ "summary": "2020 / 2040 aluminium T-slot extrusion, B-type 6 mm slot, Ø4.2 core bores for M5. Profile in XY, length along +Z.",
+ "keywords": [
+  "2020",
+  "2040",
+  "extrusion",
+  "aluminium profile",
+  "aluminum",
+  "v-slot",
+  "t-slot",
+  "HFS5",
+  "framing"
+ ],
+ "source": [
+  "common.js",
+  "tslot_20.js"
+ ],
+ "display_tolerance": 0.02,
+ "material": "Aluminium 6063-T5",
+ "materials": {
+  "Aluminium 6063-T5": 2700
+ },
+ "params": [
+  {
+   "key": "cells",
+   "label": "Profile (1 = 2020, 2 = 2040)",
+   "value": 1,
+   "unit": "",
+   "min": 1,
+   "max": 2,
+   "step": 1
+  },
+  {
+   "key": "length",
+   "label": "Length",
+   "value": 500,
+   "unit": "mm",
+   "min": 10,
+   "max": 3000
+  }
+ ],
+ "columns": [
+  "cells",
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "2020×100",
+   "values": {
+    "cells": 1,
+    "length": 100
+   }
+  },
+  {
+   "name": "2020×150",
+   "values": {
+    "cells": 1,
+    "length": 150
+   }
+  },
+  {
+   "name": "2020×200",
+   "values": {
+    "cells": 1,
+    "length": 200
+   }
+  },
+  {
+   "name": "2020×250",
+   "values": {
+    "cells": 1,
+    "length": 250
+   }
+  },
+  {
+   "name": "2020×300",
+   "values": {
+    "cells": 1,
+    "length": 300
+   }
+  },
+  {
+   "name": "2020×400",
+   "values": {
+    "cells": 1,
+    "length": 400
+   }
+  },
+  {
+   "name": "2020×500",
+   "values": {
+    "cells": 1,
+    "length": 500
+   }
+  },
+  {
+   "name": "2020×1000",
+   "values": {
+    "cells": 1,
+    "length": 1000
+   }
+  },
+  {
+   "name": "2040×100",
+   "values": {
+    "cells": 2,
+    "length": 100
+   }
+  },
+  {
+   "name": "2040×150",
+   "values": {
+    "cells": 2,
+    "length": 150
+   }
+  },
+  {
+   "name": "2040×200",
+   "values": {
+    "cells": 2,
+    "length": 200
+   }
+  },
+  {
+   "name": "2040×250",
+   "values": {
+    "cells": 2,
+    "length": 250
+   }
+  },
+  {
+   "name": "2040×300",
+   "values": {
+    "cells": 2,
+    "length": 300
+   }
+  },
+  {
+   "name": "2040×400",
+   "values": {
+    "cells": 2,
+    "length": 400
+   }
+  },
+  {
+   "name": "2040×500",
+   "values": {
+    "cells": 2,
+    "length": 500
+   }
+  },
+  {
+   "name": "2040×1000",
+   "values": {
+    "cells": 2,
+    "length": 1000
+   }
+  }
+ ],
+ "default": "2020×500",
+ "checks": {
+  "2020×500": {
+   "size": [
+    20,
+    20,
+    500
+   ],
+   "partNumber": "2020-B6-500",
+   "massG": 250,
+   "connectors": [
+    "End A",
+    "End B",
+    "Slot +X",
+    "Slot -X",
+    "Slot +Y",
+    "Slot -Y"
+   ],
+   "connector_at": {
+    "End B": [
+     0,
+     0,
+     500
+    ],
+    "Slot +X": [
+     10,
+     0,
+     250
+    ]
+   }
+  },
+  "2040×300": {
+   "size": [
+    20,
+    40,
+    300
+   ],
+   "massG": 300,
+   "connectors": [
+    "Slot +X 1",
+    "Slot +X 2",
+    "Slot -X 1",
+    "Slot -X 2",
+    "Slot +Y",
+    "Slot -Y"
+   ]
+  }
+ }
+}
