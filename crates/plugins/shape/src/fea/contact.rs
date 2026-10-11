@@ -53,6 +53,8 @@ pub(super) struct Pair {
     k: f64,
     kind: ContactKind,
     mu: f64,
+    /// A press fit: the overlap as drawn is squeezed out (g0 < 0).
+    press: bool,
 }
 
 /// A cube face where two parts meet: the cube on the first part's side, which
@@ -108,7 +110,13 @@ fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
 
 /// The pairs between every two parts whose surfaces face each other across
 /// at most about one cube (`fills`: how full of each part every cube is).
-pub(super) fn find(m: &Model, fills: &[Vec<f32>], materials: &[Elastic], names: &[String], specs: &[ContactSpec]) -> Found {
+///
+/// For a press fit the gap is measured on the parts' own surfaces instead
+/// (`meshes`): at each pair, the signed distances to the two surfaces add
+/// up to the gap, negative where they overlap (the interference), and the
+/// pair pushes along the surfaces' true normal, standing for the true area
+/// of surface its staircase of cube faces covers.
+pub(super) fn find(m: &Model, fills: &[Vec<f32>], materials: &[Elastic], names: &[String], specs: &[ContactSpec], meshes: &[(&[f32], &[u32])]) -> Found {
     let grid = &m.grid;
     let (h, n) = (grid.h, grid.n);
     let mut owner = vec![usize::MAX; n[0] * n[1] * n[2]];
@@ -117,11 +125,11 @@ pub(super) fn find(m: &Model, fills: &[Vec<f32>], materials: &[Elastic], names: 
     }
     let index = |c: [i64; 3]| -> Option<usize> { (0..3).all(|d| c[d] >= 0 && (c[d] as usize) < n[d]).then(|| grid.cell(c[0] as usize, c[1] as usize, c[2] as usize)) };
     let fill = |p: usize, c: [i64; 3]| index(c).map_or(0.0, |i| fills[p][i] as f64);
-    let kind_of = |p: usize, q: usize| -> (ContactKind, f64) {
+    let kind_of = |p: usize, q: usize| -> (ContactKind, f64, bool) {
         specs
             .iter()
             .find(|s| (s.parts[0] == names[p] && s.parts[1] == names[q]) || (s.parts[0] == names[q] && s.parts[1] == names[p]))
-            .map_or((ContactKind::Frictionless, 0.0), |s| (s.kind, if s.kind == ContactKind::Friction { s.friction.max(0.0) } else { 0.0 }))
+            .map_or((ContactKind::Frictionless, 0.0, false), |s| (s.kind, if s.kind == ContactKind::Friction { s.friction.max(0.0) } else { 0.0 }, s.press_fit && s.kind != ContactKind::Bonded))
     };
     struct Acc {
         p: usize,
@@ -131,6 +139,8 @@ pub(super) fn find(m: &Model, fills: &[Vec<f32>], materials: &[Elastic], names: 
         area: f64,
         normal: [f64; 3],
         gap: f64,
+        /// Cube-face area along each axis.
+        dirs: [f64; 3],
     }
     let mut slot: HashMap<(usize, usize), usize> = HashMap::new();
     let mut acc: Vec<Acc> = vec![];
@@ -166,7 +176,7 @@ pub(super) fn find(m: &Model, fills: &[Vec<f32>], materials: &[Elastic], names: 
             } else {
                 h * (3.0 - fill(p, c0) - fill(p, step(1)) - fill(q, step(2)) - fill(q, step(1)))
             };
-            if gap < -0.25 * h {
+            if gap < -0.25 * h && !kind_of(p, q).2 {
                 overlap = true;
             }
             if gap > h {
@@ -188,28 +198,65 @@ pub(super) fn find(m: &Model, fills: &[Vec<f32>], materials: &[Elastic], names: 
                 }
                 let (a, b) = (m.blocks[p].node(g), m.blocks[q].node(gq));
                 let i = *slot.entry((a, b)).or_insert_with(|| {
-                    acc.push(Acc { p, q, a, b, area: 0.0, normal: [0.0; 3], gap: 0.0 });
+                    acc.push(Acc { p, q, a, b, area: 0.0, normal: [0.0; 3], gap: 0.0, dirs: [0.0; 3] });
                     acc.len() - 1
                 });
                 let e = &mut acc[i];
                 e.area += quarter;
                 e.normal[d] += s as f64 * quarter;
                 e.gap += gap.max(0.0) * quarter;
+                e.dirs[d] += quarter;
                 *id = i;
             }
             meetings.push(Meeting { cell: c, dir, pairs: ids });
         }
     }
+    // Press fits: the gap, normal and area from the surfaces themselves, at each pair's midpoint.
+    let mut surfaces: HashMap<usize, (f64, [f64; 3])> = HashMap::new();
+    let parts = meshes.len();
+    for p in 0..parts {
+        for q in p + 1..parts {
+            if !kind_of(p, q).2 {
+                continue;
+            }
+            let which: Vec<usize> = (0..acc.len()).filter(|&i| acc[i].p == p && acc[i].q == q).collect();
+            let mid: Vec<[f64; 3]> = which.iter().map(|&i| {
+                let (a, b) = (m.position(acc[i].a), m.position(acc[i].b));
+                [0, 1, 2].map(|d| (a[d] + b[d]) / 2.0)
+            }).collect();
+            let on_p = super::surface_near(&mid, meshes[p].0, meshes[p].1, 3.0 * h);
+            let on_q = super::surface_near(&mid, meshes[q].0, meshes[q].1, 3.0 * h);
+            for (k, &i) in which.iter().enumerate() {
+                let (sp, _, np) = on_p[k];
+                let (sq, _, nq) = on_q[k];
+                if !(sp.is_finite() && sq.is_finite()) {
+                    continue;
+                }
+                // Out of p is into q: the two outward normals, one turned round, averaged.
+                let n = [0, 1, 2].map(|d| np[d] - nq[d]);
+                let l = norm(n);
+                if l > 1e-9 {
+                    surfaces.insert(i, (sp + sq, n.map(|v| v / l)));
+                }
+            }
+        }
+    }
     let pairs = acc
         .into_iter()
-        .map(|e| {
+        .enumerate()
+        .map(|(i, e)| {
             let len = norm(e.normal);
             // Faces facing opposite ways cancel (a sliver between two faces): keep the first's axis.
             let n = if len > 1e-9 * e.area { e.normal.map(|v| v / len) } else { [0.0, 0.0, 1.0] };
             let (ep, eq) = (materials[e.p].e, materials[e.q].e);
             let stiff = 2.0 * ep * eq / (ep + eq);
-            let (kind, mu) = kind_of(e.p, e.q);
-            Pair { p: e.p, q: e.q, a: e.a, b: e.b, n, g0: e.gap / e.area, area: e.area, k: PENALTY * stiff * e.area / h, kind, mu }
+            let (kind, mu, press) = kind_of(e.p, e.q);
+            let (g0, n, area) = match surfaces.get(&i) {
+                // The staircase covers the surface's area once per axis, by the normal's share along it.
+                Some(&(g, n)) => (g, n, (0..3).map(|d| e.dirs[d] * n[d].abs()).sum::<f64>().max(1e-3 * e.area)),
+                None => (e.gap / e.area, n, e.area),
+            };
+            Pair { p: e.p, q: e.q, a: e.a, b: e.b, n, g0, area, k: PENALTY * stiff * area / h, kind, mu, press: press && surfaces.contains_key(&i) }
         })
         .collect();
     Found { pairs, meetings, overlap }
@@ -311,8 +358,9 @@ pub(super) fn solve(m: &mut Model, f: &[f64], u: &mut [f64], found: &Found) -> O
     let (mut iterations, mut converged, mut settled, mut rounds) = (0, true, false, 0);
     let mut gap = vec![0.0; pairs.len()];
     let mut slid_before = false;
-    // The load, to tell a part drifting off on its weak tie.
-    let applied: f64 = f.chunks_exact(3).map(norm3).sum::<f64>().max(1e-12);
+    // The load (and the squeeze of press fits), to tell a part drifting off on its weak tie.
+    let squeeze: f64 = pairs.iter().map(|pr| pr.k * (-pr.g0).max(0.0)).sum();
+    let applied: f64 = (f.chunks_exact(3).map(norm3).sum::<f64>() + squeeze).max(1e-12);
     while rounds < ROUNDS {
         rounds += 1;
         // The springs change when a pair opens, closes, or slips another way.
@@ -466,6 +514,14 @@ pub struct ContactPair {
     pub normal_force: f64,
     pub shear_force: f64,
     pub max_pressure: f64,
+    /// A press fit: the interference as drawn (mm: the overlap of the
+    /// surfaces, averaged over where they overlap) and the mean pressure
+    /// over the pressing area it gives (MPa).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub press_fit: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interference: Option<f64>,
+    pub mean_pressure: f64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -485,10 +541,13 @@ pub(super) fn report(m: &Model, found: &Found, out: &Outcome, names: &[String]) 
     let mut which: HashMap<(usize, usize), usize> = HashMap::new();
     let mut summary: Vec<ContactPair> = vec![];
     let mut shear: Vec<[f64; 3]> = vec![];
+    // Per pair of parts: overlap × area, and the area overlapping (press fits).
+    let mut overlap: Vec<(f64, f64)> = vec![];
     for (i, pr) in pairs.iter().enumerate() {
         let s = *which.entry((pr.p, pr.q)).or_insert_with(|| {
-            summary.push(ContactPair { parts: [names[pr.p].clone(), names[pr.q].clone()], kind: pr.kind, friction: pr.mu, area: 0.0, pressing: 0.0, slipping: 0.0, normal_force: 0.0, shear_force: 0.0, max_pressure: 0.0 });
+            summary.push(ContactPair { parts: [names[pr.p].clone(), names[pr.q].clone()], kind: pr.kind, friction: pr.mu, area: 0.0, pressing: 0.0, slipping: 0.0, normal_force: 0.0, shear_force: 0.0, max_pressure: 0.0, press_fit: false, interference: None, mean_pressure: 0.0 });
             shear.push([0.0; 3]);
+            overlap.push((0.0, 0.0));
             summary.len() - 1
         });
         let e = &mut summary[s];
@@ -503,9 +562,20 @@ pub(super) fn report(m: &Model, found: &Found, out: &Outcome, names: &[String]) 
         for d in 0..3 {
             shear[s][d] += out.shear[i][d];
         }
+        if pr.press {
+            e.press_fit = true;
+            if pr.g0 < 0.0 {
+                overlap[s].0 += -pr.g0 * pr.area;
+                overlap[s].1 += pr.area;
+            }
+        }
     }
-    for (e, t) in summary.iter_mut().zip(&shear) {
+    for ((e, t), o) in summary.iter_mut().zip(&shear).zip(&overlap) {
         e.shear_force = norm(*t);
+        e.mean_pressure = if e.pressing > 0.0 { e.normal_force / e.pressing } else { 0.0 };
+        if e.press_fit {
+            e.interference = Some(if o.1 > 0.0 { o.0 / o.1 } else { 0.0 });
+        }
     }
     let mut faces = Vec::with_capacity(found.meetings.len());
     let mut max_pressure = 0.0f64;

@@ -15,7 +15,7 @@ type Face = { point: V3; normal: V3; triangles: number[]; part?: string | null }
 /** A face as kept with the study: where on the part it sits (fractions of the part's bounds) and which way it faces; `part` when on another part studied with it. */
 type Pick = { at: V3; probe: V3; normal: V3; part?: string };
 type ContactKind = "frictionless" | "friction" | "bonded";
-type ContactSpec = { parts: [string, string]; kind: ContactKind; friction: number };
+type ContactSpec = { parts: [string, string]; kind: ContactKind; friction: number; press_fit?: boolean };
 type Convection = { h: number; ambient: number };
 type Spec = {
   part: string | null;
@@ -28,6 +28,10 @@ type Spec = {
   /** Other parts studied with it, and how each pair acts where they touch. */
   parts: string[];
   contacts: ContactSpec[];
+  /** The heat study's temperatures load the stress study, stress-free at `reference` °C. */
+  heat_stress?: { reference: number } | null;
+  /** Re-solve the most stressed spot on finer cubes for its true peak. */
+  refine?: boolean;
 };
 /** The saved faces found on the part as it is now (null: no longer there). */
 type Resolved = { supports: (Face | null)[]; loads: { face: Face | null; force: V3 | null }[]; holds: { face: Face | null }[]; heats: { face: Face | null }[] };
@@ -39,9 +43,11 @@ const AIR: { label: string; h: number }[] = [
 ];
 type Direction = "into" | "-z" | "+z" | "-x" | "+x" | "-y" | "+y";
 type PartResult = { name: string; max_stress: number; max_displacement: number; yield_strength: number; safety: number; floating: boolean };
-type ContactPair = { parts: [string, string]; kind: ContactKind; friction: number; area: number; pressing: number; slipping: number; normal_force: number; shear_force: number; max_pressure: number };
+type ContactPair = { parts: [string, string]; kind: ContactKind; friction: number; area: number; pressing: number; slipping: number; normal_force: number; shear_force: number; max_pressure: number; press_fit?: boolean; interference?: number; mean_pressure: number };
+type HeatSummary = { reference: number; min: number; max: number; thermal_stress: number | null; mechanical_stress: number | null };
+type Peak = { at: V3; stress: number; coarse: number; cell: number; change: number; singular: boolean; at_support: boolean };
 type Contacts = { faces: { cell: V3; dir: number; pressure: number; pair: number }[]; opened: [number, number, number, number][]; max_pressure: number; pairs: ContactPair[]; rounds: number; settled: boolean };
-type Result = NonNullable<StressView["result"]> & { yield_strength: number; safety: number; elements: number; iterations: number; notes: string[]; parts?: PartResult[]; contact?: Contacts };
+type Result = NonNullable<StressView["result"]> & { yield_strength: number; safety: number; elements: number; iterations: number; notes: string[]; parts?: PartResult[]; contact?: Contacts; heat?: HeatSummary; peak?: Peak };
 const KINDS: { value: ContactKind; label: string; title: string }[] = [
   { value: "frictionless", label: "Slides", title: "Frictionless: they push on each other, never pull, and slide freely" },
   { value: "friction", label: "Grips", title: "Friction: they push, never pull, and grip sideways up to μ × the push" },
@@ -74,7 +80,7 @@ const RESOLUTIONS = [
 
 const n = (v: number, d = 1) => Number(v.toFixed(d)).toLocaleString("en-US");
 
-const emptySpec = (part: string | null): Spec => ({ part, supports: [], loads: [], holds: [], heats: [], convection: null, resolution: 56, parts: [], contacts: [] });
+const emptySpec = (part: string | null): Spec => ({ part, supports: [], loads: [], holds: [], heats: [], convection: null, resolution: 56, parts: [], contacts: [], heat_stress: null, refine: true });
 const tone = (safety: number) => (safety >= 2 ? "ok" : safety >= 1.2 ? "warn" : "bad");
 const noFaces: Resolved = { supports: [], loads: [], holds: [], heats: [] };
 
@@ -215,7 +221,8 @@ export function StressStudy(props: {
     }
     const result = state.kind === "done" ? state.result : undefined;
     const contact = result?.contact ? { faces: result.contact.faces, opened: result.contact.opened, max_pressure: result.contact.max_pressure } : undefined;
-    return { faces, result, deform: deform ? 1 : 0, contact, layer: contact ? layer : "stress" };
+    const peak = result?.peak ? { at: result.peak.at, singular: result.peak.singular } : undefined;
+    return { faces, result, deform: deform ? 1 : 0, contact, layer: contact ? layer : "stress", peak };
   }, [resolved, state, deform, vib, mode, heat, showing, layer]); // eslint-disable-line react-hooks/exhaustive-deps
   const { id, onShow } = props;
   useEffect(() => {
@@ -229,7 +236,16 @@ export function StressStudy(props: {
       const r = await fetch(projectUrl(`/stress/${props.id}`), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ supports, loads: loads.map((l) => ({ face: l.face, force: l.force })), resolution, part: props.part, parts: spec.parts, contacts: spec.contacts.filter((c) => c.parts.every((p) => p === props.part || spec.parts.includes(p))) }),
+        body: JSON.stringify({
+          supports,
+          loads: loads.map((l) => ({ face: l.face, force: l.force })),
+          resolution,
+          part: props.part,
+          parts: spec.parts,
+          contacts: spec.contacts.filter((c) => c.parts.every((p) => p === props.part || spec.parts.includes(p))),
+          refine: spec.refine !== false && !spec.parts.length,
+          heat: heatOn ? { reference: spec.heat_stress!.reference, thermal: { holds, heats, convection: spec.convection && spec.convection.h > 0 ? spec.convection : null } } : null,
+        }),
       });
       if (!r.ok) return setState({ kind: "error", text: await r.text() });
       const out = (await r.json()) as { result: Result; material: string };
@@ -248,6 +264,8 @@ export function StressStudy(props: {
   }
   const holds = resolved.holds.map((h, i) => (h.face ? { face: h.face, temperature: spec.holds[i]?.temperature ?? 20 } : null)).filter((x): x is { face: Face; temperature: number } => !!x);
   const heats = resolved.heats.map((h, i) => (h.face ? { face: h.face, watts: spec.heats[i]?.watts ?? 0 } : null)).filter((x): x is { face: Face; watts: number } => !!x);
+  const heatOn = !!spec.heat_stress && (holds.length > 0 || !!(spec.convection && spec.convection.h > 0));
+  const pressing = spec.contacts.some((c) => c.press_fit && spec.parts.some((p) => c.parts.includes(p)));
   const runHeat = async () => {
     setHeat({ kind: "busy" });
     setMode(null);
@@ -338,6 +356,11 @@ export function StressStudy(props: {
         <button type="button" className="secondary" onClick={() => pickFace(spec.parts.length ? "Click the face the force pushes on (on this part or one studied with it)" : "Click the face the force pushes on", (f) => save({ ...spec, loads: [...spec.loads, { face: pickOf(f), magnitude: 100, direction: "into" }] }))}>
           <Icon name="plus" /> Load
         </button>
+        {!spec.parts.length && (
+          <label className="xray-toggle" title="Re-solve the most stressed spot on cubes up to 8× finer and read the stress at the surface itself">
+            <input type="checkbox" checked={spec.refine !== false} onChange={(e) => save({ ...spec, refine: e.target.checked })} /> Sharpen the peak
+          </label>
+        )}
         <div className="segmented" role="group" aria-label="Resolution">
           {RESOLUTIONS.map((x) => (
             <button key={x.value} type="button" className={x.value === resolution ? "active" : ""} aria-pressed={x.value === resolution} onClick={() => save({ ...spec, resolution: x.value })}>
@@ -371,6 +394,11 @@ export function StressStudy(props: {
                     ))}
                   </div>
                 )}
+                {on && c.kind !== "bonded" && (
+                  <label className="contact-mu" title="Press fit: where the parts overlap as drawn, the overlap is an interference squeezed out, so they start pressed together">
+                    <input type="checkbox" checked={!!c.press_fit} onChange={(e) => setContact(name, { press_fit: e.target.checked })} /> Press fit
+                  </label>
+                )}
                 {on && c.kind === "friction" && (
                   <label className="contact-mu" title="Coefficient of friction: about 0.15 oiled steel, 0.5 dry steel, 0.6 rubber on concrete">
                     μ
@@ -394,7 +422,7 @@ export function StressStudy(props: {
         </div>
       )}
       <div className="stress-runs">
-        <button type="button" className="primary stress-run" disabled={!supports.length || !loads.length || state.kind === "busy" || !props.material} onClick={run} title="How hard the loads work the material, and how far it bends">
+        <button type="button" className="primary stress-run" disabled={!supports.length || (!loads.length && !heatOn && !pressing) || state.kind === "busy" || !props.material} onClick={run} title="How hard the loads work the material, and how far it bends">
           <Icon name="weight" /> {state.kind === "busy" ? "Solving…" : "Stress"}
         </button>
         <button type="button" className="secondary stress-run" disabled={!supports.length || vib?.kind === "busy" || !props.material} onClick={ring} title="The speeds it wants to vibrate at, held at its supports (loads not needed)">
@@ -444,6 +472,30 @@ export function StressStudy(props: {
             <dd>{n(r.max_stress, 1)} MPa</dd>
             <dt>Moves at most</dt>
             <dd>{n(r.max_displacement, r.max_displacement < 0.1 ? 4 : 3)} mm</dd>
+            {r.peak && (
+              <>
+                <dt>{r.peak.singular ? "Sharp inside corner" : "Peak at the surface"}</dt>
+                <dd className={r.peak.singular ? "warn" : ""} title={`Re-solved on ${n(r.peak.cell, 3)} mm cubes; the coarse cubes read ${n(r.peak.coarse, 1)} MPa there`}>
+                  {r.peak.singular ? "no finite peak: add a fillet" : `${n(r.peak.stress, 1)} MPa ±${n(r.peak.change * 100, 0)}%`}
+                </dd>
+              </>
+            )}
+            {r.heat && (
+              <>
+                <dt>Temperatures</dt>
+                <dd>
+                  {n(r.heat.min, 0)}–{n(r.heat.max, 0)} °C (stress-free at {n(r.heat.reference, 0)} °C)
+                </dd>
+                {r.heat.thermal_stress !== null && r.heat.mechanical_stress !== null && (
+                  <>
+                    <dt>From heat · from loads</dt>
+                    <dd>
+                      {n(r.heat.thermal_stress, 1)} · {n(r.heat.mechanical_stress, 1)} MPa
+                    </dd>
+                  </>
+                )}
+              </>
+            )}
           </dl>
           {r.contact && (
             <div className="contact-results">
@@ -452,6 +504,11 @@ export function StressStudy(props: {
                   <span>
                     {c.parts[0]} ↔ {c.parts[1]} <small>{c.kind === "bonded" ? "glued" : c.kind === "friction" ? `μ ${c.friction}` : "sliding"}</small>
                   </span>
+                  {c.press_fit && (
+                    <small>
+                      Press fit: {n((c.interference ?? 0) * 1000, 1)} µm interference squeezes them together at {n(c.mean_pressure, 1)} MPa on average
+                    </small>
+                  )}
                   <small>
                     {n(c.normal_force, 1)} N push · {n(c.shear_force, 1)} N sideways · {n(c.pressing, 0)} of {n(c.area, 0)} mm² pressing{c.slipping > 0 ? ` (${n(c.slipping, 0)} slipping)` : ""} · up to {n(c.max_pressure, 1)} MPa
                   </small>
@@ -562,6 +619,27 @@ export function StressStudy(props: {
             ))}
           </div>
         </div>
+        <label className="xray-toggle" title="Thermal stress: the part expands where it is warmer than the stress-free temperature, and is stressed where it cannot">
+          <input type="checkbox" checked={!!spec.heat_stress} onChange={(e) => save({ ...spec, heat_stress: e.target.checked ? { reference: spec.heat_stress?.reference ?? 20 } : null })} /> Include this heat in the stress study
+          {spec.heat_stress && (
+            <>
+              , stress-free at
+              <input
+                className="heat-reference"
+                defaultValue={String(spec.heat_stress.reference)}
+                key={`ref:${spec.heat_stress.reference}`}
+                inputMode="decimal"
+                aria-label="Stress-free temperature in degrees Celsius"
+                onBlur={(e) => {
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v) && v !== spec.heat_stress?.reference) save({ ...spec, heat_stress: { reference: v } });
+                }}
+                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              />
+              °C
+            </>
+          )}
+        </label>
         <button type="button" className="secondary stress-run heat-run" disabled={(!holds.length && !(spec.convection && spec.convection.h > 0)) || heat?.kind === "busy" || !props.material} onClick={runHeat} title="Steady temperatures: where it gets hot, and where the heat goes">
           <Icon name="alert" /> {heat?.kind === "busy" ? "Solving…" : "Heat"}
         </button>
