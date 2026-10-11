@@ -213,6 +213,14 @@ pub fn check(board: &Board, v: &mut BoardView, cu: &[Cu]) {
         }
     }
 
+    // Thermal reliefs: a pad held by fewer than two spokes joins its pour weakly (or not at all).
+    for z in &v.zones {
+        for r in z.reliefs.iter().filter(|r| r.spokes < 2) {
+            let message = if r.spokes == 0 { format!("{} has no thermal spoke into the {} pour on {} (no room): route it, or join it solid", r.pad, z.net, z.layer) } else { format!("{} joins the {} pour on {} by 1 spoke (2 or more is sound)", r.pad, z.net, z.layer) };
+            out.push(Violation { code: "thermal_relief", severity: "warning", message, at: r.at, layer: Some(z.layer.clone()), objects: vec![r.component, z.id], refs: vec![r.pad.clone()] });
+        }
+    }
+
     if rules.silk_height < 0.8 {
         out.push(Violation { code: "silk_text", severity: "warning", message: format!("Silkscreen text {:.2} mm tall is below what most fabs print legibly (0.8–1.0 mm)", rules.silk_height), at: [v.bounds[0], v.bounds[1]], layer: None, objects: vec![], refs: vec![] });
     }

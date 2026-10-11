@@ -29,6 +29,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub mod board;
+pub mod drag;
 pub mod drc;
 pub mod fabs;
 pub mod font;
@@ -74,6 +75,7 @@ impl Plugin for PcbPlugin {
             .command::<DeleteItems>()
             .command::<route::Autoroute>()
             .command::<kicad::ImportKicad>()
+            .command::<drag::CreateRoute>()
             .command::<OutlineToSketch>()
             .command::<SetSourcing>()
             .derived(Derived { name: "pcb.board", inputs: &[Board::KIND], reads_dependencies: true, compute: board::compute });
@@ -882,6 +884,8 @@ pub struct UpdateComponent {
     pub pins: Option<BTreeMap<String, String>>,
     pub pin_names: Option<BTreeMap<String, String>>,
     pub dnp: Option<bool>,
+    /// Track ends on its pads follow a move, turn or flip (default true); dragged tracks are marked `reroute`.
+    pub drag_tracks: Option<bool>,
 }
 
 impl Command for UpdateComponent {
@@ -889,6 +893,7 @@ impl Command for UpdateComponent {
 
     fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
         let mut c = tx.get::<PcbComponent>(self.target).cloned().ok_or_else(|| CommandError::new(ErrorCode::UnresolvedReference, format!("{} is not a component", self.target)))?;
+        let before = c.clone();
         let board = board_of(tx, c.board)?;
         if let Some(v) = self.reference {
             c.reference = v.trim().to_string();
@@ -931,9 +936,10 @@ impl Command for UpdateComponent {
         }
         check_component(tx, &board, Some(self.target), &c)?;
         let board_id = c.board;
+        let dragged = if self.drag_tracks.unwrap_or(true) { drag::follow(tx, &board, &before, &c)? } else { 0 };
         tx.set(self.target, c)?;
         model3d::sync(tx, board_id)?;
-        Ok(json!({ "id": self.target }))
+        Ok(json!({ "id": self.target, "tracks_dragged": dragged }))
     }
 }
 
