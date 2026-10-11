@@ -76,6 +76,29 @@ pub enum Rule {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         steps: Option<u32>,
     },
+    /// Everything assembled in `assembly` (an assembly definition, or an
+    /// instance of one) actually fits: every stock fastener in its holes
+    /// (clearance, thread engagement, length, head seat, hex key reach),
+    /// every insert, nut trap and bearing fit, joined parts seated without
+    /// overlap, nothing interfering at rest, and (with `motion`, the default)
+    /// nothing clashing as each joint moves through its limits. Fails on
+    /// any failing item of the fit report; warnings pass.
+    AssemblyFits {
+        assembly: StableId,
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
+        motion: bool,
+        /// Positions per joint sweep (default 36).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        steps: Option<u32>,
+    },
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
 }
 
 impl Rule {
@@ -84,6 +107,7 @@ impl Rule {
             Rule::MaxMass { parts, .. } | Rule::FitsWithin { parts, .. } | Rule::NoCollisions { parts } => parts.clone(),
             Rule::Clearance { a, b, .. } => vec![*a, *b],
             Rule::NoClashesInMotion { joint, parts, .. } => std::iter::once(*joint).chain(parts.iter().copied()).collect(),
+            Rule::AssemblyFits { assembly, .. } => vec![*assembly],
         }
     }
 
@@ -95,6 +119,7 @@ impl Rule {
             Rule::Clearance { min, .. } => format!("Clearance at least {} mm", mm(min)),
             Rule::NoCollisions { .. } => "No collisions".into(),
             Rule::NoClashesInMotion { .. } => "No clashes through the motion".into(),
+            Rule::AssemblyFits { .. } => "Everything fits".into(),
         }
     }
 }
@@ -180,6 +205,7 @@ fn evaluate(world: &World, entity: Entity) -> Option<Result<RequirementResult, S
         // Assemblies are checked part against part, inside and out.
         Rule::NoCollisions { parts: ids } => parts(world, ids).map(|ps| no_collisions(&geometry::expand(ps))),
         Rule::NoClashesInMotion { joint, parts: ids, steps } => clear_in_motion(world, *joint, ids, steps.unwrap_or(72) as usize),
+        Rule::AssemblyFits { assembly, motion, steps } => assembly_fits(world, *assembly, *motion, steps.unwrap_or(36) as usize),
     })
 }
 
@@ -353,12 +379,56 @@ fn clear_in_motion(world: &World, joint: StableId, ids: &[StableId], steps: usiz
     })
 }
 
+/// The assembly a fit rule covers: an assembly definition, or the one an instance shows.
+fn fit_scope(world: &World, id: StableId) -> Option<StableId> {
+    let e = world.resource::<de_core::IdIndex>().get(id)?;
+    if world.get::<de_assembly::AssemblyDef>(e).is_some() {
+        return Some(id);
+    }
+    let inst = world.get::<de_assembly::Instance>(e)?;
+    let d = world.resource::<de_core::IdIndex>().get(inst.of)?;
+    world.get::<de_assembly::AssemblyDef>(d).is_some().then_some(inst.of)
+}
+
+fn assembly_fits(world: &World, assembly: StableId, motion: bool, steps: usize) -> Result<RequirementResult, String> {
+    let scope = fit_scope(world, assembly).ok_or_else(|| format!("{assembly} is not an assembly"))?;
+    let r = de_assembly::fit::report(world, Some(scope), &de_assembly::fit::FitOptions { motion, steps })?;
+    let failing: Vec<&de_assembly::fit::FitItem> = r.items.iter().filter(|i| i.status == de_assembly::fit::FitStatus::Fail).collect();
+    let summary = match failing.first() {
+        Some(f) => {
+            let why = f.checks.iter().find(|c| c.status == de_assembly::fit::FitStatus::Fail).map(|c| c.text.clone()).unwrap_or_default();
+            let more = if failing.len() > 1 { format!(" (+{} more)", failing.len() - 1) } else { String::new() };
+            format!("{}: {why}{more}", f.title)
+        }
+        None => format!("{} items fit ({} with warnings)", r.pass + r.warn, r.warn),
+    };
+    Ok(RequirementResult {
+        passed: r.ok,
+        measured: r.fail as f64,
+        limit: 0.0,
+        unit: "misfits".into(),
+        upper_bound: true,
+        summary,
+        violations: failing.iter().map(|f| Violation { parts: f.instances.clone(), names: f.names.clone(), region: None }).collect(),
+        fix: None,
+        accuracy_mm: None,
+    })
+}
+
 // ---- Commands --------------------------------------------------------------
 
 fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
     if let Rule::NoClashesInMotion { joint, steps, .. } = rule {
         if tx.get::<de_assembly::joints::Joint>(*joint).is_none() {
             return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{joint} is not an assembly joint")));
+        }
+        if steps.is_some_and(|n| !(2..=720).contains(&n)) {
+            return Err(CommandError::new(ErrorCode::InvalidParameters, "steps must be 2 to 720"));
+        }
+    }
+    if let Rule::AssemblyFits { assembly, steps, .. } = rule {
+        if fit_scope(tx.world(), *assembly).is_none() {
+            return Err(CommandError::new(ErrorCode::InvalidParameters, format!("{assembly} is not an assembly (or an instance of one)")));
         }
         if steps.is_some_and(|n| !(2..=720).contains(&n)) {
             return Err(CommandError::new(ErrorCode::InvalidParameters, "steps must be 2 to 720"));
@@ -407,7 +477,7 @@ fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
                 return Err(CommandError::new(ErrorCode::InvalidParameters, "collision checks need two parts, or one assembly"));
             }
         }
-        Rule::NoClashesInMotion { .. } => {}
+        Rule::NoClashesInMotion { .. } | Rule::AssemblyFits { .. } => {}
     }
     Ok(())
 }
@@ -459,6 +529,14 @@ impl Command for CreateRequirement {
         let id = tx.create();
         let name = self.name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| self.rule.default_name());
         link(tx, id, &[], &self.rule.targets())?;
+        if matches!(self.rule, Rule::AssemblyFits { .. }) {
+            // Judged against the printer profile: make sure there is one to follow.
+            let profile = match de_assembly::fit::profile_entity(tx.world()) {
+                Some(p) => p,
+                None => serde_json::from_value(tx.run("fit.profile.set", json!({}))?["id"].clone()).map_err(|e| CommandError::new(ErrorCode::Internal, e.to_string()))?,
+            };
+            tx.add_dependency(id, profile)?;
+        }
         tx.set(id, Requirement { name, rule: self.rule })?;
         Ok(json!({ "id": id }))
     }
