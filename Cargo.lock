@@ -523,6 +523,7 @@ dependencies = [
  "de-core",
  "de-intent",
  "de-occt",
+ "de-pcb",
  "de-shape",
  "de-solid",
  "futures-util",
