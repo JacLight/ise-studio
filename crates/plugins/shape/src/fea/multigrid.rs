@@ -10,13 +10,23 @@
 //! Damped Jacobi smooths on every level; the coarsest is solved directly.
 //! One V-cycle with equal smoothing before and after is symmetric, as
 //! conjugate gradients needs.
+//!
+//! Parts studied together each keep their own nodes on every level (a block
+//! per part), and the stiff springs that join them where they touch carry
+//! down too: each spring k·g·gᵀ becomes k·(Pᵀg)·(Pᵀg)ᵀ, still one sparse
+//! vector, so the coarse grids see two pressed parts as one body and a part
+//! held only through its contact is still solved in a few dozen steps.
 
-use super::{CORNERS, Model};
+use super::{Block, CORNERS, Model, Spring, add_springs, block_of};
 use rayon::prelude::*;
 use std::collections::HashMap;
 
 /// Jacobi damping and sweeps before and after each coarse correction.
-const OMEGA: f64 = 0.6;
+/// Damped Jacobi only smooths while ω·λmax(D⁻¹K) < 2, and λmax grows with
+/// Poisson's ratio: 0.6 broke down from ν ≈ 0.33 (an aluminium column took
+/// 183 steps, PLA 475, steel 21); 0.4 holds every material in the table, up
+/// to nylon's 0.39, at 12–15.
+const OMEGA: f64 = 0.4;
 const SWEEPS: usize = 2;
 /// Unknowns at or below which a level is solved directly.
 const DIRECT: usize = 1800;
@@ -26,12 +36,17 @@ fn offset(a: usize) -> [usize; 3] {
     CORNERS[a].map(|c| (c > 0.0) as usize)
 }
 
-fn node_id(n: [usize; 3], p: [usize; 3]) -> usize {
-    p[0] + (n[0] + 1) * (p[1] + (n[1] + 1) * p[2])
-}
-
-fn coarser(n: [usize; 3]) -> [usize; 3] {
-    n.map(|v| v.div_ceil(2))
+/// The blocks one level coarser, numbered one after another.
+fn coarser(blocks: &[Block]) -> Vec<Block> {
+    let mut first = 0;
+    blocks
+        .iter()
+        .map(|b| {
+            let c = b.coarser(first);
+            first = c.end();
+            c
+        })
+        .collect()
 }
 
 /// Interpolation from a coarse cube's 8 corners to the corners of its child
@@ -87,20 +102,61 @@ fn galerkin(k: &[f64], s: &[[f64; 8]; 8], out: &mut [f64]) {
     }
 }
 
-/// One coarse level: its cubes, each with a 24 × 24 stiffness.
+/// Along one axis: the coarse nodes a fine node is interpolated from.
+fn shares(i: usize) -> ([usize; 2], [f64; 2], usize) {
+    if i % 2 == 0 { ([i / 2, 0], [1.0, 0.0], 1) } else { ([i / 2, i / 2 + 1], [0.5, 0.5], 2) }
+}
+
+/// A spring one level coarser: its vector g restricted (Pᵀ·g).
+fn restrict_spring(fine: &[Block], coarse: &[Block], s: &Spring) -> Spring {
+    let mut out: Vec<(usize, f64)> = Vec::with_capacity(s.g.len() * 8);
+    for &(dof, c) in &s.g {
+        let (node, d) = (dof / 3, dof % 3);
+        let b = block_of(fine, node);
+        let g = fine[b].at(node);
+        let (is, iw, inn) = shares(g[0]);
+        let (js, jw, jn) = shares(g[1]);
+        let (ks, kw, kn) = shares(g[2]);
+        for z in 0..kn {
+            for y in 0..jn {
+                for x in 0..inn {
+                    let id = coarse[b].node([is[x], js[y], ks[z]]);
+                    out.push((3 * id + d, c * iw[x] * jw[y] * kw[z]));
+                }
+            }
+        }
+    }
+    out.sort_unstable_by_key(|e| e.0);
+    let mut g: Vec<(usize, f64)> = Vec::with_capacity(out.len());
+    for (i, v) in out {
+        match g.last_mut() {
+            Some(last) if last.0 == i => last.1 += v,
+            _ => g.push((i, v)),
+        }
+    }
+    g.retain(|e| e.1 != 0.0);
+    Spring { k: s.k, g }
+}
+
+/// One coarse level: its cubes, each with a 24 × 24 stiffness, and the springs.
 struct Level {
-    n: [usize; 3],
+    blocks: Vec<Block>,
     nodes: usize,
     cells: Vec<[usize; 3]>,
+    /// Each cube's block (its part).
+    owner: Vec<usize>,
     corners: Vec<[usize; 8]>,
     /// First coarse level only: how much material each of a cube's 8 children
-    /// holds, applied through the 8 shared child matrices (saves memory).
+    /// holds, applied through each part's 8 shared child matrices (saves memory).
     weights: Vec<[f64; 8]>,
-    child: Vec<Vec<f64>>,
+    child: Vec<Vec<Vec<f64>>>,
     /// Cube matrices kept whole: every cube on deeper levels; on the first,
     /// the part from children that touch held nodes.
     mats: Vec<Option<Box<[f64]>>>,
+    /// The diagonal of the cubes alone; with the springs, inverted (0: not an unknown here).
+    el_diag: Vec<f64>,
     inv_diag: Vec<f64>,
+    springs: Vec<Spring>,
 }
 
 impl Level {
@@ -109,7 +165,7 @@ impl Level {
         if !self.weights.is_empty() {
             for (o, &w) in self.weights[e].iter().enumerate() {
                 if w != 0.0 {
-                    out.iter_mut().zip(&self.child[o]).for_each(|(a, b)| *a += w * b);
+                    out.iter_mut().zip(&self.child[self.owner[e]][o]).for_each(|(a, b)| *a += w * b);
                 }
             }
         }
@@ -118,10 +174,10 @@ impl Level {
         }
     }
 
-    fn finish(n: [usize; 3], cells: Vec<[usize; 3]>, weights: Vec<[f64; 8]>, child: Vec<Vec<f64>>, mats: Vec<Option<Box<[f64]>>>) -> Level {
-        let corners: Vec<[usize; 8]> = cells.iter().map(|c| std::array::from_fn(|a| node_id(n, std::array::from_fn(|d| c[d] + offset(a)[d])))).collect();
-        let nodes = (n[0] + 1) * (n[1] + 1) * (n[2] + 1);
-        let mut level = Level { n, nodes, cells, corners, weights, child, mats, inv_diag: vec![] };
+    fn finish(blocks: Vec<Block>, cells: Vec<[usize; 3]>, owner: Vec<usize>, weights: Vec<[f64; 8]>, child: Vec<Vec<Vec<f64>>>, mats: Vec<Option<Box<[f64]>>>) -> Level {
+        let corners: Vec<[usize; 8]> = cells.iter().zip(&owner).map(|(&c, &b)| blocks[b].corners(c)).collect();
+        let nodes = blocks.last().map_or(0, |b| b.end());
+        let mut level = Level { blocks, nodes, cells, owner, corners, weights, child, mats, el_diag: vec![], inv_diag: vec![], springs: vec![] };
         let mut diag = vec![0.0; 3 * nodes];
         let mut m = [0.0; 576];
         for e in 0..level.cells.len() {
@@ -132,30 +188,60 @@ impl Level {
                 }
             }
         }
-        let big = diag.iter().cloned().fold(0.0, f64::max);
-        level.inv_diag = diag.iter().map(|&v| if v > big * 1e-12 { 1.0 / v } else { 0.0 }).collect();
+        level.el_diag = diag;
+        level.set_springs(vec![]);
         level
+    }
+
+    /// Takes this level's springs and recomputes the diagonal with them.
+    fn set_springs(&mut self, springs: Vec<Spring>) {
+        let big = self.el_diag.iter().cloned().fold(0.0, f64::max);
+        let mut diag = self.el_diag.clone();
+        for s in &springs {
+            for &(i, c) in &s.g {
+                diag[i] += s.k * c * c;
+            }
+        }
+        self.inv_diag = self.el_diag.iter().zip(&diag).map(|(&e, &v)| if e > big * 1e-12 { 1.0 / v } else { 0.0 }).collect();
+        // A spring end on a node that is no unknown here takes no part.
+        self.springs = springs
+            .into_iter()
+            .map(|mut s| {
+                s.g.retain(|&(i, _)| self.inv_diag[i] > 0.0);
+                s
+            })
+            .filter(|s| !s.g.is_empty())
+            .collect();
     }
 
     /// The first coarse level, from the fine voxel model.
     fn from_fine(m: &Model) -> Level {
-        let nc = coarser(m.grid.n);
+        let blocks = coarser(&m.blocks);
         let interp: Vec<[[f64; 8]; 8]> = (0..8).map(|o| child_interp([o & 1, (o >> 1) & 1, (o >> 2) & 1])).collect();
-        let child: Vec<Vec<f64>> = interp
+        let child: Vec<Vec<Vec<f64>>> = m
+            .kes
             .iter()
-            .map(|s| {
-                let mut out = vec![0.0; 576];
-                galerkin(&m.ke, s, &mut out);
-                out
+            .map(|ke| {
+                interp
+                    .iter()
+                    .map(|s| {
+                        let mut out = vec![0.0; 576];
+                        galerkin(ke, s, &mut out);
+                        out
+                    })
+                    .collect()
             })
             .collect();
-        let mut slot: HashMap<[usize; 3], usize> = HashMap::new();
+        let mut slot: HashMap<(usize, [usize; 3]), usize> = HashMap::new();
         let mut cells = vec![];
+        let mut owner = vec![];
         let mut weights: Vec<[f64; 8]> = vec![];
         let mut mats: Vec<Option<Box<[f64]>>> = vec![];
         for (e, &[i, j, k]) in m.cells.iter().enumerate() {
-            let c = *slot.entry([i / 2, j / 2, k / 2]).or_insert_with(|| {
+            let p = m.part[e];
+            let c = *slot.entry((p, [i / 2, j / 2, k / 2])).or_insert_with(|| {
                 cells.push([i / 2, j / 2, k / 2]);
+                owner.push(p);
                 weights.push([0.0; 8]);
                 mats.push(None);
                 cells.len() - 1
@@ -167,23 +253,27 @@ impl Level {
             } else {
                 // Held nodes take no part: drop their rows and columns first.
                 let w = m.weight[e];
-                let km: Vec<f64> = (0..576).map(|x| if free[x / 24] && free[x % 24] { w * m.ke[x] } else { 0.0 }).collect();
+                let ke = &m.kes[p];
+                let km: Vec<f64> = (0..576).map(|x| if free[x / 24] && free[x % 24] { w * ke[x] } else { 0.0 }).collect();
                 galerkin(&km, &interp[o], mats[c].get_or_insert_with(|| vec![0.0; 576].into_boxed_slice()));
             }
         }
-        Level::finish(nc, cells, weights, child, mats)
+        Level::finish(blocks, cells, owner, weights, child, mats)
     }
 
     /// The next coarser level.
     fn coarsen(&self) -> Level {
-        let nc = coarser(self.n);
+        let blocks = coarser(&self.blocks);
         let interp: Vec<[[f64; 8]; 8]> = (0..8).map(|o| child_interp([o & 1, (o >> 1) & 1, (o >> 2) & 1])).collect();
-        let mut slot: HashMap<[usize; 3], usize> = HashMap::new();
+        let mut slot: HashMap<(usize, [usize; 3]), usize> = HashMap::new();
         let mut cells = vec![];
+        let mut owner = vec![];
         let mut children: Vec<Vec<(usize, usize)>> = vec![];
         for (e, &[i, j, k]) in self.cells.iter().enumerate() {
-            let c = *slot.entry([i / 2, j / 2, k / 2]).or_insert_with(|| {
+            let b = self.owner[e];
+            let c = *slot.entry((b, [i / 2, j / 2, k / 2])).or_insert_with(|| {
                 cells.push([i / 2, j / 2, k / 2]);
+                owner.push(b);
                 children.push(vec![]);
                 cells.len() - 1
             });
@@ -201,7 +291,7 @@ impl Level {
                 Some(out.into_boxed_slice())
             })
             .collect();
-        Level::finish(nc, cells, vec![], vec![], mats)
+        Level::finish(blocks, cells, owner, vec![], vec![], mats)
     }
 
     fn apply(&self, x: &[f64]) -> Vec<f64> {
@@ -231,6 +321,7 @@ impl Level {
                 a.iter_mut().zip(&b).for_each(|(p, q)| *p += q);
                 a
             });
+        add_springs(&self.springs, x, &mut y);
         y.iter_mut().zip(&self.inv_diag).for_each(|(v, d)| {
             if *d == 0.0 {
                 *v = 0.0
@@ -244,75 +335,80 @@ impl Level {
     }
 }
 
-/// Along one axis: the coarse nodes a fine node is interpolated from.
-fn shares(i: usize) -> ([usize; 2], [f64; 2], usize) {
-    if i % 2 == 0 { ([i / 2, 0], [1.0, 0.0], 1) } else { ([i / 2, i / 2 + 1], [0.5, 0.5], 2) }
-}
-
-/// Fine values from coarse ones (trilinear).
-fn prolong(nf: [usize; 3], nc: [usize; 3], xc: &[f64]) -> Vec<f64> {
-    let plane = 3 * (nf[0] + 1) * (nf[1] + 1);
-    let mut xf = vec![0.0; plane * (nf[2] + 1)];
-    xf.par_chunks_mut(plane).enumerate().for_each(|(k, out)| {
-        let (ks, kw, kn) = shares(k);
-        for j in 0..=nf[1] {
-            let (js, jw, jn) = shares(j);
-            for i in 0..=nf[0] {
-                let (is, iw, inn) = shares(i);
-                let o = 3 * (i + (nf[0] + 1) * j);
-                for c in 0..kn {
-                    for b in 0..jn {
-                        for a in 0..inn {
-                            let w = iw[a] * jw[b] * kw[c];
-                            let s = 3 * node_id(nc, [is[a], js[b], ks[c]]);
-                            for d in 0..3 {
-                                out[o + d] += w * xc[s + d];
+/// Fine values from coarse ones (trilinear), block by block.
+fn prolong(fine: &[Block], coarse: &[Block], xc: &[f64]) -> Vec<f64> {
+    let total = fine.last().map_or(0, |b| b.end());
+    let mut xf = vec![0.0; 3 * total];
+    let mut rest: &mut [f64] = &mut xf;
+    for (f, c) in fine.iter().zip(coarse) {
+        let (part, tail) = rest.split_at_mut(3 * f.count());
+        rest = tail;
+        let plane = 3 * (f.n[0] + 1) * (f.n[1] + 1);
+        part.par_chunks_mut(plane).enumerate().for_each(|(kl, out)| {
+            let (ks, kw, kn) = shares(f.lo[2] + kl);
+            for jl in 0..=f.n[1] {
+                let (js, jw, jn) = shares(f.lo[1] + jl);
+                for il in 0..=f.n[0] {
+                    let (is, iw, inn) = shares(f.lo[0] + il);
+                    let o = 3 * (il + (f.n[0] + 1) * jl);
+                    for z in 0..kn {
+                        for y in 0..jn {
+                            for x in 0..inn {
+                                let w = iw[x] * jw[y] * kw[z];
+                                let s = 3 * c.node([is[x], js[y], ks[z]]);
+                                for d in 0..3 {
+                                    out[o + d] += w * xc[s + d];
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-    });
+        });
+    }
     xf
 }
 
 /// Coarse values from fine ones: the transpose of `prolong`.
-fn restrict(nf: [usize; 3], nc: [usize; 3], xf: &[f64]) -> Vec<f64> {
-    let plane = 3 * (nc[0] + 1) * (nc[1] + 1);
-    let mut xc = vec![0.0; plane * (nc[2] + 1)];
-    let near = |c: usize, n: usize| -> Vec<(usize, f64)> {
-        let mut v = vec![(2 * c, 1.0)];
+fn restrict(fine: &[Block], coarse: &[Block], xf: &[f64]) -> Vec<f64> {
+    let total = coarse.last().map_or(0, |b| b.end());
+    let mut xc = vec![0.0; 3 * total];
+    // Along one axis: the fine nodes (grid index, share) a coarse node gathers from, inside [lo, hi].
+    let near = |c: usize, lo: usize, hi: usize| -> Vec<(usize, f64)> {
+        let mut v = vec![(2 * c, 1.0), (2 * c + 1, 0.5)];
         if c > 0 {
             v.push((2 * c - 1, 0.5));
         }
-        if 2 * c < n {
-            v.push((2 * c + 1, 0.5));
-        }
-        v.retain(|&(i, _)| i <= n);
+        v.retain(|&(i, _)| i >= lo && i <= hi);
         v
     };
-    xc.par_chunks_mut(plane).enumerate().for_each(|(k, out)| {
-        let kk = near(k, nf[2]);
-        for j in 0..=nc[1] {
-            let jj = near(j, nf[1]);
-            for i in 0..=nc[0] {
-                let ii = near(i, nf[0]);
-                let o = 3 * (i + (nc[0] + 1) * j);
-                for &(fk, wk) in &kk {
-                    for &(fj, wj) in &jj {
-                        for &(fi, wi) in &ii {
-                            let w = wi * wj * wk;
-                            let s = 3 * node_id(nf, [fi, fj, fk]);
-                            for d in 0..3 {
-                                out[o + d] += w * xf[s + d];
+    let mut rest: &mut [f64] = &mut xc;
+    for (f, c) in fine.iter().zip(coarse) {
+        let (part, tail) = rest.split_at_mut(3 * c.count());
+        rest = tail;
+        let plane = 3 * (c.n[0] + 1) * (c.n[1] + 1);
+        part.par_chunks_mut(plane).enumerate().for_each(|(kl, out)| {
+            let kk = near(c.lo[2] + kl, f.lo[2], f.lo[2] + f.n[2]);
+            for jl in 0..=c.n[1] {
+                let jj = near(c.lo[1] + jl, f.lo[1], f.lo[1] + f.n[1]);
+                for il in 0..=c.n[0] {
+                    let ii = near(c.lo[0] + il, f.lo[0], f.lo[0] + f.n[0]);
+                    let o = 3 * (il + (c.n[0] + 1) * jl);
+                    for &(fk, wk) in &kk {
+                        for &(fj, wj) in &jj {
+                            for &(fi, wi) in &ii {
+                                let w = wi * wj * wk;
+                                let s = 3 * f.node([fi, fj, fk]);
+                                for d in 0..3 {
+                                    out[o + d] += w * xf[s + d];
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-    });
+        });
+    }
     xc
 }
 
@@ -345,6 +441,14 @@ impl Direct {
                     if ps != usize::MAX {
                         a[pr * n + ps] += m[r * 24 + s];
                     }
+                }
+            }
+        }
+        for s in &level.springs {
+            for &(i, ci) in &s.g {
+                let pi = at[i];
+                for &(j, cj) in &s.g {
+                    a[pi * n + at[j]] += s.k * ci * cj;
                 }
             }
         }
@@ -403,7 +507,7 @@ impl Multigrid {
         let mut levels = vec![Level::from_fine(m)];
         while levels.len() < MAX_LEVELS {
             let last = levels.last().unwrap();
-            if last.active() <= DIRECT || last.n.iter().all(|&v| v <= 1) {
+            if last.active() <= DIRECT || last.blocks.iter().all(|b| b.n.iter().all(|&v| v <= 1)) {
                 break;
             }
             let next = last.coarsen();
@@ -413,9 +517,24 @@ impl Multigrid {
         if last.active() > 4 * DIRECT {
             return None; // could not coarsen far enough to solve directly
         }
-        let direct = Direct::new(last);
-        let fine_inv = (0..3 * m.nodes).map(|i| if m.free(i) && m.diag[i] > 0.0 { 1.0 / m.diag[i] } else { 0.0 }).collect();
-        Some(Multigrid { levels, direct, fine_inv })
+        let mut mg = Multigrid { levels, direct: Direct { dofs: vec![], l: vec![] }, fine_inv: vec![] };
+        mg.set_springs(m);
+        Some(mg)
+    }
+
+    /// Carries the model's springs (and its diagonal with them) down every level.
+    pub(super) fn set_springs(&mut self, m: &Model) {
+        self.fine_inv = (0..3 * m.nodes).map(|i| if m.free(i) && m.diag[i] > 0.0 { 1.0 / m.diag[i] } else { 0.0 }).collect();
+        let mut springs: Vec<Spring> = m.springs.clone();
+        let mut fine: &[Block] = &m.blocks;
+        for level in self.levels.iter_mut() {
+            let coarse = &level.blocks;
+            let next: Vec<Spring> = springs.par_iter().map(|s| restrict_spring(fine, coarse, s)).collect();
+            level.set_springs(next);
+            springs = level.springs.clone();
+            fine = &level.blocks;
+        }
+        self.direct = Direct::new(self.levels.last().unwrap());
     }
 
     /// One V-cycle: an approximate K⁻¹·r.
@@ -423,8 +542,8 @@ impl Multigrid {
         self.cycle(m, 0, r)
     }
 
-    fn dims(&self, m: &Model, l: usize) -> [usize; 3] {
-        if l == 0 { m.grid.n } else { self.levels[l - 1].n }
+    fn blocks<'a>(&'a self, m: &'a Model, l: usize) -> &'a [Block] {
+        if l == 0 { &m.blocks } else { &self.levels[l - 1].blocks }
     }
 
     fn inv(&self, l: usize) -> &[f64] {
@@ -452,8 +571,8 @@ impl Multigrid {
         }
         let ax = self.apply(m, l, &x);
         let res: Vec<f64> = r.par_iter().zip(&ax).map(|(a, b)| a - b).collect();
-        let (nf, nc) = (self.dims(m, l), self.dims(m, l + 1));
-        let mut rc = restrict(nf, nc, &res);
+        let (fb, cb) = (self.blocks(m, l), self.blocks(m, l + 1));
+        let mut rc = restrict(fb, cb, &res);
         let cinv = self.inv(l + 1);
         rc.iter_mut().zip(cinv).for_each(|(v, d)| {
             if *d == 0.0 {
@@ -461,7 +580,7 @@ impl Multigrid {
             }
         });
         let ec = self.cycle(m, l + 1, &rc);
-        let corr = prolong(nf, nc, &ec);
+        let corr = prolong(fb, cb, &ec);
         x.par_iter_mut().enumerate().for_each(|(i, v)| {
             if inv[i] > 0.0 {
                 *v += corr[i]

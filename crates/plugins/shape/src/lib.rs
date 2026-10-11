@@ -326,7 +326,11 @@ impl Command for SetDrawing {
 }
 
 /// A stored face found on the shape as it is now: its triangles, a point on it and its normal.
+///
+/// A pick on another part studied with this one (`pick.part`) is found on
+/// that part, and the face says so.
 pub fn resolve_face(program: &ShapeProgram, part: Option<&str>, pick: &fea::FacePick) -> Option<fea::Face> {
+    let part = pick.part.as_deref().or(part);
     let e = evaluated_at(program, program.display_tolerance()).ok()?;
     let (lo, hi) = match part.and_then(|n| e.parts.iter().find(|p| p.name == n)) {
         Some(p) => (p.bounds_min, p.bounds_max),
@@ -334,7 +338,7 @@ pub fn resolve_face(program: &ShapeProgram, part: Option<&str>, pick: &fea::Face
     };
     let at = |f: [f64; 3]| [0, 1, 2].map(|k| lo[k] + f[k] * (hi[k] - lo[k]));
     let tris = flat_face(&e, part, at(pick.probe), pick.normal)?;
-    Some(fea::Face { point: at(pick.at), normal: pick.normal, triangles: tris.iter().flat_map(|t| t.iter().flat_map(|p| p.iter().copied())).collect() })
+    Some(fea::Face { point: at(pick.at), normal: pick.normal, triangles: tris.iter().flat_map(|t| t.iter().flat_map(|p| p.iter().copied())).collect(), part: pick.part.clone() })
 }
 
 /// Derived: the evaluated solid (millimeters, program coordinates).
@@ -766,6 +770,32 @@ pub fn stress_study(program: &ShapeProgram, part: Option<&str>, material: &str, 
     fea::solve(&e.positions, &e.indices[start..start + count], &props, study)
 }
 
+/// A stress study on several parts of an assembly together, each in its own
+/// material (name, material): the first is the studied part (faces that name
+/// no part are on it); they press on each other where they touch, each pair
+/// as `study.contacts` says (frictionless when not listed).
+pub fn assembly_stress(program: &ShapeProgram, parts: &[(String, String)], study: &fea::Study) -> Result<fea::Result_, String> {
+    let e = evaluated_at(program, program.display_tolerance())?;
+    let bodies = parts
+        .iter()
+        .map(|(name, material)| {
+            let props = fea::elastic(material).ok_or_else(|| format!("no stiffness figures for “{material}” (on “{name}”)"))?;
+            let p = e.parts.iter().find(|p| &p.name == name).ok_or_else(|| format!("no part called “{name}”"))?;
+            Ok(fea::Body { name: name.clone(), positions: &e.positions, triangles: &e.indices[p.index_start..p.index_start + p.index_count], material: props })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    fea::solve_parts(&bodies, study)
+}
+
+/// The other parts of an assembly that touch `part` (or come within about
+/// a cube of a normal-resolution study of the two).
+pub fn touching_parts(program: &ShapeProgram, part: &str) -> Result<Vec<String>, String> {
+    let e = evaluated_at(program, program.display_tolerance())?;
+    let me = e.parts.iter().find(|p| p.name == part).ok_or_else(|| format!("no part called “{part}”"))?;
+    let mesh = |p: &runtime::EvaluatedPart| (&e.positions[..], &e.indices[p.index_start..p.index_start + p.index_count], p.bounds_min, p.bounds_max);
+    Ok(e.parts.iter().filter(|p| p.name != part && fea::touching(mesh(me), mesh(p))).map(|p| p.name.clone()).collect())
+}
+
 /// Steady temperatures through a program's solid (or one part) in its material.
 pub fn thermal_study(program: &ShapeProgram, part: Option<&str>, material: &str, study: &fea::ThermalStudy) -> Result<fea::Temperatures, String> {
     let k = fea::conductivity(material).ok_or_else(|| format!("no conductivity figure for “{material}”"))?;
@@ -830,6 +860,7 @@ pub fn motion_stress(program: &ShapeProgram, part: &str, masses: &[Option<f64>],
         bore_supports: vec![bore(held)],
         bore_loads: loaded.iter().map(|&q| fea::BoreLoad { bore: bore(q), force: on_body(q, worst) }).collect(),
         resolution: 56,
+        contacts: vec![],
     };
     let k = e.parts.iter().find(|p| p.name == part).ok_or_else(|| format!("no part called “{part}”"))?;
     let mut result = fea::solve(&e.positions, &e.indices[k.index_start..k.index_start + k.index_count], &props, &study)?;

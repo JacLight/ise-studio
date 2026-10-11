@@ -5679,6 +5679,174 @@ button.download.drawing-open small {
   margin-top: 0 !important;
 }
 
+/* Parts studied together: which ones, how they touch, what passes between them. */
+.contact-block {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.contact-block h4 {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8a8398;
+}
+
+.contact-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 3px 4px 3px 8px;
+  border-radius: 8px;
+  background: #f8f6fb;
+  font-size: 11px;
+  color: #3e3849;
+}
+
+.contact-row.on {
+  background: #f1edfb;
+}
+
+.contact-row > label:first-child {
+  color: #3e3849;
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.contact-row > label:first-child input {
+  flex: none;
+  width: auto;
+  margin: 0;
+}
+
+.contact-row > label:first-child span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contact-row small {
+  color: #a33a33;
+}
+
+.contact-row .segmented button {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 10.5px;
+}
+
+.contact-mu {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #8a8398;
+}
+
+.contact-mu input {
+  width: 44px;
+  height: 24px;
+  margin: 0;
+  padding: 0 6px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stress-on {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #ece6fb;
+  color: #5b3fc4;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.part-results,
+.contact-results {
+  display: grid;
+  gap: 4px;
+}
+
+.part-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: #f8f6fb;
+  font-size: 11px;
+  color: #3e3849;
+}
+
+.part-result small {
+  color: #8a8398;
+  font-variant-numeric: tabular-nums;
+}
+
+.part-result small.bad {
+  color: #a33a33;
+}
+
+.part-result b {
+  font-variant-numeric: tabular-nums;
+}
+
+.part-result b.ok {
+  color: #2a6f4a;
+}
+
+.part-result b.warn {
+  color: #8a5a10;
+}
+
+.part-result b.bad {
+  color: #a33a33;
+}
+
+.contact-result {
+  display: grid;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #f8f6fb;
+  font-size: 11px;
+  color: #3e3849;
+}
+
+.contact-result span small {
+  color: #8a8398;
+}
+
+.contact-result > small {
+  color: #6f6880;
+  font-variant-numeric: tabular-nums;
+}
+
+.contact-results .segmented button {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.gap-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: #b04fd6;
+  vertical-align: middle;
+}
+
 .face-hint .hint-action {
   margin-left: 10px;
   padding: 3px 10px;

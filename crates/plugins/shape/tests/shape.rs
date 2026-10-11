@@ -925,8 +925,9 @@ fn a_cantilever_bends_and_is_stressed_as_beam_theory_says() {
         point: [x, 10.0, 10.0],
         normal: [n, 0.0, 0.0],
         triangles: vec![x, 0.0, 0.0, x, 20.0, 0.0, x, 20.0, 20.0, x, 0.0, 0.0, x, 20.0, 20.0, x, 0.0, 20.0],
+        part: None,
     };
-    let study = de_shape::fea::Study { supports: vec![face(0.0, -1.0)], loads: vec![de_shape::fea::Load { face: face(200.0, 1.0), force: [0.0, 0.0, -1000.0] }], bore_supports: vec![], bore_loads: vec![], resolution: 80 };
+    let study = de_shape::fea::Study { supports: vec![face(0.0, -1.0)], loads: vec![de_shape::fea::Load { face: face(200.0, 1.0), force: [0.0, 0.0, -1000.0] }], bore_supports: vec![], bore_loads: vec![], resolution: 80, contacts: vec![] };
     let steel = de_shape::fea::elastic("Steel").unwrap();
     let r = de_shape::fea::solve(&e.positions, &e.indices, &steel, &study).unwrap();
     // Tip deflection: PL³/3EI (1.000 mm) plus shear PL/κGA (0.008 mm).
@@ -950,7 +951,7 @@ fn a_cantilever_bends_and_is_stressed_as_beam_theory_says() {
 fn a_cantilever_rings_at_the_frequency_beam_theory_says() {
     // Steel 200 × 20 × 20 mm held at one end: f₁ = (1.875²/2π)·√(EI/ρAL⁴) ≈ 407.7 Hz, twice (square section).
     let e = runtime::evaluate("return box(200, 20, 20);", &[], 0.01).unwrap();
-    let held = de_shape::fea::Face { point: [0.0, 10.0, 10.0], normal: [-1.0, 0.0, 0.0], triangles: vec![0.0, 0.0, 0.0, 0.0, 20.0, 0.0, 0.0, 20.0, 20.0, 0.0, 0.0, 0.0, 0.0, 20.0, 20.0, 0.0, 0.0, 20.0] };
+    let held = de_shape::fea::Face { point: [0.0, 10.0, 10.0], normal: [-1.0, 0.0, 0.0], triangles: vec![0.0, 0.0, 0.0, 0.0, 20.0, 0.0, 0.0, 20.0, 20.0, 0.0, 0.0, 0.0, 0.0, 20.0, 20.0, 0.0, 0.0, 20.0], part: None };
     let steel = de_shape::fea::elastic("Steel").unwrap();
     let m = de_shape::fea::modes(&e.positions, &e.indices, &steel, 7850.0, &[held], 3, 60).unwrap();
     let (ei, rho_a, l) = (200e9 * 0.02f64.powi(4) / 12.0, 7850.0 * 0.0004, 0.2f64);
@@ -1035,7 +1036,7 @@ fn a_connecting_rod_is_checked_at_its_hardest_moment() {
 }
 
 fn end_face(x: f64, n: f64, s: f64) -> de_shape::fea::Face {
-    de_shape::fea::Face { point: [x, s / 2.0, s / 2.0], normal: [n, 0.0, 0.0], triangles: vec![x, 0.0, 0.0, x, s, 0.0, x, s, s, x, 0.0, 0.0, x, s, s, x, 0.0, s] }
+    de_shape::fea::Face { point: [x, s / 2.0, s / 2.0], normal: [n, 0.0, 0.0], triangles: vec![x, 0.0, 0.0, x, s, 0.0, x, s, s, x, 0.0, 0.0, x, s, s, x, 0.0, s], part: None }
 }
 
 #[test]
@@ -1109,8 +1110,9 @@ fn a_thin_plate_bends_as_plate_theory_says_and_solves_quickly() {
         point: [x, 50.0, 2.0],
         normal: [n, 0.0, 0.0],
         triangles: vec![x, 0.0, 0.0, x, 100.0, 0.0, x, 100.0, 4.0, x, 0.0, 0.0, x, 100.0, 4.0, x, 0.0, 4.0],
+        part: None,
     };
-    let study = de_shape::fea::Study { supports: vec![face(0.0, -1.0)], loads: vec![de_shape::fea::Load { face: face(200.0, 1.0), force: [0.0, 0.0, -50.0] }], bore_supports: vec![], bore_loads: vec![], resolution: 160 };
+    let study = de_shape::fea::Study { supports: vec![face(0.0, -1.0)], loads: vec![de_shape::fea::Load { face: face(200.0, 1.0), force: [0.0, 0.0, -50.0] }], bore_supports: vec![], bore_loads: vec![], resolution: 160, contacts: vec![] };
     let steel = de_shape::fea::elastic("Steel").unwrap();
     let t0 = std::time::Instant::now();
     let r = de_shape::fea::solve(&e.positions, &e.indices, &steel, &study).unwrap();
@@ -1247,4 +1249,173 @@ fn a_curved_face_pushes_and_pulls_exactly() {
     let want = pi * 169.0 * 20.0;
     let got = volume_with(&finished, &[("push1".into(), 3.0)]);
     assert!((got - want).abs() < want * 1e-5, "finished {got} vs {want}");
+}
+
+// ---- Contact between parts -----------------------------------------------------
+
+/// An assembly's parts as bodies for a several-part study, in the materials given.
+fn bodies<'a>(e: &'a runtime::Evaluated, materials: &[&str]) -> Vec<de_shape::fea::Body<'a>> {
+    e.parts
+        .iter()
+        .zip(materials)
+        .map(|(p, m)| de_shape::fea::Body { name: p.name.clone(), positions: &e.positions, triangles: &e.indices[p.index_start..p.index_start + p.index_count], material: de_shape::fea::elastic(m).unwrap() })
+        .collect()
+}
+
+/// An axis-aligned rectangular face: `axis` (0 x, 1 y, 2 z) at `at`, facing `sign`, spanning [a0, a1] × [b0, b1] on the next two axes (cyclic).
+fn rect_face(axis: usize, at: f64, sign: f64, a: [f64; 2], b: [f64; 2], part: Option<&str>) -> de_shape::fea::Face {
+    let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+    let corner = |s: f64, t: f64| {
+        let mut p = [0.0; 3];
+        p[axis] = at;
+        p[u] = s;
+        p[v] = t;
+        p
+    };
+    let q = [corner(a[0], b[0]), corner(a[1], b[0]), corner(a[1], b[1]), corner(a[0], b[1])];
+    let mut normal = [0.0; 3];
+    normal[axis] = sign;
+    de_shape::fea::Face {
+        point: corner((a[0] + a[1]) / 2.0, (b[0] + b[1]) / 2.0),
+        normal,
+        triangles: [q[0], q[1], q[2], q[0], q[2], q[3]].iter().flatten().copied().collect(),
+        part: part.map(String::from),
+    }
+}
+
+fn load(face: de_shape::fea::Face, force: [f64; 3]) -> de_shape::fea::Load {
+    de_shape::fea::Load { face, force }
+}
+
+fn study(supports: Vec<de_shape::fea::Face>, loads: Vec<de_shape::fea::Load>, resolution: usize, contacts: Vec<de_shape::fea::ContactSpec>) -> de_shape::fea::Study {
+    de_shape::fea::Study { supports, loads, bore_supports: vec![], bore_loads: vec![], resolution, contacts }
+}
+
+fn contact(a: &str, b: &str, kind: de_shape::fea::ContactKind, friction: f64) -> de_shape::fea::ContactSpec {
+    de_shape::fea::ContactSpec { parts: [a.into(), b.into()], kind, friction }
+}
+
+#[test]
+fn stacked_blocks_press_with_f_over_a_and_act_as_one_block() {
+    use de_shape::fea::ContactKind::*;
+    // A 10 × 10 column 40 tall in two blocks, held at the bottom, 1000 N down on top: σ = F/A = 10 MPa.
+    let e = runtime::evaluate("return [part('Base', box(10, 10, 20)), part('Top', box(10, 10, 20).translate(0, 0, 20))];", &[], 0.01).unwrap();
+    let held = rect_face(2, 0.0, -1.0, [0.0, 10.0], [0.0, 10.0], Some("Base"));
+    let pushed = load(rect_face(2, 40.0, 1.0, [0.0, 10.0], [0.0, 10.0], Some("Top")), [0.0, 0.0, -1000.0]);
+    let steel = bodies(&e, &["Steel", "Steel"]);
+    let t0 = std::time::Instant::now();
+    let r = de_shape::fea::solve_parts(&steel, &study(vec![held.clone()], vec![pushed.clone()], 40, vec![])).unwrap();
+    let took = t0.elapsed().as_secs_f64();
+    let c = r.contact.as_ref().expect("the blocks touch");
+    let pair = &c.pairs[0];
+    eprintln!("stack: push {:.2} N over {:.1} mm², pressure {:.3}–{:.3} MPa, {} rounds, {} iterations, {took:.2} s", pair.normal_force, pair.pressing, c.faces.iter().map(|f| f.pressure).fold(f32::INFINITY, f32::min), c.max_pressure, c.rounds, r.iterations);
+    assert!(c.settled, "contact settles");
+    assert!((pair.normal_force - 1000.0).abs() < 1000.0 * 2e-3, "the whole load passes: {} N", pair.normal_force);
+    assert!((pair.pressing - 100.0).abs() < 1e-6, "the whole 10 × 10 face presses: {} mm²", pair.pressing);
+    assert!(c.faces.len() == 100 && c.faces.iter().all(|f| (f.pressure as f64 - 10.0).abs() < 10.0 * 0.03), "every face at F/A = 10 MPa within 3 %");
+    assert!(c.opened.is_empty(), "nothing opens under pure compression");
+    // The contact springs ride down the multigrid: a part held only through its contact solves as fast as one block.
+    assert!(r.iterations < 80, "{} iterations", r.iterations);
+    // The same as one solid block 40 tall.
+    let solid = runtime::evaluate("return box(10, 10, 40);", &[], 0.01).unwrap();
+    let mut whole_study = study(vec![held.clone()], vec![pushed.clone()], 40, vec![]);
+    whole_study.supports[0].part = None;
+    whole_study.loads[0].face.part = None;
+    let whole = de_shape::fea::solve(&solid.positions, &solid.indices, &de_shape::fea::elastic("Steel").unwrap(), &whole_study).unwrap();
+    let top = |r: &de_shape::fea::Result_, part: usize| -de_shape::fea::displacement_of(r, part, [5.0, 5.0, 40.0]).unwrap()[2];
+    let (two, one) = (top(&r, 1), top(&whole, 0));
+    // Plain compression: FL/EA = 0.002 mm (the held foot, kept from spreading, stiffens it slightly).
+    let fl_ea = 1000.0 * 40.0 / (200_000.0 * 100.0);
+    eprintln!("stack: top moves {two:.6} mm, one block {one:.6} mm, FL/EA {fl_ea:.6} mm");
+    assert!((two - one).abs() < one * 0.01, "two blocks {two} mm vs one {one} mm");
+    assert!((one - fl_ea).abs() < fl_ea * 0.03, "one block {one} mm vs FL/EA {fl_ea} mm");
+    assert!((r.max_stress - whole.max_stress).abs() < whole.max_stress * 0.02, "stress {} vs {} MPa", r.max_stress, whole.max_stress);
+
+    // Aluminium on steel: two springs in series, FL/E₁A + FL/E₂A; bonded or not, under compression it is the same.
+    let mixed = bodies(&e, &["Steel", "Aluminium"]);
+    let pressed = de_shape::fea::solve_parts(&mixed, &study(vec![held.clone()], vec![pushed.clone()], 40, vec![])).unwrap();
+    let glued = de_shape::fea::solve_parts(&mixed, &study(vec![held], vec![pushed], 40, vec![contact("Base", "Top", Bonded, 0.0)])).unwrap();
+    let series = 1000.0 * 20.0 / 100.0 * (1.0 / 200_000.0 + 1.0 / 69_000.0);
+    let (p, g) = (top(&pressed, 1), top(&glued, 1));
+    eprintln!("aluminium on steel: pressed {p:.6} mm, bonded {g:.6} mm, series springs {series:.6} mm ({} and {} iterations)", pressed.iterations, glued.iterations);
+    assert!(pressed.iterations < 120 && glued.iterations < 120, "{} / {} iterations", pressed.iterations, glued.iterations);
+    assert!((p - series).abs() < series * 0.03, "pressed {p} mm vs {series} mm");
+    assert!((p - g).abs() < g * 0.01, "pressed {p} mm vs bonded {g} mm");
+}
+
+#[test]
+fn a_block_lifted_off_its_support_opens_the_contact_and_passes_no_force() {
+    // Top block held at its own side face, pulled up 500 N: it lifts off the base, which feels nothing.
+    let e = runtime::evaluate("return [part('Base', box(10, 10, 20)), part('Top', box(10, 10, 20).translate(0, 0, 20))];", &[], 0.01).unwrap();
+    let base_held = rect_face(2, 0.0, -1.0, [0.0, 10.0], [0.0, 10.0], Some("Base"));
+    let top_held = rect_face(0, 0.0, -1.0, [0.0, 10.0], [20.0, 40.0], Some("Top"));
+    let pull = load(rect_face(2, 40.0, 1.0, [0.0, 10.0], [0.0, 10.0], Some("Top")), [0.0, 0.0, 500.0]);
+    let r = de_shape::fea::solve_parts(&bodies(&e, &["Steel", "Steel"]), &study(vec![base_held, top_held.clone()], vec![pull.clone()], 40, vec![])).unwrap();
+    let c = r.contact.as_ref().unwrap();
+    eprintln!("lift: push {:.2e} N, pressing {:.1} mm², {} opened markers, base stress {:.2e} MPa, top {:.2} MPa", c.pairs[0].normal_force, c.pairs[0].pressing, c.opened.len(), r.parts[0].max_stress, r.parts[1].max_stress);
+    assert!(c.pairs[0].normal_force.abs() < 1e-6 * 500.0, "no force passes: {} N", c.pairs[0].normal_force);
+    assert!(c.opened.len() > 50 && c.opened.iter().all(|o| o[3] > 0.0), "the contact opens: {} markers", c.opened.len());
+    assert!(r.parts[0].max_stress < 1e-6 * r.parts[1].max_stress, "the base is not stressed: {} MPa", r.parts[0].max_stress);
+    // The top block behaves exactly as if studied alone (same cubes: 1 mm on both grids).
+    let alone = runtime::evaluate("return box(10, 10, 20).translate(0, 0, 20);", &[], 0.01).unwrap();
+    let (mut held, mut pulled) = (top_held, pull);
+    held.part = None;
+    pulled.face.part = None;
+    let solo = de_shape::fea::solve(&alone.positions, &alone.indices, &de_shape::fea::elastic("Steel").unwrap(), &study(vec![held], vec![pulled], 20, vec![])).unwrap();
+    let corner = [10.0, 5.0, 40.0];
+    let (with, without) = (de_shape::fea::displacement_of(&r, 1, corner).unwrap()[2], de_shape::fea::displacement_at(&solo, corner).unwrap()[2]);
+    eprintln!("lift: free corner rises {with:.6} mm (alone {without:.6} mm)");
+    assert!(with > 0.0 && (with - without).abs() < without * 1e-3, "{with} mm vs {without} mm alone");
+}
+
+#[test]
+fn a_bonded_lap_joint_carries_shear_and_a_frictionless_one_slides() {
+    use de_shape::fea::ContactKind::*;
+    // Two 40 × 10 × 2 strips overlapping 20 mm; A held at x = 0, B pulled 200 N along x at x = 60.
+    let e = runtime::evaluate("return [part('A', box(40, 10, 2)), part('B', box(40, 10, 2).translate(20, 0, 2))];", &[], 0.01).unwrap();
+    let held = rect_face(0, 0.0, -1.0, [0.0, 10.0], [0.0, 2.0], Some("A"));
+    let pulled = load(rect_face(0, 60.0, 1.0, [0.0, 10.0], [2.0, 4.0], Some("B")), [200.0, 0.0, 0.0]);
+    let steel = bodies(&e, &["Steel", "Steel"]);
+    let glued = de_shape::fea::solve_parts(&steel, &study(vec![held.clone()], vec![pulled.clone()], 60, vec![contact("A", "B", Bonded, 0.0)])).unwrap();
+    let loose = de_shape::fea::solve_parts(&steel, &study(vec![held], vec![pulled], 60, vec![contact("A", "B", Frictionless, 0.0)])).unwrap();
+    let (gc, lc) = (glued.contact.as_ref().unwrap(), loose.contact.as_ref().unwrap());
+    let tip = |r: &de_shape::fea::Result_| r.parts[1].max_displacement;
+    eprintln!(
+        "lap joint: bonded shear {:.2} N, A {:.2} MPa, B moves {:.5} mm; frictionless shear {:.2e} N, A {:.2e} MPa, B moves {:.3e} mm",
+        gc.pairs[0].shear_force, glued.parts[0].max_stress, tip(&glued), lc.pairs[0].shear_force, loose.parts[0].max_stress, tip(&loose)
+    );
+    // Bonded: all 200 N passes through the overlap. A's shank is pulled (F/A = 10 MPa) and, the
+    // pull acting 2 mm above its middle, bent by M = 400 N·mm: at a cube centre 0.5 mm above the
+    // middle, σ = F/A + M·y/I = 10 + 400 · 0.5 / (10 · 2³/12) = 40 MPa.
+    assert!((gc.pairs[0].shear_force - 200.0).abs() < 200.0 * 0.01, "bonded shear {} N", gc.pairs[0].shear_force);
+    assert!(glued.iterations < 150, "{} iterations", glued.iterations);
+    assert!(!glued.parts[1].floating && tip(&glued) < 1.0, "bonded: B stays put ({} mm)", tip(&glued));
+    let shank = de_shape::fea::stress_at(&glued, [10.5, 5.5, 1.5]).unwrap();
+    eprintln!("lap joint: A's shank {shank:.2} MPa (F/A + My/I = 40 MPa)");
+    assert!((shank - 40.0).abs() < 40.0 * 0.05, "A's shank {shank} MPa vs 40 MPa");
+    // Frictionless: nothing grips sideways, so B slides off and A feels nothing.
+    assert!(lc.pairs[0].shear_force < 200.0 * 1e-3, "frictionless shear {} N", lc.pairs[0].shear_force);
+    assert!(loose.parts[1].floating && loose.notes.iter().any(|n| n.contains("“B”") && n.contains("slides")), "{:?}", loose.notes);
+    assert!(loose.parts[0].max_stress < glued.parts[0].max_stress * 1e-2, "A carries nothing: {} MPa", loose.parts[0].max_stress);
+    assert!(tip(&loose) > 100.0 * tip(&glued), "B slides away");
+}
+
+#[test]
+fn friction_grips_below_mu_n_and_slips_at_mu_n() {
+    use de_shape::fea::ContactKind::*;
+    // A 10 mm cube pressed onto a base with 1000 N and pushed sideways; μ = 0.3 holds up to 300 N.
+    let e = runtime::evaluate("return [part('Base', box(10, 10, 20)), part('Top', box(10, 10, 10).translate(0, 0, 20))];", &[], 0.01).unwrap();
+    let held = rect_face(2, 0.0, -1.0, [0.0, 10.0], [0.0, 10.0], Some("Base"));
+    let press = load(rect_face(2, 30.0, 1.0, [0.0, 10.0], [0.0, 10.0], Some("Top")), [0.0, 0.0, -1000.0]);
+    let push = |t: f64| load(rect_face(0, 10.0, 1.0, [0.0, 10.0], [20.0, 30.0], Some("Top")), [-t, 0.0, 0.0]);
+    let steel = bodies(&e, &["Steel", "Steel"]);
+    let mu = vec![contact("Base", "Top", Friction, 0.3)];
+    let grip = de_shape::fea::solve_parts(&steel, &study(vec![held.clone()], vec![press.clone(), push(200.0)], 30, mu.clone())).unwrap();
+    let slip = de_shape::fea::solve_parts(&steel, &study(vec![held], vec![press, push(450.0)], 30, mu)).unwrap();
+    let (g, s) = (&grip.contact.as_ref().unwrap().pairs[0], &slip.contact.as_ref().unwrap().pairs[0]);
+    eprintln!("friction: 200 N push → shear {:.2} N, slipping {:.0} of {:.0} mm²; 450 N push → shear {:.2} N (μN = 300), slipping {:.0} mm², {} rounds", g.shear_force, g.slipping, g.pressing, s.shear_force, s.slipping, slip.contact.as_ref().unwrap().rounds);
+    assert!((g.normal_force - 1000.0).abs() < 2.0 && (s.normal_force - 1000.0).abs() < 2.0, "push {} / {} N", g.normal_force, s.normal_force);
+    assert!((g.shear_force - 200.0).abs() < 200.0 * 0.01 && !grip.parts[1].floating, "grips the whole 200 N: {} N", g.shear_force);
+    assert!((s.shear_force - 300.0).abs() < 300.0 * 0.01, "slides at μN = 300 N: {} N", s.shear_force);
+    assert!(slip.parts[1].floating && (s.slipping - s.pressing).abs() < 1e-6, "slipping everywhere it presses");
 }

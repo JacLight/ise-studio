@@ -1255,10 +1255,24 @@ struct StressRequest {
     /// One part of an assembly.
     #[serde(default)]
     part: Option<String>,
+    /// Other parts studied with it, pressing on it where they touch (["all"]: every other part).
+    #[serde(default)]
+    parts: Vec<String>,
+}
+
+/// A part's material by name: its own, else the shape's.
+fn part_material(project: &Project, sid: StableId, part: Option<&str>) -> Option<String> {
+    let own = part.and_then(|n| project.get::<ShapeSolid>(sid)?.stats.parts.iter().find(|p| p.name == n)?.material.clone());
+    own.or_else(|| {
+        let m = project.get::<de_solid::MaterialRef>(sid)?;
+        project.get::<de_solid::Material>(m.0).map(|m| m.name.clone())
+    })
 }
 
 /// A stress study: supports, loads and resolution in the body; the part's
-/// own material sets its stiffness and yield strength.
+/// own material sets its stiffness and yield strength. With `parts`, those
+/// parts are studied with it, each in its own material, in contact where
+/// they touch (`contacts` says how each pair acts; frictionless if unsaid).
 async fn stress(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>, axum::Json(req): axum::Json<StressRequest>) -> axum::response::Response {
     let fail = |code: StatusCode, message: String| (code, message).into_response();
     let app = match server.project(query.get("project")) {
@@ -1270,18 +1284,57 @@ async fn stress(State(server): State<Arc<Server>>, Path(id): Path<String>, Query
         serde_json::from_value::<StableId>(json!(id)).ok().and_then(|sid| {
             let e = project.entity(sid)?;
             let program = de_shape::resolved_program(project.world(), e)?;
-            let part_material = req.part.as_ref().and_then(|n| project.get::<ShapeSolid>(sid)?.stats.parts.iter().find(|p| &p.name == n)?.material.clone());
-            let material = part_material.or_else(|| {
-                let m = project.get::<de_solid::MaterialRef>(sid)?;
-                project.get::<de_solid::Material>(m.0).map(|m| m.name.clone())
-            });
-            Some((program, material))
+            let all: Vec<String> = project.get::<ShapeSolid>(sid).map(|s| s.stats.parts.iter().map(|p| p.name.clone()).collect()).unwrap_or_default();
+            // The studied part first, then the others (each once).
+            let mut names: Vec<String> = req.part.iter().cloned().collect();
+            for n in &req.parts {
+                let more: Vec<String> = if n == "all" { all.clone() } else { vec![n.clone()] };
+                for m in more {
+                    if !names.contains(&m) {
+                        names.push(m);
+                    }
+                }
+            }
+            let materials: Vec<(String, Option<String>)> = names.iter().map(|n| (n.clone(), part_material(&project, sid, Some(n)))).collect();
+            Some((program, part_material(&project, sid, req.part.as_deref()), materials))
         })
     };
-    let Some((program, material)) = found else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
+    let Some((program, material, materials)) = found else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
+    if materials.len() > 1 {
+        if let Some((name, _)) = materials.iter().find(|(_, m)| m.is_none()) {
+            return fail(StatusCode::UNPROCESSABLE_ENTITY, format!("give “{name}” a material first: its stiffness comes from it"));
+        }
+        let parts: Vec<(String, String)> = materials.into_iter().map(|(n, m)| (n, m.unwrap_or_default())).collect();
+        let material = parts[0].1.clone();
+        return match tokio::task::spawn_blocking(move || de_shape::assembly_stress(&program, &parts, &req.study).map(|r| (r, material))).await {
+            Ok(Ok((r, material))) => axum::Json(json!({ "result": r, "material": material })).into_response(),
+            Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+            Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        };
+    }
     let Some(material) = material else { return fail(StatusCode::UNPROCESSABLE_ENTITY, "give the part a material first: its stiffness and strength come from it".into()) };
     match tokio::task::spawn_blocking(move || de_shape::stress_study(&program, req.part.as_deref(), &material, &req.study).map(|r| (r, material))).await {
         Ok(Ok((r, material))) => axum::Json(json!({ "result": r, "material": material })).into_response(),
+        Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// The other parts of an assembly touching a part: the ones a stress study can take with it.
+async fn touching(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let fail = |code: StatusCode, message: String| (code, message).into_response();
+    let app = match server.project(query.get("project")) {
+        Ok(app) => app,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let Some(part) = query.get("part").cloned() else { return fail(StatusCode::BAD_REQUEST, "name the part".into()) };
+    let program = {
+        let project = app.project.lock().unwrap();
+        serde_json::from_value::<StableId>(json!(id)).ok().and_then(|sid| de_shape::resolved_program(project.world(), project.entity(sid)?))
+    };
+    let Some(program) = program else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
+    match tokio::task::spawn_blocking(move || de_shape::touching_parts(&program, &part)).await {
+        Ok(Ok(parts)) => axum::Json(json!({ "parts": parts })).into_response(),
         Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
         Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
@@ -1923,6 +1976,7 @@ async fn main() -> std::io::Result<()> {
         .route("/stress/{id}", axum::routing::post(stress))
         .route("/modes/{id}", axum::routing::post(modes))
         .route("/study/{id}", get(study))
+        .route("/touching/{id}", get(touching))
         .route("/motion-stress/{id}", get(motion_stress))
         .route("/thermal/{id}", axum::routing::post(thermal))
         .route("/team", get(team_status))

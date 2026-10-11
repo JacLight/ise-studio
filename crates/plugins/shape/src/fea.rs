@@ -12,6 +12,7 @@
 //!
 //! Units: millimetres, newtons, megapascals (N/mm²).
 
+mod contact;
 mod multigrid;
 
 use rayon::prelude::*;
@@ -74,6 +75,9 @@ pub struct Face {
     pub point: [f64; 3],
     pub normal: [f64; 3],
     pub triangles: Vec<f64>,
+    /// The part of a several-part study it is on (none: the first part).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<String>,
 }
 
 /// A face as kept with a study: where on the part it sits (fractions of the
@@ -84,6 +88,34 @@ pub struct FacePick {
     pub at: [f64; 3],
     pub probe: [f64; 3],
     pub normal: [f64; 3],
+    /// The part it is on, when not the study's own part (another part
+    /// studied with it); fractions are of that part's bounds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<String>,
+}
+
+/// How two parts studied together act where they touch.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ContactKind {
+    /// They push on each other but never pull, and slide freely.
+    #[default]
+    Frictionless,
+    /// They push, never pull, and grip up to `friction` × the push before sliding.
+    Friction,
+    /// Glued: they move together where they touch.
+    Bonded,
+}
+
+/// The contact between two parts studied together (pairs not listed are frictionless).
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+pub struct ContactSpec {
+    pub parts: [String; 2],
+    #[serde(default)]
+    pub kind: ContactKind,
+    /// Coefficient of friction (with kind "friction").
+    #[serde(default)]
+    pub friction: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
@@ -101,6 +133,13 @@ pub struct StudySpec {
     /// The part of an assembly it is on (none: the whole solid).
     #[serde(default)]
     pub part: Option<String>,
+    /// Other parts of the assembly studied with it, pressing on it where they
+    /// touch (["all"]: every part).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<String>,
+    /// How each pair of those parts acts where they touch.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contacts: Vec<ContactSpec>,
     #[serde(default)]
     pub supports: Vec<FacePick>,
     #[serde(default)]
@@ -186,6 +225,10 @@ pub struct Study {
     /// Cubes along the part's longest side.
     #[serde(default = "default_resolution")]
     pub resolution: usize,
+    /// With several parts: how each pair acts where they touch (pairs not
+    /// listed are frictionless).
+    #[serde(default)]
+    pub contacts: Vec<ContactSpec>,
 }
 
 fn default_resolution() -> usize {
@@ -210,6 +253,29 @@ pub struct Result_ {
     pub elements: usize,
     pub iterations: usize,
     pub notes: Vec<String>,
+    /// Several parts: each one's figures, which part each cube is of (index
+    /// into `parts`), and which part each displacement is of.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<PartResult>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cell_parts: Vec<u8>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub node_parts: Vec<u8>,
+    /// Where the parts touch: pressure, what opened, the force through each pair.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contact: Option<contact::Contacts>,
+}
+
+/// One part's figures in a several-part study.
+#[derive(Clone, Debug, Serialize)]
+pub struct PartResult {
+    pub name: String,
+    pub max_stress: f64,
+    pub max_displacement: f64,
+    pub yield_strength: f64,
+    pub safety: f64,
+    /// Not held by a support, and free to move where its contacts let it.
+    pub floating: bool,
 }
 
 // ---- The element ---------------------------------------------------------------
@@ -392,27 +458,45 @@ impl Grid {
 /// Cubes less full than this are left out (slivers add nothing but trouble).
 const MIN_FILL: f32 = 0.12;
 
+/// The bounds of a mesh's triangles.
+fn bounds(positions: &[f32], triangles: &[u32]) -> ([f64; 3], [f64; 3]) {
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for &t in triangles {
+        let i = t as usize * 3;
+        for k in 0..3 {
+            lo[k] = lo[k].min(positions[i + k] as f64);
+            hi[k] = hi[k].max(positions[i + k] as f64);
+        }
+    }
+    (lo, hi)
+}
+
+/// An empty grid over a box: `resolution` cubes along its longest side, centred on it.
+fn grid_around(lo: [f64; 3], hi: [f64; 3], resolution: usize) -> Grid {
+    let longest = (0..3).map(|k| hi[k] - lo[k]).fold(0.0, f64::max);
+    let h = longest / resolution.max(4) as f64;
+    let n = [0, 1, 2].map(|k| (((hi[k] - lo[k]) / h) - 1e-9).ceil().max(1.0) as usize);
+    let origin = [0, 1, 2].map(|k| (lo[k] + hi[k]) / 2.0 - n[k] as f64 * h / 2.0);
+    Grid { h, origin, n, fill: vec![0.0; n[0] * n[1] * n[2]] }
+}
+
 /// How full of material each cube is (rays along x, by parity).
 fn voxelize(positions: &[f32], triangles: &[u32], resolution: usize) -> Grid {
+    let (lo, hi) = bounds(positions, triangles);
+    let mut grid = grid_around(lo, hi, resolution);
+    grid.fill = fill_of(&grid, positions, triangles);
+    grid
+}
+
+/// How full of one mesh each cube of a grid is.
+fn fill_of(grid: &Grid, positions: &[f32], triangles: &[u32]) -> Vec<f32> {
     let p = |i: u32| {
         let i = i as usize * 3;
         [positions[i] as f64, positions[i + 1] as f64, positions[i + 2] as f64]
     };
-    let mut lo = [f64::INFINITY; 3];
-    let mut hi = [f64::NEG_INFINITY; 3];
-    for &t in triangles {
-        let q = p(t);
-        for k in 0..3 {
-            lo[k] = lo[k].min(q[k]);
-            hi[k] = hi[k].max(q[k]);
-        }
-    }
-    let longest = (0..3).map(|k| hi[k] - lo[k]).fold(0.0, f64::max);
-    let h = longest / resolution.max(4) as f64;
-    let n = [0, 1, 2].map(|k| (((hi[k] - lo[k]) / h) - 1e-9).ceil().max(1.0) as usize);
-    // Centre the grid on the part.
-    let origin = [0, 1, 2].map(|k| (lo[k] + hi[k]) / 2.0 - n[k] as f64 * h / 2.0);
-    let mut grid = Grid { h, origin, n, fill: vec![0.0; n[0] * n[1] * n[2]] };
+    let (h, origin, n) = (grid.h, grid.origin, grid.n);
+    let mut fill = vec![0.0f32; n[0] * n[1] * n[2]];
     // Triangles binned by the (j, k) columns their y–z boxes cover.
     let mut bins: Vec<Vec<usize>> = vec![vec![]; n[1] * n[2]];
     let tris: Vec<[[f64; 3]; 3]> = triangles.chunks_exact(3).map(|t| [p(t[0]), p(t[1]), p(t[2])]).collect();
@@ -456,14 +540,13 @@ fn voxelize(positions: &[f32], triangles: &[u32], resolution: usize) -> Grid {
                     for i in i0..i1 {
                         let (x0, x1) = (origin[0] + i as f64 * h, origin[0] + (i + 1) as f64 * h);
                         let inside = (pair[1].min(x1) - pair[0].max(x0)).max(0.0) / h;
-                        let c = grid.cell(i, j, k);
-                        grid.fill[c] += (inside / (RAYS * RAYS) as f64) as f32;
+                        fill[grid.cell(i, j, k)] += (inside / (RAYS * RAYS) as f64) as f32;
                     }
                 }
             }
         }
     }
-    grid
+    fill
 }
 
 /// How much of the part each node serves (the cubes around it, by fill): a
@@ -485,28 +568,28 @@ fn spread(on: &[usize], share: &[f64], total: f64) -> Vec<(usize, f64)> {
     on.iter().map(|&n| (n, if sum > 0.0 { total * share[n] / sum } else { total / on.len() as f64 })).collect()
 }
 
-/// Grid nodes the part uses nearest an axis: within a cube and a half of the closest.
-fn nodes_on_bore(grid: &Grid, used: &[bool], bore: &Bore) -> Vec<usize> {
+/// Nodes among `ids` nearest an axis: within a cube and a half of the closest.
+fn nodes_near_axis(ids: impl Iterator<Item = usize>, position: impl Fn(usize) -> [f64; 3], h: f64, bore: &Bore) -> Vec<usize> {
     let l = (bore.axis[0] * bore.axis[0] + bore.axis[1] * bore.axis[1] + bore.axis[2] * bore.axis[2]).sqrt().max(1e-12);
     let u = bore.axis.map(|c| c / l);
     let off = |id: usize| {
-        let q = grid.position(id);
+        let q = position(id);
         let d = [q[0] - bore.at[0], q[1] - bore.at[1], q[2] - bore.at[2]];
         let t = d[0] * u[0] + d[1] * u[1] + d[2] * u[2];
         ((d[0] - t * u[0]).powi(2) + (d[1] - t * u[1]).powi(2) + (d[2] - t * u[2]).powi(2)).sqrt()
     };
-    let near: Vec<(usize, f64)> = (0..used.len()).filter(|&id| used[id]).map(|id| (id, off(id))).collect();
+    let near: Vec<(usize, f64)> = ids.map(|id| (id, off(id))).collect();
     let closest = near.iter().map(|(_, d)| *d).fold(f64::INFINITY, f64::min);
-    near.into_iter().filter(|(_, d)| *d <= closest + 1.5 * grid.h).map(|(id, _)| id).collect()
+    near.into_iter().filter(|(_, d)| *d <= closest + 1.5 * h).map(|(id, _)| id).collect()
 }
 
-/// Grid nodes the part uses that lie on a picked face.
-fn nodes_on(grid: &Grid, used: &[bool], face: &Face) -> Vec<usize> {
+/// Nodes among `ids` that lie on a picked face.
+fn nodes_on_face(ids: impl Iterator<Item = usize>, position: impl Fn(usize) -> [f64; 3], h: f64, face: &Face) -> Vec<usize> {
     let n = face.normal;
     let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-12);
     let n = n.map(|c| c / len);
     let tris: Vec<[[f64; 3]; 3]> = face.triangles.chunks_exact(9).map(|t| [[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]).collect();
-    let margin = grid.h * 0.55;
+    let margin = h * 0.55;
     let inside = |q: [f64; 3]| {
         tris.iter().any(|t| {
             // Project onto the triangle's plane, then test with a margin of half a cube.
@@ -524,56 +607,207 @@ fn nodes_on(grid: &Grid, used: &[bool], face: &Face) -> Vec<usize> {
             })
         })
     };
-    (0..used.len())
-        .filter(|&id| used[id])
-        .filter(|&id| {
-            let q = grid.position(id);
-            let d = (q[0] - face.point[0]) * n[0] + (q[1] - face.point[1]) * n[1] + (q[2] - face.point[2]) * n[2];
-            d.abs() <= margin && inside(q)
-        })
-        .collect()
+    ids.filter(|&id| {
+        let q = position(id);
+        let d = (q[0] - face.point[0]) * n[0] + (q[1] - face.point[1]) * n[1] + (q[2] - face.point[2]) * n[2];
+        d.abs() <= margin && inside(q)
+    })
+    .collect()
+}
+
+/// Grid nodes the part uses that lie on a picked face.
+fn nodes_on(grid: &Grid, used: &[bool], face: &Face) -> Vec<usize> {
+    nodes_on_face((0..used.len()).filter(|&id| used[id]), |id| grid.position(id), grid.h, face)
 }
 
 // ---- Solving -------------------------------------------------------------------
 
-/// The cubes of a part, their stiffness, and which nodes its supports hold.
+/// One part's nodes: the corners of a box of the grid's cubes (`n` cubes from
+/// cube `lo` along each axis), numbered from `first`. Parts studied together
+/// each have their own nodes, so where they touch they can part or slide.
+#[derive(Clone, Debug)]
+struct Block {
+    lo: [usize; 3],
+    n: [usize; 3],
+    first: usize,
+}
+
+impl Block {
+    fn count(&self) -> usize {
+        (self.n[0] + 1) * (self.n[1] + 1) * (self.n[2] + 1)
+    }
+    fn end(&self) -> usize {
+        self.first + self.count()
+    }
+    /// The node at grid corner `g` (which must be in the box).
+    fn node(&self, g: [usize; 3]) -> usize {
+        self.first + (g[0] - self.lo[0]) + (self.n[0] + 1) * ((g[1] - self.lo[1]) + (self.n[1] + 1) * (g[2] - self.lo[2]))
+    }
+    /// The grid corner of one of its nodes.
+    fn at(&self, id: usize) -> [usize; 3] {
+        let l = id - self.first;
+        let (nx, ny) = (self.n[0] + 1, self.n[1] + 1);
+        [self.lo[0] + l % nx, self.lo[1] + (l / nx) % ny, self.lo[2] + l / (nx * ny)]
+    }
+    /// The 8 corner nodes of a cube, in the element's corner order.
+    fn corners(&self, c: [usize; 3]) -> [usize; 8] {
+        CORNERS.map(|o| self.node([c[0] + (o[0] > 0.0) as usize, c[1] + (o[1] > 0.0) as usize, c[2] + (o[2] > 0.0) as usize]))
+    }
+    /// The same box on a grid of cubes twice the size.
+    fn coarser(&self, first: usize) -> Block {
+        let lo = self.lo.map(|v| v / 2);
+        let n = std::array::from_fn(|d| (self.lo[d] + self.n[d]).div_ceil(2) - lo[d]);
+        Block { lo, n, first }
+    }
+}
+
+/// Numbers blocks one after another.
+fn lay_out(boxes: impl Iterator<Item = ([usize; 3], [usize; 3])>) -> Vec<Block> {
+    let mut first = 0;
+    boxes
+        .map(|(lo, n)| {
+            let b = Block { lo, n, first };
+            first = b.end();
+            b
+        })
+        .collect()
+}
+
+/// The block a node is in.
+fn block_of(blocks: &[Block], id: usize) -> usize {
+    blocks.partition_point(|b| b.end() <= id)
+}
+
+/// A stiff link between nodes (a contact or a glued joint): adds k·g·gᵀ to
+/// the stiffness, where g is sparse over the unknowns.
+#[derive(Clone, Debug)]
+struct Spring {
+    k: f64,
+    g: Vec<(usize, f64)>,
+}
+
+/// y += Σ k·g·(g·x).
+fn add_springs(springs: &[Spring], x: &[f64], y: &mut [f64]) {
+    for s in springs {
+        let v = s.k * s.g.iter().map(|&(i, c)| c * x[i]).sum::<f64>();
+        if v != 0.0 {
+            for &(i, c) in &s.g {
+                y[i] += v * c;
+            }
+        }
+    }
+}
+
+/// How weak (beside a cube's own stiffness) the springs are that keep a part
+/// with no support from drifting off: far too weak to carry load, but enough
+/// that a part held only by frictionless contact has a definite answer.
+const SOFT: f64 = 1e-9;
+/// A part whose weak tie carries more than this share of the load is drifting.
+const DRIFT: f64 = 1e-3;
+
+/// The cubes of the parts, their stiffness, and which nodes supports hold.
 struct Model {
     grid: Grid,
+    blocks: Vec<Block>,
     corners: Vec<[usize; 8]>,
     cells: Vec<[usize; 3]>,
+    /// Each cube's part (index into `blocks` and `kes`).
+    part: Vec<usize>,
     nodes: usize,
     used: Vec<bool>,
     fixed: Vec<bool>,
-    ke: Vec<f64>,
+    /// Each part's cube stiffness, in its own material.
+    kes: Vec<Vec<f64>>,
     /// Each cube's share of material (scales its stiffness and mass).
     weight: Vec<f64>,
+    /// The diagonal of the stiffness: of the cubes alone, and with the springs.
+    el_diag: Vec<f64>,
     diag: Vec<f64>,
+    /// Links between parts where they touch.
+    springs: Vec<Spring>,
+    /// Parts held by no support, and the weak tie (per cube corner) that keeps them from drifting.
+    floating: Vec<Option<f64>>,
     /// Coarse grids that speed up the solve on big or thin parts.
     mg: Option<multigrid::Multigrid>,
 }
 
 impl Model {
     fn build(positions: &[f32], triangles: &[u32], material: &Elastic, supports: &[Face], bores: &[Bore], resolution: usize) -> Result<Model, String> {
+        let grid = voxelize(positions, triangles, resolution.clamp(8, 160));
+        let fill = grid.fill.clone();
+        let supports: Vec<(usize, &Face)> = supports.iter().map(|f| (0, f)).collect();
+        let bores: Vec<(usize, &Bore)> = bores.iter().map(|b| (0, b)).collect();
+        let mut model = Model::assemble(grid, &[fill], &[*material], &["the part".into()], &supports, &bores)?;
+        model.finish(&[false]);
+        Ok(model)
+    }
+
+    /// Several parts on one grid, each cube going to the part that fills
+    /// most of it, each part with nodes of its own. Supports and bores name
+    /// the part they hold.
+    fn assemble(mut grid: Grid, fills: &[Vec<f32>], materials: &[Elastic], names: &[String], supports: &[(usize, &Face)], bores: &[(usize, &Bore)]) -> Result<Model, String> {
         if supports.is_empty() && bores.is_empty() {
             return Err("add a support: a face the part is held by".into());
         }
-        let grid = voxelize(positions, triangles, resolution.clamp(8, 160));
-        let cells: Vec<[usize; 3]> = (0..grid.n[2]).flat_map(|k| (0..grid.n[1]).flat_map(move |j| (0..grid.n[0]).map(move |i| [i, j, k]))).filter(|&[i, j, k]| grid.fill[grid.cell(i, j, k)] >= MIN_FILL).collect();
+        let parts = fills.len();
+        let count = grid.fill.len();
+        // A cube's stiffness counts all the material in it, whichever part has most.
+        let mut owner = vec![usize::MAX; count];
+        let mut total = vec![0.0f32; count];
+        for c in 0..count {
+            for (p, fill) in fills.iter().enumerate() {
+                total[c] += fill[c];
+                if fill[c] >= MIN_FILL && (owner[c] == usize::MAX || fill[c] > fills[owner[c]][c]) {
+                    owner[c] = p;
+                }
+            }
+        }
+        grid.fill = total;
+        let mut cells = vec![];
+        let mut part = vec![];
+        for k in 0..grid.n[2] {
+            for j in 0..grid.n[1] {
+                for i in 0..grid.n[0] {
+                    let p = owner[grid.cell(i, j, k)];
+                    if p != usize::MAX {
+                        cells.push([i, j, k]);
+                        part.push(p);
+                    }
+                }
+            }
+        }
         if cells.is_empty() {
             return Err("the part is too thin for this resolution: raise it".into());
         }
-        let nodes = (grid.n[0] + 1) * (grid.n[1] + 1) * (grid.n[2] + 1);
+        // Each part's box of cubes.
+        let mut lo = vec![[usize::MAX; 3]; parts];
+        let mut hi = vec![[0usize; 3]; parts];
+        for (c, &p) in cells.iter().zip(&part) {
+            for d in 0..3 {
+                lo[p][d] = lo[p][d].min(c[d]);
+                hi[p][d] = hi[p][d].max(c[d] + 1);
+            }
+        }
+        if let Some(p) = (0..parts).find(|&p| lo[p][0] == usize::MAX) {
+            return Err(format!("{} is too thin for this resolution: raise it", if parts > 1 { format!("“{}”", names[p]) } else { "the part".into() }));
+        }
+        let blocks = lay_out((0..parts).map(|p| (lo[p], std::array::from_fn(|d| hi[p][d] - lo[p][d]))));
+        let nodes = blocks.last().map_or(0, |b| b.end());
+        let corners: Vec<[usize; 8]> = cells.iter().zip(&part).map(|(&c, &p)| blocks[p].corners(c)).collect();
         let mut used = vec![false; nodes];
-        let corners: Vec<[usize; 8]> = cells.iter().map(|&[i, j, k]| grid.corners(i, j, k)).collect();
         for c in &corners {
             for &n in c {
                 used[n] = true;
             }
         }
-        let ke = element_stiffness(material, grid.h);
+        let position = |id: usize| {
+            let g = blocks[block_of(&blocks, id)].at(id);
+            [0, 1, 2].map(|d| grid.origin[d] + g[d] as f64 * grid.h)
+        };
+        let of_part = |p: usize| (blocks[p].first..blocks[p].end()).filter(|&id| used[id]);
         let mut fixed = vec![false; 3 * nodes];
-        for (s, face) in supports.iter().enumerate() {
-            let on = nodes_on(&grid, &used, face);
+        for (s, &(p, face)) in supports.iter().enumerate() {
+            let on = nodes_on_face(of_part(p), position, grid.h, face);
             if on.is_empty() {
                 return Err(format!("support {} touches no part of the part at this resolution", s + 1));
             }
@@ -581,8 +815,8 @@ impl Model {
                 fixed[3 * n..3 * n + 3].fill(true);
             }
         }
-        for (s, bore) in bores.iter().enumerate() {
-            let on = nodes_on_bore(&grid, &used, bore);
+        for (s, &(p, bore)) in bores.iter().enumerate() {
+            let on = nodes_near_axis(of_part(p), position, grid.h, bore);
             if on.is_empty() {
                 return Err(format!("bore {} touches no part of the part", s + 1));
             }
@@ -590,18 +824,67 @@ impl Model {
                 fixed[3 * n..3 * n + 3].fill(true);
             }
         }
+        let kes: Vec<Vec<f64>> = materials.iter().map(|m| element_stiffness(m, grid.h)).collect();
         let weight: Vec<f64> = cells.iter().map(|&[i, j, k]| (grid.fill[grid.cell(i, j, k)] as f64).min(1.0)).collect();
-        let mut diag = vec![0.0; 3 * nodes];
-        for (c, w) in corners.iter().zip(&weight) {
+        Ok(Model { grid, blocks, corners, cells, part, nodes, used, fixed, kes, weight, el_diag: vec![], diag: vec![], springs: vec![], floating: vec![None; parts], mg: None })
+    }
+
+    /// Whether each part is held by a support of its own.
+    fn held(&self) -> Vec<bool> {
+        self.blocks.iter().map(|b| (b.first..b.end()).any(|n| self.fixed[3 * n])).collect()
+    }
+
+    /// Finishes the stiffness: parts marked `loose` (held by no support,
+    /// nor glued to anything that is) are tied very weakly to where they
+    /// are; then the diagonal and the coarse grids.
+    fn finish(&mut self, loose: &[bool]) {
+        for (p, _) in loose.iter().enumerate().filter(|(_, l)| **l) {
+            let ke = &mut self.kes[p];
+            let s = SOFT * (0..24).map(|r| ke[r * 25]).sum::<f64>() / 24.0;
+            (0..24).for_each(|r| ke[r * 25] += s);
+            self.floating[p] = Some(s);
+        }
+        let mut el_diag = vec![0.0; 3 * self.nodes];
+        for ((c, w), &p) in self.corners.iter().zip(&self.weight).zip(&self.part) {
             for (r, &n) in c.iter().enumerate() {
                 for d in 0..3 {
-                    diag[3 * n + d] += w * ke[(3 * r + d) * 24 + 3 * r + d];
+                    el_diag[3 * n + d] += w * self.kes[p][(3 * r + d) * 24 + 3 * r + d];
                 }
             }
         }
-        let mut model = Model { grid, corners, cells, nodes, used, fixed, ke, weight, diag, mg: None };
-        model.mg = multigrid::Multigrid::build(&model);
-        Ok(model)
+        self.diag = el_diag.clone();
+        self.el_diag = el_diag;
+        self.mg = multigrid::Multigrid::build(self);
+    }
+
+    /// How hard the weak tie of a part with no support pulls on it (N): more
+    /// than a sliver of the load, and the part is drifting freely.
+    fn tie_pull(&self, p: usize, u: &[f64]) -> f64 {
+        let Some(s) = self.floating[p] else { return 0.0 };
+        let mut pull = [0.0; 3];
+        for ((c, w), _) in self.corners.iter().zip(&self.weight).zip(&self.part).filter(|(_, q)| **q == p) {
+            for &n in c {
+                for d in 0..3 {
+                    pull[d] += w * s * u[3 * n + d];
+                }
+            }
+        }
+        (pull[0] * pull[0] + pull[1] * pull[1] + pull[2] * pull[2]).sqrt()
+    }
+
+    /// The grid corner a node sits at.
+    fn node_at(&self, id: usize) -> [usize; 3] {
+        self.blocks[block_of(&self.blocks, id)].at(id)
+    }
+
+    fn position(&self, id: usize) -> [f64; 3] {
+        let g = self.node_at(id);
+        [0, 1, 2].map(|d| self.grid.origin[d] + g[d] as f64 * self.grid.h)
+    }
+
+    /// The nodes a part uses.
+    fn part_nodes(&self, p: usize) -> impl Iterator<Item = usize> + '_ {
+        (self.blocks[p].first..self.blocks[p].end()).filter(|&id| self.used[id])
     }
 
     fn free(&self, i: usize) -> bool {
@@ -616,18 +899,39 @@ impl Model {
         });
     }
 
+    /// Puts links between parts in the stiffness (replacing any before),
+    /// dropping their held ends, and brings the coarse grids up to date.
+    fn set_springs(&mut self, mut springs: Vec<Spring>) {
+        for s in springs.iter_mut() {
+            s.g.retain(|&(i, c)| c != 0.0 && self.free(i));
+        }
+        springs.retain(|s| !s.g.is_empty() && s.k > 0.0);
+        self.diag = self.el_diag.clone();
+        for s in &springs {
+            for &(i, c) in &s.g {
+                self.diag[i] += s.k * c * c;
+            }
+        }
+        self.springs = springs;
+        if let Some(mut mg) = self.mg.take() {
+            mg.set_springs(self);
+            self.mg = Some(mg);
+        }
+    }
+
     /// K·x, element by element, in parallel (held and unused entries zero).
     fn apply(&self, x: &[f64]) -> Vec<f64> {
         let n3 = 3 * self.nodes;
-        let ke = &self.ke;
         let mut y = self
             .corners
             .par_chunks(4096)
             .zip(self.weight.par_chunks(4096))
+            .zip(self.part.par_chunks(4096))
             .fold(
                 || vec![0.0; n3],
-                |mut y, (chunk, weights)| {
-                    for (c, w) in chunk.iter().zip(weights) {
+                |mut y, ((chunk, weights), parts)| {
+                    for ((c, w), &p) in chunk.iter().zip(weights).zip(parts) {
+                        let ke = &self.kes[p];
                         let mut xe = [0.0; 24];
                         for (a, &n) in c.iter().enumerate() {
                             xe[3 * a..3 * a + 3].copy_from_slice(&x[3 * n..3 * n + 3]);
@@ -646,6 +950,7 @@ impl Model {
                 a.iter_mut().zip(&b).for_each(|(x, y)| *x += y);
                 a
             });
+        add_springs(&self.springs, x, &mut y);
         self.mask(&mut y);
         y
     }
@@ -692,19 +997,69 @@ impl Model {
     }
 }
 
+/// One part of a several-part study: its closed mesh (all parts in the same
+/// coordinates, mm) and its material.
+pub struct Body<'a> {
+    pub name: String,
+    pub positions: &'a [f32],
+    pub triangles: &'a [u32],
+    pub material: Elastic,
+}
+
 /// Runs a study on a closed mesh (part coordinates, mm).
 pub fn solve(positions: &[f32], triangles: &[u32], material: &Elastic, study: &Study) -> Result<Result_, String> {
+    solve_parts(&[Body { name: String::new(), positions, triangles, material: *material }], study)
+}
+
+/// Runs a study on several parts together, each in its own material, filled
+/// with cubes on one grid and pressing on one another where they touch (see
+/// `contact`). Faces name the part they are on (none: the first part); bores
+/// are on the first part.
+pub fn solve_parts(bodies: &[Body], study: &Study) -> Result<Result_, String> {
+    if bodies.is_empty() {
+        return Err("nothing to study".into());
+    }
     if study.loads.is_empty() && study.bore_loads.is_empty() {
         return Err("add a load: a face and the force on it".into());
     }
-    let model = Model::build(positions, triangles, material, &study.supports, &study.bore_supports, study.resolution)?;
-    let (grid, cells, corners, nodes, used, fixed) = (&model.grid, &model.cells, &model.corners, model.nodes, &model.used, &model.fixed);
-    let h = grid.h;
+    let several = bodies.len() > 1;
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for b in bodies {
+        let (l, u) = bounds(b.positions, b.triangles);
+        for d in 0..3 {
+            lo[d] = lo[d].min(l[d]);
+            hi[d] = hi[d].max(u[d]);
+        }
+    }
+    let grid = grid_around(lo, hi, study.resolution.clamp(8, 160));
+    let fills: Vec<Vec<f32>> = bodies.par_iter().map(|b| fill_of(&grid, b.positions, b.triangles)).collect();
+    let names: Vec<String> = bodies.iter().map(|b| b.name.clone()).collect();
+    let materials: Vec<Elastic> = bodies.iter().map(|b| b.material).collect();
+    let part_of = |what: String, name: &Option<String>| -> Result<usize, String> {
+        match name {
+            None => Ok(0),
+            Some(n) => names.iter().position(|m| m == n).ok_or_else(|| format!("{what} is on “{n}”, which is not in the study")),
+        }
+    };
+    let supports = study.supports.iter().enumerate().map(|(i, f)| Ok((part_of(format!("support {}", i + 1), &f.part)?, f))).collect::<Result<Vec<_>, String>>()?;
+    let bores: Vec<(usize, &Bore)> = study.bore_supports.iter().map(|b| (0, b)).collect();
+    let shown: Vec<String> = if several { names.clone() } else { vec!["the part".into()] };
+    let mut model = Model::assemble(grid, &fills, &materials, &shown, &supports, &bores)?;
+    let pairs = several.then(|| contact::find(&model, &fills, &materials, &names, &study.contacts));
+    let anchored = match &pairs {
+        Some(found) => found.anchored(model.held()),
+        None => model.held(),
+    };
+    model.finish(&anchored.iter().map(|a| !a).collect::<Vec<_>>());
+    let (nodes, h) = (model.nodes, model.grid.h);
     let mut notes = vec![];
     let mut f = vec![0.0; 3 * nodes];
-    let share = node_shares(nodes, corners, &model.weight);
+    let share = node_shares(nodes, &model.corners, &model.weight);
+    let mut applied = 0.0;
     for (l, load) in study.loads.iter().enumerate() {
-        let on: Vec<usize> = nodes_on(grid, used, &load.face).into_iter().filter(|&n| !fixed[3 * n]).collect();
+        let p = part_of(format!("load {}", l + 1), &load.face.part)?;
+        let on: Vec<usize> = nodes_on_face(model.part_nodes(p), |id| model.position(id), h, &load.face).into_iter().filter(|&n| !model.fixed[3 * n]).collect();
         if on.is_empty() {
             return Err(format!("load {} touches no free part of the part", l + 1));
         }
@@ -713,9 +1068,10 @@ pub fn solve(positions: &[f32], triangles: &[u32], material: &Elastic, study: &S
                 f[3 * n + d] += v;
             }
         }
+        applied += load.force.iter().map(|c| c * c).sum::<f64>().sqrt();
     }
     for (l, load) in study.bore_loads.iter().enumerate() {
-        let on: Vec<usize> = nodes_on_bore(grid, used, &load.bore).into_iter().filter(|&n| !fixed[3 * n]).collect();
+        let on: Vec<usize> = nodes_near_axis(model.part_nodes(0), |id| model.position(id), h, &load.bore).into_iter().filter(|&n| !model.fixed[3 * n]).collect();
         if on.is_empty() {
             return Err(format!("bore load {} touches no free part of the part", l + 1));
         }
@@ -724,18 +1080,40 @@ pub fn solve(positions: &[f32], triangles: &[u32], material: &Elastic, study: &S
                 f[3 * n + d] += v;
             }
         }
+        applied += load.force.iter().map(|c| c * c).sum::<f64>().sqrt();
     }
     let mut u = vec![0.0; 3 * nodes];
-    let (iterations, converged) = model.cg(&f, &mut u, 1e-9);
+    if pairs.as_ref().is_some_and(|p| p.overlap) {
+        notes.push("Some parts overlap rather than touch: they are taken as just touching (no press-fit squeeze).".to_string());
+    }
+    let mut slides = vec![false; bodies.len()];
+    let (iterations, converged, contact) = if let Some(pairs) = pairs.filter(|p| !p.is_empty()) {
+        let out = contact::solve(&mut model, &f, &mut u, &pairs);
+        slides = contact::slipping(&pairs, &out, bodies.len());
+        if !out.settled {
+            notes.push(format!("The contacts did not fully settle in {} rounds: pressures are approximate.", out.rounds));
+        }
+        let report = contact::report(&model, &pairs, &out, &names);
+        (out.iterations, out.converged, Some(report))
+    } else {
+        if several {
+            notes.push("The parts do not touch anywhere: each carries only its own loads.".to_string());
+        }
+        let (it, ok) = model.cg(&f, &mut u, 1e-9);
+        (it, ok, None)
+    };
     if !converged {
         notes.push("The solve did not fully settle: is the part held so it cannot spin or slide? Results are approximate.".into());
     }
     // Stress at each cube's centre: σ = D·B(0)·uₑ (the extra modes add no strain there).
-    let d = d_matrix(material);
+    let ds: Vec<[[f64; 6]; 6]> = materials.iter().map(d_matrix).collect();
     let b0 = b_matrix([0.0; 3], h);
-    let stresses: Vec<f64> = corners
+    let stresses: Vec<f64> = model
+        .corners
         .par_iter()
-        .map(|c| {
+        .zip(&model.part)
+        .map(|(c, &p)| {
+            let d = &ds[p];
             let mut ue = [0.0; 24];
             for (a, &n) in c.iter().enumerate() {
                 ue[3 * a..3 * a + 3].copy_from_slice(&u[3 * n..3 * n + 3]);
@@ -745,30 +1123,94 @@ pub fn solve(positions: &[f32], triangles: &[u32], material: &Elastic, study: &S
             (0.5 * ((s[0] - s[1]).powi(2) + (s[1] - s[2]).powi(2) + (s[2] - s[0]).powi(2)) + 3.0 * (s[3] * s[3] + s[4] * s[4] + s[5] * s[5])).sqrt()
         })
         .collect();
-    let max_stress = stresses.iter().cloned().fold(0.0, f64::max);
-    let mut max_displacement: f64 = 0.0;
-    let displacements: Vec<([u32; 3], [f32; 3])> = (0..nodes)
-        .filter(|&n| used[n])
-        .map(|n| {
-            let v = [u[3 * n], u[3 * n + 1], u[3 * n + 2]];
-            max_displacement = max_displacement.max((v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt());
-            (grid.node_at(n).map(|c| c as u32), v.map(|c| c as f32))
+    let count = bodies.len();
+    // A part no support holds, that its contacts let go: what its weak tie carries.
+    let free: Vec<bool> = (0..count)
+        .map(|p| {
+            if model.floating[p].is_none() {
+                return false;
+            }
+            // Slipping wherever it presses, or pulled about by its weak tie: held by nothing.
+            slides[p] || model.tie_pull(p, &u) > DRIFT * applied.max(1e-12)
         })
         .collect();
-    notes.push(format!("{} cubes of {} mm; stress is read at each cube's centre, so a sharp inside corner shows lower than its true peak.", cells.len(), crate::drawing::length_text(h)));
+    for p in (0..count).filter(|&p| free[p]) {
+        notes.push(format!("“{}” is held by no support and its contacts do not hold it: it slides or lifts away freely, so how far it moves means nothing. Hold it, or glue it with a bonded contact.", names[p]));
+    }
+    let mut part_stress = vec![0.0f64; count];
+    for (s, &p) in stresses.iter().zip(&model.part) {
+        part_stress[p] = part_stress[p].max(*s);
+    }
+    let mut part_move = vec![0.0f64; count];
+    let mut displacements = vec![];
+    let mut node_parts = vec![];
+    for n in (0..nodes).filter(|&n| model.used[n]) {
+        let p = block_of(&model.blocks, n);
+        let v = [u[3 * n], u[3 * n + 1], u[3 * n + 2]];
+        part_move[p] = part_move[p].max((v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt());
+        if free[p] {
+            continue; // drifting: drawn where it is
+        }
+        displacements.push((model.node_at(n).map(|c| c as u32), v.map(|c| c as f32)));
+        if several {
+            node_parts.push(p as u8);
+        }
+    }
+    let max_stress = stresses.iter().cloned().fold(0.0, f64::max);
+    let max_displacement = (0..count).filter(|&p| !free[p]).map(|p| part_move[p]).fold(0.0, f64::max);
+    let safety_of = |p: usize| if part_stress[p] > 0.0 { materials[p].yield_strength / part_stress[p] } else { f64::INFINITY };
+    // The part nearest to yielding sets the study's safety.
+    let worst = (0..count).min_by(|&a, &b| safety_of(a).total_cmp(&safety_of(b))).unwrap_or(0);
+    notes.push(format!("{} cubes of {} mm; stress is read at each cube's centre, so a sharp inside corner shows lower than its true peak.", model.cells.len(), crate::drawing::length_text(h)));
     Ok(Result_ {
         cell: h,
-        origin: grid.origin,
-        counts: grid.n,
-        cells: cells.iter().zip(&stresses).map(|(c, s)| (c.map(|v| v as u32), *s as f32)).collect(),
+        origin: model.grid.origin,
+        counts: model.grid.n,
+        cells: model.cells.iter().zip(&stresses).map(|(c, s)| (c.map(|v| v as u32), *s as f32)).collect(),
         displacements,
         max_stress,
         max_displacement,
-        yield_strength: material.yield_strength,
-        safety: if max_stress > 0.0 { material.yield_strength / max_stress } else { f64::INFINITY },
-        elements: cells.len(),
+        yield_strength: materials[worst].yield_strength,
+        safety: safety_of(worst),
+        elements: model.cells.len(),
         iterations,
         notes,
+        parts: if several {
+            (0..count).map(|p| PartResult { name: names[p].clone(), max_stress: part_stress[p], max_displacement: part_move[p], yield_strength: materials[p].yield_strength, safety: safety_of(p), floating: free[p] }).collect()
+        } else {
+            vec![]
+        },
+        cell_parts: if several { model.part.iter().map(|&p| p as u8).collect() } else { vec![] },
+        node_parts,
+        contact,
+    })
+}
+
+/// Whether two closed meshes (positions, triangles, bounds) touch or nearly
+/// do: within about a cube of a normal study (56 cubes) of the two together.
+pub fn touching(a: (&[f32], &[u32], [f64; 3], [f64; 3]), b: (&[f32], &[u32], [f64; 3], [f64; 3])) -> bool {
+    let size = (0..3).map(|d| a.3[d].max(b.3[d]) - a.2[d].min(b.2[d])).fold(0.0, f64::max);
+    let reach = size / 56.0;
+    let lo: [f64; 3] = std::array::from_fn(|d| a.2[d].max(b.2[d]) - reach);
+    let hi: [f64; 3] = std::array::from_fn(|d| a.3[d].min(b.3[d]) + reach);
+    if (0..3).any(|d| hi[d] <= lo[d]) {
+        return false;
+    }
+    // Where their boxes meet, in cubes half that reach.
+    let longest = (0..3).map(|d| hi[d] - lo[d]).fold(0.0, f64::max);
+    let grid = grid_around(lo, hi, ((longest / (reach / 2.0)).ceil() as usize).clamp(4, 96));
+    let (fa, fb) = (fill_of(&grid, a.0, a.1), fill_of(&grid, b.0, b.1));
+    let n = grid.n;
+    (0..n[2]).any(|k| {
+        (0..n[1]).any(|j| {
+            (0..n[0]).any(|i| {
+                fa[grid.cell(i, j, k)] > 0.02
+                    && [[0, 0, 0], [-1, 0, 0], [1, 0, 0], [0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1]].iter().any(|o: &[i64; 3]| {
+                        let c = [i as i64 + o[0], j as i64 + o[1], k as i64 + o[2]];
+                        (0..3).all(|d| c[d] >= 0 && (c[d] as usize) < n[d]) && fb[grid.cell(c[0] as usize, c[1] as usize, c[2] as usize)] > 0.02
+                    })
+            })
+        })
     })
 }
 
@@ -782,6 +1224,12 @@ pub fn stress_at(r: &Result_, point: [f64; 3]) -> Option<f64> {
 pub fn displacement_at(r: &Result_, point: [f64; 3]) -> Option<[f64; 3]> {
     let idx = [0, 1, 2].map(|k| ((point[k] - r.origin[k]) / r.cell).round() as i64);
     r.displacements.iter().find(|(c, _)| (0..3).all(|k| c[k] as i64 == idx[k])).map(|(_, d)| d.map(|v| v as f64))
+}
+
+/// The displacement of one part (index in a several-part study) at the grid node nearest a point (mm).
+pub fn displacement_of(r: &Result_, part: usize, point: [f64; 3]) -> Option<[f64; 3]> {
+    let idx = [0, 1, 2].map(|k| ((point[k] - r.origin[k]) / r.cell).round() as i64);
+    r.displacements.iter().zip(0..).find(|((c, _), i)| r.node_parts.get(*i).map_or(part == 0, |&p| p as usize == part) && (0..3).all(|k| c[k] as i64 == idx[k])).map(|((_, d), _)| d.map(|v| v as f64))
 }
 
 // ---- Natural frequencies -------------------------------------------------------
@@ -985,7 +1433,7 @@ pub fn modes(positions: &[f32], triangles: &[u32], material: &Elastic, density: 
         cell: h,
         origin: model.grid.origin,
         cells: model.cells.iter().map(|c| c.map(|v| v as u32)).collect(),
-        nodes: nodes.iter().map(|&n| model.grid.node_at(n).map(|v| v as u32)).collect(),
+        nodes: nodes.iter().map(|&n| model.node_at(n).map(|v| v as u32)).collect(),
         modes,
         mass: cube * model.weight.iter().sum::<f64>(),
         notes,
