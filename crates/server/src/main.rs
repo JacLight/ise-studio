@@ -1066,6 +1066,46 @@ async fn stress(State(server): State<Arc<Server>>, Path(id): Path<String>, Query
     }
 }
 
+/// A part's saved study with its faces found on the shape as it is now
+/// (a face that no longer exists comes back null).
+async fn study(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let fail = |code: StatusCode, message: String| (code, message).into_response();
+    let app = match server.project(query.get("project")) {
+        Ok(app) => app,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let part = query.get("part").filter(|p| !p.is_empty()).cloned();
+    let found = {
+        let project = app.project.lock().unwrap();
+        serde_json::from_value::<StableId>(json!(id)).ok().and_then(|sid| {
+            let e = project.entity(sid)?;
+            let program = de_shape::resolved_program(project.world(), e)?;
+            let spec = project.get::<de_shape::ShapeStudies>(sid).and_then(|s| s.0.iter().find(|st| st.part == part).cloned());
+            Some((program, spec))
+        })
+    };
+    let Some((program, spec)) = found else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
+    let Some(spec) = spec else { return axum::Json(json!({ "spec": null })).into_response() };
+    let out = tokio::task::spawn_blocking(move || {
+        let supports: Vec<Option<de_shape::fea::Face>> = spec.supports.iter().map(|f| de_shape::resolve_face(&program, spec.part.as_deref(), f)).collect();
+        let loads: Vec<Value> = spec
+            .loads
+            .iter()
+            .map(|l| {
+                let face = de_shape::resolve_face(&program, spec.part.as_deref(), &l.face);
+                let force = face.as_ref().map(|f| l.force(f.normal));
+                json!({ "face": face, "force": force })
+            })
+            .collect();
+        json!({ "spec": spec, "supports": supports, "loads": loads })
+    })
+    .await;
+    match out {
+        Ok(v) => axum::Json(v).into_response(),
+        Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct ModesRequest {
     supports: Vec<de_shape::fea::Face>,
@@ -1510,6 +1550,7 @@ async fn main() -> std::io::Result<()> {
         .route("/motion/{id}", get(motion))
         .route("/stress/{id}", axum::routing::post(stress))
         .route("/modes/{id}", axum::routing::post(modes))
+        .route("/study/{id}", get(study))
         .route("/team", get(team_status))
         .route("/team/invite", axum::routing::post(team_invite))
         .route("/team/settings", axum::routing::post(team_settings))

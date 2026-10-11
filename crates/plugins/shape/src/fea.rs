@@ -13,6 +13,7 @@
 //! Units: millimetres, newtons, megapascals (N/mm²).
 
 use rayon::prelude::*;
+use de_core::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
 /// Elastic modulus (MPa), Poisson's ratio and yield strength (MPa).
@@ -71,6 +72,55 @@ pub struct Face {
     pub point: [f64; 3],
     pub normal: [f64; 3],
     pub triangles: Vec<f64>,
+}
+
+/// A face as kept with a study: where on the part it sits (fractions of the
+/// part's bounds: its middle, and a point on one of its triangles) and which
+/// way it faces, so it is found again after the part changes.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+pub struct FacePick {
+    pub at: [f64; 3],
+    pub probe: [f64; 3],
+    pub normal: [f64; 3],
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+pub struct LoadPick {
+    pub face: FacePick,
+    /// Newtons.
+    pub magnitude: f64,
+    /// "into" (the face) or an axis: "-z", "+z", "-x", "+x", "-y", "+y".
+    pub direction: String,
+}
+
+/// A study as kept with the shape.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+pub struct StudySpec {
+    /// The part of an assembly it is on (none: the whole solid).
+    #[serde(default)]
+    pub part: Option<String>,
+    #[serde(default)]
+    pub supports: Vec<FacePick>,
+    #[serde(default)]
+    pub loads: Vec<LoadPick>,
+    #[serde(default = "default_resolution")]
+    pub resolution: usize,
+}
+
+impl LoadPick {
+    /// The force (N) on a face facing `normal`.
+    pub fn force(&self, normal: [f64; 3]) -> [f64; 3] {
+        let unit = match self.direction.as_str() {
+            "-z" => [0.0, 0.0, -1.0],
+            "+z" => [0.0, 0.0, 1.0],
+            "-x" => [-1.0, 0.0, 0.0],
+            "+x" => [1.0, 0.0, 0.0],
+            "-y" => [0.0, -1.0, 0.0],
+            "+y" => [0.0, 1.0, 0.0],
+            _ => normal.map(|c| -c),
+        };
+        unit.map(|c| c * self.magnitude)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

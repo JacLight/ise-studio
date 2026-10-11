@@ -43,6 +43,7 @@ impl Plugin for ShapePlugin {
     fn register(&self, r: &mut Registry) {
         r.component::<ShapeProgram>()
             .component::<PartMaterials>()
+            .component::<ShapeStudies>()
             .component::<ParameterSet>()
             .component::<sketch::Sketch>()
             .command::<sketch::CreateSketch>()
@@ -55,6 +56,7 @@ impl Plugin for ShapePlugin {
             .command::<CreateShape>()
             .command::<SetShapeParams>()
             .command::<UpdateShape>()
+            .command::<SetStudy>()
             // Formulas first: geometry is evaluated from the resolved values, and
             // re-evaluated when anything a formula reads changes.
             .derived(Derived {
@@ -226,6 +228,56 @@ pub struct PartMaterials(pub std::collections::BTreeMap<String, StableId>);
 
 impl Persist for PartMaterials {
     const KIND: &'static str = "shape.materials";
+}
+
+/// Stress and vibration studies kept with a shape, one per part (or for the
+/// whole solid): which faces hold it and which take loads, found again by
+/// where they sit when the part changes.
+#[derive(Component, Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ShapeStudies(pub Vec<fea::StudySpec>);
+
+impl Persist for ShapeStudies {
+    const KIND: &'static str = "shape.studies";
+}
+
+/// Keeps a part's study with the shape (no supports and no loads removes it).
+#[derive(Deserialize, JsonSchema)]
+pub struct SetStudy {
+    pub target: StableId,
+    pub study: fea::StudySpec,
+}
+
+impl Command for SetStudy {
+    const NAME: &'static str = "shape.set_study";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        if tx.get::<ShapeProgram>(self.target).is_none() {
+            return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{} is not a shape", self.target)));
+        }
+        let mut studies = tx.get::<ShapeStudies>(self.target).cloned().unwrap_or_default();
+        studies.0.retain(|s| s.part != self.study.part);
+        if !self.study.supports.is_empty() || !self.study.loads.is_empty() {
+            studies.0.push(self.study);
+        }
+        if studies.0.is_empty() {
+            tx.remove::<ShapeStudies>(self.target)?;
+        } else {
+            tx.set(self.target, studies)?;
+        }
+        Ok(json!({ "id": self.target }))
+    }
+}
+
+/// A stored face found on the shape as it is now: its triangles, a point on it and its normal.
+pub fn resolve_face(program: &ShapeProgram, part: Option<&str>, pick: &fea::FacePick) -> Option<fea::Face> {
+    let e = evaluated_at(program, program.display_tolerance()).ok()?;
+    let (lo, hi) = match part.and_then(|n| e.parts.iter().find(|p| p.name == n)) {
+        Some(p) => (p.bounds_min, p.bounds_max),
+        None => (e.bounds_min, e.bounds_max),
+    };
+    let at = |f: [f64; 3]| [0, 1, 2].map(|k| lo[k] + f[k] * (hi[k] - lo[k]));
+    let tris = flat_face(&e, part, at(pick.probe), pick.normal)?;
+    Some(fea::Face { point: at(pick.at), normal: pick.normal, triangles: tris.iter().flat_map(|t| t.iter().flat_map(|p| p.iter().copied())).collect() })
 }
 
 /// Derived: the evaluated solid (millimeters, program coordinates).
@@ -443,6 +495,22 @@ fn face_area(e: &runtime::Evaluated, part: Option<&str>, point: [f64; 3], n: [f6
     let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     let sub = |a: [f64; 3], b: [f64; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
     let cross = |a: [f64; 3], b: [f64; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    Some(
+        flat_face(e, part, point, n)?
+            .iter()
+            .map(|t| {
+                let c = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+                dot(c, c).sqrt() / 2.0
+            })
+            .sum(),
+    )
+}
+
+/// The triangles of the whole flat face facing `n` under `point`.
+pub fn flat_face(e: &runtime::Evaluated, part: Option<&str>, point: [f64; 3], n: [f64; 3]) -> Option<Vec<[[f64; 3]; 3]>> {
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let sub = |a: [f64; 3], b: [f64; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let cross = |a: [f64; 3], b: [f64; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
     let offset = face_offset(e, part, point, n)?;
     let tris: Vec<[[f64; 3]; 3]> = part_triangles(e, part).collect();
     let flat = |t: &[[f64; 3]; 3]| {
@@ -473,9 +541,11 @@ fn face_area(e: &runtime::Evaluated, part: Option<&str>, point: [f64; 3], n: [f6
     })?;
     let mut seen = vec![false; tris.len()];
     seen[start] = true;
-    let (mut queue, mut area) = (vec![start], 0.0);
+    let (mut queue, mut out) = (vec![start], vec![]);
     while let Some(i) = queue.pop() {
-        area += areas[i].unwrap_or(0.0);
+        if areas[i].is_some() {
+            out.push(tris[i]);
+        }
         for p in tris[i] {
             for &j in around.get(&key(p)).into_iter().flatten() {
                 if !seen[j] {
@@ -485,7 +555,7 @@ fn face_area(e: &runtime::Evaluated, part: Option<&str>, point: [f64; 3], n: [f6
             }
         }
     }
-    Some(area)
+    Some(out)
 }
 
 /// Where the flat face facing `n` under `point` sits along `n` (its plane's
