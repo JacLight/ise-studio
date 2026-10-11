@@ -22,8 +22,11 @@ export type FlatFace = {
 
 /**
  * The smooth surface around triangle `start` (local coordinates): every
- * triangle reached without crossing a sharp edge. `at` is the clicked point,
- * where the arrow goes.
+ * triangle reached without crossing a sharp edge, nor into facets of another
+ * size (a flat face a fillet runs into, or a fillet a shaft runs into: each
+ * surface's facets are alike). `at` is the clicked point, where the arrow
+ * goes. The engine finds a curved face picked for a study the same way
+ * (`smooth_face`), so what is shown is what is held or loaded.
  */
 export function curvedFaceAt(geometry: THREE.BufferGeometry, start: number, at: THREE.Vector3, range?: [number, number]): FlatFace | null {
   const pos = geometry.getAttribute("position") as THREE.BufferAttribute;
@@ -48,19 +51,52 @@ export function curvedFaceAt(geometry: THREE.BufferGeometry, start: number, at: 
       else edges.set(e, [t]);
     }
   }
+  const neighbours = (t: number) => {
+    const k = tri(t).map(key);
+    return ([[k[0], k[1]], [k[1], k[2]], [k[2], k[0]]] as [string, string][]).flatMap(([a, b]) => (edges.get(a < b ? `${a}|${b}` : `${b}|${a}`) ?? []).filter((u) => u !== t));
+  };
+  // How wide a triangle's flat group (it and its coplanar neighbours) is: area over its box's diagonal.
+  const widths = new Map<number, number>();
+  const widthOf = (t: number) => {
+    const known = widths.get(t);
+    if (known !== undefined) return known;
+    const group = new Set<number>([t]);
+    const stack = [t];
+    const box = new THREE.Box3();
+    let area = 0;
+    while (stack.length) {
+      const g = stack.pop()!;
+      const [a, b, c] = tri(g).map(v);
+      area += new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a)).length() / 2;
+      box.expandByPoint(a).expandByPoint(b).expandByPoint(c);
+      const n = normalOf(g);
+      for (const u of neighbours(g)) {
+        if (!group.has(u) && normalOf(u).dot(n) > 0.9999) {
+          group.add(u);
+          stack.push(u);
+        }
+      }
+    }
+    const diag = box.getSize(new THREE.Vector3()).length();
+    const w = diag > 0 ? area / diag : 0;
+    for (const g of group) widths.set(g, w);
+    return w;
+  };
+  const w0 = widthOf(start);
+  const alike = (u: number) => {
+    const w = widthOf(u);
+    return w <= 3 * w0 && w0 <= 3 * w;
+  };
   const seen = new Set<number>([start]);
   const queue = [start];
   while (queue.length) {
     const t = queue.pop()!;
     const n = normalOf(t);
-    const k = tri(t).map(key);
-    for (const [a, b] of [[k[0], k[1]], [k[1], k[2]], [k[2], k[0]]] as [string, string][]) {
-      for (const u of edges.get(a < b ? `${a}|${b}` : `${b}|${a}`) ?? []) {
-        // Facets of one smooth surface meet at under ~20°; a real edge is sharper.
-        if (!seen.has(u) && normalOf(u).dot(n) > 0.94) {
-          seen.add(u);
-          queue.push(u);
-        }
+    for (const u of neighbours(t)) {
+      // Facets of one smooth surface meet at under ~20°; a real edge is sharper.
+      if (!seen.has(u) && normalOf(u).dot(n) > 0.94 && alike(u)) {
+        seen.add(u);
+        queue.push(u);
       }
     }
   }

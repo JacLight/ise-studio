@@ -1489,9 +1489,11 @@ async fn study(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(
             .loads
             .iter()
             .map(|l| {
-                let face = de_shape::resolve_face(&program, spec.part.as_deref(), &l.face);
-                let force = face.as_ref().map(|f| l.force(f.normal));
-                json!({ "face": face, "force": force })
+                // The force and pressure it puts on the face as found now (a pressure on a curved face).
+                match de_shape::resolve_face(&program, spec.part.as_deref(), &l.face).map(|f| l.on(f)) {
+                    Some(load) => json!({ "face": load.face, "force": load.force, "pressure": load.pressure }),
+                    None => json!({ "face": null, "force": null }),
+                }
             })
             .collect();
         let holds: Vec<Value> = spec.holds.iter().map(|h| json!({ "face": de_shape::resolve_face(&program, spec.part.as_deref(), &h.face) })).collect();

@@ -11,9 +11,10 @@ import { Icon } from "./icons";
 import type { ProgramFace, StressView } from "./Viewport";
 
 type V3 = [number, number, number];
-type Face = { point: V3; normal: V3; triangles: number[]; part?: string | null };
-/** A face as kept with the study: where on the part it sits (fractions of the part's bounds) and which way it faces; `part` when on another part studied with it. */
-type Pick = { at: V3; probe: V3; normal: V3; part?: string };
+/** `curved`: a round face (a cylinder's side, a bore, a fillet), each triangle facing its own way. */
+type Face = { point: V3; normal: V3; triangles: number[]; part?: string | null; curved?: boolean };
+/** A face as kept with the study: where on the part it sits (fractions of the part's bounds) and which way it faces; `part` when on another part studied with it; `curved` for the whole round surface under the probe. */
+type Pick = { at: V3; probe: V3; normal: V3; part?: string; curved?: boolean };
 type ContactKind = "frictionless" | "friction" | "bonded";
 type ContactSpec = { parts: [string, string]; kind: ContactKind; friction: number; press_fit?: boolean };
 type Convection = { h: number; ambient: number };
@@ -34,14 +35,15 @@ type Spec = {
   refine?: boolean;
 };
 /** The saved faces found on the part as it is now (null: no longer there). */
-type Resolved = { supports: (Face | null)[]; loads: { face: Face | null; force: V3 | null }[]; holds: { face: Face | null }[]; heats: { face: Face | null }[] };
+/** A load's `pressure` (MPa) pushes every bit of its face straight in, besides its `force` (N). */
+type Resolved = { supports: (Face | null)[]; loads: { face: Face | null; force: V3 | null; pressure?: number }[]; holds: { face: Face | null }[]; heats: { face: Face | null }[] };
 type Temps = { cell: number; origin: V3; cells: [V3, number][]; max: number; min: number; heat_in: number; to_holds: number; to_air: number; notes: string[] };
 const AIR: { label: string; h: number }[] = [
   { label: "No air", h: 0 },
   { label: "Still air", h: 10 },
   { label: "Fan", h: 50 },
 ];
-type Direction = "into" | "-z" | "+z" | "-x" | "+x" | "-y" | "+y";
+type Direction = "into" | "pressure" | "-z" | "+z" | "-x" | "+x" | "-y" | "+y";
 type PartResult = { name: string; max_stress: number; max_displacement: number; yield_strength: number; safety: number; floating: boolean };
 type ContactPair = { parts: [string, string]; kind: ContactKind; friction: number; area: number; pressing: number; slipping: number; normal_force: number; shear_force: number; max_pressure: number; press_fit?: boolean; interference?: number; mean_pressure: number };
 type HeatSummary = { reference: number; min: number; max: number; thermal_stress: number | null; mechanical_stress: number | null };
@@ -65,6 +67,7 @@ type Modes = {
 
 const DIRECTIONS: { value: Direction; label: string }[] = [
   { value: "into", label: "Into the face" },
+  { value: "pressure", label: "Pressure (MPa)" },
   { value: "-z", label: "Down (−Z)" },
   { value: "+z", label: "Up (+Z)" },
   { value: "-x", label: "−X" },
@@ -72,6 +75,9 @@ const DIRECTIONS: { value: Direction; label: string }[] = [
   { value: "-y", label: "−Y" },
   { value: "+y", label: "+Y" },
 ];
+/** What a load's direction means, flat face or round. */
+const LOAD_TITLE =
+  "Into the face: on a flat face, the force square to it. On a round face (a bore, a shaft, a fillet), the newtons spread evenly over its area, each bit pushing straight in, so pushes on opposite sides cancel. Pressure: the same push given in MPa (N/mm²), as in a pressed bore or a pipe. An axis: the whole force one way, spread over the face by area.";
 const RESOLUTIONS = [
   { label: "Quick", value: 32 },
   { label: "Normal", value: 56 },
@@ -152,7 +158,7 @@ export function StressStudy(props: {
   }, [props.id, props.part, props.version]);
 
   const supports = resolved.supports.filter((f): f is Face => !!f);
-  const loads = resolved.loads.filter((l): l is { face: Face; force: V3 } => !!l.face && !!l.force);
+  const loads = resolved.loads.filter((l): l is { face: Face; force: V3; pressure?: number } => !!l.face && !!l.force);
   /** A picked face kept by where it sits on its part (this one, or another studied with it). */
   const pickOf = (f: ProgramFace): Pick => {
     const other = f.part && f.part !== props.part ? props.assembly.find((p) => p.name === f.part) : undefined;
@@ -160,7 +166,7 @@ export function StressStudy(props: {
     const frac = (p: V3): V3 => (b ? ([0, 1, 2].map((k) => (b.max[k] - b.min[k] > 1e-9 ? (p[k] - b.min[k]) / (b.max[k] - b.min[k]) : 0.5)) as V3) : [0.5, 0.5, 0.5]);
     const t = f.triangles;
     const probe: V3 = [(t[0] + t[3] + t[6]) / 3, (t[1] + t[4] + t[7]) / 3, (t[2] + t[5] + t[8]) / 3];
-    return { at: frac(f.centroid), probe: frac(probe), normal: f.normal, ...(other ? { part: other.name } : {}) };
+    return { at: frac(f.centroid), probe: frac(probe), normal: f.normal, ...(other ? { part: other.name } : {}), ...(f.curved ? { curved: true } : {}) };
   };
   /** Asks for a face on this part or any studied with it. */
   const pickFace = (purpose: string, take: (f: ProgramFace) => void) => props.onPickFace(purpose, take, spec.parts);
@@ -200,7 +206,7 @@ export function StressStudy(props: {
     }
     const faces: StressView["faces"] = [
       ...supports.map((f) => ({ kind: "support" as const, triangles: f.triangles, point: f.point })),
-      ...loads.map((l) => ({ kind: "load" as const, triangles: l.face.triangles, point: l.face.point, force: l.force })),
+      ...loads.map((l) => ({ kind: "load" as const, triangles: l.face.triangles, point: l.face.point, force: l.force, pressure: !!l.pressure })),
       ...thermalFaces,
     ];
     // A vibration mode, when one is picked, shows swinging; else the stress map.
@@ -238,7 +244,7 @@ export function StressStudy(props: {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           supports,
-          loads: loads.map((l) => ({ face: l.face, force: l.force })),
+          loads: loads.map((l) => ({ face: l.face, force: l.force, pressure: l.pressure ?? 0 })),
           resolution,
           part: props.part,
           parts: spec.parts,
@@ -314,7 +320,7 @@ export function StressStudy(props: {
         {spec.supports.map((_, i) => (
           <div key={`s${i}`} className={`stress-item support ${resolved.supports[i] === null ? "lost" : ""}`}>
             <span className="stress-dot" />
-            {resolved.supports[i] === null ? "Face no longer found: pick it again" : `Held at face ${i + 1}${onWhat(spec.supports[i])}`}
+            {resolved.supports[i] === null ? "Face no longer found: pick it again" : `Held at ${spec.supports[i].curved ? "round " : ""}face ${i + 1}${onWhat(spec.supports[i])}`}
             <button type="button" aria-label="Remove this support" onClick={() => save({ ...spec, supports: spec.supports.filter((_, j) => j !== i) })}>
               <Icon name="close" />
             </button>
@@ -327,15 +333,15 @@ export function StressStudy(props: {
               defaultValue={String(l.magnitude)}
               key={`${i}:${l.magnitude}`}
               inputMode="decimal"
-              aria-label="Force in newtons"
+              aria-label={l.direction === "pressure" ? "Pressure in megapascals" : "Force in newtons"}
               onBlur={(e) => {
                 const v = Number(e.target.value);
                 if (Number.isFinite(v) && v !== l.magnitude) save({ ...spec, loads: spec.loads.map((x, j) => (j === i ? { ...x, magnitude: v } : x)) });
               }}
               onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
             />
-            N
-            <select value={l.direction} aria-label="Direction" onChange={(e) => save({ ...spec, loads: spec.loads.map((x, j) => (j === i ? { ...x, direction: e.target.value as Direction } : x)) })}>
+            {l.direction === "pressure" ? "MPa" : "N"}
+            <select value={l.direction} aria-label="Direction" title={LOAD_TITLE} onChange={(e) => save({ ...spec, loads: spec.loads.map((x, j) => (j === i ? { ...x, direction: e.target.value as Direction } : x)) })}>
               {DIRECTIONS.map((d) => (
                 <option key={d.value} value={d.value}>
                   {d.label}
@@ -350,10 +356,10 @@ export function StressStudy(props: {
         ))}
       </div>
       <div className="stress-add">
-        <button type="button" className="secondary" onClick={() => pickFace(spec.parts.length ? "Click the face it is held by (on this part or one studied with it)" : "Click the face the part is held by", (f) => save({ ...spec, supports: [...spec.supports, pickOf(f)] }))}>
+        <button type="button" className="secondary" onClick={() => pickFace(spec.parts.length ? "Click the face it is held by, flat or round (on this part or one studied with it)" : "Click the face the part is held by, flat or round", (f) => save({ ...spec, supports: [...spec.supports, pickOf(f)] }))}>
           <Icon name="plus" /> Support
         </button>
-        <button type="button" className="secondary" onClick={() => pickFace(spec.parts.length ? "Click the face the force pushes on (on this part or one studied with it)" : "Click the face the force pushes on", (f) => save({ ...spec, loads: [...spec.loads, { face: pickOf(f), magnitude: 100, direction: "into" }] }))}>
+        <button type="button" className="secondary" onClick={() => pickFace(spec.parts.length ? "Click the face the force pushes on, flat or round (on this part or one studied with it)" : "Click the face the force pushes on, flat or round", (f) => save({ ...spec, loads: [...spec.loads, { face: pickOf(f), magnitude: 100, direction: "into" }] }))}>
           <Icon name="plus" /> Load
         </button>
         {!spec.parts.length && (
