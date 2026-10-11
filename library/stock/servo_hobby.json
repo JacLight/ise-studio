@@ -1,0 +1,133 @@
+{
+ "id": "servo_hobby",
+ "name": "Hobby servo",
+ "category": "Motors",
+ "summary": "TowerPro SG90, MG90S and MG996R RC servos: true case, tabs and holes, output spline, cable stub. Shaft axis on Z, case bottom on z = 0.",
+ "keywords": [
+  "servo",
+  "RC servo",
+  "SG90",
+  "MG90S",
+  "MG996R",
+  "TowerPro",
+  "micro servo",
+  "9g"
+ ],
+ "source": [
+  "common.js",
+  "servo_hobby.js"
+ ],
+ "display_tolerance": 0.02,
+ "materials": {
+  "SG90 body (case, motor, gears, PCB — lumped)": 1285,
+  "MG90S body (case, motor, gears, PCB — lumped)": 1890,
+  "MG996R body (case, motor, gears, PCB — lumped)": 1805,
+  "Brass": 8500,
+  "POM (acetal)": 1410,
+  "Servo lead (PVC, copper)": 2600
+ },
+ "params": [
+  {
+   "key": "model",
+   "label": "Model (0 SG90, 1 MG90S, 2 MG996R)",
+   "value": 2,
+   "unit": "",
+   "min": 0,
+   "max": 2,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "model"
+ ],
+ "rows": [
+  {
+   "name": "SG90",
+   "values": {
+    "model": 0
+   }
+  },
+  {
+   "name": "MG90S",
+   "values": {
+    "model": 1
+   }
+  },
+  {
+   "name": "MG996R",
+   "values": {
+    "model": 2
+   }
+  }
+ ],
+ "default": "MG996R",
+ "checks": {
+  "MG996R": {
+   "partNumber": "MG996R",
+   "massG": 55,
+   "metrics": {
+    "Spline teeth": 25,
+    "Spline diameter": 5.9
+   },
+   "connectors": [
+    "Output shaft",
+    "Bottom",
+    "Tab seat",
+    "Hole 1",
+    "Hole 2",
+    "Hole 3",
+    "Hole 4"
+   ],
+   "connector_at": {
+    "Hole 1": [
+     -14.4,
+     -5,
+     29.1
+    ],
+    "Hole 2": [
+     -14.4,
+     5,
+     29.1
+    ],
+    "Hole 3": [
+     35.1,
+     -5,
+     29.1
+    ],
+    "Hole 4": [
+     35.1,
+     5,
+     29.1
+    ],
+    "Output shaft": [
+     0,
+     0,
+     42.9
+    ]
+   }
+  },
+  "SG90": {
+   "massG": 9,
+   "connector_at": {
+    "Hole 1": [
+     -8.55,
+     0,
+     18.4
+    ],
+    "Hole 2": [
+     19.25,
+     0,
+     18.4
+    ],
+    "Output shaft": [
+     0,
+     0,
+     31.0
+    ]
+   }
+  },
+  "MG90S": {
+   "massG": 13.4
+  }
+ }
+}
