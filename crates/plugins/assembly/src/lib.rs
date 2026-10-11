@@ -31,6 +31,7 @@ use std::sync::Arc;
 
 pub mod comments;
 pub mod configs;
+pub mod fit;
 pub mod joints;
 pub mod motion;
 pub mod transform;
@@ -60,6 +61,8 @@ impl Plugin for AssemblyPlugin {
             .command::<joints::UpdateJoint>()
             .command::<joints::DeleteJoint>()
             .command::<configs::SetConfigTable>()
+            .component::<fit::FitProfile>()
+            .command::<fit::SetFitProfile>()
             .component::<CommentThread>()
             .component::<CommentReply>()
             .command::<comments::CreateComment>()

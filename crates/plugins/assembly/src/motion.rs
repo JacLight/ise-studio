@@ -76,17 +76,17 @@ pub struct AssemblySweep {
 }
 
 /// One instance's solids, in its own coordinates.
-struct Body {
-    leaves: Vec<(Arc<Manifold>, Transform)>,
-    lo: [f64; 3],
-    hi: [f64; 3],
+pub(crate) struct Body {
+    pub(crate) leaves: Vec<(Arc<Manifold>, Transform)>,
+    pub(crate) lo: [f64; 3],
+    pub(crate) hi: [f64; 3],
 }
 
 fn entity(world: &World, id: StableId) -> Option<de_core::bevy_ecs::entity::Entity> {
     world.resource::<IdIndex>().get(id)
 }
 
-fn body(world: &World, id: StableId) -> Result<Body, String> {
+pub(crate) fn body(world: &World, id: StableId) -> Result<Body, String> {
     let e = entity(world, id).ok_or("an instance is gone")?;
     let own = placement(world, e).unwrap_or(Transform::IDENTITY).inverse();
     let mut leaves = vec![];
