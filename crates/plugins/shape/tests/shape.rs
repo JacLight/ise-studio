@@ -1089,7 +1089,7 @@ fn a_cantilever_bends_and_is_stressed_as_beam_theory_says() {
         triangles: vec![x, 0.0, 0.0, x, 20.0, 0.0, x, 20.0, 20.0, x, 0.0, 0.0, x, 20.0, 20.0, x, 0.0, 20.0],
         part: None,
     };
-    let study = de_shape::fea::Study { supports: vec![face(0.0, -1.0)], loads: vec![de_shape::fea::Load { face: face(200.0, 1.0), force: [0.0, 0.0, -1000.0] }], bore_supports: vec![], bore_loads: vec![], resolution: 80, contacts: vec![] };
+    let study = de_shape::fea::Study { supports: vec![face(0.0, -1.0)], loads: vec![de_shape::fea::Load { face: face(200.0, 1.0), force: [0.0, 0.0, -1000.0] }], bore_supports: vec![], bore_loads: vec![], resolution: 80, ..Default::default() };
     let steel = de_shape::fea::elastic("Steel").unwrap();
     let r = de_shape::fea::solve(&e.positions, &e.indices, &steel, &study).unwrap();
     // Tip deflection: PL³/3EI (1.000 mm) plus shear PL/κGA (0.008 mm).
@@ -1274,7 +1274,7 @@ fn a_thin_plate_bends_as_plate_theory_says_and_solves_quickly() {
         triangles: vec![x, 0.0, 0.0, x, 100.0, 0.0, x, 100.0, 4.0, x, 0.0, 0.0, x, 100.0, 4.0, x, 0.0, 4.0],
         part: None,
     };
-    let study = de_shape::fea::Study { supports: vec![face(0.0, -1.0)], loads: vec![de_shape::fea::Load { face: face(200.0, 1.0), force: [0.0, 0.0, -50.0] }], bore_supports: vec![], bore_loads: vec![], resolution: 160, contacts: vec![] };
+    let study = de_shape::fea::Study { supports: vec![face(0.0, -1.0)], loads: vec![de_shape::fea::Load { face: face(200.0, 1.0), force: [0.0, 0.0, -50.0] }], bore_supports: vec![], bore_loads: vec![], resolution: 160, ..Default::default() };
     let steel = de_shape::fea::elastic("Steel").unwrap();
     let t0 = std::time::Instant::now();
     let r = de_shape::fea::solve(&e.positions, &e.indices, &steel, &study).unwrap();
@@ -1633,11 +1633,11 @@ fn load(face: de_shape::fea::Face, force: [f64; 3]) -> de_shape::fea::Load {
 }
 
 fn study(supports: Vec<de_shape::fea::Face>, loads: Vec<de_shape::fea::Load>, resolution: usize, contacts: Vec<de_shape::fea::ContactSpec>) -> de_shape::fea::Study {
-    de_shape::fea::Study { supports, loads, bore_supports: vec![], bore_loads: vec![], resolution, contacts }
+    de_shape::fea::Study { supports, loads, resolution, contacts, ..Default::default() }
 }
 
 fn contact(a: &str, b: &str, kind: de_shape::fea::ContactKind, friction: f64) -> de_shape::fea::ContactSpec {
-    de_shape::fea::ContactSpec { parts: [a.into(), b.into()], kind, friction }
+    de_shape::fea::ContactSpec { parts: [a.into(), b.into()], kind, friction, press_fit: false }
 }
 
 #[test]
@@ -2345,4 +2345,141 @@ fn a_loop_of_no_width_is_no_profile_and_does_not_stop_the_sketch() {
     let solved = de_shape::sketch::solve(&g, &Default::default()).unwrap();
     let (loops, _) = de_shape::sketch::loops(&g, &solved);
     assert!(loops.is_empty());
+}
+
+// ---- Heat as a load, sharper peaks, press fits ----------------------------------
+
+fn heated(reference: f64, uniform: f64) -> Option<de_shape::fea::HeatLoad> {
+    Some(de_shape::fea::HeatLoad { reference, uniform: Some(uniform), ..Default::default() })
+}
+
+#[test]
+fn a_heated_bar_grows_by_alpha_dt_l_free_and_is_stressed_e_alpha_dt_held() {
+    // Steel 100 × 10 × 10 mm warmed from 20 °C to 120 °C: α = 12e-6/K.
+    let e = runtime::evaluate("return box(100, 10, 10);", &[], 0.01).unwrap();
+    let steel = de_shape::fea::elastic("Steel").unwrap();
+    assert!((steel.alpha - 12e-6).abs() < 1e-12);
+    let held = rect_face(0, 0.0, -1.0, [0.0, 10.0], [0.0, 10.0], None);
+    let other = rect_face(0, 100.0, 1.0, [0.0, 10.0], [0.0, 10.0], None);
+    let (alpha, dt) = (steel.alpha, 100.0);
+    // Held at one end only: it grows α·ΔT·L = 0.12 mm and, away from the held end, is free of stress.
+    let mut free = study(vec![held.clone()], vec![], 50, vec![]);
+    free.heat = heated(20.0, 120.0);
+    let r = de_shape::fea::solve(&e.positions, &e.indices, &steel, &free).unwrap();
+    let grow = de_shape::fea::displacement_at(&r, [100.0, 5.0, 5.0]).unwrap()[0];
+    let want = alpha * dt * 100.0;
+    let restrained = steel.e * alpha * dt;
+    let mid = de_shape::fea::stress_at(&r, [51.0, 5.0, 5.0]).unwrap();
+    let far = r.cells.iter().filter(|(c, _)| (c[0] as f64 + 0.5) * r.cell > 30.0).map(|(_, s)| *s as f64).fold(0.0, f64::max);
+    eprintln!("free bar: grows {grow:.5} mm (α·ΔT·L = {want:.5}), stress mid-length {mid:.3} MPa, beyond 30 mm at most {far:.3} MPa (E·α·ΔT = {restrained:.0} MPa)");
+    // The held end cannot swell sideways, which stretches it a little more there (about 1 %).
+    assert!((grow - want).abs() < want * 0.02, "grows {grow} mm vs {want} mm");
+    assert!(far < restrained * 0.01, "free of stress away from the held end: {far} MPa");
+    let h = r.heat.as_ref().unwrap();
+    assert!((h.max - 120.0).abs() < 1e-9 && h.thermal_stress.is_some());
+    // Held at both ends it cannot grow: σ = E·α·ΔT = 240 MPa (in compression) along its middle.
+    let mut both = study(vec![held, other], vec![], 50, vec![]);
+    both.heat = heated(20.0, 120.0);
+    let r = de_shape::fea::solve(&e.positions, &e.indices, &steel, &both).unwrap();
+    let mid = de_shape::fea::stress_at(&r, [51.0, 5.0, 5.0]).unwrap();
+    eprintln!("held bar: {mid:.2} MPa mid-length (E·α·ΔT = {restrained:.1} MPa), {} iterations", r.iterations);
+    // The clamped ends cannot swell sideways either, so they push a little harder on the middle (about 3 %).
+    assert!((mid - restrained).abs() < restrained * 0.04, "{mid} MPa vs {restrained} MPa");
+}
+
+#[test]
+fn a_bimetal_strip_curls_as_timoshenko_says() {
+    use de_shape::fea::ContactKind::*;
+    // Steel under aluminium, each 3 mm thick and 4 mm wide, 96 mm long, glued, held at x = 0, warmed 100 K.
+    let e = runtime::evaluate("return [part('Steel', box(96, 4, 3)), part('Alu', box(96, 4, 3).translate(0, 0, 3))];", &[], 0.01).unwrap();
+    let held = vec![rect_face(0, 0.0, -1.0, [0.0, 4.0], [0.0, 3.0], Some("Steel")), rect_face(0, 0.0, -1.0, [0.0, 4.0], [3.0, 6.0], Some("Alu"))];
+    let mut s = study(held, vec![], 160, vec![contact("Steel", "Alu", Bonded, 0.0)]);
+    s.heat = heated(20.0, 120.0);
+    let b = bodies(&e, &["Steel", "Aluminium"]);
+    let r = de_shape::fea::solve_parts(&b, &s).unwrap();
+    // Timoshenko (1925), equal thicknesses: κ = 24·Δα·ΔT / (h·(14 + n + 1/n)), n = E₁/E₂.
+    let (st, al) = (de_shape::fea::elastic("Steel").unwrap(), de_shape::fea::elastic("Aluminium").unwrap());
+    let n = st.e / al.e;
+    let kappa = 24.0 * (al.alpha - st.alpha) * 100.0 / (6.0 * (14.0 + n + 1.0 / n));
+    let want = kappa * 96.0 * 96.0 / 2.0;
+    let tip = de_shape::fea::displacement_of(&r, 0, [96.0, 2.0, 3.0]).unwrap()[2];
+    eprintln!("bimetal: tip lifts {:.4} mm (Timoshenko κL²/2 = {want:.4} mm, κ = {kappa:.3e}/mm), {} cubes, {} iterations", -tip, r.elements, r.iterations);
+    // Aluminium grows more, so the strip curls towards the steel (down).
+    assert!((-tip - want).abs() < want * 0.05, "tip {} mm vs {want} mm", -tip);
+}
+
+#[test]
+fn a_hole_in_a_plate_in_tension_peaks_at_kt_times_the_stress() {
+    // Steel plate 80 × 40 × 4 mm with a 10 mm hole in the middle, pulled 100 MPa along x (16 kN on 40 × 4).
+    let e = runtime::evaluate("return box(80, 40, 4).subtract(cylinder(6, 5, { segments: 128 }).translate(40, 20, -1));", &[], 0.01).unwrap();
+    let steel = de_shape::fea::elastic("Steel").unwrap();
+    let held = rect_face(0, 0.0, -1.0, [0.0, 40.0], [0.0, 4.0], None);
+    let pulled = load(rect_face(0, 80.0, 1.0, [0.0, 40.0], [0.0, 4.0], None), [16_000.0, 0.0, 0.0]);
+    // Peterson (finite-width plate, central hole): Kt (net) = 3 − 3.14(d/W) + 3.667(d/W)² − 1.527(d/W)³.
+    let q = 0.25f64;
+    let kt_net = 3.0 - 3.14 * q + 3.667 * q * q - 1.527 * q * q * q;
+    let want = kt_net * 100.0 / (1.0 - q);
+    // The plate is 4 mm thick (t/r = 0.8): mid-thickness peaks some 3–4 % above the thin-plate
+    // figure (Folias & Wang). Cube centres alone read 15–30 % low; the re-solve reads the surface.
+    for res in [48, 64, 96] {
+        let mut s = study(vec![held.clone()], vec![pulled.clone()], res, vec![]);
+        s.refine = true;
+        let t0 = std::time::Instant::now();
+        let r = de_shape::fea::solve(&e.positions, &e.indices, &steel, &s).unwrap();
+        let p = r.peak.as_ref().unwrap_or_else(|| panic!("no peak: {:?}", r.notes));
+        eprintln!("hole at {res}: peak {:.1} MPa at {:?} on {:.3} mm cubes (moved {:.1}%), coarse cubes {:.1} MPa, Peterson {want:.1} MPa; {:.2} s", p.stress, p.at, p.cell, p.change * 100.0, p.coarse, t0.elapsed().as_secs_f64());
+        assert!(!p.singular && !p.at_support);
+        assert!((p.stress - want).abs() < want * 0.08, "peak {} MPa vs {want} MPa", p.stress);
+        assert!(p.coarse < want * 0.9, "the cube centres alone read low: {}", p.coarse);
+        let hole = ((p.at[0] - 40.0).powi(2) + (p.at[1] - 20.0).powi(2)).sqrt();
+        assert!((hole - 5.0).abs() < 0.3 && (p.at[0] - 40.0).abs() < 1.0, "at the hole's edge, square to the pull: {:?}", p.at);
+        assert!((r.max_stress - p.stress).abs() < 1e-9 && r.safety < steel.yield_strength / p.coarse);
+    }
+}
+
+#[test]
+fn a_pin_pressed_into_a_hub_presses_as_lame_says() {
+    use de_shape::fea::ContactKind::*;
+    // A steel hub (bore 20 mm, outside 40 mm, 10 long) and a steel pin 0.1 mm over (0.05 mm radial interference).
+    let src = "return [part('Hub', cylinder(10, 20, { segments: 96 }).subtract(cylinder(12, 10, { segments: 96 }).translate(0, 0, -1))), part('Pin', cylinder(10, 10.05, { segments: 96 }))];";
+    let e = runtime::evaluate(src, &[], 0.01).unwrap();
+    // Held by a small patch of the hub's foot, near its rim: enough to keep it from drifting, too little to stop it swelling.
+    let patch = de_shape::fea::Face { point: [19.0, 0.0, 0.0], normal: [0.0, 0.0, -1.0], triangles: vec![18.5, -0.5, 0.0, 19.5, -0.5, 0.0, 19.5, 0.5, 0.0, 18.5, -0.5, 0.0, 19.5, 0.5, 0.0, 18.5, 0.5, 0.0], part: Some("Hub".into()) };
+    let mut fit = contact("Hub", "Pin", Frictionless, 0.0);
+    fit.press_fit = true;
+    // Lamé, same material, solid pin: p = E·δ·(c² − b²) / (2·b·c²).
+    let (b, c, delta) = (10.025f64, 20.0f64, 0.05);
+    let want = 200_000.0 * delta * (c * c - b * b) / (2.0 * b * c * c);
+    for res in [64] {
+        let t0 = std::time::Instant::now();
+        let r = de_shape::fea::solve_parts(&bodies(&e, &["Steel", "Steel"]), &study(vec![patch.clone()], vec![], res, vec![fit.clone()])).unwrap();
+        let pair = &r.contact.as_ref().unwrap().pairs[0];
+        let area = 2.0 * std::f64::consts::PI * b * 10.0;
+        eprintln!(
+            "press fit at {res}: interference {:.4} mm, mean pressure {:.1} MPa, push {:.0} N over {:.0} mm² (true {area:.0}) → {:.1} MPa, Lamé {want:.1} MPa; hub {:.0} MPa; {:.1} s, {} rounds, {} iterations; {:?}",
+            pair.interference.unwrap(), pair.mean_pressure, pair.normal_force, pair.pressing, pair.normal_force / area, r.parts[0].max_stress, t0.elapsed().as_secs_f64(), r.contact.as_ref().unwrap().rounds, r.iterations, r.notes
+        );
+        assert!(pair.press_fit && (pair.interference.unwrap() - delta).abs() < delta * 0.05);
+        assert!((pair.mean_pressure - want).abs() < want * 0.1, "{} MPa vs {want} MPa", pair.mean_pressure);
+        // The whole push over the bore's true area: the pressure Lamé speaks of.
+        assert!((pair.normal_force / area - want).abs() < want * 0.05, "{} MPa vs {want} MPa", pair.normal_force / area);
+    }
+}
+
+#[test]
+fn a_sharp_inside_corner_is_called_singular_not_given_a_number() {
+    // An L of 10 mm square steel bar: foot along x held at its end, upright pushed sideways at its top.
+    let e = runtime::evaluate("return box(40, 10, 10).add(box(10, 10, 40));", &[], 0.01).unwrap();
+    let steel = de_shape::fea::elastic("Steel").unwrap();
+    let held = rect_face(0, 40.0, 1.0, [0.0, 10.0], [0.0, 10.0], None);
+    let pushed = load(rect_face(2, 40.0, 1.0, [0.0, 10.0], [0.0, 10.0], None), [0.0, 500.0, 0.0]);
+    let mut s = study(vec![held], vec![pushed], 48, vec![]);
+    s.refine = true;
+    let r = de_shape::fea::solve(&e.positions, &e.indices, &steel, &s).unwrap();
+    let p = r.peak.as_ref().unwrap_or_else(|| panic!("no peak: {:?}", r.notes));
+    eprintln!("L corner: {:.1} MPa at {:?} (coarse {:.1}), singular {}, {:?}", p.stress, p.at, p.coarse, p.singular, r.notes);
+    assert!(p.singular, "the inside corner at x = z = 10 is sharp: {:?}", p.at);
+    assert!((p.at[0] - 10.0).abs() < 2.0 && (p.at[2] - 10.0).abs() < 2.0, "{:?}", p.at);
+    // No number from it drives the verdict: the coarse cubes' largest stands.
+    assert!(r.max_stress < p.stress && r.notes.iter().any(|n| n.contains("no finite value") && n.contains("fillet")));
 }

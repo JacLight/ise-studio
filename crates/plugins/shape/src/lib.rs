@@ -958,7 +958,22 @@ pub fn stress_study(program: &ShapeProgram, part: Option<&str>, material: &str, 
         None if e.parts.len() > 1 => return Err("pick one part of the assembly to study".into()),
         None => (0, e.indices.len()),
     };
-    fea::solve(&e.positions, &e.indices[start..start + count], &props, study)
+    let study = with_heat(&e.positions, &e.indices[start..start + count], material, study)?;
+    fea::solve(&e.positions, &e.indices[start..start + count], &props, &study)
+}
+
+/// A study whose heat comes from a heat study: that study run first on the
+/// studied part (on the same cubes), its temperatures handed to the stress study.
+fn with_heat(positions: &[f32], triangles: &[u32], material: &str, study: &fea::Study) -> Result<fea::Study, String> {
+    let mut study = study.clone();
+    if let Some(heat) = study.heat.as_mut() {
+        if let Some(mut thermal) = heat.thermal.take() {
+            let k = fea::conductivity(material).ok_or_else(|| format!("no conductivity figure for “{material}”"))?;
+            thermal.resolution = study.resolution;
+            heat.field = Some(fea::thermal(positions, triangles, k, &thermal).map_err(|e| format!("the heat study: {e}"))?);
+        }
+    }
+    Ok(study)
 }
 
 /// A stress study on several parts of an assembly together, each in its own
@@ -975,7 +990,11 @@ pub fn assembly_stress(program: &ShapeProgram, parts: &[(String, String)], study
             Ok(fea::Body { name: name.clone(), positions: &e.positions, triangles: &e.indices[p.index_start..p.index_start + p.index_count], material: props })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    fea::solve_parts(&bodies, study)
+    let study = match bodies.first() {
+        Some(b) => with_heat(b.positions, b.triangles, &parts[0].1, study)?,
+        None => study.clone(),
+    };
+    fea::solve_parts(&bodies, &study)
 }
 
 /// The other parts of an assembly that touch `part` (or come within about
@@ -1051,7 +1070,7 @@ pub fn motion_stress(program: &ShapeProgram, part: &str, masses: &[Option<f64>],
         bore_supports: vec![bore(held)],
         bore_loads: loaded.iter().map(|&q| fea::BoreLoad { bore: bore(q), force: on_body(q, worst) }).collect(),
         resolution: 56,
-        contacts: vec![],
+        ..Default::default()
     };
     let k = e.parts.iter().find(|p| p.name == part).ok_or_else(|| format!("no part called “{part}”"))?;
     let mut result = fea::solve(&e.positions, &e.indices[k.index_start..k.index_start + k.index_count], &props, &study)?;

@@ -100,6 +100,8 @@ export type StressView = {
   deform?: number;
   /** Swing back and forth through the displacement (a vibration mode). */
   oscillate?: boolean;
+  /** The most stressed spot, re-solved finer (part coordinates); `singular`: a sharp inside corner. */
+  peak?: { at: [number, number, number]; singular: boolean };
 };
 
 export type ContactView = {
@@ -2515,6 +2517,17 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
           group.add(stressMesh(r, view.deform ? (view.deform * size * 0.04) / Math.max(r.max_displacement, 1e-9) : 0));
         }
         part.body.visible = false;
+      }
+      if (view.peak && view.result && !view.oscillate && view.layer !== "contact") {
+        // A ring of points round the peak, always on top, so it is found at a glance.
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.Float32BufferAttribute(view.peak.at, 3));
+        const dot = new THREE.Points(g, new THREE.PointsMaterial({ color: view.peak.singular ? "#b04fd6" : "#ffffff", size: 11, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.95 }));
+        dot.renderOrder = 963;
+        group.add(dot);
+        const core = new THREE.Points(g, new THREE.PointsMaterial({ color: "#e0452f", size: 6, sizeAttenuation: false, depthTest: false }));
+        core.renderOrder = 964;
+        group.add(core);
       }
       part.group.add(group);
       stressShown.current = { id, group, swing };
