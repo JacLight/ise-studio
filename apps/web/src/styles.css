@@ -4904,6 +4904,8 @@ button.download.drawing-open small {
 }
 
 .drawing-controls select {
+  width: auto;
+  max-width: 200px;
   height: 30px;
   padding: 0 8px;
   border: 1px solid #e4e0ec;
