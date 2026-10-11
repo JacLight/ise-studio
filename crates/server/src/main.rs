@@ -91,7 +91,9 @@ impl Server {
         let path = self.dir.join(format!("{name}.jsonl"));
         let project = load(&name, &path, self.registry.clone(), &self.engine).map_err(|e| e.to_string())?;
         println!("opened project {name} at revision {} ({} entities)", project.revision().0, project.entity_count());
-        let log = OpenOptions::new().create(true).append(true).open(&path).map_err(|e| e.to_string())?;
+        // The file is made with the first change: opening a name that does not
+        // exist (a mistyped link, a tab left on a deleted project) leaves nothing behind.
+        let log = if path.exists() { Some(OpenOptions::new().append(true).open(&path).map_err(|e| e.to_string())?) } else { None };
         let (events, _) = broadcast::channel(1024);
         let (shared, _) = broadcast::channel(4096);
         let ai = Arc::new(ai::Ai::new(self.ai.clone(), &name, &self.dir));
@@ -99,6 +101,7 @@ impl Server {
         let app = Arc::new(App {
             project: Mutex::new(project),
             log: Mutex::new(log),
+            log_path: path.clone(),
             events,
             sessions: AtomicUsize::new(0),
             ai,
@@ -340,7 +343,8 @@ struct App {
     /// This project's Forma AI session.
     ai: Arc<ai::Ai>,
     project: Mutex<Project>,
-    log: Mutex<File>,
+    log: Mutex<Option<File>>,
+    log_path: PathBuf,
     events: broadcast::Sender<Arc<str>>,
     sessions: AtomicUsize,
     /// Who else works on this project, and how to reach their engines.
@@ -708,7 +712,11 @@ impl App {
     }
 
     fn append(&self, change: &WireChangeSet) -> std::io::Result<()> {
-        let mut log = self.log.lock().unwrap();
+        let mut guard = self.log.lock().unwrap();
+        if guard.is_none() {
+            *guard = Some(OpenOptions::new().create(true).append(true).open(&self.log_path)?);
+        }
+        let log = guard.as_mut().unwrap();
         serde_json::to_writer(&mut *log, change)?;
         log.write_all(b"\n")?;
         log.sync_data()
