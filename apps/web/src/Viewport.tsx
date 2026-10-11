@@ -202,6 +202,8 @@ export type ViewportHandle = {
 type Props = {
   entities: ReadonlyMap<string, EntityView>;
   selected: string | null;
+  /** Other items picked with it (Shift-click): outlined, and moved with it while it is dragged. */
+  also?: string[];
   live: LiveEdit | null;
   /** Design-intent visuals: clearances, collisions, envelopes. */
   overlays: Overlay[];
@@ -211,7 +213,7 @@ type Props = {
   pivotLive: Frac | null;
   /** A pivot was chosen (fractions of the box), or null to leave pivot mode. `keepMode` stays in pivot mode. */
   onPickPivot: (frac: Frac | null, keepMode?: boolean) => void;
-  onSelect: (id: string | null) => void;
+  onSelect: (id: string | null, add?: boolean) => void;
   /** Part of the selected assembly that is picked (by name), if any. */
   selectedPart: string | null;
   /** Clicking an already selected assembly picks the part under the pointer. */
@@ -1635,7 +1637,11 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       const bodies = [...(three.current?.parts.values() ?? [])].flatMap((p) => p.meshes.filter((m) => m.visible));
       const hit = r.intersectObjects(bodies, true)[0];
       const id = hit ? (hit.object.userData.id as string) : null;
-      if (id && id === callbacks.current.selected) {
+      if (e.shiftKey && id) {
+        // Shift-click: add to (or take from) the group.
+        face.current = null;
+        callbacks.current.onSelect(id, true);
+      } else if (id && id === callbacks.current.selected) {
         face.current = selectedIsProgram() ? null : faceFromHit(hit!);
         pickAssemblyPart(r);
       } else {
@@ -1699,6 +1705,9 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         t.parts.delete(id);
       }
     }
+    const liveBase = live ? entities.get(live.id) : undefined;
+    const lb = liveBase ? shapeOf(liveBase) : null;
+    const groupDelta: [number, number, number] | null = live && lb ? [live.x - lb.x, live.y - lb.y, live.z - lb.z] : null;
     for (const e of entities.values()) {
       if (!drawn(e)) continue;
       let part = t.parts.get(e.id);
@@ -1717,8 +1726,9 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       // The engine's shape is the truth for placement, refreshed on every update. Only the
       // mesh is cached: it is rebuilt when the size changes, so its size always matches `base`.
       part.base = shapeOf(e);
-      // A live edit scales and moves the cached mesh until the engine commits it.
-      const s = live?.id === e.id ? live : part.base;
+      // A live edit scales and moves the cached mesh until the engine commits it;
+      // the rest of a group follows the dragged item by the same distance.
+      const s = live?.id === e.id ? live : groupDelta && props.also?.includes(e.id) ? { ...part.base, x: part.base.x + groupDelta[0], y: part.base.y + groupDelta[1], z: part.base.z + groupDelta[2] } : part.base;
       if (part.isProgram) part.group.scale.set(1, 1, 1);
       else part.group.scale.set(s.width / part.base.width || 1, s.depth / part.base.depth || 1, s.height / part.base.height || 1);
       // Meshes are in the part's own coordinates; shapes may extend below their origin.
@@ -1727,7 +1737,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     }
     for (const [id, part] of t.parts) {
       // A picked part shows by its glow; the whole assembly's outline would bury it.
-      part.outline.visible = id === selected && !props.selectedPart && turning.current?.id !== id;
+      part.outline.visible = (id === selected || !!props.also?.includes(id)) && !props.selectedPart && turning.current?.id !== id;
       // The picked part of an assembly glows; the rest of the assembly stays as built.
       const picked = id === selected && props.selectedPart ? assemblyParts(entities.get(id)).findIndex((p) => p.name === props.selectedPart) : -1;
       if (part.shared) {
@@ -1785,7 +1795,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       cam.updateProjectionMatrix();
     }
     t.invalidate();
-  }, [entities, selected, live, props.pivotMode, props.pivotLive, props.selectedPart, props.hidden, props.isolated, props.colorBy]);
+  }, [entities, selected, live, props.also, props.pivotMode, props.pivotLive, props.selectedPart, props.hidden, props.isolated, props.colorBy]);
 
   // The sketch being edited: redrawn on every change; orbiting waits while sketching.
   useEffect(() => {

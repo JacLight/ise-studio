@@ -33,6 +33,16 @@ impl<'a> Tx<'a> {
         self.actor
     }
 
+    /// Runs another command inside this transaction (its changes join this
+    /// one: one atomic change, one undo step).
+    pub fn run(&mut self, operation: &str, parameters: crate::Value) -> Result<crate::Value, CommandError> {
+        let info = self.registry.command_info(operation).ok_or_else(|| CommandError::new(crate::ErrorCode::UnknownOperation, format!("unknown operation {operation}")))?;
+        if operation == "core.batch" {
+            return Err(CommandError::new(crate::ErrorCode::InvalidParameters, "a batch cannot contain another batch"));
+        }
+        (info.exec)(parameters, self)
+    }
+
     /// Read access to the whole project space, including derived results.
     pub fn world(&self) -> &World {
         self.world

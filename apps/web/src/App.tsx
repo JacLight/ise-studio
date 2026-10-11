@@ -55,6 +55,10 @@ export function App({ engine }: { engine: Engine }) {
   const state = useSyncExternalStore(engine.subscribe, engine.getState);
   const [prefs, setPrefs] = useState<UiPrefs>(loadPrefs);
   const [selected, setSelected] = useState<string | null>(null);
+  // More items picked with Shift: they move and delete together with the selected one.
+  const [also, setAlso] = useState<string[]>([]);
+  const alsoRef = useRef<string[]>([]);
+  alsoRef.current = also;
   // Picked part inside the selected assembly (by name); cleared with the selection.
   const [selectedPartName, setSelectedPartName] = useState<string | null>(null);
   // What the view shows: hidden items, an isolated one, and paint by material or sale status.
@@ -306,6 +310,23 @@ export function App({ engine }: { engine: Engine }) {
     [baseShape, lockRatio, setLive],
   );
 
+  /** The command that moves one item by `d` (mm): an instance, an AI-made part or a box part. */
+  const moveStep = useCallback(
+    (id: string, d: [number, number, number]) => {
+      const e = state.entities.get(id);
+      const base = baseShape(id);
+      if (!e || !base) return null;
+      const inst = instance(e);
+      if (inst) return { operation: "assembly.instance.update", parameters: { target: id, at: inst.at.map((v: number, k: number) => Math.round((v + d[k]) * 100) / 100) } };
+      if (program(e)) {
+        const off = originOffset(e);
+        return { operation: "solid.part.move", parameters: { target: id, placement: { x: mm(base.x + d[0] - off[0]), y: mm(base.y + d[1] - off[1]), z: mm(base.z + d[2] - off[2]) } } };
+      }
+      return { operation: "solid.box.edit", parameters: { target: id, placement: { x: mm(base.x + d[0]), y: mm(base.y + d[1]), z: mm(base.z + d[2]) } } };
+    },
+    [state.entities, baseShape],
+  );
+
   /** Commits a live edit as one change per kind (size, position). */
   const commitLive = useCallback(
     async (edit: LiveEdit | null = liveRef.current) => {
@@ -314,6 +335,16 @@ export function App({ engine }: { engine: Engine }) {
       const base = baseShape(edit.id);
       if (!base) return setLive(null);
       const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
+      // A group moved together: every item by the same distance, one change, one undo step.
+      if (alsoRef.current.length && DIMS.every((a) => near(edit[a], base[a]))) {
+        const d: [number, number, number] = [edit.x - base.x, edit.y - base.y, edit.z - base.z];
+        if (d.some((v) => Math.abs(v) > 1e-6)) {
+          const steps = [edit.id, ...alsoRef.current].map((id) => moveStep(id, d)).filter((x) => x !== null);
+          await run("core.batch", { steps });
+        }
+        if (liveRef.current?.id === edit.id) setLive(null);
+        return;
+      }
       const entity = state.entities.get(edit.id);
       const inst = entity ? instance(entity) : undefined;
       if (inst) {
@@ -347,7 +378,7 @@ export function App({ engine }: { engine: Engine }) {
       // The engine's broadcast arrives before the reply, so the meshes are already current.
       if (liveRef.current === edit || liveRef.current?.id === edit.id) setLive(null);
     },
-    [baseShape, run, setLive, state.entities],
+    [baseShape, run, setLive, state.entities, moveStep],
   );
 
   const commitPatch = useCallback(
@@ -663,10 +694,29 @@ export function App({ engine }: { engine: Engine }) {
     };
   }, [importStep]);
 
-  const select = useCallback((id: string | null) => {
-    setSelected(id);
-    if (id) setPanel((p) => (p === "objects" ? p : "properties"));
-  }, []);
+  const select = useCallback(
+    (id: string | null, add = false) => {
+      if (add && id && selected && id !== selected) {
+        // Shift-click: add it to the group, or take it out again.
+        setAlso((a) => (a.includes(id) ? a.filter((x) => x !== id) : [...a, id]));
+        return;
+      }
+      if (add && id && id === selected && alsoRef.current.length) {
+        // Shift-click on the main one: the next in the group takes over.
+        const [next, ...rest] = alsoRef.current;
+        setSelected(next);
+        setAlso(rest);
+        return;
+      }
+      setAlso([]);
+      setSelected(id);
+      if (id) setPanel((p) => (p === "objects" ? p : "properties"));
+    },
+    [selected],
+  );
+  useEffect(() => {
+    if (!selected) setAlso([]);
+  }, [selected]);
 
   const togglePanel = useCallback((p: PanelKind) => setPanel((current) => (current === p ? null : p)), []);
   const hide = useCallback((g: Group) => setPrefs((p) => ({ ...p, hidden: { ...p.hidden, [g]: true } })), []);
@@ -795,6 +845,7 @@ export function App({ engine }: { engine: Engine }) {
       if (e.key === "Escape") {
         if (document.querySelector("dialog[open]")) return;
         setProgramFace(null);
+        setAlso([]);
         restoreAll();
         return;
       }
@@ -824,7 +875,11 @@ export function App({ engine }: { engine: Engine }) {
         }[e.key];
         nudge(selected, delta!);
       } else if ((e.key === "Delete" || e.key === "Backspace") && selected) {
-        remove(selected);
+        if (alsoRef.current.length) {
+          // The whole group, as one change.
+          void run("core.batch", { steps: [selected, ...alsoRef.current].map((id) => ({ operation: "core.entity.delete", parameters: { target: id } })) });
+          setAlso([]);
+        } else remove(selected);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -843,6 +898,7 @@ export function App({ engine }: { engine: Engine }) {
           entities={viewEntities}
           selected={selected}
           live={live}
+          also={also}
           overlays={overlays}
           pivotMode={pivotMode}
           pivotLive={pivotLive}
@@ -904,6 +960,11 @@ export function App({ engine }: { engine: Engine }) {
         {sketcher.bar}
         {sketcher.dimEditor}
         {edger.bar}
+        {also.length > 0 && !stressPick && (
+          <div className="face-hint floating" role="status">
+            <b>{also.length + 1} items</b> selected · drag the arrows to move them together · Delete removes them · Shift-click adds or takes away · Esc
+          </div>
+        )}
         {stressPick && (
           <div className="face-hint floating" role="status">
             {stressPick.purpose} · Esc to cancel

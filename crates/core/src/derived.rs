@@ -118,3 +118,31 @@ impl Command for DeleteEntity {
         Ok(json!({ "deleted": self.target }))
     }
 }
+
+/// One step of a batch: an operation and its parameters.
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct BatchStep {
+    operation: String,
+    #[serde(default)]
+    parameters: Value,
+}
+
+/// `core.batch`: several commands as one change (one undo step); if any
+/// fails, none of them happens.
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct BatchCommand {
+    steps: Vec<BatchStep>,
+}
+
+impl Command for BatchCommand {
+    const NAME: &'static str = "core.batch";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        let mut outputs = Vec::with_capacity(self.steps.len());
+        for (i, step) in self.steps.into_iter().enumerate() {
+            let out = tx.run(&step.operation, step.parameters).map_err(|e| CommandError::new(e.code, format!("step {} ({}): {}", i + 1, step.operation, e.message)))?;
+            outputs.push(out);
+        }
+        Ok(json!({ "outputs": outputs }))
+    }
+}

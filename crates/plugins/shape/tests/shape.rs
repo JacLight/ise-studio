@@ -1016,3 +1016,22 @@ fn a_block_in_still_air_settles_where_its_surface_sheds_the_heat() {
     assert!(r.max - r.min < 0.5, "copper evens it out");
     assert!((r.to_air - 5.0).abs() < 1e-3, "all 5 W go to the air: {}", r.to_air);
 }
+
+#[test]
+fn a_batch_is_one_change_and_one_undo_or_nothing_at_all() {
+    let mut p = project();
+    let shape = |name: &str| json!({ "operation": "shape.create", "parameters": { "name": name, "source": "return box(10, 10, 10);", "params": [] } });
+    let out = run(&mut p, "core.batch", json!({ "steps": [shape("A"), shape("B")] })).unwrap();
+    let ids: Vec<StableId> = out["outputs"].as_array().or_else(|| out.pointer("/output/outputs").and_then(Value::as_array)).unwrap().iter().map(|o| serde_json::from_value(o["id"].clone()).unwrap()).collect();
+    assert_eq!(ids.len(), 2);
+    assert!(ids.iter().all(|id| p.get::<de_shape::ShapeProgram>(*id).is_some()));
+    // One undo takes both back.
+    p.undo(&Actor { user_id: "u".into(), session_id: "s".into() }).unwrap();
+    assert!(ids.iter().all(|id| p.get::<de_shape::ShapeProgram>(*id).is_none()));
+    // A failing step: none of the batch happens.
+    let before = p.revision();
+    let bad = json!({ "operation": "shape.set_params", "parameters": { "target": StableId::new(), "values": {} } });
+    assert!(run(&mut p, "core.batch", json!({ "steps": [shape("C"), bad] })).is_err());
+    assert_eq!(p.revision(), before, "nothing was recorded");
+    assert!(p.entity_ids().iter().all(|id| p.get::<de_shape::ShapeProgram>(*id).map_or(true, |s| s.name != "C")), "C was rolled back");
+}
