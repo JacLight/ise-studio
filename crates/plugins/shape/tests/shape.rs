@@ -1157,7 +1157,12 @@ fn a_saved_study_finds_its_faces_again_after_the_part_changes() {
     }).sum();
     assert!((area - 400.0).abs() < 1e-6, "the whole 20 × 20 face: {area}");
     assert_eq!(saved.loads[0].force(far.normal), [0.0, 0.0, -1000.0]);
-    // Clearing both lists removes the study.
+    // Removing every face keeps a study that still holds choices (here, a press fit with another part).
+    let chosen = json!({ "part": null, "supports": [], "loads": [], "parts": ["Pin"], "contacts": [{ "parts": ["Beam", "Pin"], "kind": "frictionless", "friction": 0.3, "press_fit": true }] });
+    run(&mut p, "shape.set_study", json!({ "target": part, "study": chosen })).unwrap();
+    let kept = p.get::<de_shape::ShapeStudies>(part).expect("the parts and the press fit are kept").0[0].clone();
+    assert!(kept.contacts[0].press_fit && kept.parts == ["Pin"]);
+    // Clearing everything removes the study.
     run(&mut p, "shape.set_study", json!({ "target": part, "study": { "part": null, "supports": [], "loads": [] } })).unwrap();
     assert!(p.get::<de_shape::ShapeStudies>(part).is_none());
 }

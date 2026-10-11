@@ -6349,6 +6349,28 @@ button.download.drawing-open small {
   margin-top: 0 !important;
 }
 
+/* The heat rows stay inside the panel: the column never grows past it, and
+   the heat-as-a-load sentence wraps around its temperature field. */
+.heat-block {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.heat-block > .xray-toggle {
+  flex-wrap: wrap;
+  row-gap: 4px;
+  white-space: normal;
+  line-height: 1.5;
+}
+
+.xray-toggle input.heat-reference {
+  width: 44px;
+  height: 22px;
+  padding: 0 6px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Parts studied together: which ones, how they touch, what passes between them. */
 .contact-block {
   display: grid;
@@ -6395,9 +6417,12 @@ button.download.drawing-open small {
   flex: none;
   width: auto;
   margin: 0;
+  accent-color: #6d4ae0;
 }
 
 .contact-row > label:first-child span {
+  color: inherit;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -6428,6 +6453,13 @@ button.download.drawing-open small {
   text-align: right;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+
+.contact-mu input[type="checkbox"] {
+  width: auto;
+  height: auto;
+  padding: 0;
+  accent-color: #6d4ae0;
 }
 
 .stress-on {
@@ -8709,4 +8741,14 @@ button.download.drawing-open small {
   .viewer-spinner {
     animation-duration: 2.4s;
   }
+}
+
+.stress-result dd small {
+  margin-left: 4px;
+  font-weight: 500;
+  color: #8a8398;
+}
+
+.stress-result dd small.warn {
+  color: #b0661a;
 }

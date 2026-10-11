@@ -476,7 +476,13 @@ export function StressStudy(props: {
               <>
                 <dt>{r.peak.singular ? "Sharp inside corner" : "Peak at the surface"}</dt>
                 <dd className={r.peak.singular ? "warn" : ""} title={`Re-solved on ${n(r.peak.cell, 3)} mm cubes; the coarse cubes read ${n(r.peak.coarse, 1)} MPa there`}>
-                  {r.peak.singular ? "no finite peak: add a fillet" : `${n(r.peak.stress, 1)} MPa ±${n(r.peak.change * 100, 0)}%`}
+                  {r.peak.singular ? (
+                    "no finite peak: add a fillet"
+                  ) : (
+                    <>
+                      {n(r.peak.stress, 1)} MPa <small className={r.peak.change > 0.1 ? "warn" : ""}>{r.peak.change > 0.1 ? "still settling" : `settled to ${n(Math.max(r.peak.change * 100, 1), 0)}%`}</small>
+                    </>
+                  )}
                 </dd>
               </>
             )}

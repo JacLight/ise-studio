@@ -238,9 +238,20 @@ pub struct HeatPick {
 }
 
 impl StudySpec {
-    /// Nothing set: the study can go.
+    /// Nothing set: the study can go. Any choice made in it (parts studied
+    /// with it, how they touch, heat as a load, resolution, sharpening) keeps
+    /// it, even with every face removed.
     pub fn is_empty(&self) -> bool {
-        self.supports.is_empty() && self.loads.is_empty() && self.holds.is_empty() && self.heats.is_empty() && self.convection.is_none()
+        self.supports.is_empty()
+            && self.loads.is_empty()
+            && self.holds.is_empty()
+            && self.heats.is_empty()
+            && self.convection.is_none()
+            && self.parts.is_empty()
+            && self.contacts.is_empty()
+            && self.heat_stress.is_none()
+            && self.resolution == default_resolution()
+            && self.refine
     }
 }
 
