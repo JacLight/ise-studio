@@ -246,5 +246,11 @@ pub fn findings(project: &de_core::Project) -> Vec<Value> {
             out.push(json!({ "code": "PCB_DRC", "severity": "error", "entities": [id], "message": format!("{}: {} ({})", b.name, x.message, x.code), "fix": null }));
         }
     }
+    for (id, s) in de_pcb::schematic::schematics(project.world()) {
+        let Some(v) = de_pcb::schematic::view(project.world(), id) else { continue };
+        for x in v.violations.iter().filter(|x| x.severity == "error") {
+            out.push(json!({ "code": "PCB_ERC", "severity": "error", "entities": [id], "message": format!("{} schematic: {} ({})", s.name, x.message, x.code), "fix": null }));
+        }
+    }
     out
 }
