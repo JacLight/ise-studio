@@ -88,12 +88,71 @@ export type StressView = {
     displacements: [[number, number, number], [number, number, number]][];
     max_stress: number;
     max_displacement: number;
+    /** Several parts: which part each cube and each displacement is of. */
+    cell_parts?: number[];
+    node_parts?: number[];
   };
+  /** Where parts studied together touch: pressure on each cube face where they meet, and where they came apart. */
+  contact?: ContactView;
+  /** Show the contact pressure instead of the stress (the parts see-through). */
+  layer?: "stress" | "contact";
   /** How many times to exaggerate the displacement (0: as built). */
   deform?: number;
   /** Swing back and forth through the displacement (a vibration mode). */
   oscillate?: boolean;
 };
+
+export type ContactView = {
+  /** The cube on the first part's side, which way the face looks (0 −x, 1 +x, 2 −y, 3 +y, 4 −z, 5 +z), and its pressure (MPa). */
+  faces: { cell: [number, number, number]; dir: number; pressure: number }[];
+  /** Touching faces that came apart: x, y, z (mm) and the gap (mm). */
+  opened: [number, number, number, number][];
+  max_pressure: number;
+};
+
+/** Each cube face: the neighbour that would hide it, and its four corners (outward winding). */
+const CUBE_FACES: { n: [number, number, number]; c: [number, number, number][] }[] = [
+  { n: [-1, 0, 0], c: [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]] },
+  { n: [1, 0, 0], c: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]] },
+  { n: [0, -1, 0], c: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]] },
+  { n: [0, 1, 0], c: [[0, 1, 0], [0, 1, 1], [1, 1, 1], [1, 1, 0]] },
+  { n: [0, 0, -1], c: [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]] },
+  { n: [0, 0, 1], c: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]] },
+];
+
+/** The contact layer: each face where parts meet, coloured by its pressure, and a marker where touching faces came apart. */
+function contactMeshes(r: NonNullable<StressView["result"]>, c: ContactView): THREE.Object3D[] {
+  const pos: number[] = [];
+  const col: number[] = [];
+  const color = new THREE.Color();
+  const top = c.max_pressure > 0 ? c.max_pressure : 1;
+  for (const f of c.faces) {
+    // Pulling (a glued face in tension) shows as the bottom of the scale.
+    heat(Math.max(f.pressure, 0) / top, color);
+    const q = CUBE_FACES[f.dir].c.map((o) => [0, 1, 2].map((k) => r.origin[k] + (f.cell[k] + o[k]) * r.cell));
+    for (const v of [q[0], q[1], q[2], q[0], q[2], q[3]]) {
+      pos.push(...v);
+      col.push(color.r, color.g, color.b);
+    }
+  }
+  const out: THREE.Object3D[] = [];
+  if (pos.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+    m.renderOrder = 958;
+    out.push(m);
+  }
+  if (c.opened.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(c.opened.flatMap((o) => [o[0], o[1], o[2]]), 3));
+    const pts = new THREE.Points(g, new THREE.PointsMaterial({ color: "#b04fd6", size: 6, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.9 }));
+    pts.renderOrder = 962;
+    out.push(pts);
+  }
+  return out;
+}
 
 /** Blue (low) through green and yellow to red (high). */
 function heat(t: number, out: THREE.Color) {
@@ -103,33 +162,27 @@ function heat(t: number, out: THREE.Color) {
   return out.copy(stops[i]).lerp(stops[i + 1], x - i);
 }
 
-/** The stress map: the outside faces of the solved cubes, coloured by stress, displaced if asked. */
-function stressMesh(r: NonNullable<StressView["result"]>, deform: number): THREE.Mesh {
+/** The stress map: the outside faces of the solved cubes, coloured by stress, displaced if asked (see-through when `ghost`). */
+function stressMesh(r: NonNullable<StressView["result"]>, deform: number, ghost = false): THREE.Mesh {
   const key = (i: number, j: number, k: number) => `${i},${j},${k}`;
   const filled = new Map(r.cells.map(([c, sv]) => [key(c[0], c[1], c[2]), sv]));
-  const moved = new Map(r.displacements.map(([c, d]) => [key(c[0], c[1], c[2]), d]));
-  const at = (i: number, j: number, k: number): [number, number, number] => {
-    const d = moved.get(key(i, j, k)) ?? [0, 0, 0];
+  // Parts studied together move apart where they slide or open: displacements per part.
+  const several = !!r.cell_parts?.length && !!r.node_parts?.length;
+  const moved = new Map(r.displacements.map(([c, d], n) => [`${several ? r.node_parts![n] : 0}:${key(c[0], c[1], c[2])}`, d]));
+  const at = (part: number, i: number, j: number, k: number): [number, number, number] => {
+    const d = moved.get(`${part}:${key(i, j, k)}`) ?? [0, 0, 0];
     return [r.origin[0] + i * r.cell + d[0] * deform, r.origin[1] + j * r.cell + d[1] * deform, r.origin[2] + k * r.cell + d[2] * deform];
   };
-  // Each face: the neighbour that would hide it, and its four corners (outward winding).
-  const faces: { n: [number, number, number]; c: [number, number, number][] }[] = [
-    { n: [-1, 0, 0], c: [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]] },
-    { n: [1, 0, 0], c: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]] },
-    { n: [0, -1, 0], c: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]] },
-    { n: [0, 1, 0], c: [[0, 1, 0], [0, 1, 1], [1, 1, 1], [1, 1, 0]] },
-    { n: [0, 0, -1], c: [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]] },
-    { n: [0, 0, 1], c: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]] },
-  ];
   const pos: number[] = [];
   const col: number[] = [];
   const color = new THREE.Color();
   const top = r.max_stress || 1;
-  for (const [[i, j, k], sv] of r.cells) {
+  for (const [n, [[i, j, k], sv]] of r.cells.entries()) {
     heat(sv / top, color);
-    for (const f of faces) {
+    const part = several ? r.cell_parts![n] : 0;
+    for (const f of CUBE_FACES) {
       if (filled.has(key(i + f.n[0], j + f.n[1], k + f.n[2]))) continue;
-      const q = f.c.map((o) => at(i + o[0], j + o[1], k + o[2]));
+      const q = f.c.map((o) => at(part, i + o[0], j + o[1], k + o[2]));
       for (const v of [q[0], q[1], q[2], q[0], q[2], q[3]]) {
         pos.push(...v);
         col.push(color.r, color.g, color.b);
@@ -140,8 +193,8 @@ function stressMesh(r: NonNullable<StressView["result"]>, deform: number): THREE
   g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
   g.computeVertexNormals();
-  const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true }));
-  m.castShadow = true;
+  const m = new THREE.Mesh(g, ghost ? new THREE.MeshLambertMaterial({ color: "#9aa3ad", transparent: true, opacity: 0.16, depthWrite: false }) : new THREE.MeshLambertMaterial({ vertexColors: true }));
+  m.castShadow = !ghost;
   return m;
 }
 
@@ -252,6 +305,8 @@ type Props = {
   selectedPart: string | null;
   /** Clicking an already selected assembly picks the part under the pointer. */
   onSelectPart: (name: string | null) => void;
+  /** Other parts of the selected assembly whose faces can be picked too (a study taking them in). */
+  pickableParts?: string[] | null;
   /** Items (or instances at any depth) hidden from view. */
   hidden: ReadonlySet<string>;
   /** Show only this item or instance, if set. */
@@ -1916,7 +1971,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       let name: string | null = null;
       if (parts.length) {
         const p = parts.find((q) => hit.faceIndex! * 3 >= q.index_start && hit.faceIndex! * 3 < q.index_start + q.index_count);
-        if (!p || p.name !== callbacks.current.selectedPart) return undefined; // pick the part first
+        if (!p || (p.name !== callbacks.current.selectedPart && !callbacks.current.pickableParts?.includes(p.name))) return undefined; // pick the part first
         range = [p.index_start, p.index_count];
         name = p.name;
       }
@@ -2407,6 +2462,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
           (full.material as THREE.Material).dispose();
           group.add(mesh);
           swing = { mesh, base, delta };
+        } else if (view.layer === "contact" && view.contact) {
+          // The parts see-through, the faces where they meet coloured by pressure.
+          group.add(stressMesh(r, 0, true));
+          for (const o of contactMeshes(r, view.contact)) group.add(o);
         } else {
           group.add(stressMesh(r, view.deform ? (view.deform * size * 0.04) / Math.max(r.max_displacement, 1e-9) : 0));
         }

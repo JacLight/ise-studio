@@ -580,8 +580,8 @@ export function App({ engine }: { engine: Engine }) {
     setProgramFace(null);
   }, [selected, selectedPartName]);
   // A stress study asking for a face: the next flat face clicked goes to it.
-  const [stressPick, setStressPick] = useState<{ purpose: string; take: (f: ProgramFace) => void } | null>(null);
-  const requestFace = useCallback((purpose: string, take: (f: ProgramFace) => void) => setStressPick({ purpose, take }), []);
+  const [stressPick, setStressPick] = useState<{ purpose: string; take: (f: ProgramFace) => void; parts?: string[] } | null>(null);
+  const requestFace = useCallback((purpose: string, take: (f: ProgramFace) => void, parts?: string[]) => setStressPick({ purpose, take, parts }), []);
   const showStress = useCallback((id: string, view: StressView | null) => viewport.current?.stress(id, view), []);
   const grabMotion = useCallback((spec: MotionGrab | null) => viewport.current?.grabMotion(spec), []);
   useEffect(() => {
@@ -1218,6 +1218,7 @@ export function App({ engine }: { engine: Engine }) {
           onEdgeClick={edger.toggle}
           facePicks={faceTool.picture}
           programFace={programFace}
+          pickableParts={stressPick?.parts ?? null}
           onProgramFace={pickFace}
           onFaceDrag={dragFace}
           onFaceDragEnd={endFaceDrag}

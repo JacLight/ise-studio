@@ -338,7 +338,7 @@ export type PropertiesProps = {
   /** Commits a command (as the person). */
   run: (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
   /** Picks a face in the view for a stress study (purpose is shown as a hint). */
-  onPickFace: (purpose: string, take: (f: ProgramFace) => void) => void;
+  onPickFace: (purpose: string, take: (f: ProgramFace) => void, parts?: string[]) => void;
   /** Lets the view drive a mechanism by hand (null stops it). */
   onGrab: (spec: MotionGrab | null) => void;
   /** Shows a stress study in the view (null clears it). */
@@ -662,6 +662,7 @@ export function PropertiesBody(props: PropertiesProps) {
             return b ? { min: b.bounds_min, max: b.bounds_max } : null;
           })()}
           saved={part.components["shape.studies"]}
+          assembly={part.shape?.parts ?? []}
           run={props.run}
           onPickFace={props.onPickFace}
           onShow={props.onShowStress}

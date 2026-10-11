@@ -1,16 +1,21 @@
 // A stress study on a part: pick the faces it is held by and the faces
 // loads push on, run it, and read the stress map, the largest stress, how
-// far it bends, and the safety factor against its material's yield.
+// far it bends, and the safety factor against its material's yield. Parts
+// of an assembly that touch it can be studied with it: they press on it
+// where they touch (sliding freely, gripping with friction, or glued), and
+// the contact pressure shows as a layer of its own.
 
 import { useEffect, useMemo, useState } from "react";
-import { projectUrl } from "./engine";
+import { type PartStats, projectUrl } from "./engine";
 import { Icon } from "./icons";
 import type { ProgramFace, StressView } from "./Viewport";
 
 type V3 = [number, number, number];
-type Face = { point: V3; normal: V3; triangles: number[] };
-/** A face as kept with the study: where on the part it sits (fractions of the part's bounds) and which way it faces. */
-type Pick = { at: V3; probe: V3; normal: V3 };
+type Face = { point: V3; normal: V3; triangles: number[]; part?: string | null };
+/** A face as kept with the study: where on the part it sits (fractions of the part's bounds) and which way it faces; `part` when on another part studied with it. */
+type Pick = { at: V3; probe: V3; normal: V3; part?: string };
+type ContactKind = "frictionless" | "friction" | "bonded";
+type ContactSpec = { parts: [string, string]; kind: ContactKind; friction: number };
 type Convection = { h: number; ambient: number };
 type Spec = {
   part: string | null;
@@ -20,6 +25,9 @@ type Spec = {
   heats: { face: Pick; watts: number }[];
   convection: Convection | null;
   resolution: number;
+  /** Other parts studied with it, and how each pair acts where they touch. */
+  parts: string[];
+  contacts: ContactSpec[];
 };
 /** The saved faces found on the part as it is now (null: no longer there). */
 type Resolved = { supports: (Face | null)[]; loads: { face: Face | null; force: V3 | null }[]; holds: { face: Face | null }[]; heats: { face: Face | null }[] };
@@ -30,7 +38,15 @@ const AIR: { label: string; h: number }[] = [
   { label: "Fan", h: 50 },
 ];
 type Direction = "into" | "-z" | "+z" | "-x" | "+x" | "-y" | "+y";
-type Result = NonNullable<StressView["result"]> & { yield_strength: number; safety: number; elements: number; iterations: number; notes: string[] };
+type PartResult = { name: string; max_stress: number; max_displacement: number; yield_strength: number; safety: number; floating: boolean };
+type ContactPair = { parts: [string, string]; kind: ContactKind; friction: number; area: number; pressing: number; slipping: number; normal_force: number; shear_force: number; max_pressure: number };
+type Contacts = { faces: { cell: V3; dir: number; pressure: number; pair: number }[]; opened: [number, number, number, number][]; max_pressure: number; pairs: ContactPair[]; rounds: number; settled: boolean };
+type Result = NonNullable<StressView["result"]> & { yield_strength: number; safety: number; elements: number; iterations: number; notes: string[]; parts?: PartResult[]; contact?: Contacts };
+const KINDS: { value: ContactKind; label: string; title: string }[] = [
+  { value: "frictionless", label: "Slides", title: "Frictionless: they push on each other, never pull, and slide freely" },
+  { value: "friction", label: "Grips", title: "Friction: they push, never pull, and grip sideways up to μ × the push" },
+  { value: "bonded", label: "Glued", title: "Bonded: they move together where they touch" },
+];
 type Modes = {
   cell: number;
   origin: [number, number, number];
@@ -58,7 +74,8 @@ const RESOLUTIONS = [
 
 const n = (v: number, d = 1) => Number(v.toFixed(d)).toLocaleString("en-US");
 
-const emptySpec = (part: string | null): Spec => ({ part, supports: [], loads: [], holds: [], heats: [], convection: null, resolution: 56 });
+const emptySpec = (part: string | null): Spec => ({ part, supports: [], loads: [], holds: [], heats: [], convection: null, resolution: 56, parts: [], contacts: [] });
+const tone = (safety: number) => (safety >= 2 ? "ok" : safety >= 1.2 ? "warn" : "bad");
 const noFaces: Resolved = { supports: [], loads: [], holds: [], heats: [] };
 
 export function StressStudy(props: {
@@ -70,8 +87,11 @@ export function StressStudy(props: {
   bounds: { min: V3; max: V3 } | null;
   /** The shape's saved studies as stored (changes when anyone edits them). */
   saved: unknown;
+  /** Every part of the assembly (empty for a single solid). */
+  assembly: PartStats[];
   run: (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
-  onPickFace: (purpose: string, take: (f: ProgramFace) => void) => void;
+  /** Asks for a face; `parts`: other parts whose faces may be picked too. */
+  onPickFace: (purpose: string, take: (f: ProgramFace) => void, parts?: string[]) => void;
   onShow: (id: string, view: StressView | null) => void;
 }) {
   const [spec, setSpec] = useState<Spec>(() => emptySpec(props.part));
@@ -84,6 +104,9 @@ export function StressStudy(props: {
   const [deform, setDeform] = useState(false);
   const [vib, setVib] = useState<{ kind: "busy" } | { kind: "done"; modes: Modes } | { kind: "error"; text: string } | null>(null);
   const [mode, setMode] = useState<number | null>(null);
+  // The parts that touch this one (null: still finding out), and which result layer shows.
+  const [touching, setTouching] = useState<string[] | null>(null);
+  const [layer, setLayer] = useState<"stress" | "contact">("stress");
 
   // The saved study, its faces found on the part as it is now.
   useEffect(() => {
@@ -100,6 +123,20 @@ export function StressStudy(props: {
       live = false;
     };
   }, [props.id, props.part, props.version, props.saved]);
+  // The other parts it touches: the ones that can press on it in the study.
+  const several = !!props.part && props.assembly.length > 1;
+  useEffect(() => {
+    if (!several || !props.part) return setTouching([]);
+    let live = true;
+    setTouching(null);
+    fetch(projectUrl(`/touching/${props.id}?part=${encodeURIComponent(props.part)}`))
+      .then((r) => (r.ok ? r.json() : { parts: [] }))
+      .then((out: { parts: string[] }) => live && setTouching(out.parts))
+      .catch(() => live && setTouching([]));
+    return () => {
+      live = false;
+    };
+  }, [props.id, props.part, props.version, several]);
   // Another part, or a new version of it: earlier results no longer apply.
   useEffect(() => {
     setState({ kind: "idle" });
@@ -110,13 +147,34 @@ export function StressStudy(props: {
 
   const supports = resolved.supports.filter((f): f is Face => !!f);
   const loads = resolved.loads.filter((l): l is { face: Face; force: V3 } => !!l.face && !!l.force);
-  /** A picked face kept by where it sits on the part. */
+  /** A picked face kept by where it sits on its part (this one, or another studied with it). */
   const pickOf = (f: ProgramFace): Pick => {
-    const b = props.bounds;
+    const other = f.part && f.part !== props.part ? props.assembly.find((p) => p.name === f.part) : undefined;
+    const b = other ? { min: other.bounds_min, max: other.bounds_max } : props.bounds;
     const frac = (p: V3): V3 => (b ? ([0, 1, 2].map((k) => (b.max[k] - b.min[k] > 1e-9 ? (p[k] - b.min[k]) / (b.max[k] - b.min[k]) : 0.5)) as V3) : [0.5, 0.5, 0.5]);
     const t = f.triangles;
     const probe: V3 = [(t[0] + t[3] + t[6]) / 3, (t[1] + t[4] + t[7]) / 3, (t[2] + t[5] + t[8]) / 3];
-    return { at: frac(f.centroid), probe: frac(probe), normal: f.normal };
+    return { at: frac(f.centroid), probe: frac(probe), normal: f.normal, ...(other ? { part: other.name } : {}) };
+  };
+  /** Asks for a face on this part or any studied with it. */
+  const pickFace = (purpose: string, take: (f: ProgramFace) => void) => props.onPickFace(purpose, take, spec.parts);
+  /** The contact between this part and another (frictionless unless set). */
+  const contactWith = (name: string): ContactSpec => spec.contacts.find((c) => c.parts.includes(name) && c.parts.includes(props.part ?? "")) ?? { parts: [props.part ?? "", name], kind: "frictionless", friction: 0.3 };
+  const setContact = (name: string, change: Partial<ContactSpec>) => {
+    const next = { ...contactWith(name), ...change };
+    save({ ...spec, contacts: [...spec.contacts.filter((c) => !(c.parts.includes(name) && c.parts.includes(props.part ?? ""))), next] });
+  };
+  /** Takes another part into the study, or leaves it out (with its supports and loads). */
+  const include = (name: string, on: boolean) => {
+    if (on) return save({ ...spec, parts: [...spec.parts, name] });
+    const mine = (p: Pick) => p.part !== name;
+    save({
+      ...spec,
+      parts: spec.parts.filter((p) => p !== name),
+      contacts: spec.contacts.filter((c) => !c.parts.includes(name)),
+      supports: spec.supports.filter(mine),
+      loads: spec.loads.filter((l) => mine(l.face)),
+    });
   };
   /** Keeps a change with the project (it syncs to teammates and undoes like any edit). */
   const save = (next: Spec) => {
@@ -155,8 +213,10 @@ export function StressStudy(props: {
         },
       };
     }
-    return { faces, result: state.kind === "done" ? state.result : undefined, deform: deform ? 1 : 0 };
-  }, [resolved, state, deform, vib, mode, heat, showing]); // eslint-disable-line react-hooks/exhaustive-deps
+    const result = state.kind === "done" ? state.result : undefined;
+    const contact = result?.contact ? { faces: result.contact.faces, opened: result.contact.opened, max_pressure: result.contact.max_pressure } : undefined;
+    return { faces, result, deform: deform ? 1 : 0, contact, layer: contact ? layer : "stress" };
+  }, [resolved, state, deform, vib, mode, heat, showing, layer]); // eslint-disable-line react-hooks/exhaustive-deps
   const { id, onShow } = props;
   useEffect(() => {
     onShow(id, view.faces.length || view.result ? view : null);
@@ -169,7 +229,7 @@ export function StressStudy(props: {
       const r = await fetch(projectUrl(`/stress/${props.id}`), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ supports, loads: loads.map((l) => ({ face: l.face, force: l.force })), resolution, part: props.part }),
+        body: JSON.stringify({ supports, loads: loads.map((l) => ({ face: l.face, force: l.force })), resolution, part: props.part, parts: spec.parts, contacts: spec.contacts.filter((c) => c.parts.every((p) => p === props.part || spec.parts.includes(p))) }),
       });
       if (!r.ok) return setState({ kind: "error", text: await r.text() });
       const out = (await r.json()) as { result: Result; material: string };
@@ -224,7 +284,8 @@ export function StressStudy(props: {
     }
   };
   const r = state.kind === "done" ? state.result : null;
-  const tone = r ? (r.safety >= 2 ? "ok" : r.safety >= 1.2 ? "warn" : "bad") : "";
+  const verdict = r ? tone(r.safety) : "";
+  const onWhat = (p: Pick) => (p.part ? ` on ${p.part}` : "");
   return (
     <section className="props-section stress-study">
       <header>
@@ -235,7 +296,7 @@ export function StressStudy(props: {
         {spec.supports.map((_, i) => (
           <div key={`s${i}`} className={`stress-item support ${resolved.supports[i] === null ? "lost" : ""}`}>
             <span className="stress-dot" />
-            {resolved.supports[i] === null ? "Face no longer found: pick it again" : `Held at face ${i + 1}`}
+            {resolved.supports[i] === null ? "Face no longer found: pick it again" : `Held at face ${i + 1}${onWhat(spec.supports[i])}`}
             <button type="button" aria-label="Remove this support" onClick={() => save({ ...spec, supports: spec.supports.filter((_, j) => j !== i) })}>
               <Icon name="close" />
             </button>
@@ -263,6 +324,7 @@ export function StressStudy(props: {
                 </option>
               ))}
             </select>
+            {l.face.part && <span className="stress-on">{l.face.part}</span>}
             <button type="button" aria-label="Remove this load" onClick={() => save({ ...spec, loads: spec.loads.filter((_, j) => j !== i) })}>
               <Icon name="close" />
             </button>
@@ -270,10 +332,10 @@ export function StressStudy(props: {
         ))}
       </div>
       <div className="stress-add">
-        <button type="button" className="secondary" onClick={() => props.onPickFace("Click the face the part is held by", (f) => save({ ...spec, supports: [...spec.supports, pickOf(f)] }))}>
+        <button type="button" className="secondary" onClick={() => pickFace(spec.parts.length ? "Click the face it is held by (on this part or one studied with it)" : "Click the face the part is held by", (f) => save({ ...spec, supports: [...spec.supports, pickOf(f)] }))}>
           <Icon name="plus" /> Support
         </button>
-        <button type="button" className="secondary" onClick={() => props.onPickFace("Click the face the force pushes on", (f) => save({ ...spec, loads: [...spec.loads, { face: pickOf(f), magnitude: 100, direction: "into" }] }))}>
+        <button type="button" className="secondary" onClick={() => pickFace(spec.parts.length ? "Click the face the force pushes on (on this part or one studied with it)" : "Click the face the force pushes on", (f) => save({ ...spec, loads: [...spec.loads, { face: pickOf(f), magnitude: 100, direction: "into" }] }))}>
           <Icon name="plus" /> Load
         </button>
         <div className="segmented" role="group" aria-label="Resolution">
@@ -284,6 +346,53 @@ export function StressStudy(props: {
           ))}
         </div>
       </div>
+      {several && (
+        <div className="contact-block">
+          <h4>Parts touching it</h4>
+          {touching === null && <p className="motion-note">Finding the parts that touch it…</p>}
+          {touching?.length === 0 && <p className="motion-note">No other part touches it: it is studied on its own.</p>}
+          {touching && [...new Set([...touching, ...spec.parts])].map((name) => {
+            const on = spec.parts.includes(name);
+            const c = contactWith(name);
+            const material = props.assembly.find((p) => p.name === name)?.material;
+            return (
+              <div key={name} className={`contact-row ${on ? "on" : ""}`}>
+                <label title={material ? `${material}: its own stiffness` : "Give it a material to study it"}>
+                  <input type="checkbox" checked={on} disabled={!material && !on} onChange={(e) => include(name, e.target.checked)} />
+                  <span>{name}</span>
+                  {!material && <small>no material</small>}
+                </label>
+                {on && (
+                  <div className="segmented" role="group" aria-label={`How ${name} acts where it touches`}>
+                    {KINDS.map((k) => (
+                      <button key={k.value} type="button" title={k.title} className={c.kind === k.value ? "active" : ""} aria-pressed={c.kind === k.value} onClick={() => setContact(name, { kind: k.value })}>
+                        {k.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {on && c.kind === "friction" && (
+                  <label className="contact-mu" title="Coefficient of friction: about 0.15 oiled steel, 0.5 dry steel, 0.6 rubber on concrete">
+                    μ
+                    <input
+                      defaultValue={String(c.friction)}
+                      key={`${name}:${c.friction}`}
+                      inputMode="decimal"
+                      aria-label="Coefficient of friction"
+                      onBlur={(e) => {
+                        const v = Number(e.target.value);
+                        if (Number.isFinite(v) && v >= 0 && v !== c.friction) setContact(name, { friction: v });
+                      }}
+                      onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                    />
+                  </label>
+                )}
+              </div>
+            );
+          })}
+          {spec.parts.length > 0 && <p className="motion-note">They press on it where they touch, never pull (unless glued). Supports and loads can go on them too; a part with no support of its own is held only by its contacts.</p>}
+        </div>
+      )}
       <div className="stress-runs">
         <button type="button" className="primary stress-run" disabled={!supports.length || !loads.length || state.kind === "busy" || !props.material} onClick={run} title="How hard the loads work the material, and how far it bends">
           <Icon name="weight" /> {state.kind === "busy" ? "Solving…" : "Stress"}
@@ -310,23 +419,79 @@ export function StressStudy(props: {
       {state.kind === "error" && <p className="print-note bad">{state.text}</p>}
       {r && (
         <div className="stress-result">
-          <div className={`stress-verdict ${tone}`}>
-            <b>Safety ×{n(r.safety, 2)}</b> against yield ({n(r.yield_strength, 0)} MPa)
+          <div className={`stress-verdict ${verdict}`}>
+            <b>Safety ×{n(r.safety, 2)}</b> against yield ({n(r.yield_strength, 0)} MPa){r.parts && ` · ${r.parts.reduce((a, b) => (b.safety < a.safety ? b : a)).name}`}
           </div>
+          {r.parts && (
+            <div className="part-results">
+              {r.parts.map((p) => (
+                <div key={p.name} className="part-result">
+                  <span>{p.name}</span>
+                  {p.floating ? (
+                    <small className="bad">slides away: not held</small>
+                  ) : (
+                    <small>
+                      {n(p.max_stress, 1)} MPa · {n(p.max_displacement, p.max_displacement < 0.1 ? 4 : 3)} mm
+                    </small>
+                  )}
+                  <b className={tone(p.safety)}>×{n(p.safety, 2)}</b>
+                </div>
+              ))}
+            </div>
+          )}
           <dl>
             <dt>Largest stress</dt>
             <dd>{n(r.max_stress, 1)} MPa</dd>
             <dt>Moves at most</dt>
             <dd>{n(r.max_displacement, r.max_displacement < 0.1 ? 4 : 3)} mm</dd>
           </dl>
-          <div className="stress-legend" aria-hidden="true">
-            <span>0</span>
-            <i />
-            <span>{n(r.max_stress, 0)} MPa</span>
-          </div>
-          <label className="xray-toggle">
-            <input type="checkbox" checked={deform} onChange={(e) => setDeform(e.target.checked)} /> Show the bending (exaggerated)
-          </label>
+          {r.contact && (
+            <div className="contact-results">
+              {r.contact.pairs.map((c) => (
+                <div key={c.parts.join("|")} className="contact-result">
+                  <span>
+                    {c.parts[0]} ↔ {c.parts[1]} <small>{c.kind === "bonded" ? "glued" : c.kind === "friction" ? `μ ${c.friction}` : "sliding"}</small>
+                  </span>
+                  <small>
+                    {n(c.normal_force, 1)} N push · {n(c.shear_force, 1)} N sideways · {n(c.pressing, 0)} of {n(c.area, 0)} mm² pressing{c.slipping > 0 ? ` (${n(c.slipping, 0)} slipping)` : ""} · up to {n(c.max_pressure, 1)} MPa
+                  </small>
+                </div>
+              ))}
+              <div className="segmented" role="group" aria-label="Show">
+                <button type="button" className={layer === "stress" ? "active" : ""} aria-pressed={layer === "stress"} onClick={() => setLayer("stress")}>
+                  Stress
+                </button>
+                <button type="button" className={layer === "contact" ? "active" : ""} aria-pressed={layer === "contact"} onClick={() => setLayer("contact")}>
+                  Contact pressure
+                </button>
+              </div>
+            </div>
+          )}
+          {r.contact && layer === "contact" ? (
+            <>
+              <div className="stress-legend" aria-hidden="true">
+                <span>0</span>
+                <i />
+                <span>{n(r.contact.max_pressure, 1)} MPa</span>
+              </div>
+              {r.contact.opened.length > 0 && (
+                <p className="motion-note">
+                  <span className="gap-dot" /> Where touching faces came apart (up to {n(Math.max(...r.contact.opened.map((o) => o[3])) * 1000, 1)} µm).
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="stress-legend" aria-hidden="true">
+                <span>0</span>
+                <i />
+                <span>{n(r.max_stress, 0)} MPa</span>
+              </div>
+              <label className="xray-toggle">
+                <input type="checkbox" checked={deform} onChange={(e) => setDeform(e.target.checked)} /> Show the bending (exaggerated)
+              </label>
+            </>
+          )}
           <p className="motion-note">{r.notes.join(" ")}</p>
         </div>
       )}
