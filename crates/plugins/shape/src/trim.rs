@@ -31,36 +31,36 @@ pub struct ExtendSketch {
     pub at: [f64; 2],
 }
 
-fn bad(text: impl Into<String>) -> CommandError {
+pub(crate) fn bad(text: impl Into<String>) -> CommandError {
     CommandError::new(ErrorCode::InvalidParameters, text.into())
 }
 
-type P = [f64; 2];
+pub(crate) type P = [f64; 2];
 const EPS: f64 = 1e-7;
 const BEZIER_STEPS: usize = 96;
 
-fn sub(a: P, b: P) -> P {
+pub(crate) fn sub(a: P, b: P) -> P {
     [a[0] - b[0], a[1] - b[1]]
 }
-fn dot(a: P, b: P) -> f64 {
+pub(crate) fn dot(a: P, b: P) -> f64 {
     a[0] * b[0] + a[1] * b[1]
 }
-fn cross(a: P, b: P) -> f64 {
+pub(crate) fn cross(a: P, b: P) -> f64 {
     a[0] * b[1] - a[1] * b[0]
 }
-fn dist(a: P, b: P) -> f64 {
+pub(crate) fn dist(a: P, b: P) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
 }
-fn lerp(a: P, b: P, t: f64) -> P {
+pub(crate) fn lerp(a: P, b: P, t: f64) -> P {
     [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
 }
-fn wrap(a: f64) -> f64 {
+pub(crate) fn wrap(a: f64) -> f64 {
     a.rem_euclid(TAU)
 }
 
 /// A curve as plain geometry, for finding crossings.
 #[derive(Clone, Debug)]
-enum Prim {
+pub(crate) enum Prim {
     Seg(P, P),
     /// Centre, radius, start angle and counter-clockwise sweep (TAU for a full circle).
     Circ(P, f64, f64, f64),
@@ -69,14 +69,14 @@ enum Prim {
 }
 
 impl Prim {
-    fn on_arc(&self, p: P) -> bool {
+    pub(crate) fn on_arc(&self, p: P) -> bool {
         match self {
             Prim::Circ(c, _, a0, sweep) => *sweep >= TAU - 1e-12 || wrap((p[1] - c[1]).atan2(p[0] - c[0]) - a0) <= sweep + 1e-9,
             _ => true,
         }
     }
     /// Where along the curve a point is: 0–1 for lines and Béziers, the angle past the start for circles and arcs.
-    fn param(&self, p: P) -> f64 {
+    pub(crate) fn param(&self, p: P) -> f64 {
         match self {
             Prim::Seg(a, b) => {
                 let d = sub(*b, *a);
@@ -114,7 +114,7 @@ impl Prim {
 }
 
 /// Where a segment (as a whole line when `infinite`) meets another curve.
-fn seg_hits(a: P, b: P, other: &Prim, infinite: bool) -> Vec<P> {
+pub(crate) fn seg_hits(a: P, b: P, other: &Prim, infinite: bool) -> Vec<P> {
     let d = sub(b, a);
     let within = |t: f64| infinite || (-EPS..=1.0 + EPS).contains(&t);
     let mut out = vec![];
@@ -151,7 +151,7 @@ fn seg_hits(a: P, b: P, other: &Prim, infinite: bool) -> Vec<P> {
     out
 }
 
-fn circ_hits(c1: P, r1: f64, other: &Prim) -> Vec<P> {
+pub(crate) fn circ_hits(c1: P, r1: f64, other: &Prim) -> Vec<P> {
     match other {
         Prim::Circ(c2, r2, ..) => {
             let d = dist(c1, *c2);
@@ -179,18 +179,20 @@ fn crossings(t: &Prim, other: &Prim) -> Vec<(f64, P)> {
     pts.into_iter().map(|p| (t.param(p), p)).collect()
 }
 
-struct Ctx {
-    sketch: Sketch,
-    dims: BTreeMap<String, f64>,
-    at: BTreeMap<u32, P>,
-    radii: BTreeMap<u32, f64>,
+pub(crate) struct Ctx {
+    pub(crate) sketch: Sketch,
+    pub(crate) dims: BTreeMap<String, f64>,
+    pub(crate) at: BTreeMap<u32, P>,
+    pub(crate) radii: BTreeMap<u32, f64>,
     next: u32,
     /// Points some curve used before the change.
     used_before: BTreeSet<u32>,
+    /// Every constraint held before the change.
+    met_before: bool,
 }
 
 impl Ctx {
-    fn load(tx: &Tx, target: StableId) -> Result<Ctx, CommandError> {
+    pub(crate) fn load(tx: &Tx, target: StableId) -> Result<Ctx, CommandError> {
         let mut sketch = tx.get::<Sketch>(target).cloned().ok_or_else(|| CommandError::new(ErrorCode::UnresolvedReference, format!("{target} is not a sketch")))?;
         let dims = params::resolve(tx.world(), &sketch.params).map_err(bad)?;
         let solved = solve(&sketch.geometry, &dims).map_err(|e| CommandError::new(ErrorCode::InvalidGeometry, e))?;
@@ -202,22 +204,23 @@ impl Ctx {
         }
         let next = sketch.geometry.points.iter().map(|p| p.id).chain(sketch.geometry.curves.iter().map(Curve::id)).max().unwrap_or(0) + 1;
         let used_before = sketch.geometry.curves.iter().flat_map(curve_points).collect();
-        Ok(Ctx { sketch, dims, at: solved.points, radii: solved.radii, next, used_before })
+        let met_before = solved.conflicts.is_empty();
+        Ok(Ctx { sketch, dims, at: solved.points, radii: solved.radii, next, used_before, met_before })
     }
-    fn p(&self, id: u32) -> P {
+    pub(crate) fn p(&self, id: u32) -> P {
         self.at[&id]
     }
-    fn id(&mut self) -> u32 {
+    pub(crate) fn id(&mut self) -> u32 {
         self.next += 1;
         self.next - 1
     }
-    fn point(&mut self, p: P) -> u32 {
+    pub(crate) fn point(&mut self, p: P) -> u32 {
         let id = self.id();
         self.sketch.geometry.points.push(Point { id, x: p[0], y: p[1] });
         self.at.insert(id, p);
         id
     }
-    fn prim(&self, c: &Curve) -> Prim {
+    pub(crate) fn prim(&self, c: &Curve) -> Prim {
         match c {
             Curve::Line { a, b, .. } => Prim::Seg(self.p(*a), self.p(*b)),
             Curve::Circle { id, center, radius, .. } => Prim::Circ(self.p(*center), self.radii.get(id).copied().unwrap_or(*radius), 0.0, TAU),
@@ -247,7 +250,7 @@ impl Ctx {
         out
     }
     /// A new end at `p` on curve `on`: an existing end of `on` if it is there, else a new point held on `on`.
-    fn end_on(&mut self, p: P, on: u32) -> u32 {
+    pub(crate) fn end_on(&mut self, p: P, on: u32) -> u32 {
         let c = self.sketch.geometry.curves.iter().find(|c| c.id() == on).cloned().unwrap();
         let ends: Vec<u32> = match &c {
             Curve::Line { a, b, .. } | Curve::Bezier { a, b, .. } => vec![*a, *b],
@@ -273,8 +276,30 @@ impl Ctx {
                 || matches!(c, Constraint::Midpoint { line, .. } if *line == changed)
                 || matches!(c, Constraint::Equal { a, b } if (*a == changed || *b == changed) && g.curves.iter().any(|k| k.id() == changed && matches!(k, Curve::Line { .. }))))
         });
+        self.save(tx, target, &BTreeSet::new(), false, json!({ "id": target, "curves": made }))
+    }
+
+    /// A new dimension of the sketch (key d1, d2, … as the editor names
+    /// them), `label` numbered after it. Returns its key.
+    pub(crate) fn dimension(&mut self, label: &str, value: f64, unit: &str) -> String {
+        let mut n = 1;
+        while self.sketch.params.iter().any(|p| p.key == format!("d{n}")) {
+            n += 1;
+        }
+        let key = format!("d{n}");
+        self.sketch.params.push(crate::Param { key: key.clone(), label: format!("{label} {n}"), value, unit: unit.into(), min: (unit == "mm").then_some(0.001), max: None, step: None, expr: None });
+        self.dims.insert(key.clone(), value);
+        key
+    }
+
+    /// Tidies up and stores the sketch: points no curve uses any more go
+    /// (except `keep`), and constraints on anything gone go with it, with the
+    /// dimensions only they carried. `strict` refuses a change that leaves
+    /// constraints unmet that were met before.
+    pub(crate) fn save(mut self, tx: &mut Tx, target: StableId, keep: &BTreeSet<u32>, strict: bool, out: Value) -> Result<Value, CommandError> {
+        let g = &mut self.sketch.geometry;
         let used: BTreeSet<u32> = g.curves.iter().flat_map(curve_points).collect();
-        let gone_points: BTreeSet<u32> = self.used_before.iter().copied().filter(|p| !used.contains(p)).collect();
+        let gone_points: BTreeSet<u32> = self.used_before.iter().copied().filter(|p| !used.contains(p) && !keep.contains(p)).collect();
         let curves: BTreeSet<u32> = g.curves.iter().map(Curve::id).collect();
         let points: BTreeSet<u32> = g.points.iter().map(|p| p.id).filter(|p| !gone_points.contains(p)).collect();
         g.points.retain(|p| !gone_points.contains(&p.id));
@@ -282,9 +307,18 @@ impl Ctx {
         g.constraints.retain(|c| refs(c).iter().all(|r| curves.contains(r) || points.contains(r)));
         let keys: BTreeSet<String> = g.constraints.iter().filter_map(|c| c.key().map(str::to_string)).collect();
         self.sketch.params.retain(|p| keys.contains(&p.key));
-        solve(&self.sketch.geometry, &self.dims).map_err(|e| CommandError::new(ErrorCode::InvalidGeometry, e))?;
+        let solved = solve(&self.sketch.geometry, &self.dims).map_err(|e| CommandError::new(ErrorCode::InvalidGeometry, e))?;
+        if strict && !solved.conflicts.is_empty() && self.met_before {
+            return Err(CommandError::new(ErrorCode::InvalidGeometry, "that cannot hold together with the sketch's other constraints and dimensions"));
+        }
+        // Store where everything now is, so the drawing is right before the next solve.
+        for p in &mut self.sketch.geometry.points {
+            if let Some(q) = solved.points.get(&p.id) {
+                (p.x, p.y) = (q[0], q[1]);
+            }
+        }
         tx.set(target, self.sketch)?;
-        Ok(json!({ "id": target, "curves": made }))
+        Ok(out)
     }
 }
 

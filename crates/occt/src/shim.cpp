@@ -24,6 +24,7 @@
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Section.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -565,6 +566,21 @@ int occ_hlr_view(void* p, int h, double dx, double dy, double dz, double ux, dou
     *data = d.data();
     *len = (int)d.size();
     return count;
+  });
+}
+
+/// Where a shape crosses a plane: the section's edges (true lines, circles
+/// and curves where the plane cuts the faces), as one compound.
+int occ_section(void* p, int h, double ox, double oy, double oz, double nx, double ny, double nz) {
+  Arena* a = static_cast<Arena*>(p);
+  return guard(a, [&] {
+    const TopoDS_Shape* s = get(a, h);
+    if (!s) return -1;
+    BRepAlgoAPI_Section sec(*s, gp_Pln(gp_Pnt(ox, oy, oz), gp_Dir(nx, ny, nz)), Standard_False);
+    sec.Approximation(Standard_True);
+    sec.Build();
+    if (!sec.IsDone()) throw Standard_Failure("could not cut the shape with the plane");
+    return push(a, sec.Shape());
   });
 }
 
