@@ -731,28 +731,27 @@ pub fn groups(joints: &[(StableId, Joint)]) -> Vec<Group> {
         .collect()
 }
 
-fn is_joint(world: &World, id: StableId) -> bool {
-    entity(world, id).is_some_and(|e| world.get::<Joint>(e).is_some())
+/// The group holding an instance (it is in it and not its anchor), if any.
+fn group_holding(world: &World, instance: StableId) -> Option<Group> {
+    let scope = entity(world, instance).and_then(|e| world.get::<Instance>(e)).map(|i| i.parent)?;
+    groups(&joints_in(world, scope)).into_iter().find(|g| g.members.contains(&instance) && g.anchor != Some(instance))
 }
 
 /// The joints holding an instance (its group's), if any hold it.
 pub fn holding(world: &World, instance: StableId) -> Vec<StableId> {
-    let Some(e) = entity(world, instance) else { return vec![] };
-    world.get::<DependsOn>(e).map(|d| d.0.iter().copied().filter(|j| is_joint(world, *j)).collect()).unwrap_or_default()
+    group_holding(world, instance).map(|g| g.joints).unwrap_or_default()
 }
 
-/// Derived: an instance's placement (see [`Placed`]).
+/// Derived: an instance's placement (see [`Placed`]). Its group is read from
+/// the joints in its assembly; the dependencies (on the assembly's joint hub,
+/// see [`rewire`]) only say when to look again.
 pub(crate) fn placed(world: &World, e: Entity) -> Option<Result<Placed, String>> {
     let inst = world.get::<Instance>(e)?;
-    let deps = world.get::<DependsOn>(e).map(|d| d.0.clone()).unwrap_or_default();
-    let mut joint_ids: Vec<StableId> = deps.iter().copied().filter(|d| is_joint(world, *d)).collect();
-    if joint_ids.is_empty() {
-        return Some(Ok(Placed::new(inst.transform(), None, None, BTreeMap::new())));
-    }
-    joint_ids.sort();
     let id = *world.get::<StableId>(e)?;
-    let anchor = deps.iter().copied().find(|d| entity(world, *d).is_some_and(|x| world.get::<Instance>(x).is_some()));
-    Some(place_in_group(world, id, &joint_ids, anchor))
+    let Some(g) = group_holding(world, id) else {
+        return Some(Ok(Placed::new(inst.transform(), None, None, BTreeMap::new())));
+    };
+    Some(place_in_group(world, id, &g.joints, g.anchor))
 }
 
 fn place_in_group(world: &World, id: StableId, joint_ids: &[StableId], anchor: Option<StableId>) -> Result<Placed, String> {
@@ -813,39 +812,78 @@ fn scope_instances(world: &World, scope: Option<StableId>) -> Vec<(StableId, Ins
     out
 }
 
-/// Makes every held instance of the scope depend on what places it: its
-/// group's joints, its anchor, and the definitions of the instances in it
-/// (their connectors); and nothing else of the kind.
+/// One per assembly (and one for the top of the project) that has joints:
+/// it depends on everything that places the assembly's held instances — its
+/// joints, the groups' anchors and the definitions of the instances joined
+/// (their connectors) — and every held instance depends on it alone. Adding
+/// a joint changes the hub's dependencies, not every instance's, so an
+/// assembly of hundreds of joined parts stays cheap to change and to store.
+#[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct JointHub {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assembly: Option<StableId>,
+}
+
+impl Persist for JointHub {
+    const KIND: &'static str = "assembly.joint_hub";
+}
+
+fn hub_of(world: &World, scope: Option<StableId>) -> Option<StableId> {
+    world.resource::<IdIndex>().iter().filter(|(_, e)| world.get::<JointHub>(*e).is_some_and(|h| h.assembly == scope)).map(|(id, _)| id).min()
+}
+
+/// Keeps the scope's joint hub (see [`JointHub`]) and its held instances'
+/// dependencies in step with the joints.
 pub(crate) fn rewire(tx: &mut Tx, scope: Option<StableId>) -> Result<(), CommandError> {
     let joints = joints_in(tx.world(), scope);
     let gs = groups(&joints);
     let instances = scope_instances(tx.world(), scope);
     let of: HashMap<StableId, StableId> = instances.iter().map(|(id, i)| (*id, i.of)).collect();
-    for (id, inst) in &instances {
-        let mut want: Vec<StableId> = vec![];
-        if let Some(g) = gs.iter().find(|g| g.members.contains(id) && g.anchor != Some(*id)) {
-            want.extend(&g.joints);
+    let hub = match hub_of(tx.world(), scope) {
+        Some(h) => Some(h),
+        None if !joints.is_empty() => {
+            let h = tx.create();
+            tx.set(h, JointHub { assembly: scope })?;
+            Some(h)
+        }
+        None => None,
+    };
+    if let Some(h) = hub {
+        let mut want: Vec<StableId> = joints.iter().map(|(j, _)| *j).collect();
+        for g in &gs {
             want.extend(g.anchor);
             for m in &g.members {
                 if let Some(d) = of.get(m)
-                    && *d != inst.of
                     && !want.contains(d)
                 {
                     want.push(*d);
                 }
             }
         }
+        let current = tx.get::<DependsOn>(h).map(|d| d.0.clone()).unwrap_or_default();
+        for d in current.iter().filter(|d| !want.contains(d)) {
+            tx.remove_dependency(h, *d)?;
+        }
+        for d in want.iter().filter(|d| !current.contains(d)) {
+            tx.add_dependency(h, *d)?;
+        }
+    }
+    for (id, inst) in &instances {
+        let mut want: Vec<StableId> = vec![];
+        if gs.iter().any(|g| g.members.contains(id) && g.anchor != Some(*id)) {
+            want.extend(hub);
+        }
         let world = tx.world();
         let current = tx.get::<DependsOn>(*id).map(|d| d.0.clone()).unwrap_or_default();
         let ours = |d: &StableId| {
-            entity(world, *d).is_some_and(|e| world.get::<Joint>(e).is_some() || world.get::<Instance>(e).is_some() || ((world.get::<ShapeProgram>(e).is_some() || world.get::<AssemblyDef>(e).is_some()) && *d != inst.of))
+            entity(world, *d).is_some_and(|e| world.get::<Joint>(e).is_some() || world.get::<JointHub>(e).is_some() || world.get::<Instance>(e).is_some() || ((world.get::<ShapeProgram>(e).is_some() || world.get::<AssemblyDef>(e).is_some()) && *d != inst.of))
                 || entity(world, *d).is_none()
         };
         let stale: Vec<StableId> = current.iter().copied().filter(|d| ours(d) && !want.contains(d)).collect();
         for d in stale {
             tx.remove_dependency(*id, d)?;
         }
-        for d in want {
+        for d in want.into_iter().filter(|d| !current.contains(d)) {
             tx.add_dependency(*id, d)?;
         }
     }
@@ -857,7 +895,11 @@ pub(crate) fn rewire(tx: &mut Tx, scope: Option<StableId>) -> Result<(), Command
 fn freeze(tx: &mut Tx, scope: Option<StableId>) -> Result<(), CommandError> {
     for (id, mut inst) in scope_instances(tx.world(), scope) {
         let Some(p) = tx.get::<Placed>(id).filter(|p| p.by.is_some()).cloned() else { continue };
-        inst.at = p.at.map(|v| (v * 1e9).round() / 1e9);
+        let at = p.at.map(|v| (v * 1e9).round() / 1e9);
+        if inst.at == at && inst.rotation == p.rotation {
+            continue; // unchanged: nothing to journal
+        }
+        inst.at = at;
         inst.rotation = p.rotation;
         tx.set(id, inst)?;
     }
@@ -867,6 +909,15 @@ fn freeze(tx: &mut Tx, scope: Option<StableId>) -> Result<(), CommandError> {
 /// A held instance's group noticed a change in one of its instances that no
 /// dependency carries (its configuration): its other instances re-solve.
 pub(crate) fn touch(tx: &mut Tx, instance: StableId, scope: Option<StableId>) -> Result<(), CommandError> {
+    // With a hub: re-mark it (its dependents, every held instance, re-solve).
+    if let Some(h) = hub_of(tx.world(), scope) {
+        let of = tx.get::<Instance>(instance).map(|i| i.of);
+        if let Some(d) = of.filter(|d| tx.get::<DependsOn>(h).is_some_and(|x| x.0.contains(d))) {
+            tx.remove_dependency(h, d)?;
+            tx.add_dependency(h, d)?;
+            return Ok(());
+        }
+    }
     let joints = joints_in(tx.world(), scope);
     for g in groups(&joints) {
         if !g.members.contains(&instance) {

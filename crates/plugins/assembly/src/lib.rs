@@ -57,6 +57,7 @@ impl Plugin for AssemblyPlugin {
             .command::<MakeUnique>()
             .command::<DeleteInstance>()
             .component::<joints::Joint>()
+            .component::<joints::JointHub>()
             .command::<joints::CreateJoint>()
             .command::<joints::UpdateJoint>()
             .command::<joints::DeleteJoint>()
