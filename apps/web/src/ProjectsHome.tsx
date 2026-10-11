@@ -19,7 +19,7 @@ type Project = {
   team: { members: { name: string; role: string }[]; joined: boolean; by: string } | null;
   info?: { title: string | null; description: string; tags: string[] };
 };
-type Trashed = { entry: string; name: string; deleted: number; revisions: number; taken: boolean };
+type Trashed = { entry: string; name: string; title?: string; deleted: number; revisions: number; taken: boolean };
 
 type Filter = "all" | "mine" | "shared" | "team";
 type Sort = "edited" | "name" | "created";
@@ -306,7 +306,7 @@ export function ProjectsHome(props: { onClose: () => void }) {
                 {trash.map((t) => (
                   <li key={t.entry}>
                     <span>
-                      <b>{prettyName(t.name)}</b>
+                      <b>{t.title || prettyName(t.name)}</b>
                       <small>
                         Deleted {ago(t.deleted)} · {t.revisions.toLocaleString()} changes
                       </small>

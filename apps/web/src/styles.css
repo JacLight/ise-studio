@@ -5675,8 +5675,8 @@ button.download.drawing-open small {
   position: fixed;
   inset: 0;
   z-index: 210;
-  display: grid;
-  grid-template-rows: auto auto 1fr;
+  display: flex;
+  flex-direction: column;
   background: #f7f6fa;
 }
 
@@ -5783,6 +5783,7 @@ button.download.drawing-open small {
 }
 
 .projects-body {
+  flex: 1;
   min-height: 0;
   padding: 8px 24px 32px;
   overflow: auto;
@@ -6263,6 +6264,7 @@ button.download.drawing-open small {
 /* ---- Projects: details, menu, tags, trash ---- */
 .project-open-area {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto;
   width: 100%;
   min-width: 0;
@@ -6372,7 +6374,13 @@ button.download.drawing-open small {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 0 28px 4px;
+  padding: 0 24px 8px;
+}
+
+/* A project without a picture fills its card the same as one with. */
+.project-open-area .project-thumb {
+  width: 100%;
+  justify-self: stretch;
 }
 
 .tag-chip {

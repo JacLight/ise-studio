@@ -246,7 +246,8 @@ async fn trash_list(State(server): State<Arc<Server>>) -> impl IntoResponse {
             let (name, at) = entry.rsplit_once('~')?;
             let at: u64 = at.parse().ok()?;
             let revisions = std::fs::read(e.path().join(format!("{name}.jsonl"))).map(|b| b.iter().filter(|c| **c == b'\n').count()).unwrap_or(0);
-            Some(json!({ "entry": entry, "name": name, "deleted": at * 1000, "revisions": revisions, "taken": server.dir.join(format!("{name}.jsonl")).exists() }))
+            let title = info_of(&e.path(), name)["title"].as_str().map(str::to_string).unwrap_or_else(|| pretty_name(name));
+            Some(json!({ "entry": entry, "name": name, "title": title, "deleted": at * 1000, "revisions": revisions, "taken": server.dir.join(format!("{name}.jsonl")).exists() }))
         })
         .collect();
     list.sort_by_key(|v| std::cmp::Reverse(v["deleted"].as_u64().unwrap_or(0)));
