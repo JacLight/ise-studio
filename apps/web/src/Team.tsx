@@ -303,8 +303,8 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
   );
 }
 
-/** One field two teammates changed at once: what each set, which stayed, and a way to pick the other. */
-function Clash(props: { clash: TeamStatus["conflicts"][number]; entities: ReadonlyMap<string, EntityView>; run: Run; onDone: () => void }) {
+/** One field two teammates (or a branch and its original) changed at once: what each set, which stayed, and a way to pick the other. */
+export function Clash(props: { clash: TeamStatus["conflicts"][number]; entities: ReadonlyMap<string, EntityView>; run: Run; onDone: () => void; who?: string; you?: string }) {
   const c = props.clash;
   const e = props.entities.get(c.id);
   const prog = e ? program(e) : undefined;
@@ -324,7 +324,7 @@ function Clash(props: { clash: TeamStatus["conflicts"][number]; entities: Readon
   return (
     <div className="clash">
       <p>
-        <b>{c.by.user_id === "local" ? "A teammate" : c.by.user_id}</b> and you both changed <b>{what}</b>. Every copy kept <b>{show(kept)}</b>; the other value was{" "}
+        <b>{props.who ?? (c.by.user_id === "local" ? "A teammate" : c.by.user_id)}</b> and {props.you ?? "you"} both changed <b>{what}</b>. Every copy kept <b>{show(kept)}</b>; the other value was{" "}
         <b>{show(other)}</b>.
       </p>
       <div className="clash-actions">

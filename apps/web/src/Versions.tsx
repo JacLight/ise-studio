@@ -1,13 +1,15 @@
 // Named versions of the project: mark it ("Sent to supplier", "v1.2"), look
 // at any version read-only, compare it with now, restore it (as one new,
-// undoable change), or branch from it into a new project and merge that back.
+// undoable change), or branch from it into a new project, pull the original's
+// newer changes into it, and merge it back.
 // Versions live in the project's own journal and reach teammates like any
 // change; the history is never rewritten.
 
 import { useCallback, useEffect, useState } from "react";
 import { Dialog } from "./Dialog";
-import { type EntityView, projectName, projectTitle, projectUrl } from "./engine";
+import { type EntityView, type TeamStatus, projectName, projectTitle, projectUrl } from "./engine";
 import { Icon } from "./icons";
+import { Clash } from "./Team";
 
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
 
@@ -21,10 +23,16 @@ export type BranchInfo = {
   created: number;
   merged_at: number | null;
   merged: number;
+  pulled_at: number | null;
+  pulled: number;
   ahead: number;
   behind: number;
 };
 type Which = { version?: string; revision?: number };
+type Conflict = TeamStatus["conflicts"][number];
+
+const changes = (n: number) => `${n} ${n === 1 ? "change" : "changes"}`;
+const day = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 
 type Change = { id: string; change: "added" | "removed" | "changed"; name: string | null; kinds: string[]; fields?: { kind: string; path: string; before: unknown; after: unknown }[] };
 type Comparison = { label: string; added: number; removed: number; changed: number; changes: Change[] };
@@ -108,8 +116,8 @@ export function useVersionActions() {
       ) : (
         <>
           <p>
-            A new project starts from <b>{ask.label}</b>, titled “{projectTitle()} — branch from {ask.label}”. Work there freely; it remembers where it came from, and you can merge its
-            changes back into <b>{projectTitle()}</b> later.
+            A new project starts from <b>{ask.label}</b>, titled “{projectTitle()} — branch from {ask.label}”. Work there freely; it remembers where it came from, so you can pull in what
+            changes here in <b>{projectTitle()}</b> and merge its changes back later.
           </p>
           <label className="version-field">
             Project name <span>optional</span>
@@ -247,7 +255,134 @@ export function Compare(props: { project: string; which: Which; onPick?: (id: st
   );
 }
 
-/** The versions list (in the change history panel): mark, look, compare, restore, branch; and, on a branch, merging back. */
+/** On a branch: where it came from, pulling the original's newer changes in, and merging back. */
+function BranchCard(props: { branch: BranchInfo; entities: ReadonlyMap<string, EntityView>; run: Run; onChanged: (b: BranchInfo) => void }) {
+  const b = props.branch;
+  const [busy, setBusy] = useState<"pull" | "merge" | null>(null);
+  const [note, setNote] = useState<{ text: string; tone: "ok" | "bad" | "" } | null>(null);
+  const [clashes, setClashes] = useState<Conflict[]>([]);
+  useEffect(() => {
+    if (!note || clashes.length) return;
+    const t = window.setTimeout(() => setNote(null), 8000);
+    return () => window.clearTimeout(t);
+  }, [note, clashes.length]);
+  const both = (n: number) => `${n} ${n === 1 ? "field was" : "fields were"} changed on both sides`;
+
+  const pull = async () => {
+    setBusy("pull");
+    try {
+      const out = (await post(projectUrl("/branch/pull"), {})) as { changes: number; conflicts: Conflict[]; branch: BranchInfo };
+      props.onChanged(out.branch);
+      setClashes(out.conflicts);
+      setNote(
+        !out.changes
+          ? { text: `Already up to date with “${b.from_title}”.`, tone: "" }
+          : out.conflicts.length
+            ? { text: `Pulled ${changes(out.changes)} from “${b.from_title}”. ${both(out.conflicts.length)}: every copy kept the later edit; choose below.`, tone: "" }
+            : { text: `Pulled ${changes(out.changes)} from “${b.from_title}”. This branch now has everything in it.`, tone: "ok" },
+      );
+    } catch (e) {
+      setNote({ text: (e as Error).message, tone: "bad" });
+    } finally {
+      setBusy(null);
+    }
+  };
+  const mergeBack = async () => {
+    setBusy("merge");
+    try {
+      const out = (await post(projectUrl("/branch/merge"), {})) as { changes: number; conflicts: Conflict[]; branch: BranchInfo };
+      props.onChanged(out.branch);
+      setClashes([]);
+      const clash = out.conflicts.length ? ` ${both(out.conflicts.length)}: see the Team panel of “${b.from_title}”.` : "";
+      setNote(out.changes ? { text: `Merged ${changes(out.changes)} into “${b.from_title}”.${clash}`, tone: clash ? "" : "ok" } : { text: `Nothing new to merge into “${b.from_title}”.`, tone: "" });
+    } catch (e) {
+      setNote({ text: (e as Error).message, tone: "bad" });
+    } finally {
+      setBusy(null);
+    }
+  };
+  const settle = (c: Conflict) => {
+    setClashes((list) => list.filter((x) => x !== c));
+    void fetch(projectUrl("/team/conflicts/settle"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: c.id, path: c.path, command_id: c.command_id }) });
+  };
+
+  const history = [`from ${b.label}`, b.pulled_at && `last pulled ${day(b.pulled_at)}`, b.merged_at && `last merged ${day(b.merged_at)}`].filter(Boolean).join(" · ");
+  return (
+    <div className="branch-card">
+      <div className="branch-head">
+        <Icon name="copy" />
+        <span>
+          Branch of <b>{b.from_title}</b>
+          <small>{history}</small>
+        </span>
+        {b.from_exists && (
+          <button type="button" className="link-button" onClick={() => openProject(b.from)}>
+            Open original
+          </button>
+        )}
+      </div>
+      {b.from_exists ? (
+        <div className="branch-sync">
+          <div className={`branch-way ${b.behind ? "pending" : ""}`}>
+            <span className="way-icon">
+              <Icon name="download" />
+            </span>
+            <span className="way-text">
+              {b.behind ? (
+                <>
+                  <b>{b.behind} newer</b> in {b.from_title}
+                </>
+              ) : (
+                <>Up to date with {b.from_title}</>
+              )}
+              <small>{!b.behind ? "Nothing new there" : b.pulled_at ? "Since your last pull" : "Since you branched"}</small>
+            </span>
+            <button type="button" className={b.behind ? "primary" : "secondary"} disabled={!b.behind || busy !== null} onClick={() => void pull()}>
+              {busy === "pull" ? "Pulling…" : "Pull"}
+            </button>
+          </div>
+          <div className={`branch-way ${b.ahead ? "pending" : ""}`}>
+            <span className="way-icon">
+              <Icon name="share" />
+            </span>
+            <span className="way-text">
+              {b.ahead ? (
+                <>
+                  <b>{changes(b.ahead)}</b> not in {b.from_title} yet
+                </>
+              ) : (
+                <>Everything here is in {b.from_title}</>
+              )}
+              <small>{b.ahead ? "Made on this branch" : b.merged_at ? "Since your last merge" : "Nothing made here yet"}</small>
+            </span>
+            <button type="button" className={b.ahead ? "primary" : "secondary"} disabled={!b.ahead || busy !== null} onClick={() => void mergeBack()}>
+              {busy === "merge" ? "Merging…" : "Merge back"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="small muted">The original is no longer on this computer.</p>
+      )}
+      {note && (
+        <p className={`branch-note ${note.tone}`} role="status">
+          {note.tone === "ok" && <Icon name="check" />}
+          {note.tone === "bad" && <Icon name="alert" />}
+          <span>{note.text}</span>
+        </p>
+      )}
+      {clashes.length > 0 && (
+        <div className="clashes branch-clashes">
+          {clashes.slice(0, 6).map((c) => (
+            <Clash key={c.command_id + c.path + c.id} clash={c} entities={props.entities} run={props.run} who={`“${b.from_title}”`} you="this branch" onDone={() => settle(c)} />
+          ))}
+          {clashes.length > 6 && <p className="small muted">{clashes.length - 6} more in the Team panel.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The versions list (in the change history panel): mark, look, compare, restore, branch; and, on a branch, pulling and merging back. */
 export function VersionsSection(props: { revision: number; me: string; run: Run; entities: ReadonlyMap<string, EntityView>; markAt: number | null; onMarked: () => void }) {
   const [list, setList] = useState<VersionEntry[] | null>(null);
   const [branch, setBranch] = useState<BranchInfo | null>(null);
@@ -256,7 +391,6 @@ export function VersionsSection(props: { revision: number; me: string; run: Run;
   const [note, setNote] = useState("");
   const [comparing, setComparing] = useState<string | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
-  const [merging, setMerging] = useState(false);
   const actions = useVersionActions();
   const refresh = useCallback(async () => {
     try {
@@ -274,6 +408,18 @@ export function VersionsSection(props: { revision: number; me: string; run: Run;
   useEffect(() => {
     void refresh();
   }, [refresh, versionKey, props.revision]);
+  // On a branch the original moves on by itself: look again now and then for its newer changes.
+  const isBranch = !!branch?.from_exists;
+  useEffect(() => {
+    if (!isBranch) return;
+    const look = () => void refresh();
+    const t = window.setInterval(() => document.visibilityState === "visible" && look(), 15000);
+    window.addEventListener("focus", look);
+    return () => {
+      window.clearInterval(t);
+      window.removeEventListener("focus", look);
+    };
+  }, [isBranch, refresh]);
   useEffect(() => {
     if (props.markAt !== null) {
       setMarking(true);
@@ -293,53 +439,10 @@ export function VersionsSection(props: { revision: number; me: string; run: Run;
       void refresh();
     }
   };
-  const mergeBack = async () => {
-    if (!branch) return;
-    setMerging(true);
-    try {
-      const out = (await post(projectUrl("/branch/merge"), {})) as { into: string; changes: number; conflicts: unknown[] };
-      const clash = out.conflicts.length ? ` ${out.conflicts.length} ${out.conflicts.length === 1 ? "field was" : "fields were"} changed on both sides: see the Team panel of “${branch.from_title}”.` : "";
-      actions.setMessage({ text: out.changes ? `Merged ${out.changes} ${out.changes === 1 ? "change" : "changes"} into “${branch.from_title}”.${clash}` : `Nothing new to merge into “${branch.from_title}”.` });
-      void refresh();
-    } catch (e) {
-      actions.setMessage({ text: (e as Error).message, bad: true });
-    } finally {
-      setMerging(false);
-    }
-  };
 
   return (
     <section className="versions" aria-label="Versions">
-      {branch && (
-        <div className="branch-card">
-          <div className="branch-head">
-            <Icon name="copy" />
-            <span>
-              Branch of <b>{branch.from_title}</b>
-              <small>
-                from {branch.label}
-                {branch.merged_at ? ` · last merged ${new Date(branch.merged_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}` : ""}
-              </small>
-            </span>
-          </div>
-          {branch.from_exists ? (
-            <div className="branch-actions">
-              <span className="small muted">
-                {branch.ahead ? `${branch.ahead} ${branch.ahead === 1 ? "change" : "changes"} not in the original yet` : "Everything here is in the original"}
-                {branch.behind ? ` · it has ${branch.behind} of its own since` : ""}
-              </span>
-              <button type="button" className="primary" disabled={!branch.ahead || merging} onClick={() => void mergeBack()}>
-                {merging ? "Merging…" : "Merge back"}
-              </button>
-              <button type="button" className="link-button" onClick={() => openProject(branch.from)}>
-                Open original
-              </button>
-            </div>
-          ) : (
-            <p className="small muted">The original is no longer on this computer.</p>
-          )}
-        </div>
-      )}
+      {branch && <BranchCard branch={branch} entities={props.entities} run={props.run} onChanged={setBranch} />}
       <div className="versions-head">
         <h3 className="panel-section">Versions</h3>
         {!marking && (
