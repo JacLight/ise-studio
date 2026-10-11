@@ -86,6 +86,9 @@ export function ToolRail(props: {
   /** Open comment threads, shown as a count on the comment tool. */
   openComments: number;
   onComment: () => void;
+  /** The bill of materials / sourcing workbench open, if it is. */
+  bench: "bom" | "sourcing" | null;
+  onBench: (b: "bom" | "sourcing") => void;
 }) {
   const active = (p: PanelKind) => (props.panel === p ? "active" : "");
   return (
@@ -122,6 +125,8 @@ export function ToolRail(props: {
       <IconButton icon="sliders" label="Object properties" className={active("properties")} onClick={() => props.onPanel("properties")} />
       <IconButton icon="shield" label="Requirements" className={active("requirements")} onClick={() => props.onPanel("requirements")} />
       <IconButton icon="history" label="Change history" className={active("history")} onClick={() => props.onPanel("history")} />
+      <IconButton icon="list" label="Bill of materials (B)" className={props.bench === "bom" ? "active" : ""} onClick={() => props.onBench("bom")} />
+      <IconButton icon="truck" label="Sourcing: suppliers, quotes" className={props.bench === "sourcing" ? "active" : ""} onClick={() => props.onBench("sourcing")} />
       <IconButton icon="spark" label="Open AI chat (A)" className="ai-tool" onClick={props.onAi} />
       <IconButton icon="minus" label="Hide tools" onClick={props.onHide} />
     </nav>

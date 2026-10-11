@@ -32,6 +32,7 @@ impl Plugin for SolidPlugin {
             .command::<SetBoxDimensions>()
             .command::<CreateMaterial>()
             .command::<SetMaterialDensity>()
+            .command::<SetMaterialCost>()
             .command::<AssignMaterial>()
             .derived(Derived {
                 name: "solid.display_mesh",
@@ -66,6 +67,76 @@ impl Persist for BoxFeature {
 pub struct Material {
     pub name: String,
     pub density: Density,
+    /// What the material costs to buy, for cost estimates in the bill of
+    /// materials. Absent (older projects, or not priced yet) means unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<MaterialCost>,
+}
+
+/// The price of a material, in the forms it is bought: by weight, by the
+/// sheet, or by the bar. Any can be given; estimates use the form that suits
+/// the part's process (sheet for laser, router and sheet-metal parts, bar for
+/// cut extrusions, weight for everything else).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct MaterialCost {
+    /// ISO 4217 code of the prices (default the project's currency).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    /// Price per kilogram.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_kg: Option<f64>,
+    /// Price of one sheet of a stated size (mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<SheetPrice>,
+    /// Price of one bar or length of stock (mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bar: Option<BarPrice>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SheetPrice {
+    pub price: f64,
+    /// Sheet size, mm (e.g. 2440 × 1220).
+    pub length: f64,
+    pub width: f64,
+    /// Thickness, mm, when the price is for one thickness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thickness: Option<f64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BarPrice {
+    pub price: f64,
+    /// Length of one bar, mm (e.g. 6000).
+    pub length: f64,
+}
+
+impl MaterialCost {
+    /// Refuses negative, infinite or zero-sized prices.
+    pub fn check(&self) -> Result<(), CommandError> {
+        let bad = |m: &str| Err(CommandError::new(ErrorCode::InvalidParameters, m.to_string()));
+        let price = |v: f64| v.is_finite() && v >= 0.0;
+        let size = |v: f64| v.is_finite() && v > 0.0;
+        if self.per_kg.is_some_and(|v| !price(v)) {
+            return bad("cost per kg must be a price of at least 0");
+        }
+        if let Some(s) = &self.sheet {
+            if !price(s.price) || !size(s.length) || !size(s.width) || s.thickness.is_some_and(|t| !size(t)) {
+                return bad("a sheet price needs a price of at least 0 and a size greater than zero");
+            }
+        }
+        if let Some(b) = &self.bar {
+            if !price(b.price) || !size(b.length) {
+                return bad("a bar price needs a price of at least 0 and a length greater than zero");
+            }
+        }
+        if let Some(c) = &self.currency {
+            if c.len() != 3 || !c.chars().all(|c| c.is_ascii_alphabetic()) {
+                return bad("currency is a three-letter code such as USD, EUR, GBP");
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Persist for Material {
@@ -338,6 +409,9 @@ impl Command for SetPivot {
 pub struct CreateMaterial {
     pub name: String,
     pub density: Density,
+    /// What it costs (per kg, per sheet, per bar), for BOM estimates.
+    #[serde(default)]
+    pub cost: Option<MaterialCost>,
 }
 
 impl Command for CreateMaterial {
@@ -347,8 +421,11 @@ impl Command for CreateMaterial {
         if self.density.canonical() <= 0.0 {
             return Err(CommandError::new(ErrorCode::InvalidParameters, "density must be greater than zero"));
         }
+        if let Some(c) = &self.cost {
+            c.check()?;
+        }
         let id = tx.create();
-        tx.set(id, Material { name: self.name, density: self.density })?;
+        tx.set(id, Material { name: self.name, density: self.density, cost: self.cost })?;
         Ok(json!({ "id": id }))
     }
 }
@@ -372,6 +449,30 @@ impl Command for SetMaterialDensity {
             .cloned()
             .ok_or_else(|| CommandError::new(ErrorCode::UnresolvedReference, format!("{} is not a material", self.target)))?;
         material.density = self.density;
+        tx.set(self.target, material)?;
+        Ok(json!({ "id": self.target }))
+    }
+}
+
+/// `solid.material.set_cost`: sets or clears (`null`) what a material costs.
+#[derive(Deserialize, JsonSchema)]
+pub struct SetMaterialCost {
+    pub target: StableId,
+    pub cost: Option<MaterialCost>,
+}
+
+impl Command for SetMaterialCost {
+    const NAME: &'static str = "solid.material.set_cost";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        let mut material = tx
+            .get::<Material>(self.target)
+            .cloned()
+            .ok_or_else(|| CommandError::new(ErrorCode::UnresolvedReference, format!("{} is not a material", self.target)))?;
+        if let Some(c) = &self.cost {
+            c.check()?;
+        }
+        material.cost = self.cost.filter(|c| c != &MaterialCost::default());
         tx.set(self.target, material)?;
         Ok(json!({ "id": self.target }))
     }

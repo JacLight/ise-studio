@@ -4,6 +4,7 @@ import { type Proposal, interpret } from "./assistant";
 import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
+import { type Bench, Workbench } from "./Bom";
 import { RequirementsPanel } from "./RequirementsPanel";
 import { type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, type TeamCursor, mm, projectInfo, projectName, projectTitle, projectUrl } from "./engine";
 import { type ConfigRow, type EdgeFinish, type Frac, type LiveEdit, type Shape, assemblyParts, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
@@ -76,6 +77,7 @@ export function App({ engine }: { engine: Engine }) {
   const [objectsTab, setObjectsTab] = useState<"tree" | "stacking">("tree");
   useEffect(() => setSelectedPartName(null), [selected]);
   const [panel, setPanel] = useState<PanelKind | null>(null);
+  const [bench, setBench] = useState<Bench | null>(null);
   const [dialog, setDialog] = useState<"share" | "storage" | null>(null);
   const [focus, setFocus] = useState(false);
   const [view, setView] = useState<ViewName>("perspective");
@@ -944,7 +946,10 @@ export function App({ engine }: { engine: Engine }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key.toLowerCase() === "e" && selected && !edger.editing && !sketcher.editing) {
+      if (e.key.toLowerCase() === "b" && !sketcher.editing) {
+        e.preventDefault();
+        setBench((b) => (b === "bom" ? null : "bom"));
+      } else if (e.key.toLowerCase() === "e" && selected && !edger.editing && !sketcher.editing) {
         e.preventDefault();
         faceTool.stop();
         void edger.start(selected);
@@ -1424,6 +1429,8 @@ export function App({ engine }: { engine: Engine }) {
               commenting={commenting}
               openComments={openComments}
               onComment={toggleCommenting}
+              bench={bench}
+              onBench={(b) => setBench((current) => (current === b ? null : b))}
             />
           )}
           {hidden.view ? (
@@ -1443,6 +1450,20 @@ export function App({ engine }: { engine: Engine }) {
         </div>
       )}
       {focus && <Restore onRestore={restoreAll} />}
+
+      {!focus && bench && (
+        <Workbench
+          tab={bench}
+          onTab={setBench}
+          onClose={() => setBench(null)}
+          entities={state.entities}
+          revision={state.revision}
+          selected={selected}
+          run={run}
+          notify={notify}
+          onSelect={(id) => select(id)}
+        />
+      )}
 
       {!focus && panel && (
         <ToolPanel kind={panel} onClose={() => setPanel(null)}>
