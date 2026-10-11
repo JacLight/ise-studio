@@ -281,6 +281,8 @@ enum Kind {
     Insert { d: f64, len: f64, hole: f64, depth: f64, wall: f64, od: f64 },
     Nut { d: f64, s: f64, m: f64 },
     Washer { d: f64 },
+    /// A bought item with tapped holes (a servo horn): its threads hold screws.
+    Tapped { depth: f64 },
     Bearing { d: f64, outer: f64, width: f64, number: String },
     Pin { d: f64, len: f64 },
     /// Some other bought item (a servo, a stepper, a horn).
@@ -298,7 +300,7 @@ impl Kind {
     }
     /// Holds a thread a screw engages.
     fn threaded(&self) -> bool {
-        matches!(self, Kind::Insert { .. } | Kind::Nut { .. })
+        matches!(self, Kind::Insert { .. } | Kind::Nut { .. } | Kind::Tapped { .. })
     }
     /// Covered by its own item (and its neighbours' overlaps explained there).
     fn has_item(&self) -> bool {
@@ -375,6 +377,7 @@ fn kind_of(world: &World, id: StableId, inst: &Instance) -> Kind {
             number: stats.as_ref().and_then(|s| s.declared.stock.as_ref()).map(|s| s.part_number.clone()).unwrap_or_else(|| "bearing".into()),
         },
         Some("iso8734") => Kind::Pin { d: v("d"), len: v("length") },
+        _ if metric("Tapped thread").is_some() => Kind::Tapped { depth: metric("Tapped depth").unwrap_or(0.0) },
         Some(_) => Kind::Stock,
         None if declared_stock => Kind::Stock,
         None => {
@@ -809,7 +812,10 @@ fn screw_item(cx: &mut Ctx, i: usize) -> FitItem {
     let mut engaged = 0.0;
     let mut providers: Vec<(usize, f64, f64)> = vec![]; // host, top, bottom
     let mut required: f64 = 0.0;
-    for s in segs.iter().filter(|s| cx.insts[s.host].kind.threaded()) {
+    // A thread holder's segment is a thread only where its bore is under the screw's size
+    // (a horn's centre hole is a clearance hole, not a thread).
+    let is_thread = |s: &Segment| cx.insts[s.host].kind.threaded() && s.hole().map(|x| 2.0 * x.rmin).fold(f64::INFINITY, f64::min) < d - 0.1;
+    for s in segs.iter().filter(|s| is_thread(s)) {
         let (top, bottom) = (s.top() + step / 2.0, s.bottom() - step / 2.0);
         let e = (top.min(thread_top) - bottom.max(-len)).max(0.0);
         engaged += e;
@@ -818,6 +824,7 @@ fn screw_item(cx: &mut Ctx, i: usize) -> FitItem {
         let need = match host.kind {
             Kind::Insert { len: li, .. } => 0.75 * li.min(2.0 * d),
             Kind::Nut { m, .. } => 0.9 * m,
+            Kind::Tapped { depth, .. } => 0.8 * depth.min(d),
             _ => 1.5 * d,
         };
         required = required.max(need);
@@ -827,9 +834,9 @@ fn screw_item(cx: &mut Ctx, i: usize) -> FitItem {
         }
     }
     // Holes in the parts it passes through.
-    let mut tapped: Vec<(usize, f64)> = vec![];
+    let mut tapped: Vec<(usize, f64, f64)> = vec![]; // host, length, length needed
     let mut bottomed: Option<(usize, f64)> = None;
-    for s in segs.iter().filter(|s| !cx.insts[s.host].kind.threaded()) {
+    for s in segs.iter().filter(|s| !is_thread(s)) {
         let host = &cx.insts[s.host];
         // The pocket an insert or nut sits in (and the relief under an insert) is theirs, not a clearance hole.
         let in_pocket = |z: f64| providers.iter().any(|(p, top, bottom)| z <= *top + 0.3 && z >= *bottom - if matches!(cx.insts[*p].kind, Kind::Insert { .. }) { 1.6 } else { 0.3 });
@@ -849,8 +856,12 @@ fn screw_item(cx: &mut Ctx, i: usize) -> FitItem {
         let at = cx.at(i, [0.0, 0.0, (seg.top() + seg.bottom()) / 2.0]);
         if dfit < d - 0.05 {
             // Smaller than the screw: a tapped or self-tapping hole, or too small.
-            if dfit >= 0.72 * d && host.kind.printed() {
-                tapped.push((s.host, span));
+            if dfit >= 0.72 * d && host.kind.bought() {
+                // A bought part's own tapped hole (a servo's spline, for its horn screw).
+                tapped.push((s.host, span, 0.8 * span.min(d)));
+                checks.push(check("Tapped hole", FitStatus::Pass, format!("Ø{} tapped hole in {} (the maker's thread for an M{}), {} mm long", mm(dfit), host.name, mm(d), mm(span))).value(dfit, "mm").part(&host.name).at(at));
+            } else if dfit >= 0.72 * d && host.kind.printed() {
+                tapped.push((s.host, span, 1.5 * d));
                 checks.push(check("Self-tapping hole", FitStatus::Pass, format!("Ø{} pilot in {} (for M{} into plastic: {}–{} mm), {} mm long", mm(dfit), host.name, mm(d), mm(0.8 * d), mm(0.92 * d), mm(span))).value(dfit, "mm").target(format!("{}–{} mm", mm(0.8 * d), mm(0.92 * d))).part(&host.name).at(at));
             } else {
                 checks.push(check("Hole", FitStatus::Fail, format!("Ø{} in {} is smaller than the M{} screw: it will not go in (clearance Ø{} or more, or an insert)", mm(dmin), host.name, mm(d), mm(iso273(d).map(|t| t[0]).unwrap_or(d + 0.2)))).value(dmin, "mm").target(format!("≥ {} mm", mm(iso273(d).map(|t| t[0]).unwrap_or(d + 0.2)))).part(&host.name).at(at));
@@ -867,7 +878,7 @@ fn screw_item(cx: &mut Ctx, i: usize) -> FitItem {
             (FitStatus::Pass, "ISO 273 medium".to_string())
         } else if dfit <= coarse + 0.1 {
             (FitStatus::Pass, "ISO 273 coarse".to_string())
-        } else if dk > 0.0 && dfit < dk - 0.6 {
+        } else if dk > 0.0 && (dfit < dk - 0.6 || seg.top() < -0.6) {
             (if host.kind.bought() { FitStatus::Pass } else { FitStatus::Warn }, format!("loose, over ISO 273 coarse (Ø{}); the head still covers it", mm(coarse)))
         } else {
             (FitStatus::Fail, format!("so big the Ø{} head can pull through", mm(dk)))
@@ -881,11 +892,9 @@ fn screw_item(cx: &mut Ctx, i: usize) -> FitItem {
         };
         checks.push(check("Coaxial", st, text).value(off, "mm").target(format!("≤ {} mm", mm((dmin - d) / 2.0))).part(&host.name).at(at));
     }
-    for (h, span) in &tapped {
+    for (h, span, need) in &tapped {
         engaged += span;
-        required = required.max(match cx.insts[*h].kind {
-            _ => 1.5 * d,
-        });
+        required = required.max(*need);
         providers.push((*h, 0.0, 0.0));
     }
     // Engagement and length.
