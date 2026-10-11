@@ -784,7 +784,27 @@ pub fn solve_scope(world: &World, scope: Option<StableId>, values: &HashMap<Stab
     let joints = joints_in(world, scope);
     let mut out = Solution::default();
     for g in groups(&joints) {
-        let links = g.joints.iter().map(|j| link(world, *j, values.get(j).map(|v| v.as_slice()))).collect::<Result<Vec<_>, _>>()?;
+        // Joints linked by formula to a joint given a value here follow it (an idler finger geared to the driven one).
+        let given = |id: StableId, key: &str| -> Option<f64> {
+            let v = values.get(&id)?;
+            let kind = entity(world, id).and_then(|e| world.get::<Joint>(e))?.kind;
+            kind.values().iter().position(|(k, _, _)| *k == key).and_then(|i| v.get(i).copied())
+        };
+        let links = g
+            .joints
+            .iter()
+            .map(|j| match values.get(j) {
+                Some(v) => link(world, *j, Some(v.as_slice())),
+                None if values.is_empty() => link(world, *j, None),
+                None => {
+                    let e = entity(world, *j).ok_or("a joint is gone")?;
+                    let (joint, set) = (world.get::<Joint>(e).ok_or("not a joint")?, world.get::<ParameterSet>(e).ok_or("no values")?);
+                    let resolved = de_shape::params::resolve_with(world, &set.params, &given).map_err(|m| format!("{}: {m}", set.name))?;
+                    let v: Vec<f64> = joint.kind.values().iter().map(|(k, _, _)| resolved.get(*k).copied().unwrap_or(0.0)).collect();
+                    link(world, *j, Some(&v))
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let stored = |m: StableId| entity(world, m).and_then(|x| world.get::<Instance>(x)).map(Instance::transform);
         let mut fixed = HashMap::new();
         if let Some(a) = g.anchor {
