@@ -8,7 +8,12 @@
 //! that row's values, so one definition placed three times can show three
 //! sizes. A parameter driven by a formula stays driven: the table cannot set it.
 //! A row can also leave out finishes (fillets, chamfers, shells…), named by
-//! the parameter that sizes them.
+//! the parameter that sizes them, and parts, by name: an enclosure's “Basic”
+//! without the fan and its guard, its “Pro” with them. A part left out is
+//! gone from everything the shape feeds (view, mass, parts list, exports,
+//! drawings, studies), and the joints and gear meshes that only it held go
+//! with it, reported in `ShapeStats::left_out`. The program itself can read
+//! the configuration's name as `config`.
 
 use crate::{Param, ShapeProgram, ShapeStats, params};
 use de_core::{
@@ -33,6 +38,10 @@ pub struct ConfigRow {
     /// Finishes left off in this configuration, by the parameter that sizes them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub suppress: Vec<String>,
+    /// Parts left out of this configuration, by the name the program gives
+    /// them in part(): dropped from the result wherever the shape is used.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts_off: Vec<String>,
 }
 
 /// A shape's configuration table.
@@ -147,6 +156,15 @@ pub fn check_table(world: &World, program: &ShapeProgram, table: &ShapeConfigura
                 )));
             }
         }
+        let mut off = std::collections::HashSet::new();
+        for part in &row.parts_off {
+            if part.trim().is_empty() || part.trim() != part {
+                return Err(invalid(format!("{name} leaves out a part without a name: name parts as the program does in part()")));
+            }
+            if !off.insert(part) {
+                return Err(invalid(format!("{name} leaves out “{part}” twice")));
+            }
+        }
         for key in &row.suppress {
             if !program.finishes.iter().any(|f| &f.key == key) {
                 return Err(invalid(format!("{name} leaves off the finish sized by “{key}”, but no finish of {} is", program.name)));
@@ -179,10 +197,21 @@ pub fn suppress_finishes(program: &mut ShapeProgram, row: &ConfigRow) {
     }
 }
 
+/// A program's inputs (see `program_inputs`) in configuration `row`: its
+/// name, which the program reads as `config`, and the parts it leaves out.
+pub fn with_row(inputs: &str, row: &ConfigRow) -> String {
+    let mut v: serde_json::Value = serde_json::from_str(inputs).unwrap_or_else(|_| json!({}));
+    v["config"] = json!(row.name);
+    if !row.parts_off.is_empty() {
+        v["parts_off"] = json!(row.parts_off);
+    }
+    v.to_string()
+}
+
 /// A shape's program in one of its configurations, ready to evaluate: the
 /// row's values in place, formulas worked out from them (a formula reading a
 /// configured parameter follows it), its suppressed finishes left off, and
-/// named “Bolt (M8×30)”.
+/// named “Bolt (M8×30)”. The parts it leaves out are dropped when it runs.
 pub fn configured_program(world: &World, e: Entity, config: &str) -> Result<ShapeProgram, String> {
     let mut program = world.get::<ShapeProgram>(e).ok_or("not a shape")?.clone();
     let table = world.get::<ShapeConfigurations>(e);
@@ -197,7 +226,7 @@ pub fn configured_program(world: &World, e: Entity, config: &str) -> Result<Shap
             p.value = *v;
         }
     }
-    program.inputs = crate::program_inputs(world, &program)?;
+    program.inputs = with_row(&crate::program_inputs(world, &program)?, row);
     program.name = display_name(&program.name, Some(config));
     Ok(program)
 }
@@ -235,17 +264,32 @@ pub fn evaluate(world: &World, e: Entity, config: &str) -> Result<Configured, St
 }
 
 /// Applies a table to a shape: checks it, checks that every configuration
-/// still makes a valid solid, and, when one is active, writes its values into
-/// the shape's parameters. An empty table removes it.
+/// still makes a valid solid (and keeps at least one part), and, when one is
+/// active, writes its values into the shape's parameters. An empty table
+/// removes it. A part newly left out must be one the program makes; one
+/// left out before and renamed in the program since is reported where the
+/// configuration is shown (`ShapeStats::left_out`), not refused here.
 pub fn store_table(tx: &mut Tx, target: StableId, table: ShapeConfigurations) -> Result<(), CommandError> {
     let mut program = tx.get::<ShapeProgram>(target).cloned().ok_or_else(|| CommandError::new(ErrorCode::UnresolvedReference, format!("{target} is not a shape")))?;
     check_table(tx.world(), &program, &table)?;
     let materials = tx.get::<crate::PartMaterials>(target).cloned().unwrap_or_default();
+    let old = tx.get::<ShapeConfigurations>(target).cloned().unwrap_or_default();
     for row in &table.rows {
         let mut p = program.clone();
         apply_row(&mut p, row);
         suppress_finishes(&mut p, row);
-        crate::validate(tx.world(), &p, &materials).map_err(|e| CommandError::new(e.code, format!("{}: {}", row.name, e.message)))?;
+        let e = crate::validate_in(tx.world(), &p, &materials, Some(row)).map_err(|e| CommandError::new(e.code, format!("{}: {}", row.name, e.message)))?;
+        let before = old.row(&row.name).map(|r| r.parts_off.as_slice()).unwrap_or_default();
+        let new: Vec<String> = e.left_out.missing.iter().filter(|m| !before.contains(m)).map(|n| format!("“{n}”")).collect();
+        if !new.is_empty() {
+            return Err(invalid(if e.parts.is_empty() {
+                format!("{}: {} makes one solid, not parts, so there is no part to leave out", row.name, program.name)
+            } else {
+                let made: Vec<String> = if e.left_out.all.is_empty() { e.parts.iter().map(|p| p.name.clone()).collect() } else { e.left_out.all.clone() };
+                let made: Vec<String> = made.iter().map(|n| format!("“{n}”")).collect();
+                format!("{}: {} makes no part called {} (its parts are {})", row.name, program.name, new.join(", "), made.join(", "))
+            }));
+        }
     }
     if let Some(row) = table.active_row() {
         apply_row(&mut program, row);

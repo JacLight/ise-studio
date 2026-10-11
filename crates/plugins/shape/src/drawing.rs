@@ -385,6 +385,7 @@ pub fn drawings(program: &ShapeProgram, sheets: &[(Options, Title)]) -> Result<V
         let parts: Vec<(String, Shape)> = exact.parts.iter().filter(|p| options.part.as_ref().is_none_or(|n| &p.name == n)).map(|p| (p.name.clone(), p.shape)).collect();
         if parts.is_empty() {
             return Err(match &options.part {
+                Some(n) if exact.left_out.parts.contains(n) => format!("“{n}” is left out of this configuration: draw it in one that has it"),
                 Some(n) => format!("no part called “{n}”"),
                 None => "the program made nothing to draw".into(),
             });

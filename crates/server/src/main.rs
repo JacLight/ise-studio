@@ -430,12 +430,16 @@ enum ClientMessage {
     /// Evaluate a shape with changed parameter values, without committing.
     /// Values for keys the shape does not have yet are added (a new fillet's
     /// radius), and `finishes`, when given, replaces its edge finishes.
+    /// `config` evaluates it in one of its configurations (that row's values,
+    /// finishes and parts left out) before `values` and `finishes` apply.
     ShapePreview {
         request_id: u64,
         target: StableId,
         values: BTreeMap<String, f64>,
         #[serde(default)]
         finishes: Option<Vec<de_shape::EdgeFinish>>,
+        #[serde(default)]
+        config: Option<String>,
     },
     /// The edges of a shape as it is now, for picking (program coordinates, mm).
     ShapeEdges { request_id: u64, target: StableId },
@@ -597,9 +601,17 @@ impl App {
                     .map_err(|e| CommandError::new(ErrorCode::InvalidGeometry, e));
                 return reply(request_id, result);
             }
-            ClientMessage::ShapePreview { request_id, target, values, finishes } => {
-                let Some(mut program) = project.entity(target).and_then(|e| de_shape::resolved_program(project.world(), e)) else {
+            ClientMessage::ShapePreview { request_id, target, values, finishes, config } => {
+                let Some(e) = project.entity(target) else {
                     return reply(request_id, Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{target} is not a shape"))));
+                };
+                let program = match config.as_deref().filter(|c| !c.is_empty()) {
+                    Some(c) => de_shape::configs::configured_program(project.world(), e, c).map_err(|m| CommandError::new(ErrorCode::InvalidParameters, m)),
+                    None => de_shape::resolved_program(project.world(), e).ok_or_else(|| CommandError::new(ErrorCode::UnresolvedReference, format!("{target} is not a shape"))),
+                };
+                let mut program = match program {
+                    Ok(p) => p,
+                    Err(err) => return reply(request_id, Err(err)),
                 };
                 drop(project); // evaluate without holding the project
                 for param in &mut program.params {

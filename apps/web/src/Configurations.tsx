@@ -1,16 +1,23 @@
 // Configurations: named sets of parameter values for one shape ("M6×20",
 // "M8×30"), kept as a table — rows are configurations, columns the parameters
-// they set (and the finishes they keep). The switcher previews a row on hover
-// and activates it on click; instances pick a row of their definition.
+// they set (and the finishes they keep). A shape made of parts can leave some
+// out per configuration (an enclosure's "Basic" without the fan). The switcher
+// previews a row on hover and activates it on click; instances pick a row of
+// their definition.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { EntityView } from "./engine";
+import type { EntityView, LeftOut } from "./engine";
 import { Icon } from "./icons";
 import { type ConfigRow, type Configurations, configurations, fmt, program } from "./model";
 
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
 
 const FINISH_SHORT: Record<string, string> = { fillet: "Fillet", chamfer: "Chamfer", push: "Push", shell: "Shell", draft: "Draft" };
+
+/** “Fan”, “Fan and Guard”, “Fan, Guard and Grille”. */
+function listNames(names: string[]) {
+  return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
 
 /** A name not yet in the table: "Config 2", "Config 3"… */
 function freshName(rows: ConfigRow[]) {
@@ -126,6 +133,17 @@ export function ConfigSection(props: {
     return [...seen.entries()];
   }, [prog.finishes]);
 
+  // The parts the program makes, in its order (the shape shows its active
+  // configuration, so the ones it leaves out come from its report).
+  const stats = entity.shape;
+  const allParts = stats?.left_out?.all?.length ? stats.left_out.all : (stats?.parts ?? []).map((p) => p.name);
+  const hasParts = allParts.length > 1;
+  const partsIn = (r: ConfigRow) => allParts.filter((n) => !(r.parts_off ?? []).includes(n));
+  const partsTitle = (r: ConfigRow) => {
+    const off = (r.parts_off ?? []).filter((n) => allParts.includes(n));
+    return off.length ? `Without ${listNames(off)}` : "Every part";
+  };
+
   const save = (next: Configurations, renamed?: Record<string, string>) =>
     run("shape.config.set_table", { target: entity.id, params: next.params, rows: next.rows, active: next.active ?? "", ...(renamed ? { renamed } : {}) });
 
@@ -194,7 +212,7 @@ export function ConfigSection(props: {
               role="radio"
               aria-checked={r.name === table.active}
               className={r.name === table.active ? "active" : ""}
-              title={r.description || table.params.map((k) => `${label(k)} ${fmt(r.values[k])}${unit(k)}`).join(" · ")}
+              title={[r.description || table.params.map((k) => `${label(k)} ${fmt(r.values[k])}${unit(k)}`).join(" · "), hasParts && r.parts_off?.length ? partsTitle(r) : ""].filter(Boolean).join(" · ")}
               onMouseEnter={() => r.name !== table.active && preview(r)}
               onFocus={() => r.name !== table.active && preview(r)}
               onBlur={() => previewing.current && preview(null)}
@@ -215,6 +233,8 @@ export function ConfigSection(props: {
           ))}
         </select>
       )}
+
+      <LeftOutNote left={entity.shape?.left_out} who={table.active ?? null} />
 
       {modified && table.active && (
         <div className="config-modified-row">
@@ -277,6 +297,11 @@ export function ConfigSection(props: {
                     <span className="config-col-label finish">{kind}</span>
                   </th>
                 ))}
+                {hasParts && (
+                  <th title="The parts each configuration has (pick them below)">
+                    <span className="config-col-label finish">Parts</span>
+                  </th>
+                )}
                 <th aria-label="Actions" />
               </tr>
             </thead>
@@ -311,6 +336,11 @@ export function ConfigSection(props: {
                       </td>
                     );
                   })}
+                  {hasParts && (
+                    <td className="config-parts-count" title={partsTitle(r)}>
+                      {partsIn(r).length === allParts.length ? "All" : `${partsIn(r).length}/${allParts.length}`}
+                    </td>
+                  )}
                   <td className="config-row-actions">
                     <button
                       type="button"
@@ -332,6 +362,63 @@ export function ConfigSection(props: {
         </div>
       )}
 
+      {editing && hasParts && (
+        <div className="config-parts" role="group" aria-label="Parts in each configuration">
+          <div className="config-parts-head">
+            <span>Parts in each configuration</span>
+            <small>Click a part to leave it out</small>
+          </div>
+          {table.rows.map((r, i) => {
+            const off = r.parts_off ?? [];
+            const kept = partsIn(r);
+            const stale = off.filter((n) => !allParts.includes(n));
+            const toggle = (name: string) => {
+              const next = off.includes(name) ? off.filter((n) => n !== name) : [...off, name];
+              void save(withRow(i, { ...r, parts_off: next }));
+            };
+            return (
+              <div key={r.name} className={`config-parts-row ${r.name === table.active ? "active" : ""}`}>
+                <span className="config-parts-name" title={r.name}>
+                  {r.name}
+                </span>
+                <span className="config-part-chips">
+                  {allParts.map((name) => {
+                    const isOff = off.includes(name);
+                    const last = !isOff && kept.length === 1;
+                    return (
+                      <button
+                        type="button"
+                        key={name}
+                        className={`config-part ${isOff ? "off" : ""}`}
+                        aria-pressed={!isOff}
+                        disabled={last}
+                        title={last ? "A configuration keeps at least one part" : isOff ? `Put ${name} back into ${r.name}` : `Leave ${name} out of ${r.name}`}
+                        onClick={() => toggle(name)}
+                      >
+                        {isOff ? <Icon name="minus" /> : <Icon name="check" />}
+                        {name}
+                      </button>
+                    );
+                  })}
+                  {stale.map((name) => (
+                    <button
+                      type="button"
+                      key={`stale:${name}`}
+                      className="config-part missing"
+                      title={`${r.name} leaves out “${name}”, but the program makes no part by that name (renamed?). Click to forget it`}
+                      onClick={() => toggle(name)}
+                    >
+                      <Icon name="alert" />
+                      {name}
+                    </button>
+                  ))}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {editing && (
         <div className="config-add-row">
           <button
@@ -340,7 +427,7 @@ export function ConfigSection(props: {
             onClick={() => {
               const base = table.rows.find((r) => r.name === table.active) ?? table.rows[table.rows.length - 1];
               const values = Object.fromEntries(table.params.map((k) => [k, base?.values[k] ?? current(k)]));
-              void save({ ...table, rows: [...table.rows, { name: freshName(table.rows), values, suppress: base?.suppress }] });
+              void save({ ...table, rows: [...table.rows, { name: freshName(table.rows), values, suppress: base?.suppress, parts_off: base?.parts_off }] });
             }}
           >
             <Icon name="plus" /> Configuration
@@ -371,6 +458,48 @@ export function ConfigSection(props: {
   );
 }
 
+/**
+ * What the configuration shown leaves out: its parts, and, plainly, the
+ * joints and gear meshes that went with them or names the program no longer makes.
+ */
+function LeftOutNote(props: { left: LeftOut | undefined; who: string | null }) {
+  const left = props.left;
+  if (!left) return null;
+  const who = props.who ?? "This configuration";
+  const missing = left.missing ?? [];
+  const dropped = left.dropped ?? [];
+  return (
+    <div className="config-left-out">
+      {!!left.parts?.length && (
+        <p className="config-left-parts">
+          <Icon name="layers" />
+          <span>
+            Without <strong>{listNames(left.parts)}</strong>
+          </span>
+        </p>
+      )}
+      {(missing.length > 0 || dropped.length > 0) && (
+        <ul className="config-left-notes">
+          {missing.length > 0 && (
+            <li>
+              <Icon name="alert" />
+              <span>
+                {who} leaves out {listNames(missing.map((n) => `“${n}”`))}, but the program makes no part by {missing.length > 1 ? "those names" : "that name"}. Rename it in the table or the program.
+              </span>
+            </li>
+          )}
+          {dropped.map((d) => (
+            <li key={d}>
+              <Icon name="alert" />
+              <span>{d}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /** On an instance: which configuration of its shape it shows. */
 export function InstanceConfig(props: { entity: EntityView; def: EntityView; config: string | null | undefined; run: Run }) {
   const table = configurations(props.def);
@@ -395,6 +524,7 @@ export function InstanceConfig(props: { entity: EntityView; def: EntityView; con
           </option>
         ))}
       </select>
+      <LeftOutNote left={props.config ? props.entity.configured?.stats.left_out : props.def.shape?.left_out} who={props.config ?? table.active ?? null} />
     </section>
   );
 }

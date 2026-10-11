@@ -49,6 +49,34 @@ pub struct Evaluated {
     pub metrics: std::collections::BTreeMap<String, Metric>,
     /// Hinges and gear meshes the program declared (see `gears`).
     pub mechanism: Option<serde_json::Value>,
+    /// What the configuration it was evaluated in left out.
+    pub left_out: LeftOut,
+}
+
+/// What a configuration left out of a program's result (see
+/// `ConfigRow::parts_off`): the parts, and the motion that only they held.
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize, JsonSchema)]
+pub struct LeftOut {
+    /// Parts left out, in the order the program made them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<String>,
+    /// Every part the program made, left out or not (only when some are).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub all: Vec<String>,
+    /// Parts the configuration leaves out that the program does not make
+    /// (renamed or removed since): reported, never silently ignored.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing: Vec<String>,
+    /// Hinges, joints, gear meshes, drives and couplings that went with
+    /// those parts, in words.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dropped: Vec<String>,
+}
+
+impl LeftOut {
+    pub fn is_empty(&self) -> bool {
+        self.parts.is_empty() && self.missing.is_empty() && self.dropped.is_empty()
+    }
 }
 
 /// One fabricable item of an assembly, in millimeters (program coordinates).
@@ -74,6 +102,19 @@ pub(crate) struct PartSpec {
     pub(crate) h: u32,
     pub(crate) material: Option<String>,
     pub(crate) process: Option<String>,
+}
+
+impl Evaluated {
+    /// One part by name; one the configuration left out is said to be.
+    pub fn part(&self, name: &str) -> Result<&EvaluatedPart, String> {
+        self.parts.iter().find(|p| p.name == name).ok_or_else(|| {
+            if self.left_out.parts.iter().any(|n| n == name) {
+                format!("“{name}” is left out of this configuration: study it in one that has it")
+            } else {
+                format!("no part called “{name}”")
+            }
+        })
+    }
 }
 
 impl std::fmt::Debug for Evaluated {
@@ -142,6 +183,10 @@ pub(crate) fn run_program<'f>(
     if Instant::now() > deadline {
         return Err(format!("the program took longer than {} seconds", limit.as_secs()));
     }
+    if output.parts.as_ref().is_some_and(|p| p.is_empty()) {
+        let off = output.left_out.as_ref().map(|l| l.parts.iter().map(|n| format!("“{n}”")).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+        return Err(format!("every part ({off}) is left out: a configuration has to keep at least one"));
+    }
     Ok(output)
 }
 
@@ -173,6 +218,7 @@ pub fn evaluate_in(source: &str, params: &[(String, f64)], tolerance: f64, input
     result.map(|mut e| {
         e.metrics = output.metrics;
         e.mechanism = output.mechanism;
+        e.left_out = output.left_out.unwrap_or_default();
         e
     })
 }
@@ -186,6 +232,9 @@ pub(crate) struct Output {
     /// How parts move: hinges and gear meshes the program declared.
     #[serde(default)]
     pub(crate) mechanism: Option<serde_json::Value>,
+    /// What the configuration left out.
+    #[serde(default)]
+    pub(crate) left_out: Option<LeftOut>,
 }
 
 /// A measured fact a program reports with metric(): area, keys, seats…
@@ -270,6 +319,7 @@ pub(crate) fn finish_parts(list: Vec<(String, Option<String>, Option<String>, Ma
         parts,
         metrics: Default::default(),
         mechanism: None,
+        left_out: LeftOut::default(),
     })
 }
 
@@ -308,6 +358,7 @@ pub(crate) fn finish(solid: Manifold) -> Result<Evaluated, String> {
         parts: Vec::new(),
         metrics: Default::default(),
         mechanism: None,
+        left_out: LeftOut::default(),
     })
 }
 
