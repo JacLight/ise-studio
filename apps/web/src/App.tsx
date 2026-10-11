@@ -7,7 +7,7 @@ import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, sugg
 import { RequirementsPanel } from "./RequirementsPanel";
 import { type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, type TeamCursor, mm, projectInfo, projectName, projectTitle, projectUrl } from "./engine";
 import { type EdgeFinish, type Frac, type LiveEdit, type Shape, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
-import { HistoryBody, ObjectsBody, ProjectBody, PropertiesBody, ToolPanel, ViewsBody } from "./Panels";
+import { GroupList, HistoryBody, ObjectsBody, ProjectBody, PropertiesBody, ToolPanel, ViewsBody } from "./Panels";
 import { useEdgeEditor } from "./EdgeEditor";
 import type { MotionGrab, ProgramFace, StressView, TurnBody } from "./Viewport";
 import type { FaceDriver } from "./engine";
@@ -1224,6 +1224,21 @@ export function App({ engine }: { engine: Engine }) {
                         </button>
                       ))}
                   </div>
+                ) : undefined
+              }
+              groups={
+                groups.length ? (
+                  <GroupList
+                    groups={groups.map((e) => ({ id: e.id, name: groupOf(e)!.name, members: groupOf(e)!.members.filter((m) => state.entities.has(m)) }))}
+                    active={(g) => !!selected && g.members.includes(selected) && g.members.every((m) => m === selected || also.includes(m))}
+                    onPick={(id) => {
+                      const g = groupOf(state.entities.get(id));
+                      const first = g?.members.find((m) => state.entities.has(m));
+                      if (first) select(first);
+                    }}
+                    onRename={(id, name) => void run("assembly.group.update", { target: id, name })}
+                    onUngroup={(id) => void run("core.entity.delete", { target: id })}
+                  />
                 ) : undefined
               }
               tree={(() => {

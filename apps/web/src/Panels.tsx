@@ -172,6 +172,8 @@ export function ObjectsBody(props: {
   parameters?: ReactNode;
   /** Sketches in the project (click to edit). */
   sketches?: ReactNode;
+  /** Saved groups of items (click to pick the whole group). */
+  groups?: ReactNode;
   /** Bring in a STEP file as a part. */
   onImport?: (file: File) => void;
 }) {
@@ -192,6 +194,12 @@ export function ObjectsBody(props: {
         <>
           <h3 className="panel-section">Sketches</h3>
           {props.sketches}
+        </>
+      )}
+      {props.groups && (
+        <>
+          <h3 className="panel-section">Groups</h3>
+          {props.groups}
         </>
       )}
       <h3 className="panel-section">Parts</h3>
@@ -935,5 +943,51 @@ export function ViewsBody(props: {
         <span>{props.turntable ? "Stop turntable" : "Turntable"}</span>
       </button>
     </>
+  );
+}
+
+/** Saved groups: click one to pick it whole, double-click the name to rename, × to ungroup. */
+export function GroupList(props: {
+  groups: { id: string; name: string; members: string[] }[];
+  active: (g: { members: string[] }) => boolean;
+  onPick: (id: string) => void;
+  onRename: (id: string, name: string) => void;
+  onUngroup: (id: string) => void;
+}) {
+  const [renaming, setRenaming] = useState<{ id: string; text: string } | null>(null);
+  return (
+    <div className="group-list">
+      {props.groups.map((g) =>
+        renaming?.id === g.id ? (
+          <form
+            key={g.id}
+            className="list-row group-rename"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (renaming.text.trim() && renaming.text.trim() !== g.name) props.onRename(g.id, renaming.text.trim());
+              setRenaming(null);
+            }}
+          >
+            <Icon name="layers" />
+            <input autoFocus value={renaming.text} aria-label="Group name" onChange={(e) => setRenaming({ id: g.id, text: e.target.value })} onBlur={(e) => e.currentTarget.form?.requestSubmit()} onKeyDown={(e) => e.key === "Escape" && (e.stopPropagation(), setRenaming(null))} />
+          </form>
+        ) : (
+          <div key={g.id} className={`list-row group-row ${props.active(g) ? "active" : ""}`}>
+            <button type="button" className="group-pick" onClick={() => props.onPick(g.id)} onDoubleClick={() => setRenaming({ id: g.id, text: g.name })} title="Click to pick the group · double-click to rename">
+              <Icon name="layers" />
+              <span>
+                {g.name}
+                <small className="row-count">
+                  {g.members.length} {g.members.length === 1 ? "item" : "items"}
+                </small>
+              </span>
+            </button>
+            <button type="button" className="group-ungroup" title={`Ungroup ${g.name} (the items stay)`} aria-label={`Ungroup ${g.name}`} onClick={() => props.onUngroup(g.id)}>
+              <Icon name="close" />
+            </button>
+          </div>
+        ),
+      )}
+    </div>
   );
 }

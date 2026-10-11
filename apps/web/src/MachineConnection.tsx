@@ -18,6 +18,12 @@ type Observation = {
   observed_at_ms: number;
   report: QueryReport;
 };
+type DriverCatalog = {
+  mode: "offline_preparation";
+  generated_at_utc: string;
+  drivers: { id: string; name: string; summary: string; next_test: string;
+    offline_checks: string; hardware_status: string; offline_test_count: number }[];
+};
 
 const boardName = (type: number | null) => ({ 1: "LMC2-Lite", 2: "LMC2-Lite-Digital", 3: "USB-Lite", 4: "LMC4", 5: "LMC4 family", 6: "LMC-Dynamic", 7: "USB-Lite dual-source" })[type as 1] ?? "Unknown";
 
@@ -29,6 +35,25 @@ export function MachineConnection() {
   const [busy, setBusy] = useState(false);
   const [observation, setObservation] = useState<Observation | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [drivers, setDrivers] = useState<DriverCatalog | null>(null);
+  const [driversBusy, setDriversBusy] = useState(false);
+  const [driversError, setDriversError] = useState<string | null>(null);
+  async function loadDrivers() {
+    setDriversBusy(true);
+    setDriversError(null);
+    setDrivers(null);
+    try {
+      const response = await fetch("/machines/drivers", { cache: "no-store" });
+      const result = await response.json();
+      if (!response.ok || result.error) throw new Error(result.error || "Driver catalog unavailable.");
+      if (result.mode !== "offline_preparation" || !Array.isArray(result.drivers)) throw new Error("Invalid driver catalog.");
+      setDrivers(result as DriverCatalog);
+    } catch (cause) {
+      setDriversError(cause instanceof Error ? cause.message : "Driver catalog unavailable.");
+    } finally {
+      setDriversBusy(false);
+    }
+  }
   async function refresh() {
     if (active.current) return;
     active.current = true;
@@ -90,6 +115,23 @@ export function MachineConnection() {
         )}
       </div>
       <p className="small muted">Framing is not available yet. Machine calibration and red-light configuration still need verification.</p>
+      <h3 className="panel-section">Prepared machine drivers</h3>
+      <p className="small muted">Review preparation for fiber, CO2 and CNC machines. This check does not connect to a machine.</p>
+      <button type="button" className="secondary" onClick={loadDrivers} disabled={driversBusy}>
+        {driversBusy ? "Loading drivers…" : "View prepared drivers"}
+      </button>
+      <div aria-live="polite">
+        {driversError && <p className="small" role="alert">{driversError}</p>}
+        {drivers?.drivers.map(driver => (
+          <details key={driver.id}>
+            <summary className="small">{driver.name}</summary>
+            <p className="small">{driver.summary}</p>
+            <p className="small muted">Offline checks: {driver.offline_checks === "passed" ? `${driver.offline_test_count} passed` : "verification pending"}.
+              {" "}Machine validation: {driver.hardware_status === "partial" ? "partial" : "not performed"}.</p>
+            <p className="small">Next machine check: {driver.next_test}</p>
+          </details>
+        ))}
+      </div>
     </section>
   );
 }
