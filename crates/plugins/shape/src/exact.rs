@@ -574,6 +574,16 @@ fn install<'js>(ctx: &Ctx<'js>, state: &Rc<RefCell<State>>) -> rquickjs::Result<
     {
         let st = state.clone();
         native.set(
+            "faceNear",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, h: u32, x: f64, y: f64, z: f64| -> rquickjs::Result<u32> {
+                st.borrow_mut().arena.face_near(shape(h), [x, y, z]).map(|i| i as u32).map_err(|e| fail(&ctx, "faces", e))
+            })?,
+        )?;
+    }
+
+    {
+        let st = state.clone();
+        native.set(
             "pushFace",
             Function::new(ctx.clone(), move |ctx: Ctx<'js>, h: u32, index: u32, distance: f64| -> rquickjs::Result<u32> {
                 st.borrow_mut().arena.push_face(shape(h), index as usize, distance).map(handle).map_err(|e| fail(&ctx, "push", e))

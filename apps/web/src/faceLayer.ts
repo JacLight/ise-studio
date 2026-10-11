@@ -1,7 +1,8 @@
-// Flat faces of any part, for push and pull. A click finds the whole flat
-// face under the pointer on the display mesh (every connected triangle in the
-// same plane), refuses curved surfaces, and draws it tinted with an arrow
-// along its outward normal. Dragging the arrow slides both along the normal.
+// Faces of any part, for push and pull. A click finds the whole flat face
+// under the pointer on the display mesh (every connected triangle in the
+// same plane), or the whole smooth curved surface (a cylinder's side, a hole),
+// and draws it tinted with an arrow along its outward normal there. Dragging
+// the arrow slides both along the normal.
 
 import * as THREE from "three";
 
@@ -15,7 +16,67 @@ export type FlatFace = {
   centroid: [number, number, number];
   normal: [number, number, number];
   area: number;
+  /** A curved surface: `centroid` is where it was clicked, `normal` the surface's there. */
+  curved?: boolean;
 };
+
+/**
+ * The smooth surface around triangle `start` (local coordinates): every
+ * triangle reached without crossing a sharp edge. `at` is the clicked point,
+ * where the arrow goes.
+ */
+export function curvedFaceAt(geometry: THREE.BufferGeometry, start: number, at: THREE.Vector3, range?: [number, number]): FlatFace | null {
+  const pos = geometry.getAttribute("position") as THREE.BufferAttribute;
+  const index = geometry.getIndex();
+  const tri = (t: number): [number, number, number] => (index ? [index.getX(3 * t), index.getX(3 * t + 1), index.getX(3 * t + 2)] : [3 * t, 3 * t + 1, 3 * t + 2]);
+  const v = (i: number) => new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i));
+  const count = (index ? index.count : pos.count) / 3;
+  const [lo, hi] = range ? [range[0] / 3, (range[0] + range[1]) / 3] : [0, count];
+  const normalOf = (t: number) => {
+    const [a, b, c] = tri(t).map(v);
+    return new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a)).normalize();
+  };
+  // Neighbours across an edge (two shared vertex positions).
+  const key = (i: number) => `${pos.getX(i).toFixed(4)},${pos.getY(i).toFixed(4)},${pos.getZ(i).toFixed(4)}`;
+  const edges = new Map<string, number[]>();
+  for (let t = lo; t < hi; t++) {
+    const k = tri(t).map(key);
+    for (const [a, b] of [[k[0], k[1]], [k[1], k[2]], [k[2], k[0]]] as [string, string][]) {
+      const e = a < b ? `${a}|${b}` : `${b}|${a}`;
+      const list = edges.get(e);
+      if (list) list.push(t);
+      else edges.set(e, [t]);
+    }
+  }
+  const seen = new Set<number>([start]);
+  const queue = [start];
+  while (queue.length) {
+    const t = queue.pop()!;
+    const n = normalOf(t);
+    const k = tri(t).map(key);
+    for (const [a, b] of [[k[0], k[1]], [k[1], k[2]], [k[2], k[0]]] as [string, string][]) {
+      for (const u of edges.get(a < b ? `${a}|${b}` : `${b}|${a}`) ?? []) {
+        // Facets of one smooth surface meet at under ~20°; a real edge is sharper.
+        if (!seen.has(u) && normalOf(u).dot(n) > 0.94) {
+          seen.add(u);
+          queue.push(u);
+        }
+      }
+    }
+  }
+  const faces = [...seen];
+  const out = new Float32Array(faces.length * 9);
+  let area = 0;
+  faces.forEach((t, k) => {
+    const [a, b, d] = tri(t).map(v);
+    area += new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(d, a)).length() / 2;
+    [a, b, d].forEach((p, j) => out.set([p.x, p.y, p.z], k * 9 + j * 3));
+  });
+  if (area <= 0) return null;
+  // The normal where it was clicked: the clicked facet's, smoothed with its neighbours'.
+  const n = normalOf(start);
+  return { triangles: out, centroid: [at.x, at.y, at.z], normal: [n.x, n.y, n.z], area, curved: true };
+}
 
 /**
  * The flat face around triangle `start` of a mesh (local coordinates), or

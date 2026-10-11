@@ -1212,3 +1212,39 @@ fn trim_cuts_back_to_the_nearest_crossings_and_extend_reaches_the_next_curve() {
     let orig = de_shape::sketch::bezier_at([0.0, 0.0], [15.0, 30.0], [45.0, 30.0], [60.0, 0.0], 0.25);
     assert!((mid[0] - orig[0]).abs() < 0.05 && (mid[1] - orig[1]).abs() < 0.05, "{mid:?} vs {orig:?}");
 }
+
+#[test]
+fn a_curved_face_pushes_and_pulls_exactly() {
+    // A 40 × 40 × 10 plate with a ⌀10 hole; the hole's wall pushed 1 mm (into the hole: ⌀8),
+    // then a cylinder's side pulled 2 mm (r 10 → 8). Picked by a point on the face, as the view does.
+    let program = |source: &str| de_shape::ShapeProgram {
+        name: "P".into(),
+        description: String::new(),
+        source: source.into(),
+        params: vec![],
+        display_tolerance: None,
+        levels: vec![],
+        uses: Default::default(),
+        finishes: vec![],
+        inputs: String::new(),
+    };
+    let volume_with = |p: &de_shape::ShapeProgram, values: &[(String, f64)]| {
+        let (arena, exact) = de_shape::exact::evaluate_exact_in(de_occt::Arena::new(), &p.name, &p.source, values, 0.01, &p.inputs).map_err(|(_, e)| e).unwrap();
+        exact.parts.iter().map(|q| arena.volume(q.shape)).sum::<f64>()
+    };
+    let volume = |p: &de_shape::ShapeProgram| volume_with(p, &[]);
+    let pi = std::f64::consts::PI;
+    let plate = program("return box(40, 40, 10).subtract(cylinder(20, 5).translate([20, 20, -5])).push(1, { curved: true, near: [25, 20, 5] });");
+    let want = 16000.0 - pi * 16.0 * 10.0;
+    assert!((volume(&plate) - want).abs() < want * 1e-5, "plate {} vs {want}", volume(&plate));
+    let rod = program("return cylinder(20, 10).push(-2, { curved: true, near: [10, 0, 10] });");
+    let want = pi * 64.0 * 20.0;
+    assert!((volume(&rod) - want).abs() < want * 1e-5, "rod {} vs {want}", volume(&rod));
+    // As a finish the view adds: where on the bounds, and kind "curved_face".
+    let mut finished = program("return cylinder(20, 10);");
+    finished.finishes = vec![serde_json::from_value(json!({ "kind": "push", "key": "push1", "edges": [{ "at": [1.0, 0.5, 0.5], "kind": "curved_face", "dir": [1, 0, 0] }] })).unwrap()];
+    finished.inputs = format!(r#"{{"sketches":{{}},"finishes":{}}}"#, serde_json::to_string(&finished.finishes).unwrap());
+    let want = pi * 169.0 * 20.0;
+    let got = volume_with(&finished, &[("push1".into(), 3.0)]);
+    assert!((got - want).abs() < want * 1e-5, "finished {got} vs {want}");
+}

@@ -551,16 +551,18 @@ export function App({ engine }: { engine: Engine }) {
   const pickFace = useCallback(
     (f: ProgramFace | null, why?: "curved") => {
       if (stressPick) {
-        if (why === "curved") return notify("Supports and loads go on flat faces: pick a flat face");
+        if (why === "curved" || f?.curved) return notify("Supports and loads go on flat faces: pick a flat face");
         if (!f) return;
         stressPick.take(f);
         setStressPick(null);
         return;
       }
-      if (why === "curved") notify("Only flat faces push and pull: pick a flat face");
+      if (why === "curved") notify("That surface could not be picked: try another spot on it");
       setProgramFace(f);
       setFaceDrag(null);
       if (!f) return;
+      // A curved face is pushed by a finish; a flat one may have a parameter that already drives it.
+      if (f.curved) return setFaceDriver(null);
       setFaceDriver("finding");
       engine.shapeFace(f.id, f.part, f.centroid, f.normal).then(
         (r) => setFaceDriver(r.driver),
@@ -584,7 +586,7 @@ export function App({ engine }: { engine: Engine }) {
       let n = 1;
       while (prog.params.some((q) => q.key === `push${n}`)) n++;
       const key = `push${n}`;
-      return { key, label: `Push ${n} distance`, finish: { kind: "push", key, ...(f.part ? { part: f.part } : {}), edges: [{ at, kind: "face", dir: f.normal }] } };
+      return { key, label: `Push ${n} distance`, finish: { kind: "push", key, ...(f.part ? { part: f.part } : {}), edges: [{ at, kind: f.curved ? "curved_face" : "face", dir: f.normal }] } };
     },
     [state.entities],
   );
@@ -1051,7 +1053,9 @@ export function App({ engine }: { engine: Engine }) {
                 Drag the arrow to change <b>{faceDriver.label}</b> ({fmtNum(faceDriver.value)} mm) · Esc to leave
               </>
             ) : (
-              <>Drag the arrow to push or pull this face · it's kept as a linkable distance · Esc to leave</>
+              <>
+                Drag the arrow to {programFace.curved ? "thicken or thin this curved surface" : "push or pull this face"} · it's kept as a linkable distance · Esc to leave
+              </>
             )}
           </div>
         )}

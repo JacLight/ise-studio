@@ -699,6 +699,7 @@ fn install_native<'js>(ctx: &Ctx<'js>, arena: &Rc<RefCell<Arena>>) -> rquickjs::
     // evaluated exactly (see `evaluate_in`).
     native.set("edges", Function::new(ctx.clone(), |ctx: Ctx<'js>, _h: u32| -> rquickjs::Result<String> { Err(throw(&ctx, NEEDS_EXACT)) })?)?;
     native.set("faces", Function::new(ctx.clone(), |ctx: Ctx<'js>, _h: u32| -> rquickjs::Result<String> { Err(throw(&ctx, NEEDS_EXACT)) })?)?;
+    native.set("faceNear", Function::new(ctx.clone(), |ctx: Ctx<'js>, _h: u32, _x: f64, _y: f64, _z: f64| -> rquickjs::Result<u32> { Err(throw(&ctx, NEEDS_EXACT)) })?)?;
     native.set(
         "pushFace",
         Function::new(ctx.clone(), |ctx: Ctx<'js>, _h: u32, _i: u32, _d: f64| -> rquickjs::Result<u32> { Err(throw(&ctx, NEEDS_EXACT)) })?,

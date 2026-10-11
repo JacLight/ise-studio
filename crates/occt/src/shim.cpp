@@ -41,6 +41,8 @@
 #include <BRepGProp_Face.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepOffsetAPI_MakeOffset.hxx>
+#include <BRepOffset_MakeOffset.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCone.hxx>
@@ -1057,8 +1059,53 @@ int occ_faces(void* p, int h, const double** data, int* len) {
   });
 }
 
-/// Pushes (distance > 0, adds material) or pulls (distance < 0, cuts) one flat
-/// face along its outward normal: the face's own outline swept that far.
+/// The solid of a shape (an offset can come back as a shell or a compound of one solid).
+static TopoDS_Shape as_solid(const TopoDS_Shape& r) {
+  TopExp_Explorer solids(r, TopAbs_SOLID);
+  if (solids.More()) {
+    TopoDS_Shape first = solids.Current();
+    solids.Next();
+    if (!solids.More()) return first;
+    return r;
+  }
+  TopExp_Explorer shells(r, TopAbs_SHELL);
+  if (shells.More()) {
+    BRepBuilderAPI_MakeSolid ms(TopoDS::Shell(shells.Current()));
+    if (ms.IsDone()) {
+      ShapeFix_Solid fix(ms.Solid());
+      fix.Perform();
+      return fix.Solid();
+    }
+  }
+  return r;
+}
+
+/// The face nearest a point (index as faces() numbers them), or -1.
+int occ_face_near(void* p, int h, double x, double y, double z) {
+  Arena* a = static_cast<Arena*>(p);
+  return guard(a, [&] {
+    const TopoDS_Shape* s = get(a, h);
+    if (!s) return -1;
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(*s, TopAbs_FACE, faces);
+    TopoDS_Vertex v = BRepBuilderAPI_MakeVertex(gp_Pnt(x, y, z));
+    int best = -1;
+    double dist = 1e300;
+    for (int i = 1; i <= faces.Extent(); i++) {
+      BRepExtrema_DistShapeShape d(v, faces(i));
+      if (d.IsDone() && d.Value() < dist) {
+        dist = d.Value();
+        best = i - 1;
+      }
+    }
+    return best;
+  });
+}
+
+/// Pushes (distance > 0, adds material) or pulls (distance < 0, cuts) one
+/// face along its outward normal. A flat face: its outline swept that far. A
+/// curved one (a cylinder's side, a hole, a sphere): the face offset that far,
+/// its neighbours extended or trimmed to meet it.
 int occ_push_face(void* p, int h, int index, double distance) {
   Arena* a = static_cast<Arena*>(p);
   return guard(a, [&] {
@@ -1069,8 +1116,18 @@ int occ_push_face(void* p, int h, int index, double distance) {
     if (index < 0 || index >= faces.Extent()) throw Standard_Failure("unknown face");
     TopoDS_Face f = TopoDS::Face(faces(index + 1));
     BRepAdaptor_Surface surf(f);
-    if (surf.GetType() != GeomAbs_Plane) throw Standard_Failure("only flat faces can be pushed or pulled");
     if (std::fabs(distance) < 1e-9) return push(a, *s);
+    if (surf.GetType() != GeomAbs_Plane) {
+      BRepOffset_MakeOffset mo;
+      mo.Initialize(*s, 0.0, 1e-6, BRepOffset_Skin, Standard_True, Standard_False, GeomAbs_Intersection);
+      mo.SetOffsetOnFace(f, distance);
+      mo.MakeOffsetShape();
+      if (!mo.IsDone()) throw Standard_Failure("could not offset this curved face that far");
+      TopoDS_Shape r = as_solid(mo.Shape());
+      BRepCheck_Analyzer check(r);
+      if (!check.IsValid()) throw Standard_Failure("offsetting this curved face that far breaks the solid");
+      return push(a, tidy(r));
+    }
     gp_Dir n = surf.Plane().Axis().Direction();
     if (f.Orientation() == TopAbs_REVERSED) n.Reverse();
     TopoDS_Face base = TopoDS::Face(f.Oriented(TopAbs_FORWARD));

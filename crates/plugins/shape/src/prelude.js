@@ -126,11 +126,15 @@ class Solid {
     return JSON.parse(__n.faces(this.h)).map((f, index) => Object.freeze({ index, flat: !!f.normal, ...f }));
   }
   /**
-   * Pushes a flat face out by `distance` mm (adding material), or pulls it in
-   * with a negative distance (cutting), along its normal. `which` picks the
-   * face: { normal: [x, y, z], near: [x, y, z] } (the flat face facing that
-   * way nearest the point), or a face from solid.faces. Exact.
-   *   box(60, 40, 10).push(5, { normal: [0, 0, 1] })   // 15 mm tall now
+   * Pushes a face out by `distance` mm (adding material), or pulls it in
+   * with a negative distance (cutting), along its normal. A flat face is
+   * swept; a curved one (a cylinder's side, a hole, a sphere) is offset, its
+   * neighbours meeting it. `which` picks the face: { normal: [x, y, z], near:
+   * [x, y, z] } (the flat face facing that way nearest the point),
+   * { curved: true, near } (the face nearest the point, flat or curved), or a
+   * face from solid.faces. Exact.
+   *   box(60, 40, 10).push(5, { normal: [0, 0, 1] })        // 15 mm tall now
+   *   cylinder(20, 10).push(2, { curved: true, near: [10, 0, 10] })  // radius 12
    */
   push(distance, which) {
     if (typeof distance !== "number" || !Number.isFinite(distance)) throw new Error("push: the distance must be a number of mm");
@@ -147,6 +151,18 @@ class Solid {
  */
 function selectFace(solid, which) {
   if (which && typeof which.index === "number") return which;
+  // A curved face (or any face) by where it is: the face nearest the point.
+  if (which && (which.curved || which.kind === "curved_face")) {
+    let near = which.near;
+    if (which.at) {
+      const { min, max } = solid.bounds;
+      near = which.at.map((f, k) => min[k] + f * (max[k] - min[k]));
+    }
+    if (!near) throw new Error("push: a curved face is picked by a point near it");
+    const q = vec3(near);
+    const s = asSolid(solid);
+    return s.faces[__n.faceNear(s.h, q[0], q[1], q[2])];
+  }
   const flat = asSolid(solid).faces.filter((f) => f.flat);
   if (!flat.length) throw new Error("push: the shape has no flat face");
   let normal = which && (which.normal ?? which.dir);

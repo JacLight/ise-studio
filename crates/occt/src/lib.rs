@@ -40,6 +40,7 @@ unsafe extern "C" {
     fn occ_blend(a: *mut c_void, h: c_int, kind: c_int, size: f64, idx: *const c_int, n: c_int) -> c_int;
     fn occ_faces(a: *mut c_void, h: c_int, data: *mut *const f64, len: *mut c_int) -> c_int;
     fn occ_push_face(a: *mut c_void, h: c_int, index: c_int, distance: f64) -> c_int;
+    fn occ_face_near(a: *mut c_void, h: c_int, x: f64, y: f64, z: f64) -> c_int;
 }
 
 /// A shape in an [`Arena`] (a solid, or a planar profile on z = 0).
@@ -334,7 +335,13 @@ impl Arena {
         let d = unsafe { std::slice::from_raw_parts(data, len as usize) };
         Ok(d.chunks_exact(8).map(|f| Face { normal: (f[0] > 0.5).then_some([f[1], f[2], f[3]]), center: [f[4], f[5], f[6]], area: f[7] }).collect())
     }
-    /// Pushes (positive, adds material) or pulls (negative, cuts) a flat face along its normal.
+    /// The face nearest a point, numbered as [`Arena::faces`] numbers them.
+    pub fn face_near(&mut self, s: Shape, p: [f64; 3]) -> Result<usize, String> {
+        let i = unsafe { occ_face_near(self.0, s.0, p[0], p[1], p[2]) };
+        if i < 0 { Err(self.error()) } else { Ok(i as usize) }
+    }
+    /// Pushes (positive, adds material) or pulls (negative, cuts) a face along
+    /// its outward normal: flat faces by sweeping, curved ones by offsetting.
     pub fn push_face(&mut self, s: Shape, face: usize, distance: f64) -> Result<Shape, String> {
         self.check(unsafe { occ_push_face(self.0, s.0, face as c_int, distance) })
     }
@@ -464,7 +471,14 @@ mod tests {
         assert!((a.volume(lower) - 600.0).abs() < 1e-6);
         let cyl = a.cylinder(10.0, 3.0, 3.0, false).unwrap();
         let side = a.faces(cyl).unwrap().iter().position(|f| f.normal.is_none()).unwrap();
-        assert!(a.push_face(cyl, side, 1.0).is_err(), "curved faces are refused");
+        // A cylinder's side (r 3, h 10), pushed out 2 mm: the radius grows to 5, the height stays.
+        let fat = a.push_face(cyl, side, 2.0).unwrap();
+        let want = std::f64::consts::PI * 5.0 * 5.0 * 10.0;
+        assert!((a.volume(fat) - want).abs() < want * 1e-4, "volume {} vs {want}", a.volume(fat));
+        let thin = a.push_face(cyl, side, -1.0).unwrap();
+        let want = std::f64::consts::PI * 2.0 * 2.0 * 10.0;
+        assert!((a.volume(thin) - want).abs() < want * 1e-4, "volume {} vs {want}", a.volume(thin));
+        assert_eq!(a.face_near(cyl, [3.0, 0.0, 5.0]).unwrap(), side, "the side is the face nearest a point on it");
     }
 
     #[test]

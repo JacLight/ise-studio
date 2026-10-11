@@ -33,7 +33,7 @@ import {
 } from "./gizmo";
 import type { Overlay } from "./intent";
 import { EdgeLayer, type EdgePicture } from "./edgeLayer";
-import { FaceLayer, type FlatFace, flatFaceAt } from "./faceLayer";
+import { FaceLayer, type FlatFace, curvedFaceAt, flatFaceAt } from "./faceLayer";
 import { SketchLayer, type SketchPicture, segmentPoints } from "./sketchLayer";
 import { type Plane, normalOf, positions, radiusOf, toWorld } from "./sketchModel";
 import {
@@ -1607,8 +1607,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         range = [p.index_start, p.index_count];
         name = p.name;
       }
-      const flat = flatFaceAt(part.body.geometry, hit.faceIndex, range);
-      return flat ? { ...flat, id, part: name } : null;
+      const face = flatFaceAt(part.body.geometry, hit.faceIndex, range) ?? curvedFaceAt(part.body.geometry, hit.faceIndex, part.body.worldToLocal(hit.point.clone()), range);
+      return face ? { ...face, id, part: name } : null;
     };
 
     const pickAssemblyPart = (r: THREE.Raycaster) => {
