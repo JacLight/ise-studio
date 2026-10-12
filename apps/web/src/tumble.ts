@@ -86,3 +86,32 @@ export function attachTumble(dom: HTMLElement, camera: THREE.Camera, controls: O
   };
   return state;
 }
+
+/**
+ * Zooming in walks on once the view is close: OrbitControls only ever halves
+ * the way to its target, so the camera would stall in front of the nearest
+ * wall. Within `floor()` of the target, a wheel step moves the camera and the
+ * target together along the ray under the pointer, through a case's lid or a
+ * floor into what is inside. Zooming out is OrbitControls' as usual.
+ */
+export function attachWalk(dom: HTMLElement, camera: THREE.PerspectiveCamera, controls: OrbitControls, floor: () => number): () => void {
+  const wheel = (e: WheelEvent) => {
+    if (!controls.enabled || !controls.enableZoom || e.deltaY >= 0) return;
+    const reach = floor();
+    if (camera.position.distanceTo(controls.target) > reach * 1.5) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const rect = dom.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, camera);
+    // A notch of a mouse wheel (100) walks a third of the reach; a trackpad's small deltas walk less.
+    const step = reach * 0.35 * Math.min(Math.abs(e.deltaY) / 100, 2);
+    const move = ray.ray.direction.multiplyScalar(step);
+    camera.position.add(move);
+    controls.target.add(move);
+    controls.dispatchEvent({ type: "change" });
+  };
+  dom.addEventListener("wheel", wheel, { capture: true, passive: false });
+  return () => dom.removeEventListener("wheel", wheel, { capture: true });
+}

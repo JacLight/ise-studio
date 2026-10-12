@@ -15,7 +15,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { attachTumble, type Tumble } from "./tumble";
+import { attachTumble, attachWalk, type Tumble } from "./tumble";
 import { pcbLooks } from "./pcb3d";
 import type { EntityView, MeshData } from "./engine";
 import {
@@ -463,6 +463,8 @@ type Scene = {
   invalidate: () => void;
   /** A camera move in progress (see `glideTo`). */
   flight: Flight | null;
+  /** Everything placed, as a sphere: zoom walks on and fog starts by its size. */
+  extent: THREE.Sphere;
 };
 
 type View3 = { position: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3 };
@@ -511,10 +513,29 @@ function stepFlight(t: Scene, now: number): boolean {
   return k < 1;
 }
 
+/** Shown part meshes whose box holds `eye` (by a margin), drawn last first. */
+function enclosing(t: Scene, eye: THREE.Vector3): THREE.Mesh[] {
+  const out: THREE.Mesh[] = [];
+  const box = new THREE.Box3();
+  for (const part of t.parts.values()) {
+    if (!part.group.visible) continue;
+    for (const m of part.meshes) {
+      if (!m.visible) continue;
+      const g = m.geometry;
+      if (!g.boundingBox) g.computeBoundingBox();
+      box.copy(g.boundingBox!).applyMatrix4(m.matrixWorld);
+      // Inside by more than a hair: grazing a face from outside does not hide it.
+      const margin = Math.min(0.2, box.getSize(new THREE.Vector3()).length() * 0.002);
+      if (box.expandByScalar(-margin).containsPoint(eye)) out.push(m);
+    }
+  }
+  return out;
+}
+
 /** Near plane follows the scale, so a tower and a bolt both render without z-fighting. */
 function settleCamera(t: Scene) {
   const distance = t.camera.position.distanceTo(t.controls.target);
-  t.camera.near = Math.max(0.5, distance / 5000);
+  t.camera.near = Math.max(0.1, distance / 5000);
   t.camera.updateProjectionMatrix();
   t.controls.update();
 }
@@ -963,7 +984,11 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     // The camera goes all the way round, underneath included: the ground is
     // one-sided, so from below it vanishes and the grid stays as a reference.
     controls.autoRotateSpeed = 1.2;
+    // Zoom heads for what is under the pointer, as in other CAD tools.
+    controls.zoomToCursor = true;
     const tumbler = attachTumble(renderer.domElement, camera, controls);
+    // Close in, zoom walks through a lid or a floor instead of stalling at it.
+    const unwalk = attachWalk(renderer.domElement, camera, controls, () => Math.max((three.current?.extent.radius ?? 100) * 0.04, 0.5));
 
     let dirty = true;
     let raf = 0;
@@ -1420,12 +1445,21 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       if (!dirty) return;
       dirty = false;
       const distance = camera.position.distanceTo(controls.target);
+      // The haze starts past the model, however close in the camera is.
+      const extent = three.current?.extent;
+      const beyond = extent ? camera.position.distanceTo(extent.center) + extent.radius : 0;
       const fog = scene.fog as THREE.Fog;
-      fog.near = distance * 2.2;
-      fog.far = distance * 6;
+      fog.near = Math.max(distance * 2.2, beyond);
+      fog.far = Math.max(distance * 6, beyond * 2.5);
       layoutOverlays();
       sketchLayer.layout(toScreen);
+      // A part the camera is inside (a case, a room's shell, a floor passed
+      // through) steps aside, as if the camera had walked in: what it holds
+      // shows instead of the inside of its walls.
+      const aside = three.current ? enclosing(three.current, camera.position) : [];
+      for (const m of aside) m.visible = false;
       renderer.render(scene, camera);
+      for (const m of aside) m.visible = true;
       if (callbacks.current.comments?.pins.length) scheduleOcclusion();
     };
     raf = requestAnimationFrame(frame);
@@ -2253,7 +2287,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     renderer.domElement.addEventListener("pointerdown", onCanvasDown);
     renderer.domElement.addEventListener("pointerup", onCanvasUp);
 
-    three.current = { renderer, scene, camera, controls, tumble: tumbler, sun, parts: new Map(), gizmo, push, overlayRoot, overlayLabels: [], ground, grid, gridCell: 20, wireframe: false, invalidate, flight: null };
+    three.current = { renderer, scene, camera, controls, tumble: tumbler, sun, parts: new Map(), gizmo, push, overlayRoot, overlayLabels: [], ground, grid, gridCell: 20, wireframe: false, invalidate, flight: null, extent: new THREE.Sphere(new THREE.Vector3(), 100) };
     scene.add(sketchLayer.root, edgeLayer.root, faceLayer.root, pickedLayer.root, connectorLayer.root);
     if (sketchLabels.current) sketchLayer.setHost(sketchLabels.current);
     sketchLayer.onEditDimension = (key, x, y) => callbacks.current.onEditDimension(key, x, y);
@@ -2265,6 +2299,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       observer.disconnect();
       controls.dispose();
       tumbler.dispose();
+      unwalk();
       window.removeEventListener("keydown", onKey, true);
       for (const part of three.current?.parts.values() ?? []) disposePart(part);
       scene.traverse((o) => {
@@ -2371,6 +2406,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     // Fit the shadow camera to the parts.
     const bounds = new THREE.Box3();
     for (const part of t.parts.values()) bounds.expandByObject(part.group);
+    if (!bounds.isEmpty()) bounds.getBoundingSphere(t.extent);
     // Anything below the ground shows through it, dimmed, instead of vanishing behind it.
     const buried = !bounds.isEmpty() && bounds.min.z < -1;
     const groundMat = t.ground.material as THREE.MeshStandardMaterial;
