@@ -11,7 +11,10 @@
   "Ruthex",
   "CNC Kitchen",
   "Voron",
-  "knurled insert"
+  "knurled insert",
+  "M2",
+  "M6",
+  "short"
  ],
  "source": [
   "common.js",
@@ -29,7 +32,7 @@
    "value": 3,
    "unit": "mm",
    "min": 2,
-   "max": 5,
+   "max": 6,
    "step": 0.5
   },
   {
@@ -38,7 +41,7 @@
    "value": 5.7,
    "unit": "mm",
    "min": 2,
-   "max": 12,
+   "max": 14,
    "step": 0.1
   },
   {
@@ -56,6 +59,13 @@
   "length"
  ],
  "rows": [
+  {
+   "name": "M2×3",
+   "values": {
+    "d": 2,
+    "length": 3
+   }
+  },
   {
    "name": "M2×4",
    "values": {
@@ -92,6 +102,13 @@
    }
   },
   {
+   "name": "M4×4 short",
+   "values": {
+    "d": 4,
+    "length": 4
+   }
+  },
+  {
    "name": "M4×8.1",
    "values": {
     "d": 4,
@@ -99,10 +116,24 @@
    }
   },
   {
+   "name": "M5×5.8 short",
+   "values": {
+    "d": 5,
+    "length": 5.8
+   }
+  },
+  {
    "name": "M5×9.5",
    "values": {
     "d": 5,
     "length": 9.5
+   }
+  },
+  {
+   "name": "M6×12.7",
+   "values": {
+    "d": 6,
+    "length": 12.7
    }
   }
  ],
@@ -148,6 +179,25 @@
    "tolerance": 0.06,
    "metrics": {
     "Printed hole Ø": 6.4
+   }
+  },
+  "M6×12.7": {
+   "size": [
+    8.7,
+    8.7,
+    12.7
+   ],
+   "tolerance": 0.06,
+   "metrics": {
+    "Printed hole Ø": 8.0,
+    "Hole depth": 13.7
+   },
+   "partNumber": "Ruthex RX-M6x12.7"
+  },
+  "M4×4 short": {
+   "partNumber": "CNC Kitchen M4x4 short",
+   "metrics": {
+    "Printed hole Ø": 5.6
    }
   }
  }

@@ -12,12 +12,15 @@
 // • Esc steps back from face to part. Values snap to 1 mm (⇧ 10, ⌥ 0.1),
 //   preview live, and commit once on release; Esc mid-drag cancels.
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { attachTumble, attachWalk, type Tumble } from "./tumble";
 import { pcbLooks } from "./pcb3d";
+import { type DisplayMode, type SectionPlane, type ViewName, ViewTools } from "./viewTools";
+import { ViewToolbar } from "./ViewToolbar";
 import type { EntityView, MeshData } from "./engine";
+import { BatchLayer } from "./batchLayer";
 import {
   AXIS_NAMES,
   ACCENT,
@@ -69,7 +72,7 @@ import {
   type V3,
 } from "./model";
 
-export type ViewName = "perspective" | "top" | "front" | "bottom";
+export type { ViewName, DisplayMode, SectionPlane };
 
 /**
  * Driving a mechanism by hand: pressing on one of `groups` of part `id`
@@ -327,6 +330,8 @@ export type ViewportHandle = {
   /** Shows a stress study on a part: its supports and loads, and (when solved) the stress map. Null clears it. */
   stress: (id: string, view: StressView | null) => void;
   view: (name: ViewName) => void;
+  /** The view's tools (projection, display mode, section, measure), for commands from elsewhere. */
+  tools: () => ViewTools | null;
   zoom: (factor: number) => void;
   setWireframe: (on: boolean) => void;
   setTurntable: (on: boolean) => void;
@@ -395,6 +400,8 @@ type Props = {
   poses?: ReadonlyMap<string, Transform> | null;
   /** An instance turned with the gizmo's rings: its new position and rotation (false: refused, put it back). */
   onTurnInstance?: (id: string, at: V3, rotation: V3) => Promise<boolean>;
+  /** A selection box closed on these items (add: Shift held, adding to what is selected). */
+  onSelectMany?: (ids: string[], add: boolean) => void;
 };
 
 /** A flat face of a part made by a program, and which part of an assembly it is on. */
@@ -533,6 +540,13 @@ function enclosing(t: Scene, eye: THREE.Vector3): THREE.Mesh[] {
     for (const m of part.meshes) {
       if (!m.visible) continue;
       const g = m.geometry;
+      // Most parts are nowhere near the eye: a sphere says so before a box is placed.
+      if (!g.boundingSphere) g.computeBoundingSphere();
+      const s = g.boundingSphere!;
+      const e = m.matrixWorld.elements;
+      const dx = e[12] - eye.x, dy = e[13] - eye.y, dz = e[14] - eye.z;
+      const reach = (s.radius + s.center.length()) * m.matrixWorld.getMaxScaleOnAxis();
+      if (dx * dx + dy * dy + dz * dz > reach * reach * 1.01) continue;
       if (!g.boundingBox) g.computeBoundingBox();
       box.copy(g.boundingBox!).applyMatrix4(m.matrixWorld);
       // Inside by more than a hair: grazing a face from outside does not hide it.
@@ -589,11 +603,13 @@ function surface(look: Look, wireframe: boolean) {
 /** Scene geometry (mm) from an engine mesh (m). */
 function makeGeometry(mesh: MeshData): THREE.BufferGeometry {
   const indexed = new THREE.BufferGeometry();
-  indexed.setAttribute("position", new THREE.Float32BufferAttribute(mesh.positions.map((v) => v * MM), 3));
-  indexed.setIndex(mesh.indices);
+  const positions = Float32Array.from(mesh.positions);
+  for (let i = 0; i < positions.length; i++) positions[i] *= MM;
+  indexed.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  indexed.setIndex(new THREE.BufferAttribute(mesh.indices instanceof Uint32Array ? mesh.indices : Uint32Array.from(mesh.indices), 1));
   if (mesh.normals?.length) {
     // Smooth on curves, crisp at sharp edges: the engine already split the normals.
-    indexed.setAttribute("normal", new THREE.Float32BufferAttribute(mesh.normals, 3));
+    indexed.setAttribute("normal", new THREE.BufferAttribute(mesh.normals instanceof Float32Array ? mesh.normals : Float32Array.from(mesh.normals), 3));
     return indexed;
   }
   const geometry = indexed.toNonIndexed();
@@ -659,6 +675,8 @@ function buildInstance(e: EntityView, entities: ReadonlyMap<string, EntityView>,
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData = { id: e.id, path: o.path, shape: o.shape };
+    // Drawn as a GPU instance with every other mesh of its geometry and look (see batchLayer).
+    BatchLayer.adopt(mesh);
     group.add(mesh);
     meshes.push(mesh);
   }
@@ -844,6 +862,8 @@ const FACE_NAMES: Record<string, string> = { "0:1": "Right face", "0:-1": "Left 
 export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(props, ref) {
   const { entities, selected, live, overlays } = props;
   const host = useRef<HTMLDivElement>(null);
+  const [viewTools, setViewTools] = useState<ViewTools | null>(null);
+  const toolsRef = useRef<ViewTools | null>(null);
   const label = useRef<HTMLDivElement>(null);
   const readout = useRef<HTMLDivElement>(null);
   const cursorLayer = useRef<HTMLDivElement>(null);
@@ -895,10 +915,11 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
 
   useEffect(() => {
     const el = host.current!;
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true, stencil: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x000000, 0);
     renderer.shadowMap.enabled = true;
+    renderer.localClippingEnabled = true; // section planes cut the parts, not the ground
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.45;
@@ -906,6 +927,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     el.prepend(renderer.domElement);
 
     const scene = new THREE.Scene();
+    // World matrices are brought up to date once per frame, before the instance layer reads them.
+    scene.matrixWorldAutoUpdate = false;
     scene.fog = new THREE.Fog(0xf5f6f8, 2000, 6000);
     const camera = new THREE.PerspectiveCamera(36, 1, 1, 400000);
     camera.up.set(0, 0, 1);
@@ -951,6 +974,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     const hoverFaceTint = new FaceTint(ACCENT, 0.1, 0.55);
     const ghost = new Ghost();
     const guide = new AxisGuide();
+    const batch = new BatchLayer();
+    scene.add(batch.root);
     scene.add(overlayRoot, hoverFaceTint.root, selectedFaceTint.root, ghost.root, guide.root, gizmo.root, push.root);
 
     // Pivot mode: 27 pickable points on the selected part, drawn as flat
@@ -1000,6 +1025,33 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     const tumbler = attachTumble(renderer.domElement, camera, controls);
     // Close in, zoom walks through a lid or a floor instead of stalling at it.
     const unwalk = attachWalk(renderer.domElement, camera, controls, () => Math.max((three.current?.extent.radius ?? 100) * 0.04, 0.5));
+    // Projection, display modes, sections, measuring, box select and the view cube.
+    const tools = new ViewTools({
+      el,
+      canvas: renderer.domElement,
+      camera,
+      target: () => controls.target,
+      scene,
+      bodies: () => visibleBodies(),
+      materialsOf: bodyMaterials,
+      extent: () => three.current?.extent ?? new THREE.Sphere(new THREE.Vector3(), 100),
+      invalidate: () => (dirty = true),
+      fit: (only, direction, up) => three.current && fitView(three.current, only, true, direction, up),
+      selected: () => callbacks.current.selected,
+      onSelectMany: (ids, add) => callbacks.current.onSelectMany?.(ids, add),
+      nameOf: (id) => {
+        const e = callbacks.current.entities.get(id);
+        return e ? partName(e) : id;
+      },
+    });
+    tools.measure.nameOf = (id) => {
+      const e = callbacks.current.entities.get(id);
+      return e ? partName(e) : id;
+    };
+    toolsRef.current = tools;
+    // Reachable from the element for automated checks (headless browser tests).
+    (el as HTMLElement & { viewTools?: ViewTools }).viewTools = tools;
+    setViewTools(tools);
 
     let dirty = true;
     let raf = 0;
@@ -1014,7 +1066,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     });
 
     const toScreen = (p: THREE.Vector3) => {
-      const v = p.clone().project(camera);
+      const v = p.clone().project(tools.camera());
       const rect = renderer.domElement.getBoundingClientRect();
       return { x: ((v.x + 1) / 2) * rect.width, y: ((1 - v.y) / 2) * rect.height, behind: v.z > 1 };
     };
@@ -1455,6 +1507,13 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       }
       if (!dirty) return;
       dirty = false;
+      draw();
+    };
+    const frameStats = { aside: 0, matrices: 0, batch: 0, render: 0 };
+    function* instanceMeshes() {
+      for (const part of three.current?.parts.values() ?? []) if (part.shared && part.group.visible) yield* part.meshes;
+    }
+    const draw = () => {
       const distance = camera.position.distanceTo(controls.target);
       // The haze starts past the model, however close in the camera is.
       const extent = three.current?.extent;
@@ -1467,13 +1526,46 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       // A part the camera is inside (a case, a room's shell, a floor passed
       // through) steps aside, as if the camera had walked in: what it holds
       // shows instead of the inside of its walls.
+      const t0 = performance.now();
+      scene.updateMatrixWorld();
       const aside = three.current ? enclosing(three.current, camera.position) : [];
       for (const m of aside) m.visible = false;
-      renderer.render(scene, camera);
+      const t1 = performance.now();
+      const view = tools.beforeRender();
+      // Instances of shared geometry go to the GPU as instances, culled and simplified by size.
+      const t2 = performance.now();
+      batch.update(instanceMeshes(), view, renderer.domElement.clientHeight || 800, three.current?.wireframe ?? false);
+      const t3 = performance.now();
+      renderer.render(scene, view);
+      tools.afterRender(renderer, view);
+      frameStats.aside = t1 - t0;
+      frameStats.matrices = t2 - t1;
+      frameStats.batch = t3 - t2;
+      frameStats.render = performance.now() - t3;
       for (const m of aside) m.visible = true;
       if (callbacks.current.comments?.pins.length) scheduleOcclusion();
     };
     raf = requestAnimationFrame(frame);
+    // `?perf`: a handle for measuring the view (tools and benchmarks drive it
+    // over the DevTools protocol): one frame drawn and waited for, in ms.
+    if (new URLSearchParams(location.search).has("perf")) {
+      const px = new Uint8Array(4);
+      (window as unknown as { formaPerf: unknown }).formaPerf = {
+        renderer,
+        camera,
+        controls,
+        parts: () => three.current?.parts.size ?? 0,
+        batch,
+        frameStats,
+        frame: () => {
+          const t0 = performance.now();
+          draw();
+          const gl = renderer.getContext();
+          gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+          return performance.now() - t0;
+        },
+      };
+    }
 
     const resize = () => {
       const { clientWidth: w, clientHeight: h } = el;
@@ -1498,7 +1590,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       if (Math.round(size.x) !== el.clientWidth || Math.round(size.y) !== el.clientHeight) resize();
       if (dirty) scene.updateMatrixWorld();
       camera.updateMatrixWorld();
-      raycaster.setFromCamera(new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1), camera);
+      raycaster.setFromCamera(new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1), tools.camera());
       return raycaster;
     };
     /** What is drawn for the selection: a part, or the shapes inside a selected instance (at any depth). */
@@ -1648,6 +1740,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     let motionDrag: { x: number; y: number } | null = null;
     const onDown = (e: PointerEvent) => {
       if (onCommentUi(e)) return;
+      // Measuring, picking a section face or drawing a selection box.
+      if (tools.down(e)) return;
       // Picking a joint's connector: a click on a triad picks it; anywhere else orbits.
       if (connectorLayer.active && e.button === 0) {
         const rect = renderer.domElement.getBoundingClientRect();
@@ -1830,6 +1924,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       }
     };
     const onMove = (e: PointerEvent) => {
+      if (tools.move(e, rayAt)) return;
       reportHover(e);
       if (connectorLayer.active && !(e.buttons & 1)) {
         const rect = renderer.domElement.getBoundingClientRect();
@@ -2089,6 +2184,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       callbacks.current.onDragEnd(commit && moved);
     };
     const onUp = (e: PointerEvent) => {
+      if (tools.boxUp(e)) return;
       if (liveStroke) {
         const st = liveStroke;
         liveStroke = null;
@@ -2240,6 +2336,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     const onCanvasUp = (e: PointerEvent) => {
       if (callbacks.current.sketch || callbacks.current.edges || connectorLayer.active) return;
       renderer.domElement.classList.remove("dragging");
+      if (tools.click(e, rayAt)) {
+        down = null;
+        return;
+      }
       // Each press makes at most one click: a press that ended elsewhere must
       // not pair with a later release near the same spot.
       const from = down;
@@ -2311,8 +2411,11 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       controls.dispose();
       tumbler.dispose();
       unwalk();
+      tools.dispose();
+      toolsRef.current = null;
       window.removeEventListener("keydown", onKey, true);
       for (const part of three.current?.parts.values() ?? []) disposePart(part);
+      batch.dispose();
       scene.traverse((o) => {
         if (o instanceof THREE.Mesh || o instanceof THREE.Line) {
           o.geometry.dispose();
@@ -2887,16 +2990,11 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       const t = three.current;
       if (!t) return;
       t.controls.autoRotate = false;
-      t.flight = null;
-      const distance = t.camera.position.distanceTo(t.controls.target);
-      const direction = {
-        perspective: new THREE.Vector3(0.55, -0.7, 0.45),
-        top: new THREE.Vector3(0, -0.0001, 1),
-        front: new THREE.Vector3(0, -1, 0.06),
-        bottom: new THREE.Vector3(0, 0.0001, -1),
-      }[name].normalize();
-      t.camera.position.copy(t.controls.target).addScaledVector(direction, distance);
-      t.controls.update();
+      // Glides round to the view, everything framed (a standard view in an orthographic camera is a true elevation).
+      toolsRef.current?.view(name);
+    },
+    tools() {
+      return toolsRef.current;
     },
     zoom(factor) {
       const t = three.current;
@@ -2925,6 +3023,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       const shown = [t.gizmo.root.visible, t.push.root.visible];
       t.gizmo.root.visible = false;
       t.push.root.visible = false;
+      t.scene.updateMatrixWorld();
       t.renderer.render(t.scene, t.camera);
       const url = t.renderer.domElement.toDataURL("image/png");
       [t.gizmo.root.visible, t.push.root.visible] = shown;
@@ -2939,6 +3038,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
   return (
     <div ref={host} className="viewport" aria-label="3D model. Drag to orbit, scroll to zoom. Click a part to move it; click one of its faces to push or pull it.">
       <div ref={labelLayer} className="intent-layer" aria-hidden />
+      {viewTools && <ViewToolbar tools={viewTools} selected={props.selected} onFitAll={() => three.current && fitView(three.current, undefined, true)} />}
       <div ref={sketchLabels} className="sketch-layer" />
       <div ref={label} className="model-dimension" aria-hidden />
       <div ref={faceBadge} className="face-badge" aria-hidden />

@@ -575,7 +575,71 @@ function Library(props: { lib: LibSymbol[] | null; active: string | null; onPick
           </div>
         ))}
       </div>
+      <KicadParts q={q} active={props.active} onPick={props.onPick} canEdit={props.canEdit} />
       <p className="small sch-hint">Pick one, then click the sheet to place it (R turns, X mirrors, Esc stops).</p>
+    </div>
+  );
+}
+
+type KicadHit = { id: string; name: string; library: string; description: string; footprint: string; count: number };
+/** KiCad library parts fetched for placing: their definition and default footprint. */
+const kicadParts = new Map<string, { definition: unknown; footprint: { name: string } | null }>();
+
+/** The official KiCad symbol library, searched by the engine (downloaded on first use). */
+function KicadParts(props: { q: string; active: string | null; onPick: (name: string) => void; canEdit: boolean }) {
+  const [hits, setHits] = useState<KicadHit[] | null>(null);
+  const [state, setState] = useState<string | null>(null);
+  useEffect(() => {
+    const q = props.q.trim();
+    if (q.length < 2) {
+      setHits(null);
+      return;
+    }
+    let live = true;
+    const t = setTimeout(() => {
+      setState("Searching the KiCad library…");
+      fetch(projectUrl(`/pcb/kicad/search?kind=symbols&limit=24&q=${encodeURIComponent(q)}`))
+        .then(async (r) => (r.ok ? r.json() : Promise.reject(new Error(await r.text()))))
+        .then((r: { results: KicadHit[] }) => {
+          if (!live) return;
+          setHits(r.results);
+          setState(null);
+        })
+        .catch((e) => live && setState(String(e.message ?? e)));
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [props.q]);
+  const pick = async (h: KicadHit) => {
+    if (!kicadParts.has(h.id)) {
+      setState(`Reading ${h.id}…`);
+      const r = await fetch(projectUrl(`/pcb/kicad/symbol/${encodeURIComponent(h.id)}`));
+      if (!r.ok) return setState(await r.text());
+      const d = await r.json();
+      kicadParts.set(h.id, { definition: d.definition, footprint: d.footprint });
+      previews.set(h.id, Promise.resolve(d.preview));
+      setState(d.unmapped_pins?.length ? `Pins ${d.unmapped_pins.join(", ")} have no pad on ${d.footprint?.name}` : d.footprint ? null : `${h.id} names no footprint: choose one on the board`);
+    }
+    props.onPick(h.id);
+  };
+  if (!hits && !state) return null;
+  return (
+    <div className="sch-kicad">
+      <h4 className="sch-sub">KiCad library</h4>
+      {state && <p className="small">{state}</p>}
+      {hits?.length === 0 && <p className="small">Nothing matches.</p>}
+      {hits?.map((h) => (
+        <button key={h.id} type="button" disabled={!props.canEdit} className={`pcb-row ${props.active === h.id ? "active" : ""}`} onClick={() => void pick(h)} title={h.description}>
+          <span className="val">
+            {h.name}
+            <small>
+              {h.library} · {h.count} pins{h.footprint ? ` · ${h.footprint.split(":")[1] ?? h.footprint}` : ""}
+            </small>
+          </span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -940,7 +1004,9 @@ function SchematicCanvas(props: {
       return;
     }
     if (mode.m === "place") {
-      await props.commit("pcb.schematic.place", { schematic: v.id, sheet: sh.id, symbol: mode.symbol, at: p, rotation: mode.rotation, mirror: mode.mirror });
+      // A KiCad library part carries its definition, and its footprint for the board.
+      const k = kicadParts.get(mode.symbol);
+      await props.commit("pcb.schematic.place", { schematic: v.id, sheet: sh.id, symbol: mode.symbol, at: p, rotation: mode.rotation, mirror: mode.mirror, ...(k ? { definition: k.definition, ...(k.footprint && v.board ? { footprint_definition: k.footprint, footprint: k.footprint.name } : {}) } : {}) });
       return;
     }
     if (mode.m === "label") {

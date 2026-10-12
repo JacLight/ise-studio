@@ -1,0 +1,156 @@
+{
+ "id": "tee_section",
+ "name": "T section",
+ "standard": "EN 10055",
+ "category": "Structural sections",
+ "summary": "Hot-rolled equal-leg T sections T 30 to T 140 (EN 10055), S235JR, cut to length. Flange top on y = h, stem down to y = 0, length along +Z.",
+ "keywords": [
+  "tee",
+  "T-bar",
+  "T section",
+  "T profile",
+  "DIN 1024",
+  "EN 10055",
+  "steel tee"
+ ],
+ "source": [
+  "common.js",
+  "sections.js",
+  "tee_section.js"
+ ],
+ "display_tolerance": 0.05,
+ "material": "Structural steel S235JR",
+ "materials": {
+  "Structural steel S235JR": 7850
+ },
+ "params": [
+  {
+   "key": "h",
+   "label": "Size (h = b)",
+   "value": 50,
+   "unit": "mm",
+   "min": 30,
+   "max": 140
+  },
+  {
+   "key": "length",
+   "label": "Length (cut)",
+   "value": 1000,
+   "unit": "mm",
+   "min": 10,
+   "max": 12000
+  }
+ ],
+ "columns": [
+  "h"
+ ],
+ "rows": [
+  {
+   "name": "T 30",
+   "values": {
+    "h": 30
+   }
+  },
+  {
+   "name": "T 35",
+   "values": {
+    "h": 35
+   }
+  },
+  {
+   "name": "T 40",
+   "values": {
+    "h": 40
+   }
+  },
+  {
+   "name": "T 45",
+   "values": {
+    "h": 45
+   }
+  },
+  {
+   "name": "T 50",
+   "values": {
+    "h": 50
+   }
+  },
+  {
+   "name": "T 60",
+   "values": {
+    "h": 60
+   }
+  },
+  {
+   "name": "T 70",
+   "values": {
+    "h": 70
+   }
+  },
+  {
+   "name": "T 80",
+   "values": {
+    "h": 80
+   }
+  },
+  {
+   "name": "T 100",
+   "values": {
+    "h": 100
+   }
+  },
+  {
+   "name": "T 120",
+   "values": {
+    "h": 120
+   }
+  },
+  {
+   "name": "T 140",
+   "values": {
+    "h": 140
+   }
+  }
+ ],
+ "default": "T 50",
+ "checks": {
+  "T 50": {
+   "size": [
+    50,
+    50,
+    1000
+   ],
+   "partNumber": "T 50 × 1000 S235JR",
+   "massG": 4440.0,
+   "connectors": [
+    "End A",
+    "End B",
+    "Axis",
+    "Flange top",
+    "Stem toe",
+    "Stem +X",
+    "Stem -X",
+    "Flange underside +X"
+   ],
+   "connector_at": {
+    "Flange top": [
+     0,
+     50,
+     500.0
+    ],
+    "Stem toe": [
+     0,
+     0,
+     500.0
+    ]
+   }
+  },
+  "T 140": {
+   "size": [
+    140,
+    140,
+    1000
+   ]
+  }
+ }
+}

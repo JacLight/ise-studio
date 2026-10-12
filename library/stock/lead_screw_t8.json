@@ -1,0 +1,238 @@
+{
+ "id": "lead_screw_t8",
+ "name": "Lead screw T8",
+ "standard": "Tr8 (ISO 2904 profile)",
+ "category": "Bearings & motion",
+ "summary": "T8 trapezoidal lead screw (Ø8, 2 mm pitch; lead 8 mm 4-start, 4 mm 2-start, 2 mm single), stainless 304, threaded full length with chamfered ends. Axis +Z from z = 0",
+ "keywords": [
+  "T8",
+  "Tr8x8",
+  "Tr8x2",
+  "Tr8x4",
+  "lead screw",
+  "leadscrew",
+  "acme",
+  "trapezoidal screw",
+  "Z axis screw",
+  "3D printer",
+  "threaded rod"
+ ],
+ "source": [
+  "common.js",
+  "leadscrew.js",
+  "lead_screw_t8.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Stainless steel 304",
+ "materials": {
+  "Stainless steel 304": 7930
+ },
+ "params": [
+  {
+   "key": "lead",
+   "label": "Lead",
+   "value": 8,
+   "unit": "mm",
+   "min": 2,
+   "max": 8,
+   "step": 2
+  },
+  {
+   "key": "length",
+   "label": "Length",
+   "value": 300,
+   "unit": "mm",
+   "min": 50,
+   "max": 1500
+  },
+  {
+   "key": "threads",
+   "label": "True helical thread (1 = on)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "lead",
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "Tr8×8×100",
+   "values": {
+    "lead": 8,
+    "length": 100
+   },
+   "description": "lead 8 mm, 100 mm long"
+  },
+  {
+   "name": "Tr8×8×150",
+   "values": {
+    "lead": 8,
+    "length": 150
+   },
+   "description": "lead 8 mm, 150 mm long"
+  },
+  {
+   "name": "Tr8×8×200",
+   "values": {
+    "lead": 8,
+    "length": 200
+   },
+   "description": "lead 8 mm, 200 mm long"
+  },
+  {
+   "name": "Tr8×8×250",
+   "values": {
+    "lead": 8,
+    "length": 250
+   },
+   "description": "lead 8 mm, 250 mm long"
+  },
+  {
+   "name": "Tr8×8×300",
+   "values": {
+    "lead": 8,
+    "length": 300
+   },
+   "description": "lead 8 mm, 300 mm long"
+  },
+  {
+   "name": "Tr8×8×350",
+   "values": {
+    "lead": 8,
+    "length": 350
+   },
+   "description": "lead 8 mm, 350 mm long"
+  },
+  {
+   "name": "Tr8×8×400",
+   "values": {
+    "lead": 8,
+    "length": 400
+   },
+   "description": "lead 8 mm, 400 mm long"
+  },
+  {
+   "name": "Tr8×8×500",
+   "values": {
+    "lead": 8,
+    "length": 500
+   },
+   "description": "lead 8 mm, 500 mm long"
+  },
+  {
+   "name": "Tr8×2×100",
+   "values": {
+    "lead": 2,
+    "length": 100
+   },
+   "description": "lead 2 mm, 100 mm long"
+  },
+  {
+   "name": "Tr8×2×200",
+   "values": {
+    "lead": 2,
+    "length": 200
+   },
+   "description": "lead 2 mm, 200 mm long"
+  },
+  {
+   "name": "Tr8×2×300",
+   "values": {
+    "lead": 2,
+    "length": 300
+   },
+   "description": "lead 2 mm, 300 mm long"
+  },
+  {
+   "name": "Tr8×2×400",
+   "values": {
+    "lead": 2,
+    "length": 400
+   },
+   "description": "lead 2 mm, 400 mm long"
+  },
+  {
+   "name": "Tr8×2×500",
+   "values": {
+    "lead": 2,
+    "length": 500
+   },
+   "description": "lead 2 mm, 500 mm long"
+  },
+  {
+   "name": "Tr8×4×200",
+   "values": {
+    "lead": 4,
+    "length": 200
+   },
+   "description": "lead 4 mm, 200 mm long"
+  },
+  {
+   "name": "Tr8×4×300",
+   "values": {
+    "lead": 4,
+    "length": 300
+   },
+   "description": "lead 4 mm, 300 mm long"
+  },
+  {
+   "name": "Tr8×4×400",
+   "values": {
+    "lead": 4,
+    "length": 400
+   },
+   "description": "lead 4 mm, 400 mm long"
+  },
+  {
+   "name": "Tr8×4×500",
+   "values": {
+    "lead": 4,
+    "length": 500
+   },
+   "description": "lead 4 mm, 500 mm long"
+  }
+ ],
+ "default": "Tr8×8×300",
+ "checks": {
+  "Tr8×8×300": {
+   "size": [
+    8,
+    8,
+    300
+   ],
+   "connectors": [
+    "Axis",
+    "End A",
+    "End B"
+   ],
+   "connector_at": {
+    "End B": [
+     0,
+     0,
+     300
+    ]
+   },
+   "metrics": {
+    "Lead": 8,
+    "Starts": 4,
+    "Minor diameter": 5.5
+   },
+   "partNumber": "T8-L8-300"
+  },
+  "Tr8×2×100": {
+   "size": [
+    8,
+    8,
+    100
+   ],
+   "metrics": {
+    "Starts": 1
+   }
+  }
+ }
+}

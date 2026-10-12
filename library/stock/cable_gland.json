@@ -1,0 +1,129 @@
+{
+ "id": "cable_gland",
+ "name": "Cable gland",
+ "category": "Seals & feet",
+ "summary": "Nylon PA66 IP68 cable gland with NBR seal and locknut, PG or metric thread. Panel outer face z = 0, cap up +Z, thread down −Z.",
+ "keywords": [
+  "cable gland",
+  "cord grip",
+  "strain relief",
+  "PG7",
+  "PG9",
+  "PG11",
+  "M12",
+  "M16",
+  "M20",
+  "M25",
+  "IP68",
+  "cable entry",
+  "bulkhead"
+ ],
+ "source": [
+  "common.js",
+  "cable_gland.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Nylon PA66": 1140,
+  "NBR rubber": 1250
+ },
+ "params": [
+  {
+   "key": "size",
+   "label": "Size (1 PG7, 2 PG9, 3 PG11, 4 M12, 5 M16, 6 M20, 7 M25)",
+   "value": 1,
+   "unit": "",
+   "min": 1,
+   "max": 7,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "size"
+ ],
+ "rows": [
+  {
+   "name": "PG7",
+   "values": {
+    "size": 1
+   }
+  },
+  {
+   "name": "PG9",
+   "values": {
+    "size": 2
+   }
+  },
+  {
+   "name": "PG11",
+   "values": {
+    "size": 3
+   }
+  },
+  {
+   "name": "M12×1.5",
+   "values": {
+    "size": 4
+   }
+  },
+  {
+   "name": "M16×1.5",
+   "values": {
+    "size": 5
+   }
+  },
+  {
+   "name": "M20×1.5",
+   "values": {
+    "size": 6
+   }
+  },
+  {
+   "name": "M25×1.5",
+   "values": {
+    "size": 7
+   }
+  }
+ ],
+ "default": "M16×1.5",
+ "checks": {
+  "M16×1.5": {
+   "size": [
+    19,
+    21.93931022920578,
+    30
+   ],
+   "tolerance": 0.06,
+   "connectors": [
+    "Panel face",
+    "Axis",
+    "Cable entry"
+   ],
+   "connector_at": {
+    "Cable entry": [
+     0,
+     0,
+     22
+    ],
+    "Axis": [
+     0,
+     0,
+     -8
+    ]
+   },
+   "metrics": {
+    "Panel hole Ø": 16.2,
+    "Cable Ø min": 4,
+    "Cable Ø max": 8
+   },
+   "partNumber": "Cable gland M16×1.5 PA66 4-8"
+  },
+  "PG7": {
+   "metrics": {
+    "Panel hole Ø": 12.7,
+    "Across flats": 15
+   },
+   "partNumber": "Cable gland PG7 PA66 3-6.5"
+  }
+ }
+}

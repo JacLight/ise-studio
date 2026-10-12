@@ -888,11 +888,9 @@ async fn run(
                 };
                 if let Some(bytes) = done {
                     // Content-addressed: only the right bytes are kept.
-                    if hash_bytes(&bytes) == sha
-                        && let Some(dir) = de_shape::assets::dir()
-                    {
-                        let _ = std::fs::create_dir_all(&dir);
-                        if std::fs::write(dir.join(format!("{sha}.step")), &bytes).is_ok() {
+                    if hash_bytes(&bytes) == sha {
+                        // Kept as what it is (a STEP file, a picture, a font).
+                        if de_shape::assets::store_as(&sha, &bytes).is_ok() {
                             app.asset_arrived(&sha);
                         }
                     } else {

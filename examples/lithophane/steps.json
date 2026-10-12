@@ -1,0 +1,26 @@
+[
+  {
+    "operation": "solid.material.create",
+    "parameters": { "name": "PLA (Bambu, white)", "density": { "value": 1240, "unit": "kg/m3" } }
+  },
+  {
+    "operation": "solid.material.create",
+    "parameters": { "name": "PLA (Bambu, black)", "density": { "value": 1240, "unit": "kg/m3" } }
+  },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Lighthouse lithophane lamp",
+      "description": "A lithophane of lighthouse.png (added with ./forma image add): 0.8 mm of white PLA where the picture is lightest, 3.2 mm where it is darkest, so it shows the picture when lit from behind. It stands in a black base with a slot for its frame and two tea-light pockets behind it; the title is cut into the base's front.",
+      "source": { "$file": "lithophane.js" },
+      "display_tolerance": 0.02,
+      "materials": { "PLA (Bambu, white)": "$0.id", "PLA (Bambu, black)": "$1.id" },
+      "params": [
+        { "key": "width", "label": "Panel width", "value": 150, "unit": "mm", "min": 60, "max": 250 },
+        { "key": "thin", "label": "Thinnest (light)", "value": 0.8, "unit": "mm", "min": 0.4, "max": 2, "step": 0.05 },
+        { "key": "range", "label": "Thickness range", "value": 2.4, "unit": "mm", "min": 1, "max": 5, "step": 0.1 },
+        { "key": "frame", "label": "Frame", "value": 4, "unit": "mm", "min": 2, "max": 10, "step": 0.5 }
+      ]
+    }
+  }
+]

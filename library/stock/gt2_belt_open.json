@@ -1,0 +1,105 @@
+{
+ "id": "gt2_belt_open",
+ "name": "GT2 open belt",
+ "standard": "GT2 2 mm",
+ "category": "Bearings & motion",
+ "summary": "GT2 (2 mm pitch) open timing belt, 6 mm wide, cut to length: straight along +X from x = 0, land on z = 0 with the teeth down, pitch line at z = 0.254",
+ "keywords": [
+  "GT2",
+  "2GT",
+  "timing belt",
+  "open belt",
+  "belt",
+  "6mm belt",
+  "CoreXY",
+  "3D printer"
+ ],
+ "source": [
+  "common.js",
+  "gt2.js",
+  "gt2_belt_open.js"
+ ],
+ "display_tolerance": 0.02,
+ "material": "Neoprene, glass-fibre cords",
+ "materials": {
+  "Neoprene, glass-fibre cords": 1350
+ },
+ "params": [
+  {
+   "key": "length",
+   "label": "Length",
+   "value": 1000,
+   "unit": "mm",
+   "min": 20,
+   "max": 10000
+  }
+ ],
+ "columns": [
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "250 mm",
+   "values": {
+    "length": 250
+   }
+  },
+  {
+   "name": "500 mm",
+   "values": {
+    "length": 500
+   }
+  },
+  {
+   "name": "750 mm",
+   "values": {
+    "length": 750
+   }
+  },
+  {
+   "name": "1000 mm",
+   "values": {
+    "length": 1000
+   }
+  },
+  {
+   "name": "1500 mm",
+   "values": {
+    "length": 1500
+   }
+  },
+  {
+   "name": "2000 mm",
+   "values": {
+    "length": 2000
+   }
+  }
+ ],
+ "default": "1000 mm",
+ "checks": {
+  "1000 mm": {
+   "size": [
+    1000,
+    6,
+    1.38
+   ],
+   "connectors": [
+    "End A",
+    "End B",
+    "Back",
+    "Teeth"
+   ],
+   "connector_at": {
+    "End B": [
+     1000,
+     0,
+     0.254
+    ]
+   },
+   "metrics": {
+    "Teeth": 500
+   },
+   "partNumber": "GT2-6-OPEN-1000"
+  }
+ }
+}

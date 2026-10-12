@@ -1,0 +1,79 @@
+{
+ "id": "usb_c_receptacle",
+ "name": "USB-C receptacle",
+ "category": "Electronics",
+ "summary": "USB Type-C 16-pin (USB 2.0) receptacle, horizontal top-mount SMT with through-hole shell legs: shell, tongue with 24 contacts, insulator, SMT leads. Board top on z = 0, mouth facing −Y at y = 0.",
+ "keywords": [
+  "USB-C",
+  "USB C",
+  "Type-C",
+  "USB type C",
+  "receptacle",
+  "connector",
+  "TYPE-C-31-M-12",
+  "USB4105",
+  "16 pin",
+  "C165948"
+ ],
+ "source": [
+  "common.js",
+  "elec.js",
+  "usb_c_receptacle.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Stainless steel": 7930,
+  "LCP (black)": 1400,
+  "Phosphor bronze, gold-plated": 8800
+ },
+ "params": [
+  {
+   "key": "model",
+   "label": "Model (0 TYPE-C-31-M-12, 1 USB4105-GF-A)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "model"
+ ],
+ "rows": [
+  {
+   "name": "TYPE-C-31-M-12",
+   "values": {
+    "model": 0
+   }
+  },
+  {
+   "name": "USB4105-GF-A",
+   "values": {
+    "model": 1
+   }
+  }
+ ],
+ "default": "TYPE-C-31-M-12",
+ "checks": {
+  "TYPE-C-31-M-12": {
+   "partNumber": "TYPE-C-31-M-12",
+   "metrics": {
+    "Shell width": 8.94,
+    "Shell height": 3.26
+   },
+   "connectors": [
+    "Board",
+    "Mating face",
+    "Board edge"
+   ],
+   "connector_at": {
+    "Mating face": [
+     0,
+     0,
+     1.63
+    ]
+   }
+  }
+ }
+}

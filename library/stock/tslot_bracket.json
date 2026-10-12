@@ -1,0 +1,118 @@
+{
+ "id": "tslot_bracket",
+ "name": "Corner bracket",
+ "standard": null,
+ "category": "Structural",
+ "summary": "Cast aluminium corner (L) bracket with side gussets and locating keys for 20 / 30 / 40 series T-slot extrusion (2020, 2040, 3030, 3060, 4040, 4080). Inner corner on the origin: seat A on z = 0 along +X, seat B on x = 0 up +Z",
+ "keywords": [
+  "corner bracket",
+  "L bracket",
+  "angle bracket",
+  "2020 bracket",
+  "3030 bracket",
+  "4040 bracket",
+  "extrusion bracket",
+  "cast bracket",
+  "gusset",
+  "HBLFS"
+ ],
+ "source": [
+  "common.js",
+  "tslot.js",
+  "tslot_bracket.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Aluminium ADC12 (die cast)",
+ "materials": {
+  "Aluminium ADC12 (die cast)": 2740
+ },
+ "params": [
+  {
+   "key": "size",
+   "label": "Profile (2020, 2040, 3030, 3060, 4040, 4080)",
+   "value": 2020,
+   "unit": "",
+   "min": 2020,
+   "max": 4080,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "size"
+ ],
+ "rows": [
+  {
+   "name": "2020 bracket",
+   "values": {
+    "size": 2020
+   }
+  },
+  {
+   "name": "2040 bracket",
+   "values": {
+    "size": 2040
+   }
+  },
+  {
+   "name": "3030 bracket",
+   "values": {
+    "size": 3030
+   }
+  },
+  {
+   "name": "3060 bracket",
+   "values": {
+    "size": 3060
+   }
+  },
+  {
+   "name": "4040 bracket",
+   "values": {
+    "size": 4040
+   }
+  },
+  {
+   "name": "4080 bracket",
+   "values": {
+    "size": 4080
+   }
+  }
+ ],
+ "default": "2020 bracket",
+ "checks": {
+  "2020 bracket": {
+   "size": [
+    21.5,
+    20,
+    21.5
+   ],
+   "connectors": [
+    "Seat A",
+    "Seat B",
+    "Hole A",
+    "Hole B"
+   ],
+   "connector_at": {
+    "Hole A": [
+     11.75,
+     0,
+     3.5
+    ],
+    "Hole B": [
+     3.5,
+     0,
+     11.75
+    ]
+   },
+   "partNumber": "BRKT-2020-CAST"
+  },
+  "4080 bracket": {
+   "connectors": [
+    "Hole A 1",
+    "Hole A 2",
+    "Hole B 1",
+    "Hole B 2"
+   ]
+  }
+ }
+}
