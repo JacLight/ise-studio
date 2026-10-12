@@ -16,6 +16,7 @@ pub mod fabricate;
 pub mod fillet;
 pub mod gears;
 pub mod library;
+pub mod measure;
 pub mod mechanism;
 pub mod params;
 pub mod pathfinder;
