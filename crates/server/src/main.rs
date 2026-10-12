@@ -11,6 +11,7 @@ mod ai;
 mod history;
 mod machines;
 mod pcb;
+mod pcb_library;
 mod pcb_schematic;
 mod peers;
 mod share;
@@ -643,7 +644,8 @@ impl App {
             }
             ClientMessage::Check { request_id } => {
                 let mut report = serde_json::to_value(de_intent::check(&project)).unwrap();
-                let boards = pcb::findings(&project);
+                let mut boards = pcb::findings(&project);
+                boards.extend(pcb_schematic::findings(&project));
                 if !boards.is_empty() {
                     report["ok"] = json!(false);
                     if let Some(f) = report["findings"].as_array_mut() {
@@ -2439,6 +2441,14 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/schematics", get(pcb_schematic::list))
         .route("/pcb/schematic/{id}", get(pcb_schematic::show))
         .route("/pcb/schematic/{id}/schematic.pdf", get(pcb_schematic::pdf))
+        .route("/pcb/schematic/{id}/simulate", axum::routing::post(pcb_schematic::simulate))
+        .route("/pcb/simulations", get(pcb_schematic::simulations))
+        .route("/pcb/kicad", get(pcb_library::status))
+        .route("/pcb/kicad/fetch", axum::routing::post(pcb_library::fetch))
+        .route("/pcb/kicad/search", get(pcb_library::search))
+        .route("/pcb/kicad/footprint/{id}", get(pcb_library::footprint))
+        .route("/pcb/kicad/symbol/{id}", get(pcb_library::symbol))
+        .route("/pcb/verify-footprints", get(pcb_library::verify))
         .route("/pcb/boards", get(pcb::boards))
         .route("/pcb/buy", get(pcb::buy))
         .route("/pcb/settings", get(pcb::settings_get).post(pcb::settings_post))
@@ -2446,6 +2456,8 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/{id}/3d", get(pcb::scene3d))
         .route("/pcb/{id}/bom.json", get(pcb::bom_json))
         .route("/pcb/{id}/fab.zip", get(pcb::zip))
+        .route("/pcb/{id}/gerber-check", get(pcb::gerber_check))
+        .route("/pcb/{id}/layers", get(pcb::layers))
         .route("/pcb/{id}/file/{name}", get(pcb::file))
         .route("/import/{file}", axum::routing::post(import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
         .fallback_service(ui)

@@ -9,6 +9,8 @@
 //   node tools/forma.mjs fit <assembly or instance id | project> [--motion]   do screws, inserts, nuts, bearings and joined parts fit (and, with --motion, every joint's sweep)
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
+//   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
+//   node tools/forma.mjs simulate <schematic> [--tran 30ms] [--expect "min(V(3V3), burst) > 3.0"] [--save name]   ngspice on a schematic
 //   node tools/forma.mjs list                 every entity, one line each
 //   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
 //   node tools/forma.mjs get <id>             one entity in full (program source, params, results)
@@ -202,6 +204,200 @@ if (command === "run") {
     if (r.pass && extra !== "all") console.log(`  (${r.pass} passing items hidden; add "all" to list them)`);
     for (const n of r.notes) console.log(`  ! ${n}`);
     failed = !r.ok;
+  }
+} else if (command === "pcb") {
+  // Electronics: KiCad library parts, footprint verification, the Gerber read-back check.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const q = (extra = {}) => new URLSearchParams({ ...(project ? { project } : {}), ...extra });
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const get = async (path) => {
+    const res = await fetch(`${http}${path}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  };
+  const sub = file;
+  try {
+    if (sub === "parts") {
+      const kind = args.includes("--footprints") ? "footprints" : "symbols";
+      const words = args.slice(2).filter((a) => a !== "--footprints").join(" ");
+      if (!words) throw new Error("say what to look for: forma pcb parts <words> [--footprints]");
+      const r = await get(`/pcb/kicad/search?${q({ q: words, kind, limit: "30" })}`);
+      if (!r.results.length) console.log(`nothing in the KiCad ${kind} matches “${words}”`);
+      for (const e of r.results) console.log(`${e.id}  (${e.count} ${kind === "symbols" ? "pins" : "pads"})${e.footprint ? `  → ${e.footprint}` : e.filters ? `  footprints: ${e.filters}` : ""}\n    ${e.description || e.keywords}`);
+      console.log(`(${r.licence})`);
+    } else if (sub === "add") {
+      // Place a KiCad library symbol, its footprint defined on the board in the same step.
+      const fpFlag = flag("--footprint");
+      const at = (flag("--at") ?? "50,50").split(",").map(Number);
+      const reference = flag("--ref");
+      const value = flag("--value");
+      const [, , schematic, symbolId] = args;
+      if (!schematic || !symbolId) throw new Error("usage: forma pcb add <schematic id> <Library:Symbol> [--footprint Library:Footprint] [--at x,y] [--ref U3] [--value …]");
+      const s = await get(`/pcb/kicad/symbol/${encodeURIComponent(symbolId)}`);
+      let footprint = s.footprint;
+      if (fpFlag) footprint = (await get(`/pcb/kicad/footprint/${encodeURIComponent(fpFlag)}`)).footprint;
+      if (!footprint) console.log(`! ${symbolId} names no footprint${s.definition.footprint ? ` it can read (${s.footprint_error ?? s.definition.footprint})` : ""}: give --footprint Library:Name (search with forma pcb parts <words> --footprints)`);
+      const missing = fpFlag ? s.definition.pins.filter((p) => !footprint.pads.some((x) => x.number === p.number)).map((p) => p.number) : s.unmapped_pins;
+      if (missing?.length) console.log(`! pins ${missing.join(", ")} have no pad of that number on ${footprint.name}: give pin_map in pcb.schematic.place`);
+      const params = { schematic, symbol: s.definition.name, definition: s.definition, at, ...(footprint ? { footprint_definition: footprint, footprint: footprint.name } : {}), ...(reference ? { reference } : {}), ...(value ? { value } : {}) };
+      const r = await engine.commit("pcb.schematic.place", params);
+      if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
+      console.log(`✓ placed ${r.value.output.reference} = ${symbolId}${footprint ? ` on ${footprint.name}` : ""} (rev ${r.value.revision})${s.definition.lcsc ? `; LCSC ${s.definition.lcsc}` : ""}`);
+      for (const n of s.footprint_notes ?? []) console.log(`  note: ${n}`);
+    } else if (sub === "footprint") {
+      // Define a KiCad library footprint on a board (for pcb.component.create).
+      const [, , board, fpId] = args;
+      if (!board || !fpId) throw new Error("usage: forma pcb footprint <board id> <Library:Name>");
+      const f = await get(`/pcb/kicad/footprint/${encodeURIComponent(fpId)}`);
+      const r = await engine.commit("pcb.footprint.define", { board, footprint: f.footprint });
+      if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
+      console.log(`✓ ${fpId} defined on the board: ${f.footprint.pads.length} pads (use it as footprint "${fpId}")`);
+      for (const n of f.notes) console.log(`  note: ${n}`);
+    } else if (sub === "verify-footprints") {
+      const names = args.slice(2).join(",");
+      const r = await get(`/pcb/verify-footprints?${q(names ? { names } : {})}`);
+      console.log(`${r.errors ? "✗" : "✓"} ${r.checked} footprints against KiCad's library: ${r.errors} errors, ${r.warnings} warnings`);
+      for (const f of r.footprints) {
+        const shown = f.findings.filter((x) => x.severity !== "note" || names);
+        if (!shown.length) {
+          if (names) console.log(`  ✓ ${f.footprint} = ${f.kicad}`);
+          continue;
+        }
+        console.log(`  ${f.errors ? "✗" : "~"} ${f.footprint} vs ${f.kicad} (${f.pads}/${f.kicad_pads} pads, worst centre ${f.worst_position} mm)`);
+        for (const x of shown) console.log(`      ${x.severity.padEnd(7)} ${x.pad ? `${x.pad}: ` : ""}${x.message}`);
+      }
+      for (const m of r.missing) console.log(`  ? ${m}`);
+      failed = r.errors > 0;
+    } else if (sub === "gerber-check") {
+      // The fab package read back by an independent reader and compared with the board.
+      const board = args[2];
+      if (!board) throw new Error("usage: forma pcb gerber-check <board id>");
+      const c = await get(`/pcb/${board}/gerber-check?${q()}`);
+      console.log(`${c.ok ? "✓" : "✗"} ${c.summary}`);
+      for (const l of c.layers) {
+        const area = l.board_area != null ? `, copper ${l.file_area} mm² (board ${l.board_area}, ${l.differ_area} differ)` : "";
+        console.log(`  ${l.ok ? "✓" : "✗"} ${l.file} (${l.function}): ${l.objects} objects${l.pads ? `, ${l.pads_ok}/${l.pads} pads` : ""}${area}${l.nets.length ? `, ${l.nets.filter((n) => n.ok).length}/${l.nets.length} nets match` : ""}`);
+        for (const p of l.problems) console.log(`      ✗ ${p}`);
+        for (const n of l.notes) console.log(`      · ${n}`);
+      }
+      for (const d of c.drills) {
+        console.log(`  ${d.ok ? "✓" : "✗"} ${d.file}: ${d.file_holes}/${d.board_holes} holes (${d.sizes.map(([s, b, f]) => `ø${s}×${f}`).join(", ")})`);
+        for (const p of d.problems) console.log(`      ✗ ${p}`);
+      }
+      if (c.outline) {
+        const o = c.outline;
+        console.log(`  ${o.ok ? "✓" : "✗"} ${o.file}: ${o.loops} closed loop(s), ${o.file_size.join(" × ")} mm, ${o.file_area} mm²`);
+        for (const p of o.problems) console.log(`      ✗ ${p}`);
+      }
+      for (const u of c.unreadable) console.log(`  ✗ ${u}`);
+      failed = !c.ok;
+    } else if (sub === "library") {
+      if (args[2] === "update") {
+        const res = await fetch(`${http}/pcb/kicad/fetch?repo=all`, { method: "POST" });
+        if (!res.ok) throw new Error(await res.text());
+      }
+      const s = await get("/pcb/kicad");
+      console.log(`KiCad libraries in ${s.root}\n  footprints: ${s.footprints ?? "not downloaded yet"}\n  symbols:    ${s.symbols ?? "not downloaded yet"}\n  ${s.licence}`);
+    } else {
+      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | library [update]");
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
+} else if (command === "simulate") {
+  // ngspice on a schematic: waveforms, measurements, datasheet checks and expectations.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const all = (name) => {
+    const out = [];
+    for (let i = args.indexOf(name); i >= 0; i = args.indexOf(name)) out.push(args.splice(i, 2)[1]);
+    return out;
+  };
+  const time = (s) => {
+    const m = String(s).trim().match(/^([-\d.e+]+)\s*(s|ms|us|µs|ns)?$/i);
+    if (!m) throw new Error(`“${s}” is not a time (30ms, 50us, 0.02)`);
+    return Number(m[1]) * ({ s: 1, ms: 1e-3, us: 1e-6, µs: 1e-6, ns: 1e-9 }[(m[2] ?? "s").toLowerCase()] ?? 1);
+  };
+  const num = (s) => {
+    const m = String(s).trim().match(/^([-\d.e+]+)\s*([a-zµ]*)$/i);
+    if (!m) throw new Error(`“${s}” is not a number`);
+    const p = { m: 1e-3, u: 1e-6, µ: 1e-6, n: 1e-9, k: 1e3, meg: 1e6 }[m[2].replace(/[vahzs]$/i, "").toLowerCase()] ?? 1;
+    return Number(m[1]) * p;
+  };
+  try {
+    const tran = all("--tran")[0];
+    const dc = all("--dc")[0];
+    const ac = all("--ac")[0];
+    const save = all("--save")[0];
+    const csv = all("--csv")[0];
+    const derate = all("--derate")[0];
+    const step = all("--step")[0];
+    const schematic = args[1];
+    if (!schematic) throw new Error('usage: forma simulate <schematic id> [--tran 30ms] [--dc NET:0:6:0.1] [--ac NET:10:1e6] [--source NET=5V,r=0.2,rise=1ms] [--press SW2@20ms:5ms] [--burst U1@5ms:2ms:0.5A] [--expect "min(V(3V3), burst) > 3.0"]… [--derate 0.6] [--save name] [--csv out.csv]');
+    let analysis = { kind: "tran", stop: tran ? time(tran) : 0.03, step: step ? time(step) : null };
+    if (dc) {
+      const [net, from, to, st] = dc.split(":");
+      analysis = { kind: "dc", net, from: num(from), to: num(to), step: num(st ?? "0.05") };
+    } else if (ac) {
+      const [net, from, to] = ac.split(":");
+      analysis = { kind: "ac", net, from: num(from ?? "10"), to: num(to ?? "1e6"), points: 20 };
+    } else if (args.includes("--op")) {
+      args.splice(args.indexOf("--op"), 1);
+      analysis = { kind: "op" };
+    }
+    const sources = all("--source").map((s) => {
+      const [net, rest] = s.split("=");
+      const [v, ...kv] = rest.split(",");
+      const o = Object.fromEntries(kv.map((x) => x.split("=")));
+      return { net, volts: num(v), r: o.r != null ? num(o.r) : null, rise: o.rise != null ? time(o.rise) : null, delay: o.delay != null ? time(o.delay) : null };
+    });
+    const presses = all("--press").map((s) => {
+      const [part, rest] = s.split("@");
+      const [at, hold] = rest.split(":");
+      return { part, at: time(at), hold: time(hold ?? "10ms") };
+    });
+    const bursts = all("--burst").map((s) => {
+      const [part, rest] = s.split("@");
+      const [at, length, current, baseA] = rest.split(":");
+      return { part, at: time(at), length: time(length ?? "2ms"), current: num(current ?? "0.5"), base: baseA ? num(baseA) : null };
+    });
+    const request = { analysis, sources, presses, bursts, expect: all("--expect"), mlcc_derating: derate ? Number(derate) : null };
+    const res = await fetch(`${http}/pcb/schematic/${schematic}/simulate${project ? `?project=${encodeURIComponent(project)}` : ""}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request) });
+    if (!res.ok) throw new Error(await res.text());
+    const r = await res.json();
+    const mark = { pass: "✓", warn: "!", fail: "✗" };
+    console.log(`${r.ok ? "✓" : "✗"} ${analysis.kind} analysis, ${r.x.length} points; ${r.parts.length} parts modelled${r.skipped.length ? `, ${r.skipped.length} left out` : ""}`);
+    for (const p of r.parts) console.log(`  ${p.reference.padEnd(5)} ${p.model}${p.approximate ? "  [approximate]" : ""}`);
+    for (const s of r.skipped) console.log(`  ·     ${s}`);
+    for (const a of r.assumptions) console.log(`  assumed: ${a}`);
+    if (r.windows.length > 1) console.log(`  windows: ${r.windows.map((w) => `${w.name} ${(w.from * 1e3).toFixed(3)}–${(w.to * 1e3).toFixed(3)} ms`).join(", ")}`);
+    if (r.checks.length) console.log("Datasheet checks:");
+    for (const c of r.checks) console.log(`  ${mark[c.status]} ${c.name} (${c.limit}): ${c.detail}`);
+    if (r.expectations.length) console.log("Expectations:");
+    for (const c of r.expectations) console.log(`  ${mark[c.status]} ${c.name}: ${c.detail}`);
+    if (r.measurements.length) console.log("Measurements:");
+    for (const c of r.measurements) console.log(`  ${c.name}: ${c.detail}`);
+    if (analysis.kind === "op" || analysis.kind === "dc" || analysis.kind === "ac") {
+      for (const s of r.signals) console.log(`  ${s.name}: ${s.values.length === 1 ? s.values[0] : `${s.values[0].toPrecision(4)} … ${s.values[s.values.length - 1].toPrecision(4)} ${s.unit}`}`);
+    }
+    if (csv) {
+      const { writeFileSync } = await import("node:fs");
+      const head = [r.x_name, ...r.signals.map((s) => s.name)].join(",");
+      writeFileSync(csv, [head, ...r.x.map((x, i) => [x, ...r.signals.map((s) => s.values[i])].join(","))].join("\n") + "\n");
+      console.log(`waveforms written to ${csv}`);
+    }
+    if (save) {
+      const c = await engine.commit("pcb.simulation.save", { schematic, name: save, request });
+      if (!c.ok) throw new Error(`${c.error.code} ${c.error.message}`);
+      console.log(`✓ saved as “${save}”: ./forma check runs it from now on`);
+    }
+    failed = !r.ok;
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
   }
 } else if (command === "stock") {
   // The stock library: families, or the sizes matching a search ("M3×12", "608", "servo").

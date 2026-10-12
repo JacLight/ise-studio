@@ -1,0 +1,10 @@
+A handful of files from the official KiCad libraries, unchanged, for the
+footprint-verification and library-import tests:
+
+  kicad-footprints/  from https://gitlab.com/kicad/libraries/kicad-footprints
+  kicad-symbols/     from https://gitlab.com/kicad/libraries/kicad-symbols
+
+They are by the KiCad library contributors and licensed CC-BY-SA 4.0 with the
+KiCad libraries design exception (https://www.kicad.org/libraries/license/).
+Forma itself never ships the libraries: it downloads them on demand into a
+cache folder on the user's computer.

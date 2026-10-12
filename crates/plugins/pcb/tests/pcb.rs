@@ -84,11 +84,15 @@ fn ipc_7351b_lands_match_the_published_nominal_patterns() {
 fn datasheet_footprints_have_their_makers_dimensions() {
     let esp = footprints::get("ESP32-WROOM-32").unwrap();
     assert_eq!(esp.pads.len(), 39);
-    // Outer pad span 17.5 mm, pitch 1.27 mm, pin 1 7.49 mm below the top edge (12.75).
+    // Side rows 17.5 mm apart centre to centre, reaching 0.5 mm past the module's 18 mm width;
+    // pitch 1.27 mm, pin 1 7.49 mm below the top edge (12.75); the bottom row 0.5 mm past the bottom edge.
     let p1 = pad(&esp, "1");
-    assert!(near(p1.at[0] - p1.size[0] / 2.0, -8.75, 1e-9) && near(12.75 - p1.at[1], 7.49, 1e-9), "{p1:?}");
+    assert!(near(p1.at[0], -8.75, 1e-9) && near(p1.at[0] - p1.size[0] / 2.0, -9.5, 1e-9) && near(12.75 - p1.at[1], 7.49, 1e-9), "{p1:?}");
     assert!(near(pad(&esp, "1").at[1] - pad(&esp, "2").at[1], 1.27, 1e-9));
-    assert!(near(pad(&esp, "39").size[0], 3.7, 1e-9));
+    assert!(near(pad(&esp, "15").at[1] - 0.75, -13.25, 1e-9), "{:?}", pad(&esp, "15"));
+    // GND pad 3.7 mm square, 7.5 mm from the module's left edge and 10.29 mm above its bottom edge.
+    let gnd = pad(&esp, "39");
+    assert!(near(gnd.size[0], 3.7, 1e-9) && near(gnd.at[0], -1.5, 1e-9) && near(gnd.at[1], -2.46, 1e-9), "{gnd:?}");
 
     let usb = footprints::get("USB-C_16P").unwrap();
     let a1 = pad(&usb, "A1");
