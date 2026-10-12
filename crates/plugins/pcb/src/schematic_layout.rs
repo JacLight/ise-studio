@@ -48,6 +48,9 @@ pub struct NetlistPart {
     /// Pad → pin function, used to name pins of a guessed box symbol.
     #[serde(default)]
     pub pin_names: BTreeMap<String, String>,
+    /// A KiCad library symbol as GET /pcb/kicad/symbol/<Library:Name> returns it (`symbol` is then its name).
+    #[serde(default)]
+    pub definition: Option<SymbolDef>,
 }
 
 /// `pcb.schematic.from_netlist`: draw parts and a netlist (net → pads,
@@ -76,6 +79,8 @@ struct Part {
     dnp: bool,
     pin_map: BTreeMap<String, Vec<String>>,
     def: SymbolDef,
+    /// Carried by each symbol when it is not a built-in one.
+    definition: Option<Box<SymbolDef>>,
     /// Symbol pin number → net.
     nets: BTreeMap<String, String>,
 }
@@ -105,6 +110,7 @@ impl Part {
             value_at: None,
             exclude_from_board: false,
             component: None,
+            definition: self.definition.clone(),
         }
     }
     fn two_pin(&self) -> bool {
@@ -178,12 +184,12 @@ fn build_parts(parts: &[NetlistPart], nets: &BTreeMap<String, Vec<String>>) -> R
     }
     for p in parts {
         let pads = pad_net.remove(&p.reference.to_ascii_uppercase()).unwrap_or_default();
-        let Some(mut symbol) = p.symbol.clone().or_else(|| guess_symbol(p)) else { continue };
+        let Some(mut symbol) = p.symbol.clone().or_else(|| p.definition.as_ref().map(|d| d.name.clone())).or_else(|| guess_symbol(p)) else { continue };
         let mut custom = p.pins.clone();
-        let mut def = if !custom.is_empty() { Some(symbols::custom(&symbol, &custom)) } else { symbols::get(&symbol) };
+        let mut def = if let Some(d) = &p.definition { Some(d.clone()) } else if !custom.is_empty() { Some(symbols::custom(&symbol, &custom)) } else { symbols::get(&symbol) };
         // A symbol whose pins miss a connected pad: draw a box from the footprint instead.
         let covers = |d: &SymbolDef| pads.keys().all(|pad| d.pins.iter().any(|x| p.pin_map.get(&x.number).cloned().unwrap_or_else(|| x.pads()).contains(pad)));
-        if def.as_ref().is_none_or(|d| !covers(d)) && p.symbol.is_none() {
+        if def.as_ref().is_none_or(|d| !covers(d)) && p.symbol.is_none() && p.definition.is_none() {
             let fp = crate::footprints::get(&p.footprint);
             let mut numbers: Vec<String> = fp.map(|f| f.pads.iter().map(|x| x.number.clone()).filter(|n| !n.is_empty()).collect()).unwrap_or_else(|| pads.keys().cloned().collect());
             numbers.sort_by(|a, b| natural(a, b));
@@ -230,6 +236,7 @@ fn build_parts(parts: &[NetlistPart], nets: &BTreeMap<String, Vec<String>>) -> R
             description: p.description.clone(),
             dnp: p.dnp,
             pin_map: p.pin_map.clone(),
+            definition: p.definition.clone().map(Box::new),
             def,
             nets: pin_nets,
         });
@@ -377,6 +384,7 @@ fn dummy(def: &SymbolDef, rotation: f64) -> SchSymbol {
         value_at: None,
         exclude_from_board: false,
         component: None,
+        definition: symbols::get(&def.name).is_none().then(|| Box::new(def.clone())),
     }
 }
 
@@ -756,6 +764,7 @@ impl Command for FromBoard {
                 pin_map: BTreeMap::new(),
                 pins: vec![],
                 pin_names: c.pin_names.clone(),
+                definition: None,
             };
             if guess_symbol(&p).is_none() {
                 continue;

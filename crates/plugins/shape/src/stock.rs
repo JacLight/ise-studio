@@ -43,6 +43,13 @@ pub struct Stock {
     /// Catalogue mass in grams (the BOM uses it over the modelled volume).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mass_g: Option<f64>,
+    /// Sold cut to length (a beam, a tube, a bar): the length of one piece
+    /// in mm. `unit_price` and `mass_g` are for one piece of this length.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cut_length_mm: Option<f64>,
+    /// Price per metre of a cut-to-length item, in `currency`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_per_m: Option<f64>,
     /// Where it can be bought.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<Source>,

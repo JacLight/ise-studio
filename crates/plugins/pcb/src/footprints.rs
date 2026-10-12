@@ -640,7 +640,8 @@ fn jst(series: &str, n: usize) -> Footprint {
 }
 
 fn led_tht(d: f64) -> Footprint {
-    let (h, flange, hole) = if d < 4.0 { (5.3, 3.8, 0.8) } else { (8.6, 5.8, 0.9) };
+    // ø0.9 holes for the 0.5 mm square leads (0.71 mm across the corners) leave room for plating tolerance.
+    let (h, flange, hole) = if d < 4.0 { (5.3, 3.8, 0.9) } else { (8.6, 5.8, 0.9) };
     let pads = vec![tht("1", [0.0, 0.0], [1.8, 1.8], hole, PadShape::Rect), tht("2", [2.54, 0.0], [1.8, 1.8], hole, PadShape::Circle)];
     let f = Footprint {
         name: format!("LED_{}mm", d as i32),
@@ -715,18 +716,21 @@ fn usb_c_16() -> Footprint {
 }
 
 fn esp32_wroom_32() -> Footprint {
-    // Espressif ESP32-WROOM-32E datasheet v2.1, fig. 13: 18 × 25.5 mm, 38 pads 1.5 × 0.9 at 1.27 mm, outer pad span 17.5 mm,
-    // pin 1 7.49 mm below the top edge, GND pad 3.7 × 3.7 mm (3 × 3 paste windows) 7.5 mm right of the left pad row and 10.29 mm above the bottom.
+    // Espressif ESP32-WROOM-32E datasheet v2.1, fig. 13: 18 × 25.5 mm, 38 pads 1.5 × 0.9 at 1.27 mm reaching 0.5 mm past
+    // the module's edges (side pad rows 17.5 mm apart centre to centre), pin 1 7.49 mm below the top edge, GND pad
+    // 3.7 × 3.7 mm (3 × 3 paste windows) 7.5 mm from the module's left edge and 10.29 mm above its bottom edge.
+    // Checked pad by pad against KiCad's RF_Module:ESP32-WROOM-32E (`./forma pcb verify-footprints`).
     let (w, l) = (18.0, 25.5);
     let pitch = 1.27;
     let pad = [1.5, 0.9];
-    let side_x = 17.5 / 2.0 - pad[0] / 2.0;
+    let overhang = 0.5;
+    let side_x = w / 2.0 + overhang - pad[0] / 2.0;
     let top_y = l / 2.0 - 7.49;
     let mut pads = Vec::new();
     for i in 0..14 {
         pads.push(smd((i + 1).to_string(), [-side_x, r6(top_y - pitch * i as f64)], pad));
     }
-    let bottom_y = -(l / 2.0 - 0.25 - pad[0] / 2.0);
+    let bottom_y = -(l / 2.0 + overhang - pad[0] / 2.0);
     for i in 0..10 {
         let mut p = smd((15 + i).to_string(), [r6(-pitch * 4.5 + pitch * i as f64), bottom_y], pad);
         p.rotation = 90.0;
@@ -735,7 +739,7 @@ fn esp32_wroom_32() -> Footprint {
     for i in 0..14 {
         pads.push(smd((25 + i).to_string(), [side_x, r6(top_y - pitch * (13 - i) as f64)], pad));
     }
-    let gc = [r6(-side_x + 7.5), r6(-l / 2.0 + 10.29)];
+    let gc = [r6(-w / 2.0 + 7.5), r6(-l / 2.0 + 10.29)];
     let windows = (0..9).map(|k| {
         let (i, j) = ((k % 3) as f64 - 1.0, (k / 3) as f64 - 1.0);
         [gc[0] + i * 1.4, gc[1] + j * 1.4, 0.9, 0.9]

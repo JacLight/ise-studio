@@ -1,0 +1,261 @@
+{
+ "id": "rhs_hot",
+ "name": "Rectangular hollow section (hot-finished)",
+ "standard": "EN 10210-2",
+ "category": "Structural sections",
+ "summary": "Hot-finished RHS 50×30×3.2 to 400×200×12.5 (EN 10210-2), S355J2H, cut to length. The depth h along Y, the width b along X, centred on the origin; length along +Z from z = 0.",
+ "keywords": [
+  "RHS",
+  "rectangular tube",
+  "box section",
+  "rectangular hollow section",
+  "steel tube",
+  "hot finished",
+  "EN 10210"
+ ],
+ "source": [
+  "common.js",
+  "sections.js",
+  "rhs_hot.js"
+ ],
+ "display_tolerance": 0.05,
+ "material": "Structural steel S355J2H",
+ "materials": {
+  "Structural steel S355J2H": 7850
+ },
+ "params": [
+  {
+   "key": "h",
+   "label": "Depth",
+   "value": 100,
+   "unit": "mm",
+   "min": 20,
+   "max": 500
+  },
+  {
+   "key": "b",
+   "label": "Width",
+   "value": 50,
+   "unit": "mm",
+   "min": 10,
+   "max": 300
+  },
+  {
+   "key": "t",
+   "label": "Wall",
+   "value": 5,
+   "unit": "mm",
+   "min": 1,
+   "max": 20
+  },
+  {
+   "key": "length",
+   "label": "Length (cut)",
+   "value": 1000,
+   "unit": "mm",
+   "min": 10,
+   "max": 12000
+  }
+ ],
+ "columns": [
+  "h",
+  "b",
+  "t"
+ ],
+ "rows": [
+  {
+   "name": "RHS 50×30×3.2",
+   "values": {
+    "h": 50,
+    "b": 30,
+    "t": 3.2
+   }
+  },
+  {
+   "name": "RHS 60×40×4",
+   "values": {
+    "h": 60,
+    "b": 40,
+    "t": 4
+   }
+  },
+  {
+   "name": "RHS 80×40×4",
+   "values": {
+    "h": 80,
+    "b": 40,
+    "t": 4
+   }
+  },
+  {
+   "name": "RHS 90×50×5",
+   "values": {
+    "h": 90,
+    "b": 50,
+    "t": 5
+   }
+  },
+  {
+   "name": "RHS 100×50×5",
+   "values": {
+    "h": 100,
+    "b": 50,
+    "t": 5
+   }
+  },
+  {
+   "name": "RHS 100×60×5",
+   "values": {
+    "h": 100,
+    "b": 60,
+    "t": 5
+   }
+  },
+  {
+   "name": "RHS 120×60×5",
+   "values": {
+    "h": 120,
+    "b": 60,
+    "t": 5
+   }
+  },
+  {
+   "name": "RHS 120×80×6.3",
+   "values": {
+    "h": 120,
+    "b": 80,
+    "t": 6.3
+   }
+  },
+  {
+   "name": "RHS 150×100×6.3",
+   "values": {
+    "h": 150,
+    "b": 100,
+    "t": 6.3
+   }
+  },
+  {
+   "name": "RHS 150×100×8",
+   "values": {
+    "h": 150,
+    "b": 100,
+    "t": 8
+   }
+  },
+  {
+   "name": "RHS 160×80×6.3",
+   "values": {
+    "h": 160,
+    "b": 80,
+    "t": 6.3
+   }
+  },
+  {
+   "name": "RHS 160×80×8",
+   "values": {
+    "h": 160,
+    "b": 80,
+    "t": 8
+   }
+  },
+  {
+   "name": "RHS 200×100×6.3",
+   "values": {
+    "h": 200,
+    "b": 100,
+    "t": 6.3
+   }
+  },
+  {
+   "name": "RHS 200×100×8",
+   "values": {
+    "h": 200,
+    "b": 100,
+    "t": 8
+   }
+  },
+  {
+   "name": "RHS 200×120×10",
+   "values": {
+    "h": 200,
+    "b": 120,
+    "t": 10
+   }
+  },
+  {
+   "name": "RHS 250×150×8",
+   "values": {
+    "h": 250,
+    "b": 150,
+    "t": 8
+   }
+  },
+  {
+   "name": "RHS 250×150×10",
+   "values": {
+    "h": 250,
+    "b": 150,
+    "t": 10
+   }
+  },
+  {
+   "name": "RHS 300×200×10",
+   "values": {
+    "h": 300,
+    "b": 200,
+    "t": 10
+   }
+  },
+  {
+   "name": "RHS 300×200×12.5",
+   "values": {
+    "h": 300,
+    "b": 200,
+    "t": 12.5
+   }
+  },
+  {
+   "name": "RHS 400×200×12.5",
+   "values": {
+    "h": 400,
+    "b": 200,
+    "t": 12.5
+   }
+  }
+ ],
+ "default": "RHS 100×50×5",
+ "checks": {
+  "RHS 100×50×5": {
+   "size": [
+    50,
+    100,
+    1000
+   ],
+   "partNumber": "HF RHS 100×50×5 × 1000 S355J2H",
+   "massG": 10779.4,
+   "connectors": [
+    "End A",
+    "End B",
+    "Axis",
+    "Face +X",
+    "Face -X",
+    "Face +Y",
+    "Face -Y"
+   ],
+   "connector_at": {
+    "Face +Y": [
+     0,
+     50.0,
+     500.0
+    ],
+    "Face -X": [
+     -25.0,
+     0,
+     500.0
+    ]
+   },
+   "tolerance": 0.1
+  }
+ }
+}

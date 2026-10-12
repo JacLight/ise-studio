@@ -3,7 +3,7 @@
  "name": "GT2 timing pulley",
  "standard": "GT2 2 mm",
  "category": "Bearings & motion",
- "summary": "GT2 (2 mm pitch) aluminium timing pulley for 6 mm belt, one flange, hub with two M3 set screws. Axis +Z, hub face on z = 0",
+ "summary": "GT2 (2 mm pitch) aluminium timing pulley for 6 mm belt, 16T–60T: hub with two M3 set screws, flanges (inner and outer where wider than the hub). Axis +Z, hub face on z = 0",
  "keywords": [
   "GT2",
   "2GT",
@@ -11,7 +11,12 @@
   "belt pulley",
   "20T",
   "16T",
-  "3D printer"
+  "3D printer",
+  "30T",
+  "36T",
+  "40T",
+  "60T",
+  "reduction pulley"
  ],
  "source": [
   "common.js",
@@ -74,6 +79,76 @@
     "teeth": 16,
     "bore": 5
    }
+  },
+  {
+   "name": "20T bore 6",
+   "values": {
+    "teeth": 20,
+    "bore": 6
+   }
+  },
+  {
+   "name": "16T bore 4",
+   "values": {
+    "teeth": 16,
+    "bore": 4
+   }
+  },
+  {
+   "name": "30T bore 5",
+   "values": {
+    "teeth": 30,
+    "bore": 5
+   }
+  },
+  {
+   "name": "30T bore 8",
+   "values": {
+    "teeth": 30,
+    "bore": 8
+   }
+  },
+  {
+   "name": "36T bore 5",
+   "values": {
+    "teeth": 36,
+    "bore": 5
+   }
+  },
+  {
+   "name": "36T bore 8",
+   "values": {
+    "teeth": 36,
+    "bore": 8
+   }
+  },
+  {
+   "name": "40T bore 5",
+   "values": {
+    "teeth": 40,
+    "bore": 5
+   }
+  },
+  {
+   "name": "40T bore 8",
+   "values": {
+    "teeth": 40,
+    "bore": 8
+   }
+  },
+  {
+   "name": "60T bore 5",
+   "values": {
+    "teeth": 60,
+    "bore": 5
+   }
+  },
+  {
+   "name": "60T bore 8",
+   "values": {
+    "teeth": 60,
+    "bore": 8
+   }
   }
  ],
  "default": "20T bore 5",
@@ -107,6 +182,24 @@
    "size": [
     13,
     13,
+    16
+   ]
+  },
+  "60T bore 8": {
+   "size": [
+    42,
+    42,
+    16
+   ],
+   "metrics": {
+    "Teeth": 60
+   },
+   "partNumber": "GT2-60T-B8-W6"
+  },
+  "36T bore 5": {
+   "size": [
+    26,
+    26,
     16
    ]
   }
