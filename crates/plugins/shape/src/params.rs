@@ -425,10 +425,18 @@ pub fn references(params: &[Param]) -> Vec<StableId> {
 
 /// Values of a parameter list after formulas, reading other entities' resolved values.
 pub fn resolve(world: &World, params: &[Param]) -> Result<BTreeMap<String, f64>, String> {
+    resolve_with(world, params, &|_, _| None)
+}
+
+/// [`resolve`], with some other entities' values given instead of read
+/// (`given(entity, key)`): what a formula would work out to if they changed —
+/// a joint linked to another follows it through a motion sweep.
+pub fn resolve_with(world: &World, params: &[Param], given: &dyn Fn(StableId, &str) -> Option<f64>) -> Result<BTreeMap<String, f64>, String> {
     use std::cell::RefCell;
     let done: RefCell<BTreeMap<String, f64>> = RefCell::new(BTreeMap::new());
     let visiting: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
-    fn one(world: &World, params: &[Param], key: &str, done: &RefCell<BTreeMap<String, f64>>, visiting: &RefCell<HashSet<String>>) -> Result<f64, String> {
+    type Given<'a> = &'a dyn Fn(StableId, &str) -> Option<f64>;
+    fn one(world: &World, params: &[Param], key: &str, done: &RefCell<BTreeMap<String, f64>>, visiting: &RefCell<HashSet<String>>, given: Given) -> Result<f64, String> {
         if let Some(v) = done.borrow().get(key) {
             return Ok(*v);
         }
@@ -442,7 +450,8 @@ pub fn resolve(world: &World, params: &[Param]) -> Result<BTreeMap<String, f64>,
                 let e = parse_stored(f).map_err(|e| format!("{}: {e}", p.label))?;
                 let v = e
                     .eval(&|id, k| match id {
-                        None => one(world, params, k, done, visiting),
+                        None => one(world, params, k, done, visiting, given),
+                        Some(id) if given(id, k).is_some() => Ok(given(id, k).unwrap()),
                         Some(id) => {
                             let ent = world.resource::<IdIndex>().get(id).ok_or_else(|| format!("{}: a referenced object was deleted", p.label))?;
                             world
@@ -472,7 +481,7 @@ pub fn resolve(world: &World, params: &[Param]) -> Result<BTreeMap<String, f64>,
         Ok(v)
     }
     for p in params {
-        one(world, params, &p.key, &done, &visiting)?;
+        one(world, params, &p.key, &done, &visiting, given)?;
     }
     Ok(done.into_inner())
 }

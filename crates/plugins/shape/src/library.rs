@@ -270,6 +270,9 @@ pub struct InsertStock {
     /// Degrees about X, then Y, then Z.
     #[serde(default)]
     pub rotation: [f64; 3],
+    /// The instance's properties (e.g. "step": the assembly step it goes in at).
+    #[serde(default)]
+    pub properties: BTreeMap<String, String>,
 }
 
 fn yes() -> bool {
@@ -334,7 +337,7 @@ impl Command for InsertStock {
             let name = self.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| format!("{} {}", fam.name, row.name));
             let out = tx.run(
                 "assembly.instance.create",
-                json!({ "of": definition, "parent": self.parent, "name": name, "at": self.at, "rotation": self.rotation, "config": row.name }),
+                json!({ "of": definition, "parent": self.parent, "name": name, "at": self.at, "rotation": self.rotation, "config": row.name, "properties": self.properties }),
             )?;
             instance = out["id"].clone();
         }

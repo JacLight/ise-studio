@@ -489,6 +489,7 @@ dependencies = [
  "de-core",
  "de-shape",
  "de-solid",
+ "de-sourcing",
  "manifold-csg",
  "serde",
  "serde_json",

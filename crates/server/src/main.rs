@@ -1422,6 +1422,63 @@ async fn connectors(State(server): State<Arc<Server>>, Path(id): Path<String>, Q
     }
 }
 
+/// GET /fit/<assembly, instance of one, or "project">?motion=off&steps=36: the
+/// fit report (see de_assembly::fit). For an instance, places are in project
+/// coordinates (where the instance is); otherwise in the assembly's own.
+async fn fit_report(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let fail = |code: StatusCode, message: String| (code, message).into_response();
+    let app = match server.project(query.get("project")) {
+        Ok(app) => app,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let options = de_assembly::fit::FitOptions {
+        motion: query.get("motion").is_none_or(|m| m != "off"),
+        steps: query.get("steps").and_then(|v| v.parse::<usize>().ok()).unwrap_or(36).clamp(2, 360),
+    };
+    let app = app.clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<de_assembly::fit::FitReport, String> {
+        let project = app.project.lock().unwrap();
+        let world = project.world();
+        if id == "project" {
+            return de_assembly::fit::report(world, None, &options);
+        }
+        let sid = serde_json::from_value::<StableId>(json!(id)).ok().or_else(|| {
+            project.entity_ids().into_iter().find(|e| project.get::<de_assembly::AssemblyDef>(*e).is_some_and(|d| d.name == id) || project.get::<de_assembly::Instance>(*e).is_some_and(|i| i.name == id))
+        });
+        let sid = sid.ok_or_else(|| format!("{id} is not an assembly or instance"))?;
+        if project.get::<de_assembly::AssemblyDef>(sid).is_some() {
+            return de_assembly::fit::report(world, Some(sid), &options);
+        }
+        let inst = project.get::<de_assembly::Instance>(sid).ok_or_else(|| format!("{id} is not an assembly or instance"))?;
+        if project.get::<de_assembly::AssemblyDef>(inst.of).is_none() {
+            return Err(format!("{} is not an assembly: fit checks look at what is assembled in one", inst.name));
+        }
+        let mut r = de_assembly::fit::report(world, Some(inst.of), &options)?;
+        // Into project coordinates: through every instance up to the top.
+        let mut t = de_assembly::Transform::IDENTITY;
+        let mut cur = Some(sid);
+        while let Some(c) = cur {
+            let Some(i) = project.get::<de_assembly::Instance>(c) else { break };
+            let place = project.entity(c).and_then(|e| de_assembly::placement(world, e)).unwrap_or_else(|| i.transform());
+            t = place.then(&t);
+            cur = i.parent.and_then(|a| project.entity_ids().into_iter().find(|e| project.get::<de_assembly::Instance>(*e).is_some_and(|x| x.of == a)));
+        }
+        for item in &mut r.items {
+            item.at = item.at.map(|p| t.apply(p));
+            for c in &mut item.checks {
+                c.at = c.at.map(|p| t.apply(p));
+            }
+        }
+        Ok(r)
+    })
+    .await;
+    match result {
+        Ok(Ok(r)) => axum::Json(r).into_response(),
+        Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct StressRequest {
     #[serde(flatten)]
@@ -2254,6 +2311,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/motion/{id}", get(motion))
         .route("/assembly-motion/{id}", get(assembly_motion))
         .route("/connectors/{id}", get(connectors))
+        .route("/fit/{id}", get(fit_report))
         .route("/stress/{id}", axum::routing::post(stress))
         .route("/modes/{id}", axum::routing::post(modes))
         .route("/study/{id}", get(study))

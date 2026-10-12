@@ -274,6 +274,24 @@
    "description": "25×37×7 mm"
   },
   {
+   "name": "6806-2RS",
+   "values": {
+    "d": 30,
+    "D": 42,
+    "B": 7
+   },
+   "description": "30×42×7 mm"
+  },
+  {
+   "name": "6807-2RS",
+   "values": {
+    "d": 35,
+    "D": 47,
+    "B": 7
+   },
+   "description": "35×47×7 mm"
+  },
+  {
    "name": "6900-2RS",
    "values": {
     "d": 10,
@@ -396,6 +414,18 @@
     42,
     9
    ]
+  },
+  "6807-2RS": {
+   "size": [
+    47,
+    47,
+    7
+   ],
+   "massG": 29,
+   "metrics": {
+    "Bore": 35,
+    "Outside diameter": 47
+   }
   }
  }
 }

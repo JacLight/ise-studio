@@ -608,7 +608,9 @@ pub fn evaluated_at(program: &ShapeProgram, tolerance: f64) -> Result<Arc<runtim
     use std::hash::{Hash, Hasher};
     use std::sync::{Mutex, OnceLock};
     static CACHE: OnceLock<Mutex<Vec<(u64, Arc<runtime::Evaluated>)>>> = OnceLock::new();
-    const CAPACITY: usize = 8;
+    // Assemblies show many configured sizes (screws, inserts, bearings) at once;
+    // a small cache re-evaluates them on every sweep.
+    const CAPACITY: usize = 64;
 
     let mut h = DefaultHasher::new();
     program.source.hash(&mut h);

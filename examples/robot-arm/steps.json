@@ -1,0 +1,4862 @@
+[
+ {
+  "operation": "solid.material.create",
+  "parameters": {
+   "name": "PLA white",
+   "density": {
+    "value": 1240,
+    "unit": "kg/m3"
+   },
+   "cost": {
+    "per_kg": 20
+   }
+  }
+ },
+ {
+  "operation": "solid.material.create",
+  "parameters": {
+   "name": "PLA charcoal",
+   "density": {
+    "value": 1240,
+    "unit": "kg/m3"
+   },
+   "cost": {
+    "per_kg": 20
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Base",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/base.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "programs/base.js"
+    ]
+   },
+   "params": [],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Base cover",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/base-cover.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "programs/base-cover.js"
+    ]
+   },
+   "params": [],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Turntable",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/turntable.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "programs/turntable.js"
+    ]
+   },
+   "params": [],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Shoulder yoke",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/yoke.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "programs/yoke.js"
+    ]
+   },
+   "params": [],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Shoulder bearing cheek",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/shoulder-cheek.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "programs/shoulder-cheek.js"
+    ]
+   },
+   "params": [],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Upper arm, left half",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/upper-arm.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "programs/upper-arm.js"
+    ]
+   },
+   "params": [
+    {
+     "key": "half",
+     "label": "half",
+     "value": 0,
+     "unit": ""
+    }
+   ],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Upper arm, right half",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/upper-arm.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "programs/upper-arm.js"
+    ]
+   },
+   "params": [
+    {
+     "key": "half",
+     "label": "half",
+     "value": 1,
+     "unit": ""
+    }
+   ],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Forearm, left half",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/forearm.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "programs/forearm.js"
+    ]
+   },
+   "params": [
+    {
+     "key": "half",
+     "label": "half",
+     "value": 0,
+     "unit": ""
+    }
+   ],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Forearm, right half",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/forearm.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "programs/forearm.js"
+    ]
+   },
+   "params": [
+    {
+     "key": "half",
+     "label": "half",
+     "value": 1,
+     "unit": ""
+    }
+   ],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Elbow cheek, horn side",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/elbow-cheek.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "programs/elbow-cheek.js"
+    ]
+   },
+   "params": [
+    {
+     "key": "side",
+     "label": "side",
+     "value": 0,
+     "unit": ""
+    }
+   ],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Elbow cheek, bearing side",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/elbow-cheek.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "programs/elbow-cheek.js"
+    ]
+   },
+   "params": [
+    {
+     "key": "side",
+     "label": "side",
+     "value": 1,
+     "unit": ""
+    }
+   ],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Wrist housing",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/wrist-housing.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "programs/wrist-housing.js"
+    ]
+   },
+   "params": [],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Wrist cover",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/small-parts.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "programs/small-parts.js"
+    ]
+   },
+   "params": [
+    {
+     "key": "which",
+     "label": "which",
+     "value": 0,
+     "unit": ""
+    }
+   ],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Finger pivot spacer",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/small-parts.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "programs/small-parts.js"
+    ]
+   },
+   "params": [
+    {
+     "key": "which",
+     "label": "which",
+     "value": 1,
+     "unit": ""
+    }
+   ],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Finger pivot sleeve",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/small-parts.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "programs/small-parts.js"
+    ]
+   },
+   "params": [
+    {
+     "key": "which",
+     "label": "which",
+     "value": 2,
+     "unit": ""
+    }
+   ],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Finger, driven",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/finger.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "../gearbox/involute.js",
+     "programs/finger.js"
+    ]
+   },
+   "params": [
+    {
+     "key": "side",
+     "label": "side",
+     "value": 0,
+     "unit": ""
+    }
+   ],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "shape.create",
+  "parameters": {
+   "name": "Finger, idler",
+   "description": "Printed part of the desktop robot arm (examples/robot-arm/programs/finger.js).",
+   "source": {
+    "$file": [
+     "programs/lib.js",
+     "../gearbox/involute.js",
+     "programs/finger.js"
+    ]
+   },
+   "params": [
+    {
+     "key": "side",
+     "label": "side",
+     "value": 1,
+     "unit": ""
+    }
+   ],
+   "definition": true,
+   "display_tolerance": 0.05,
+   "materials": {
+    "PLA white": "$0.id",
+    "PLA charcoal": "$1.id"
+   }
+  }
+ },
+ {
+  "operation": "assembly.create",
+  "parameters": {
+   "name": "Robot arm",
+   "description": "Desktop 4-axis robot arm with a geared two-finger gripper: base yaw, shoulder, elbow and wrist pitch on MG996R / MG90S servos, every joint on a disc horn and (shoulder, elbow, wrist) a ball bearing on the other side."
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$3.id",
+   "parent": "$19.id",
+   "name": "Base cover",
+   "properties": {
+    "step": "6"
+   }
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$2.id",
+   "parent": "$19.id",
+   "name": "Base",
+   "properties": {
+    "step": "10"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": "ground",
+   "b": {
+    "instance": "$21.id",
+    "connector": "Ground"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Base insert 1",
+   "properties": {
+    "step": "9"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$21.id",
+    "connector": "Insert 1"
+   },
+   "b": {
+    "instance": "$23.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Base insert 2",
+   "properties": {
+    "step": "9"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$21.id",
+    "connector": "Insert 2"
+   },
+   "b": {
+    "instance": "$25.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Base insert 3",
+   "properties": {
+    "step": "9"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$21.id",
+    "connector": "Insert 3"
+   },
+   "b": {
+    "instance": "$27.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Base insert 4",
+   "properties": {
+    "step": "9"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$21.id",
+    "connector": "Insert 4"
+   },
+   "b": {
+    "instance": "$29.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$21.id",
+    "connector": "Cover seat"
+   },
+   "b": {
+    "instance": "$20.id",
+    "connector": "Seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M2×4",
+   "parent": "$19.id",
+   "name": "Base servo insert 1",
+   "properties": {
+    "step": "1"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$20.id",
+    "connector": "Servo hole 1"
+   },
+   "b": {
+    "instance": "$32.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M2×4",
+   "parent": "$19.id",
+   "name": "Base servo insert 2",
+   "properties": {
+    "step": "1"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$20.id",
+    "connector": "Servo hole 2"
+   },
+   "b": {
+    "instance": "$34.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M2×4",
+   "parent": "$19.id",
+   "name": "Base servo insert 3",
+   "properties": {
+    "step": "1"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$20.id",
+    "connector": "Servo hole 3"
+   },
+   "b": {
+    "instance": "$36.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M2×4",
+   "parent": "$19.id",
+   "name": "Base servo insert 4",
+   "properties": {
+    "step": "1"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$20.id",
+    "connector": "Servo hole 4"
+   },
+   "b": {
+    "instance": "$38.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "servo_hobby",
+   "size": "MG996R",
+   "parent": "$19.id",
+   "name": "Base servo",
+   "properties": {
+    "step": "2"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$20.id",
+    "connector": "Servo mount"
+   },
+   "b": {
+    "instance": "$40.id",
+    "connector": "Hole 1"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso7089",
+   "size": "M2",
+   "parent": "$19.id",
+   "name": "Base servo washer 1",
+   "properties": {
+    "step": "3"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$40.id",
+    "connector": "Hole 1"
+   },
+   "b": {
+    "instance": "$42.id",
+    "connector": "Top face"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Base servo screw 1",
+   "properties": {
+    "step": "3"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$42.id",
+    "connector": "Bottom face"
+   },
+   "b": {
+    "instance": "$44.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso7089",
+   "size": "M2",
+   "parent": "$19.id",
+   "name": "Base servo washer 2",
+   "properties": {
+    "step": "3"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$40.id",
+    "connector": "Hole 2"
+   },
+   "b": {
+    "instance": "$46.id",
+    "connector": "Top face"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Base servo screw 2",
+   "properties": {
+    "step": "3"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$46.id",
+    "connector": "Bottom face"
+   },
+   "b": {
+    "instance": "$48.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso7089",
+   "size": "M2",
+   "parent": "$19.id",
+   "name": "Base servo washer 3",
+   "properties": {
+    "step": "3"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$40.id",
+    "connector": "Hole 3"
+   },
+   "b": {
+    "instance": "$50.id",
+    "connector": "Top face"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Base servo screw 3",
+   "properties": {
+    "step": "3"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$50.id",
+    "connector": "Bottom face"
+   },
+   "b": {
+    "instance": "$52.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso7089",
+   "size": "M2",
+   "parent": "$19.id",
+   "name": "Base servo washer 4",
+   "properties": {
+    "step": "3"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$40.id",
+    "connector": "Hole 4"
+   },
+   "b": {
+    "instance": "$54.id",
+    "connector": "Top face"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Base servo screw 4",
+   "properties": {
+    "step": "3"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$54.id",
+    "connector": "Bottom face"
+   },
+   "b": {
+    "instance": "$56.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "bearing_deep_groove",
+   "size": "6807-2RS",
+   "parent": "$19.id",
+   "name": "Turntable bearing",
+   "properties": {
+    "step": "4"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$20.id",
+    "connector": "Bearing"
+   },
+   "b": {
+    "instance": "$58.id",
+    "connector": "Face A"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×12",
+   "parent": "$19.id",
+   "name": "Base cover screw 1",
+   "properties": {
+    "step": "11"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$20.id",
+    "connector": "Screw 1"
+   },
+   "b": {
+    "instance": "$60.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×12",
+   "parent": "$19.id",
+   "name": "Base cover screw 2",
+   "properties": {
+    "step": "11"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$20.id",
+    "connector": "Screw 2"
+   },
+   "b": {
+    "instance": "$62.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×12",
+   "parent": "$19.id",
+   "name": "Base cover screw 3",
+   "properties": {
+    "step": "11"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$20.id",
+    "connector": "Screw 3"
+   },
+   "b": {
+    "instance": "$64.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×12",
+   "parent": "$19.id",
+   "name": "Base cover screw 4",
+   "properties": {
+    "step": "11"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$20.id",
+    "connector": "Screw 4"
+   },
+   "b": {
+    "instance": "$66.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "servo_horn",
+   "size": "25T Ø24",
+   "parent": "$19.id",
+   "name": "Base horn",
+   "properties": {
+    "step": "12"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "hinge",
+   "a": {
+    "instance": "$40.id",
+    "connector": "Output shaft"
+   },
+   "b": {
+    "instance": "$68.id",
+    "connector": "Spline"
+   },
+   "name": "Base yaw",
+   "value": 0,
+   "limits": [
+    -90,
+    90
+   ]
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×6",
+   "parent": "$19.id",
+   "name": "Base horn screw",
+   "properties": {
+    "step": "12"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$68.id",
+    "connector": "Face"
+   },
+   "b": {
+    "instance": "$70.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$4.id",
+   "parent": "$19.id",
+   "name": "Turntable",
+   "properties": {
+    "step": "13"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$68.id",
+    "connector": "Face"
+   },
+   "b": {
+    "instance": "$72.id",
+    "connector": "Base horn"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×10",
+   "parent": "$19.id",
+   "name": "Base horn screw 1",
+   "properties": {
+    "step": "14"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$72.id",
+    "connector": "Base screw 1"
+   },
+   "b": {
+    "instance": "$74.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×10",
+   "parent": "$19.id",
+   "name": "Base horn screw 2",
+   "properties": {
+    "step": "14"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$72.id",
+    "connector": "Base screw 2"
+   },
+   "b": {
+    "instance": "$76.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×10",
+   "parent": "$19.id",
+   "name": "Base horn screw 3",
+   "properties": {
+    "step": "14"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$72.id",
+    "connector": "Base screw 3"
+   },
+   "b": {
+    "instance": "$78.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×10",
+   "parent": "$19.id",
+   "name": "Base horn screw 4",
+   "properties": {
+    "step": "14"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$72.id",
+    "connector": "Base screw 4"
+   },
+   "b": {
+    "instance": "$80.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Turntable insert 1",
+   "properties": {
+    "step": "13"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$72.id",
+    "connector": "Yoke insert 1"
+   },
+   "b": {
+    "instance": "$82.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Turntable insert 2",
+   "properties": {
+    "step": "13"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$72.id",
+    "connector": "Yoke insert 2"
+   },
+   "b": {
+    "instance": "$84.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Turntable insert 3",
+   "properties": {
+    "step": "13"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$72.id",
+    "connector": "Yoke insert 3"
+   },
+   "b": {
+    "instance": "$86.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Turntable insert 4",
+   "properties": {
+    "step": "13"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$72.id",
+    "connector": "Yoke insert 4"
+   },
+   "b": {
+    "instance": "$88.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$5.id",
+   "parent": "$19.id",
+   "name": "Shoulder yoke",
+   "properties": {
+    "step": "15"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$72.id",
+    "connector": "Yoke seat"
+   },
+   "b": {
+    "instance": "$90.id",
+    "connector": "Seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×14",
+   "parent": "$19.id",
+   "name": "Yoke screw 1",
+   "properties": {
+    "step": "16"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$90.id",
+    "connector": "Foot screw 1"
+   },
+   "b": {
+    "instance": "$92.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×14",
+   "parent": "$19.id",
+   "name": "Yoke screw 2",
+   "properties": {
+    "step": "16"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$90.id",
+    "connector": "Foot screw 2"
+   },
+   "b": {
+    "instance": "$94.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×14",
+   "parent": "$19.id",
+   "name": "Yoke screw 3",
+   "properties": {
+    "step": "16"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$90.id",
+    "connector": "Foot screw 3"
+   },
+   "b": {
+    "instance": "$96.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×14",
+   "parent": "$19.id",
+   "name": "Yoke screw 4",
+   "properties": {
+    "step": "16"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$90.id",
+    "connector": "Foot screw 4"
+   },
+   "b": {
+    "instance": "$98.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Yoke insert 1",
+   "properties": {
+    "step": "15"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$90.id",
+    "connector": "Cheek insert 1"
+   },
+   "b": {
+    "instance": "$100.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Yoke insert 2",
+   "properties": {
+    "step": "15"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$90.id",
+    "connector": "Cheek insert 2"
+   },
+   "b": {
+    "instance": "$102.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "servo_horn",
+   "size": "25T Ø24",
+   "parent": "$19.id",
+   "name": "Shoulder horn",
+   "properties": {
+    "step": "17"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$90.id",
+    "connector": "Shoulder horn"
+   },
+   "b": {
+    "instance": "$104.id",
+    "connector": "Face"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×8",
+   "parent": "$19.id",
+   "name": "Shoulder horn screw 1",
+   "properties": {
+    "step": "18"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$90.id",
+    "connector": "Shoulder screw 1"
+   },
+   "b": {
+    "instance": "$106.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×8",
+   "parent": "$19.id",
+   "name": "Shoulder horn screw 2",
+   "properties": {
+    "step": "18"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$90.id",
+    "connector": "Shoulder screw 2"
+   },
+   "b": {
+    "instance": "$108.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×8",
+   "parent": "$19.id",
+   "name": "Shoulder horn screw 3",
+   "properties": {
+    "step": "18"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$90.id",
+    "connector": "Shoulder screw 3"
+   },
+   "b": {
+    "instance": "$110.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×8",
+   "parent": "$19.id",
+   "name": "Shoulder horn screw 4",
+   "properties": {
+    "step": "18"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$90.id",
+    "connector": "Shoulder screw 4"
+   },
+   "b": {
+    "instance": "$112.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$7.id",
+   "parent": "$19.id",
+   "name": "Upper arm, left half",
+   "properties": {
+    "step": "19"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M2×4",
+   "parent": "$19.id",
+   "name": "Shoulder servo insert 1",
+   "properties": {
+    "step": "19"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Shoulder servo hole 1"
+   },
+   "b": {
+    "instance": "$115.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M2×4",
+   "parent": "$19.id",
+   "name": "Shoulder servo insert 2",
+   "properties": {
+    "step": "19"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Shoulder servo hole 2"
+   },
+   "b": {
+    "instance": "$117.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M2×4",
+   "parent": "$19.id",
+   "name": "Shoulder servo insert 3",
+   "properties": {
+    "step": "19"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Shoulder servo hole 3"
+   },
+   "b": {
+    "instance": "$119.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M2×4",
+   "parent": "$19.id",
+   "name": "Shoulder servo insert 4",
+   "properties": {
+    "step": "19"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Shoulder servo hole 4"
+   },
+   "b": {
+    "instance": "$121.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M2×4",
+   "parent": "$19.id",
+   "name": "Elbow servo insert 1",
+   "properties": {
+    "step": "19"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Elbow servo hole 1"
+   },
+   "b": {
+    "instance": "$123.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M2×4",
+   "parent": "$19.id",
+   "name": "Elbow servo insert 2",
+   "properties": {
+    "step": "19"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Elbow servo hole 2"
+   },
+   "b": {
+    "instance": "$125.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M2×4",
+   "parent": "$19.id",
+   "name": "Elbow servo insert 3",
+   "properties": {
+    "step": "19"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Elbow servo hole 3"
+   },
+   "b": {
+    "instance": "$127.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M2×4",
+   "parent": "$19.id",
+   "name": "Elbow servo insert 4",
+   "properties": {
+    "step": "19"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Elbow servo hole 4"
+   },
+   "b": {
+    "instance": "$129.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Upper arm insert 1",
+   "properties": {
+    "step": "19"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Half insert 1"
+   },
+   "b": {
+    "instance": "$131.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Upper arm insert 2",
+   "properties": {
+    "step": "19"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Half insert 2"
+   },
+   "b": {
+    "instance": "$133.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Upper arm insert 3",
+   "properties": {
+    "step": "19"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Half insert 3"
+   },
+   "b": {
+    "instance": "$135.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Upper arm insert 4",
+   "properties": {
+    "step": "19"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Half insert 4"
+   },
+   "b": {
+    "instance": "$137.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Upper arm insert 5",
+   "properties": {
+    "step": "19"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Half insert 5"
+   },
+   "b": {
+    "instance": "$139.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Upper arm insert 6",
+   "properties": {
+    "step": "19"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Half insert 6"
+   },
+   "b": {
+    "instance": "$141.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "servo_hobby",
+   "size": "MG996R",
+   "parent": "$19.id",
+   "name": "Shoulder servo",
+   "properties": {
+    "step": "20"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "hinge",
+   "a": {
+    "instance": "$104.id",
+    "connector": "Spline"
+   },
+   "b": {
+    "instance": "$143.id",
+    "connector": "Output shaft"
+   },
+   "name": "Shoulder",
+   "value": 0,
+   "limits": [
+    -90,
+    90
+   ]
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$143.id",
+    "connector": "Hole 1"
+   },
+   "b": {
+    "instance": "$114.id",
+    "connector": "Shoulder servo mount"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso7089",
+   "size": "M2",
+   "parent": "$19.id",
+   "name": "Shoulder servo washer 1",
+   "properties": {
+    "step": "21"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$143.id",
+    "connector": "Hole 1"
+   },
+   "b": {
+    "instance": "$146.id",
+    "connector": "Top face"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Shoulder servo screw 1",
+   "properties": {
+    "step": "21"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$146.id",
+    "connector": "Bottom face"
+   },
+   "b": {
+    "instance": "$148.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso7089",
+   "size": "M2",
+   "parent": "$19.id",
+   "name": "Shoulder servo washer 2",
+   "properties": {
+    "step": "21"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$143.id",
+    "connector": "Hole 2"
+   },
+   "b": {
+    "instance": "$150.id",
+    "connector": "Top face"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Shoulder servo screw 2",
+   "properties": {
+    "step": "21"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$150.id",
+    "connector": "Bottom face"
+   },
+   "b": {
+    "instance": "$152.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso7089",
+   "size": "M2",
+   "parent": "$19.id",
+   "name": "Shoulder servo washer 3",
+   "properties": {
+    "step": "21"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$143.id",
+    "connector": "Hole 3"
+   },
+   "b": {
+    "instance": "$154.id",
+    "connector": "Top face"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Shoulder servo screw 3",
+   "properties": {
+    "step": "21"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$154.id",
+    "connector": "Bottom face"
+   },
+   "b": {
+    "instance": "$156.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso7089",
+   "size": "M2",
+   "parent": "$19.id",
+   "name": "Shoulder servo washer 4",
+   "properties": {
+    "step": "21"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$143.id",
+    "connector": "Hole 4"
+   },
+   "b": {
+    "instance": "$158.id",
+    "connector": "Top face"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Shoulder servo screw 4",
+   "properties": {
+    "step": "21"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$158.id",
+    "connector": "Bottom face"
+   },
+   "b": {
+    "instance": "$160.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "servo_hobby",
+   "size": "MG996R",
+   "parent": "$19.id",
+   "name": "Elbow servo",
+   "properties": {
+    "step": "22"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Elbow servo mount"
+   },
+   "b": {
+    "instance": "$162.id",
+    "connector": "Hole 1"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso7089",
+   "size": "M2",
+   "parent": "$19.id",
+   "name": "Elbow servo washer 1",
+   "properties": {
+    "step": "23"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$162.id",
+    "connector": "Hole 1"
+   },
+   "b": {
+    "instance": "$164.id",
+    "connector": "Top face"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Elbow servo screw 1",
+   "properties": {
+    "step": "23"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$164.id",
+    "connector": "Bottom face"
+   },
+   "b": {
+    "instance": "$166.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso7089",
+   "size": "M2",
+   "parent": "$19.id",
+   "name": "Elbow servo washer 2",
+   "properties": {
+    "step": "23"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$162.id",
+    "connector": "Hole 2"
+   },
+   "b": {
+    "instance": "$168.id",
+    "connector": "Top face"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Elbow servo screw 2",
+   "properties": {
+    "step": "23"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$168.id",
+    "connector": "Bottom face"
+   },
+   "b": {
+    "instance": "$170.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso7089",
+   "size": "M2",
+   "parent": "$19.id",
+   "name": "Elbow servo washer 3",
+   "properties": {
+    "step": "23"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$162.id",
+    "connector": "Hole 3"
+   },
+   "b": {
+    "instance": "$172.id",
+    "connector": "Top face"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Elbow servo screw 3",
+   "properties": {
+    "step": "23"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$172.id",
+    "connector": "Bottom face"
+   },
+   "b": {
+    "instance": "$174.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso7089",
+   "size": "M2",
+   "parent": "$19.id",
+   "name": "Elbow servo washer 4",
+   "properties": {
+    "step": "23"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$162.id",
+    "connector": "Hole 4"
+   },
+   "b": {
+    "instance": "$176.id",
+    "connector": "Top face"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Elbow servo screw 4",
+   "properties": {
+    "step": "23"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$176.id",
+    "connector": "Bottom face"
+   },
+   "b": {
+    "instance": "$178.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$8.id",
+   "parent": "$19.id",
+   "name": "Upper arm, right half",
+   "properties": {
+    "step": "24"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$114.id",
+    "connector": "Half seat"
+   },
+   "b": {
+    "instance": "$180.id",
+    "connector": "Seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×35",
+   "parent": "$19.id",
+   "name": "Upper arm screw 1",
+   "properties": {
+    "step": "25"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$180.id",
+    "connector": "Screw 1"
+   },
+   "b": {
+    "instance": "$182.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×35",
+   "parent": "$19.id",
+   "name": "Upper arm screw 2",
+   "properties": {
+    "step": "25"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$180.id",
+    "connector": "Screw 2"
+   },
+   "b": {
+    "instance": "$184.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×35",
+   "parent": "$19.id",
+   "name": "Upper arm screw 3",
+   "properties": {
+    "step": "25"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$180.id",
+    "connector": "Screw 3"
+   },
+   "b": {
+    "instance": "$186.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×35",
+   "parent": "$19.id",
+   "name": "Upper arm screw 4",
+   "properties": {
+    "step": "25"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$180.id",
+    "connector": "Screw 4"
+   },
+   "b": {
+    "instance": "$188.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×35",
+   "parent": "$19.id",
+   "name": "Upper arm screw 5",
+   "properties": {
+    "step": "25"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$180.id",
+    "connector": "Screw 5"
+   },
+   "b": {
+    "instance": "$190.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×35",
+   "parent": "$19.id",
+   "name": "Upper arm screw 6",
+   "properties": {
+    "step": "25"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$180.id",
+    "connector": "Screw 6"
+   },
+   "b": {
+    "instance": "$192.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso8734",
+   "size": "Ø8×16",
+   "parent": "$19.id",
+   "name": "Shoulder pin",
+   "properties": {
+    "step": "24"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$180.id",
+    "connector": "Shoulder pin"
+   },
+   "b": {
+    "instance": "$194.id",
+    "connector": "Axis"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso8734",
+   "size": "Ø8×16",
+   "parent": "$19.id",
+   "name": "Elbow pin",
+   "properties": {
+    "step": "24"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$180.id",
+    "connector": "Elbow pin"
+   },
+   "b": {
+    "instance": "$196.id",
+    "connector": "Axis"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×6",
+   "parent": "$19.id",
+   "name": "Shoulder horn screw",
+   "properties": {
+    "step": "26"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$104.id",
+    "connector": "Face"
+   },
+   "b": {
+    "instance": "$198.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$6.id",
+   "parent": "$19.id",
+   "name": "Shoulder bearing cheek",
+   "properties": {
+    "step": "28"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "bearing_deep_groove",
+   "size": "608-2RS",
+   "parent": "$19.id",
+   "name": "Shoulder bearing",
+   "properties": {
+    "step": "27"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$200.id",
+    "connector": "Bearing"
+   },
+   "b": {
+    "instance": "$201.id",
+    "connector": "Face A"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$90.id",
+    "connector": "Cheek seat"
+   },
+   "b": {
+    "instance": "$200.id",
+    "connector": "Seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×12",
+   "parent": "$19.id",
+   "name": "Shoulder cheek screw 1",
+   "properties": {
+    "step": "29"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$200.id",
+    "connector": "Foot screw 1"
+   },
+   "b": {
+    "instance": "$204.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×12",
+   "parent": "$19.id",
+   "name": "Shoulder cheek screw 2",
+   "properties": {
+    "step": "29"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$200.id",
+    "connector": "Foot screw 2"
+   },
+   "b": {
+    "instance": "$206.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$9.id",
+   "parent": "$19.id",
+   "name": "Forearm, left half",
+   "properties": {
+    "step": "30"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Forearm cheek insert 1",
+   "properties": {
+    "step": "30"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$208.id",
+    "connector": "Cheek insert 1"
+   },
+   "b": {
+    "instance": "$209.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Forearm cheek insert 2",
+   "properties": {
+    "step": "30"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$208.id",
+    "connector": "Cheek insert 2"
+   },
+   "b": {
+    "instance": "$211.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Forearm insert 1",
+   "properties": {
+    "step": "30"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$208.id",
+    "connector": "Half insert 1"
+   },
+   "b": {
+    "instance": "$213.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Forearm insert 2",
+   "properties": {
+    "step": "30"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$208.id",
+    "connector": "Half insert 2"
+   },
+   "b": {
+    "instance": "$215.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Forearm insert 3",
+   "properties": {
+    "step": "30"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$208.id",
+    "connector": "Half insert 3"
+   },
+   "b": {
+    "instance": "$217.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Forearm insert 4",
+   "properties": {
+    "step": "30"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$208.id",
+    "connector": "Half insert 4"
+   },
+   "b": {
+    "instance": "$219.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "servo_hobby",
+   "size": "MG90S",
+   "parent": "$19.id",
+   "name": "Wrist servo",
+   "properties": {
+    "step": "31"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$208.id",
+    "connector": "Wrist servo mount"
+   },
+   "b": {
+    "instance": "$221.id",
+    "connector": "Hole 1"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Wrist servo screw 1",
+   "properties": {
+    "step": "31"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$221.id",
+    "connector": "Hole 1"
+   },
+   "b": {
+    "instance": "$223.id",
+    "connector": "Head seat"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Wrist servo screw 2",
+   "properties": {
+    "step": "31"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$221.id",
+    "connector": "Hole 2"
+   },
+   "b": {
+    "instance": "$225.id",
+    "connector": "Head seat"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$10.id",
+   "parent": "$19.id",
+   "name": "Forearm, right half",
+   "properties": {
+    "step": "32"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$208.id",
+    "connector": "Half seat"
+   },
+   "b": {
+    "instance": "$227.id",
+    "connector": "Seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×20",
+   "parent": "$19.id",
+   "name": "Forearm screw 1",
+   "properties": {
+    "step": "33"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$227.id",
+    "connector": "Screw 1"
+   },
+   "b": {
+    "instance": "$229.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×20",
+   "parent": "$19.id",
+   "name": "Forearm screw 2",
+   "properties": {
+    "step": "33"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$227.id",
+    "connector": "Screw 2"
+   },
+   "b": {
+    "instance": "$231.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×20",
+   "parent": "$19.id",
+   "name": "Forearm screw 3",
+   "properties": {
+    "step": "33"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$227.id",
+    "connector": "Screw 3"
+   },
+   "b": {
+    "instance": "$233.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×20",
+   "parent": "$19.id",
+   "name": "Forearm screw 4",
+   "properties": {
+    "step": "33"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$227.id",
+    "connector": "Screw 4"
+   },
+   "b": {
+    "instance": "$235.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Forearm cheek insert 3",
+   "properties": {
+    "step": "32"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$227.id",
+    "connector": "Cheek insert 1"
+   },
+   "b": {
+    "instance": "$237.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Forearm cheek insert 4",
+   "properties": {
+    "step": "32"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$227.id",
+    "connector": "Cheek insert 2"
+   },
+   "b": {
+    "instance": "$239.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso8734",
+   "size": "Ø5×16",
+   "parent": "$19.id",
+   "name": "Wrist pin",
+   "properties": {
+    "step": "32"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$227.id",
+    "connector": "Wrist pin"
+   },
+   "b": {
+    "instance": "$241.id",
+    "connector": "Axis"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "servo_horn",
+   "size": "25T Ø24",
+   "parent": "$19.id",
+   "name": "Elbow horn",
+   "properties": {
+    "step": "34"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "hinge",
+   "a": {
+    "instance": "$162.id",
+    "connector": "Output shaft"
+   },
+   "b": {
+    "instance": "$243.id",
+    "connector": "Spline"
+   },
+   "name": "Elbow",
+   "value": 0,
+   "limits": [
+    -60,
+    90
+   ]
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$11.id",
+   "parent": "$19.id",
+   "name": "Elbow cheek, horn side",
+   "properties": {
+    "step": "35"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$243.id",
+    "connector": "Face"
+   },
+   "b": {
+    "instance": "$245.id",
+    "connector": "Elbow horn"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×8",
+   "parent": "$19.id",
+   "name": "Elbow horn screw 1",
+   "properties": {
+    "step": "36"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$245.id",
+    "connector": "Elbow screw 1"
+   },
+   "b": {
+    "instance": "$247.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×8",
+   "parent": "$19.id",
+   "name": "Elbow horn screw 2",
+   "properties": {
+    "step": "36"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$245.id",
+    "connector": "Elbow screw 2"
+   },
+   "b": {
+    "instance": "$249.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×8",
+   "parent": "$19.id",
+   "name": "Elbow horn screw 3",
+   "properties": {
+    "step": "36"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$245.id",
+    "connector": "Elbow screw 3"
+   },
+   "b": {
+    "instance": "$251.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×8",
+   "parent": "$19.id",
+   "name": "Elbow horn screw 4",
+   "properties": {
+    "step": "36"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$245.id",
+    "connector": "Elbow screw 4"
+   },
+   "b": {
+    "instance": "$253.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$245.id",
+    "connector": "Forearm seat"
+   },
+   "b": {
+    "instance": "$208.id",
+    "connector": "Cheek seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×18",
+   "parent": "$19.id",
+   "name": "Elbow cheek screw 1",
+   "properties": {
+    "step": "37"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$245.id",
+    "connector": "Screw 1"
+   },
+   "b": {
+    "instance": "$256.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×18",
+   "parent": "$19.id",
+   "name": "Elbow cheek screw 2",
+   "properties": {
+    "step": "37"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$245.id",
+    "connector": "Screw 2"
+   },
+   "b": {
+    "instance": "$258.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$12.id",
+   "parent": "$19.id",
+   "name": "Elbow cheek, bearing side",
+   "properties": {
+    "step": "39"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "bearing_deep_groove",
+   "size": "608-2RS",
+   "parent": "$19.id",
+   "name": "Elbow bearing",
+   "properties": {
+    "step": "38"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$260.id",
+    "connector": "Bearing"
+   },
+   "b": {
+    "instance": "$261.id",
+    "connector": "Face A"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$227.id",
+    "connector": "Cheek seat"
+   },
+   "b": {
+    "instance": "$260.id",
+    "connector": "Forearm seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×18",
+   "parent": "$19.id",
+   "name": "Elbow cheek screw 3",
+   "properties": {
+    "step": "40"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$260.id",
+    "connector": "Screw 1"
+   },
+   "b": {
+    "instance": "$264.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×18",
+   "parent": "$19.id",
+   "name": "Elbow cheek screw 4",
+   "properties": {
+    "step": "40"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$260.id",
+    "connector": "Screw 2"
+   },
+   "b": {
+    "instance": "$266.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×6",
+   "parent": "$19.id",
+   "name": "Elbow horn screw",
+   "properties": {
+    "step": "41"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$243.id",
+    "connector": "Face"
+   },
+   "b": {
+    "instance": "$268.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "servo_horn",
+   "size": "20T Ø16",
+   "parent": "$19.id",
+   "name": "Wrist horn",
+   "properties": {
+    "step": "42"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "hinge",
+   "a": {
+    "instance": "$221.id",
+    "connector": "Output shaft"
+   },
+   "b": {
+    "instance": "$270.id",
+    "connector": "Spline"
+   },
+   "name": "Wrist",
+   "value": 0,
+   "limits": [
+    -90,
+    90
+   ]
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$13.id",
+   "parent": "$19.id",
+   "name": "Wrist housing",
+   "properties": {
+    "step": "44"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$270.id",
+    "connector": "Face"
+   },
+   "b": {
+    "instance": "$272.id",
+    "connector": "Wrist horn"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Wrist horn screw 1",
+   "properties": {
+    "step": "45"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$272.id",
+    "connector": "Wrist screw 1"
+   },
+   "b": {
+    "instance": "$274.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Wrist horn screw 2",
+   "properties": {
+    "step": "45"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$272.id",
+    "connector": "Wrist screw 2"
+   },
+   "b": {
+    "instance": "$276.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Wrist horn screw 3",
+   "properties": {
+    "step": "45"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$272.id",
+    "connector": "Wrist screw 3"
+   },
+   "b": {
+    "instance": "$278.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Wrist horn screw 4",
+   "properties": {
+    "step": "45"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$272.id",
+    "connector": "Wrist screw 4"
+   },
+   "b": {
+    "instance": "$280.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×5",
+   "parent": "$19.id",
+   "name": "Wrist horn screw",
+   "properties": {
+    "step": "46"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$270.id",
+    "connector": "Face"
+   },
+   "b": {
+    "instance": "$282.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "bearing_deep_groove",
+   "size": "625-2RS",
+   "parent": "$19.id",
+   "name": "Wrist bearing",
+   "properties": {
+    "step": "43"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$272.id",
+    "connector": "Wrist bearing"
+   },
+   "b": {
+    "instance": "$284.id",
+    "connector": "Face A"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×3 short",
+   "parent": "$19.id",
+   "name": "Finger pivot insert",
+   "properties": {
+    "step": "43"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$272.id",
+    "connector": "Pivot insert"
+   },
+   "b": {
+    "instance": "$286.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Wrist cover insert 1",
+   "properties": {
+    "step": "43"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$272.id",
+    "connector": "Cover insert 1"
+   },
+   "b": {
+    "instance": "$288.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Wrist cover insert 2",
+   "properties": {
+    "step": "43"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$272.id",
+    "connector": "Cover insert 2"
+   },
+   "b": {
+    "instance": "$290.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Wrist cover insert 3",
+   "properties": {
+    "step": "43"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$272.id",
+    "connector": "Cover insert 3"
+   },
+   "b": {
+    "instance": "$292.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "heatset_insert",
+   "size": "M3×5.7",
+   "parent": "$19.id",
+   "name": "Wrist cover insert 4",
+   "properties": {
+    "step": "43"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$272.id",
+    "connector": "Cover insert 4"
+   },
+   "b": {
+    "instance": "$294.id",
+    "connector": "Top face"
+   },
+   "aligned": true
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "servo_hobby",
+   "size": "MG90S",
+   "parent": "$19.id",
+   "name": "Gripper servo",
+   "properties": {
+    "step": "47"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$272.id",
+    "connector": "Grip servo mount"
+   },
+   "b": {
+    "instance": "$296.id",
+    "connector": "Hole 1"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Gripper servo screw 1",
+   "properties": {
+    "step": "48"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$296.id",
+    "connector": "Hole 1"
+   },
+   "b": {
+    "instance": "$298.id",
+    "connector": "Head seat"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×6",
+   "parent": "$19.id",
+   "name": "Gripper servo screw 2",
+   "properties": {
+    "step": "48"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$296.id",
+    "connector": "Hole 2"
+   },
+   "b": {
+    "instance": "$300.id",
+    "connector": "Head seat"
+   },
+   "aligned": true,
+   "offset": -2.5
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "servo_horn",
+   "size": "20T Ø16",
+   "parent": "$19.id",
+   "name": "Gripper horn",
+   "properties": {
+    "step": "49"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "hinge",
+   "a": {
+    "instance": "$296.id",
+    "connector": "Output shaft"
+   },
+   "b": {
+    "instance": "$302.id",
+    "connector": "Spline"
+   },
+   "name": "Grip",
+   "value": 0,
+   "limits": [
+    0,
+    30
+   ]
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×5",
+   "parent": "$19.id",
+   "name": "Gripper horn screw",
+   "properties": {
+    "step": "49"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$302.id",
+    "connector": "Face"
+   },
+   "b": {
+    "instance": "$304.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$17.id",
+   "parent": "$19.id",
+   "name": "Finger, driven",
+   "properties": {
+    "step": "50"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$302.id",
+    "connector": "Face"
+   },
+   "b": {
+    "instance": "$306.id",
+    "connector": "Grip horn"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×8",
+   "parent": "$19.id",
+   "name": "Grip horn screw 1",
+   "properties": {
+    "step": "51"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$306.id",
+    "connector": "Grip screw 1"
+   },
+   "b": {
+    "instance": "$308.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×8",
+   "parent": "$19.id",
+   "name": "Grip horn screw 2",
+   "properties": {
+    "step": "51"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$306.id",
+    "connector": "Grip screw 2"
+   },
+   "b": {
+    "instance": "$310.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×8",
+   "parent": "$19.id",
+   "name": "Grip horn screw 3",
+   "properties": {
+    "step": "51"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$306.id",
+    "connector": "Grip screw 3"
+   },
+   "b": {
+    "instance": "$312.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M2×8",
+   "parent": "$19.id",
+   "name": "Grip horn screw 4",
+   "properties": {
+    "step": "51"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$306.id",
+    "connector": "Grip screw 4"
+   },
+   "b": {
+    "instance": "$314.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$15.id",
+   "parent": "$19.id",
+   "name": "Finger pivot spacer",
+   "properties": {
+    "step": "52"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$272.id",
+    "connector": "Finger pivot"
+   },
+   "b": {
+    "instance": "$316.id",
+    "connector": "Bottom"
+   }
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$18.id",
+   "parent": "$19.id",
+   "name": "Finger, idler",
+   "properties": {
+    "step": "53"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "hinge",
+   "a": {
+    "instance": "$272.id",
+    "connector": "Finger pivot"
+   },
+   "b": {
+    "instance": "$318.id",
+    "connector": "Pivot"
+   },
+   "name": "Grip idler",
+   "offset": 9.7,
+   "value": "=-Grip.angle",
+   "limits": [
+    -30,
+    0
+   ]
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$16.id",
+   "parent": "$19.id",
+   "name": "Finger pivot sleeve",
+   "properties": {
+    "step": "54"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$272.id",
+    "connector": "Finger pivot"
+   },
+   "b": {
+    "instance": "$320.id",
+    "connector": "Bottom"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×20",
+   "parent": "$19.id",
+   "name": "Finger pivot screw",
+   "properties": {
+    "step": "55"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$320.id",
+    "connector": "Screw"
+   },
+   "b": {
+    "instance": "$322.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$14.id",
+   "parent": "$19.id",
+   "name": "Wrist cover",
+   "properties": {
+    "step": "56"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$272.id",
+    "connector": "Cover seat"
+   },
+   "b": {
+    "instance": "$324.id",
+    "connector": "Seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×8",
+   "parent": "$19.id",
+   "name": "Wrist cover screw 1",
+   "properties": {
+    "step": "57"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$324.id",
+    "connector": "Screw 1"
+   },
+   "b": {
+    "instance": "$326.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×8",
+   "parent": "$19.id",
+   "name": "Wrist cover screw 2",
+   "properties": {
+    "step": "57"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$324.id",
+    "connector": "Screw 2"
+   },
+   "b": {
+    "instance": "$328.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×8",
+   "parent": "$19.id",
+   "name": "Wrist cover screw 3",
+   "properties": {
+    "step": "57"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$324.id",
+    "connector": "Screw 3"
+   },
+   "b": {
+    "instance": "$330.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "stock.insert",
+  "parameters": {
+   "family": "iso4762",
+   "size": "M3×8",
+   "parent": "$19.id",
+   "name": "Wrist cover screw 4",
+   "properties": {
+    "step": "57"
+   }
+  }
+ },
+ {
+  "operation": "assembly.joint.create",
+  "parameters": {
+   "assembly": "$19.id",
+   "type": "fixed",
+   "a": {
+    "instance": "$324.id",
+    "connector": "Screw 4"
+   },
+   "b": {
+    "instance": "$332.id",
+    "connector": "Head seat"
+   }
+  }
+ },
+ {
+  "operation": "assembly.instance.create",
+  "parameters": {
+   "of": "$19.id",
+   "name": "Robot arm",
+   "at": [
+    0,
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "operation": "intent.requirement.create",
+  "parameters": {
+   "rule": {
+    "kind": "no_clashes_in_motion",
+    "joint": "$69.id",
+    "steps": 36
+   }
+  }
+ },
+ {
+  "operation": "intent.requirement.create",
+  "parameters": {
+   "rule": {
+    "kind": "no_clashes_in_motion",
+    "joint": "$144.id",
+    "steps": 36
+   }
+  }
+ },
+ {
+  "operation": "intent.requirement.create",
+  "parameters": {
+   "rule": {
+    "kind": "no_clashes_in_motion",
+    "joint": "$244.id",
+    "steps": 36
+   }
+  }
+ },
+ {
+  "operation": "intent.requirement.create",
+  "parameters": {
+   "rule": {
+    "kind": "no_clashes_in_motion",
+    "joint": "$271.id",
+    "steps": 36
+   }
+  }
+ },
+ {
+  "operation": "intent.requirement.create",
+  "parameters": {
+   "rule": {
+    "kind": "no_clashes_in_motion",
+    "joint": "$303.id",
+    "steps": 36
+   }
+  }
+ },
+ {
+  "operation": "intent.requirement.create",
+  "parameters": {
+   "name": "Everything fits",
+   "rule": {
+    "kind": "assembly_fits",
+    "assembly": "$19.id",
+    "motion": false
+   }
+  }
+ }
+]

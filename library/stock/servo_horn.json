@@ -1,0 +1,119 @@
+{
+ "id": "servo_horn",
+ "name": "Servo disc horn",
+ "category": "Motors",
+ "summary": "Aluminium disc horns for hobby servos: 25T Ø24 with M3 tapped holes (MG996R class) and 20T Ø16 with M2 tapped holes (MG90S). Hub bottom on z = 0, disc top at z = height; Spline connector meets the servo's Output shaft.",
+ "keywords": [
+  "servo horn",
+  "disc horn",
+  "servo arm",
+  "25T",
+  "20T",
+  "metal horn",
+  "aluminium horn",
+  "MG996R horn",
+  "MG90S horn"
+ ],
+ "source": [
+  "common.js",
+  "servo_horn.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Aluminium 6061",
+ "materials": {
+  "Aluminium 6061": 2700
+ },
+ "params": [
+  {
+   "key": "model",
+   "label": "Model (0 25T Ø24, 1 20T Ø16)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  },
+  {
+   "key": "threads",
+   "label": "True helical thread (1 = on)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "model"
+ ],
+ "rows": [
+  {
+   "name": "25T Ø24",
+   "values": {
+    "model": 0
+   },
+   "description": "MG996R / MG995 / DS3218, 4 × M3"
+  },
+  {
+   "name": "20T Ø16",
+   "values": {
+    "model": 1
+   },
+   "description": "MG90S, 4 × M2"
+  }
+ ],
+ "default": "25T Ø24",
+ "checks": {
+  "25T Ø24": {
+   "size": [
+    24,
+    24,
+    6.5
+   ],
+   "tolerance": 0.05,
+   "metrics": {
+    "Spline teeth": 25,
+    "Tapped thread": 3
+   },
+   "connectors": [
+    "Hole 1",
+    "Hole 2",
+    "Hole 3",
+    "Hole 4",
+    "Spline",
+    "Face"
+   ],
+   "connector_at": {
+    "Spline": [
+     0,
+     0,
+     3.1
+    ],
+    "Face": [
+     0,
+     0,
+     6.5
+    ]
+   }
+  },
+  "20T Ø16": {
+   "size": [
+    16,
+    16,
+    5.6
+   ],
+   "tolerance": 0.05,
+   "metrics": {
+    "Spline teeth": 20,
+    "Tapped thread": 2
+   },
+   "connector_at": {
+    "Spline": [
+     0,
+     0,
+     2.8
+    ]
+   }
+  }
+ }
+}

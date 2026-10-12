@@ -236,3 +236,52 @@ fn a_closed_loop_of_instances_solves() {
         assert!(close(r.apply([95.0, 5.0, 10.0]), [200.0 + 90.0 * co, 90.0 * s, 10.0], 1e-6));
     }
 }
+
+#[test]
+fn a_long_chain_of_joints_stays_cheap_to_change() {
+    // Joining one more part to a group of many changes the group's joint hub,
+    // not every instance already in it: a commit's size does not grow with the group.
+    let mut p = project();
+    let link = component(&mut p, "Link", LINK);
+    let mut prev = place(&mut p, link, None, "Link 0", [0.0; 3], [0.0; 3]);
+    let mut sizes = vec![];
+    for n in 1..40 {
+        let next = place(&mut p, link, None, &format!("Link {n}"), [0.0; 3], [0.0; 3]);
+        let envelope = Envelope {
+            schema_version: SCHEMA_VERSION,
+            command_id: StableId::new().to_string(),
+            project_id: p.id().into(),
+            expected_revision: p.revision(),
+            operation: "assembly.joint.create".into(),
+            parameters: json!({ "type": "fixed", "a": { "instance": prev, "connector": "Tip" }, "b": { "instance": next, "connector": "Bottom" } }),
+            actor: Actor { user_id: "u".into(), session_id: "s".into() },
+        };
+        sizes.push(p.commit(envelope).unwrap().op_count);
+        prev = next;
+    }
+    assert!(*sizes.last().unwrap() <= 12, "ops per joint: {sizes:?}");
+    // The chain still stands: each link stands on the one before's tip, 90 along and 10 up.
+    let tip = placed(&p, prev).apply([95.0, 5.0, 10.0]);
+    assert!(close(tip, [95.0 + 39.0 * 90.0, 5.0, 10.0 + 39.0 * 10.0], 1e-6), "{tip:?}");
+}
+
+#[test]
+fn a_joint_linked_to_the_swept_one_follows_it_through_the_sweep() {
+    // Two gears' arms: the idler's angle is a formula of the driver's; sweeping
+    // the driver turns the idler the other way at every step.
+    let mut p = project();
+    let link = component(&mut p, "Link", LINK);
+    let a = place(&mut p, link, None, "Driver", [0.0; 3], [0.0; 3]);
+    let b = place(&mut p, link, None, "Idler", [0.0, 50.0, 0.0], [0.0; 3]);
+    let drive = id(&run(&mut p, "assembly.joint.create", json!({ "type": "hinge", "name": "Drive", "a": "ground", "b": { "instance": a, "connector": "Bottom" }, "value": 0, "limits": [0, 40] })).unwrap());
+    run(&mut p, "assembly.joint.create", json!({ "type": "hinge", "name": "Follow", "a": { "at": [0, 50, 0] }, "b": { "instance": b, "connector": "Bottom" }, "value": "=-Drive.angle", "limits": [-40, 0] })).unwrap();
+    let s = de_assembly::motion::sweep(p.world(), drive, None, None, None, 4, &Default::default(), false).unwrap();
+    let idx = s.instances.iter().position(|i| i.id == b).unwrap();
+    for f in &s.frames {
+        // The idler's quaternion turns by −value about Z.
+        let q = f.poses[idx].1;
+        let angle = 2.0 * q[2].atan2(q[3]).to_degrees();
+        assert!((angle + f.value).abs() < 1e-6, "at {} the idler is at {angle}", f.value);
+    }
+    assert!(s.instances[idx].moves);
+}
