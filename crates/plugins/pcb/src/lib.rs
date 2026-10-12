@@ -40,6 +40,7 @@ pub mod geom;
 pub mod gerber;
 pub mod idf;
 pub mod kicad;
+pub mod kicad_lib;
 pub mod model3d;
 pub mod outputs;
 pub mod reader;
@@ -53,6 +54,7 @@ pub mod schematic_view;
 pub mod sexpr;
 pub mod sourcing;
 pub mod symbols;
+pub mod verify;
 
 pub use board::BoardView;
 pub use footprints::Footprint;
@@ -431,7 +433,7 @@ fn entity(world: &World, id: StableId) -> Option<Entity> {
     world.resource::<IdIndex>().get(id)
 }
 
-fn board_of(tx: &Tx, id: StableId) -> Result<Board, CommandError> {
+pub(crate) fn board_of(tx: &Tx, id: StableId) -> Result<Board, CommandError> {
     tx.get::<Board>(id).cloned().ok_or_else(|| CommandError::new(ErrorCode::UnresolvedReference, format!("{id} is not a board")))
 }
 
@@ -550,7 +552,7 @@ fn check_board(b: &Board) -> Result<(), CommandError> {
     Ok(())
 }
 
-fn check_footprint(name: &str, f: &Footprint) -> Result<(), CommandError> {
+pub(crate) fn check_footprint(name: &str, f: &Footprint) -> Result<(), CommandError> {
     if f.pads.is_empty() {
         return Err(bad(format!("footprint {name} has no pads")));
     }

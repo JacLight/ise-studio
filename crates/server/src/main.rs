@@ -11,6 +11,7 @@ mod ai;
 mod history;
 mod machines;
 mod pcb;
+mod pcb_library;
 mod pcb_schematic;
 mod peers;
 mod share;
@@ -2348,6 +2349,12 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/schematics", get(pcb_schematic::list))
         .route("/pcb/schematic/{id}", get(pcb_schematic::show))
         .route("/pcb/schematic/{id}/schematic.pdf", get(pcb_schematic::pdf))
+        .route("/pcb/kicad", get(pcb_library::status))
+        .route("/pcb/kicad/fetch", axum::routing::post(pcb_library::fetch))
+        .route("/pcb/kicad/search", get(pcb_library::search))
+        .route("/pcb/kicad/footprint/{id}", get(pcb_library::footprint))
+        .route("/pcb/kicad/symbol/{id}", get(pcb_library::symbol))
+        .route("/pcb/verify-footprints", get(pcb_library::verify))
         .route("/pcb/boards", get(pcb::boards))
         .route("/pcb/buy", get(pcb::buy))
         .route("/pcb/settings", get(pcb::settings_get).post(pcb::settings_post))

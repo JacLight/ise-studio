@@ -60,6 +60,7 @@ pub async fn preview(Path(name): Path<String>) -> axum::response::Response {
         value_at: None,
         exclude_from_board: false,
         component: None,
+        definition: None,
     };
     let v = de_pcb::schematic_view::symbol_preview(&s);
     axum::Json(json!({ "draw": v.draw, "bbox": v.bbox, "pins": v.pins })).into_response()

@@ -198,6 +198,86 @@ if (command === "run") {
     for (const n of r.notes) console.log(`  ! ${n}`);
     failed = !r.ok;
   }
+} else if (command === "pcb") {
+  // Electronics: KiCad library parts, footprint verification, the Gerber read-back check.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const q = (extra = {}) => new URLSearchParams({ ...(project ? { project } : {}), ...extra });
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const get = async (path) => {
+    const res = await fetch(`${http}${path}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  };
+  const sub = file;
+  try {
+    if (sub === "parts") {
+      const kind = args.includes("--footprints") ? "footprints" : "symbols";
+      const words = args.slice(2).filter((a) => a !== "--footprints").join(" ");
+      if (!words) throw new Error("say what to look for: forma pcb parts <words> [--footprints]");
+      const r = await get(`/pcb/kicad/search?${q({ q: words, kind, limit: "30" })}`);
+      if (!r.results.length) console.log(`nothing in the KiCad ${kind} matches “${words}”`);
+      for (const e of r.results) console.log(`${e.id}  (${e.count} ${kind === "symbols" ? "pins" : "pads"})${e.footprint ? `  → ${e.footprint}` : e.filters ? `  footprints: ${e.filters}` : ""}\n    ${e.description || e.keywords}`);
+      console.log(`(${r.licence})`);
+    } else if (sub === "add") {
+      // Place a KiCad library symbol, its footprint defined on the board in the same step.
+      const fpFlag = flag("--footprint");
+      const at = (flag("--at") ?? "50,50").split(",").map(Number);
+      const reference = flag("--ref");
+      const value = flag("--value");
+      const [, , schematic, symbolId] = args;
+      if (!schematic || !symbolId) throw new Error("usage: forma pcb add <schematic id> <Library:Symbol> [--footprint Library:Footprint] [--at x,y] [--ref U3] [--value …]");
+      const s = await get(`/pcb/kicad/symbol/${encodeURIComponent(symbolId)}`);
+      let footprint = s.footprint;
+      if (fpFlag) footprint = (await get(`/pcb/kicad/footprint/${encodeURIComponent(fpFlag)}`)).footprint;
+      if (!footprint) console.log(`! ${symbolId} names no footprint${s.definition.footprint ? ` it can read (${s.footprint_error ?? s.definition.footprint})` : ""}: give --footprint Library:Name (search with forma pcb parts <words> --footprints)`);
+      const missing = fpFlag ? s.definition.pins.filter((p) => !footprint.pads.some((x) => x.number === p.number)).map((p) => p.number) : s.unmapped_pins;
+      if (missing?.length) console.log(`! pins ${missing.join(", ")} have no pad of that number on ${footprint.name}: give pin_map in pcb.schematic.place`);
+      const params = { schematic, symbol: s.definition.name, definition: s.definition, at, ...(footprint ? { footprint_definition: footprint, footprint: footprint.name } : {}), ...(reference ? { reference } : {}), ...(value ? { value } : {}) };
+      const r = await engine.commit("pcb.schematic.place", params);
+      if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
+      console.log(`✓ placed ${r.value.output.reference} = ${symbolId}${footprint ? ` on ${footprint.name}` : ""} (rev ${r.value.revision})${s.definition.lcsc ? `; LCSC ${s.definition.lcsc}` : ""}`);
+      for (const n of s.footprint_notes ?? []) console.log(`  note: ${n}`);
+    } else if (sub === "footprint") {
+      // Define a KiCad library footprint on a board (for pcb.component.create).
+      const [, , board, fpId] = args;
+      if (!board || !fpId) throw new Error("usage: forma pcb footprint <board id> <Library:Name>");
+      const f = await get(`/pcb/kicad/footprint/${encodeURIComponent(fpId)}`);
+      const r = await engine.commit("pcb.footprint.define", { board, footprint: f.footprint });
+      if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
+      console.log(`✓ ${fpId} defined on the board: ${f.footprint.pads.length} pads (use it as footprint "${fpId}")`);
+      for (const n of f.notes) console.log(`  note: ${n}`);
+    } else if (sub === "verify-footprints") {
+      const names = args.slice(2).join(",");
+      const r = await get(`/pcb/verify-footprints?${q(names ? { names } : {})}`);
+      console.log(`${r.errors ? "✗" : "✓"} ${r.checked} footprints against KiCad's library: ${r.errors} errors, ${r.warnings} warnings`);
+      for (const f of r.footprints) {
+        const shown = f.findings.filter((x) => x.severity !== "note" || names);
+        if (!shown.length) {
+          if (names) console.log(`  ✓ ${f.footprint} = ${f.kicad}`);
+          continue;
+        }
+        console.log(`  ${f.errors ? "✗" : "~"} ${f.footprint} vs ${f.kicad} (${f.pads}/${f.kicad_pads} pads, worst centre ${f.worst_position} mm)`);
+        for (const x of shown) console.log(`      ${x.severity.padEnd(7)} ${x.pad ? `${x.pad}: ` : ""}${x.message}`);
+      }
+      for (const m of r.missing) console.log(`  ? ${m}`);
+      failed = r.errors > 0;
+    } else if (sub === "library") {
+      if (args[2] === "update") {
+        const res = await fetch(`${http}/pcb/kicad/fetch?repo=all`, { method: "POST" });
+        if (!res.ok) throw new Error(await res.text());
+      }
+      const s = await get("/pcb/kicad");
+      console.log(`KiCad libraries in ${s.root}\n  footprints: ${s.footprints ?? "not downloaded yet"}\n  symbols:    ${s.symbols ?? "not downloaded yet"}\n  ${s.licence}`);
+    } else {
+      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | library [update]");
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
 } else if (command === "stock") {
   // The stock library: families, or the sizes matching a search ("M3×12", "608", "servo").
   const query = args.slice(1).join(" ");
