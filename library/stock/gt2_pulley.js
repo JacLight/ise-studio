@@ -4,15 +4,19 @@
 // Sources: Gates PowerGrip GT2 manual (pitch, pitch line differential, see
 // gt2.js); common 3D-printer pulley dimensions as sold by Gates-licensed and
 // generic makers (20T: flange and hub Ø16, toothed width 7, overall 16 mm;
-// 16T: Ø13); set screws ISO 4029 M3×3.
+// 16T: Ø13; 30T: hub Ø16, flanges Ø22; 36T: Ø16 / Ø26; 40T: Ø18 / Ø28;
+// 60T: Ø22 / Ø42 — the larger ones with an inner flange 1 mm wide on the
+// hub side as well); set screws ISO 4029 M3×3.
 //
-// Axis along +Z, hub face on z = 0, hub 0…8 (with the inner flange), teeth
-// 8…15, outer flange 15…16.
+// Axis along +Z, hub face on z = 0, hub 0…8 (its last 1 mm the inner
+// flange where the flanges are wider than the hub), teeth 8…15, outer
+// flange 15…16.
 
-const PULLEY = { 20: [16, 1.6], 16: [13, 1.5] }; // hub/flange Ø, USD
+//            hub Ø  flange Ø  USD
+const PULLEY = { 16: [13, 13, 1.5], 20: [16, 16, 1.6], 30: [16, 22, 2.4], 36: [16, 26, 2.8], 40: [18, 28, 3.0], 60: [22, 42, 4.5] };
 const teeth = p.teeth;
 const bore = p.bore;
-const [Dh, price] = lookup(PULLEY, teeth, "GT2 pulley");
+const [Dh, Df, price] = lookup(PULLEY, teeth, "GT2 pulley");
 const hubL = 8;
 const toothW = 7;
 const flange = 1;
@@ -20,9 +24,9 @@ const H = hubL + toothW + flange;
 const OD = gt2Outside(teeth);
 const PD = gt2Pitch(teeth);
 
-const hub = cylinder(hubL, Dh / 2);
+const hub = Df > Dh ? cylinder(hubL - flange, Dh / 2).add(cylinder(flange + 0.01, Df / 2).translate(0, 0, hubL - flange)) : cylinder(hubL, Dh / 2);
 const toothed = gt2Profile(teeth).extrude(toothW).translate(0, 0, hubL);
-const top = cylinder(flange, Dh / 2).translate(0, 0, hubL + toothW);
+const top = cylinder(flange, Df / 2).translate(0, 0, hubL + toothW);
 // Set-screw holes: M3 tapped radially at mid-hub, along +X and +Y.
 const zs = hubL / 2 - 0.5;
 const tap = internalThreadTool({ d: 3, pitch: 0.5, z0: bore / 2 - 0.5, z1: Dh / 2 + 0.5 });
@@ -35,7 +39,8 @@ const screw = setScrew(3, 3).translate(0, 0, bore / 2);
 // less its grooves (0.744 mm² each), and two steel M3×3 set screws (0.15 g).
 const groove = 0.744;
 const ring = (D) => (Math.PI / 4) * (D * D - bore * bore);
-const massG = 2.7e-3 * (ring(Dh) * (hubL + flange) + (ring(OD) - teeth * groove) * toothW) + 2 * 0.15;
+const flanges = Df > Dh ? 2 : 1;
+const massG = 2.7e-3 * (ring(Dh) * (hubL + 1 - flanges * flange) + ring(Df) * flanges * flange + (ring(OD) - teeth * groove) * toothW) + 2 * 0.15;
 const size = `${teeth}T bore ${num(bore)}`;
 stock({
   partNumber: `GT2-${teeth}T-B${num(bore)}-W6`,

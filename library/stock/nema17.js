@@ -1,11 +1,12 @@
-// NEMA 17 hybrid stepper motor, 1.8° (200 steps/rev), body 34 / 40 / 48 mm.
+// NEMA 17 hybrid stepper motor, 1.8° (200 steps/rev), body 34 / 40 / 48 mm,
+// and the 23 mm "pancake" used on direct-drive extruders.
 //
 // Source: NEMA ICS 16 size 17 frame — 42.3 mm square flange, Ø22 mm × 2 mm
 // pilot, M3 mounting holes on a 31.0 mm square pattern (about 4.5 mm deep),
 // Ø5 mm shaft 24 mm from the mounting face with a 0.5 mm D-flat (4.5 mm
 // across) over the outer 15 mm; generic 17HS-series datasheets (e.g.
 // 17HS4401: 42×42×40 mm, 0.28 kg; 34 mm bodies ≈ 0.23 kg; 48 mm bodies
-// ≈ 0.35 kg), 6-pin JST-PH socket on the rear cap's side.
+// ≈ 0.35 kg; 23 mm pancakes, e.g. 17HS10-0704S, ≈ 0.14 kg), 6-pin JST-PH socket on the rear cap's side.
 //
 // Shaft along +Z, the mounting face (front cap face) on z = 0, body behind
 // it down −Z. Front and rear caps are aluminium; between them the stator
@@ -51,14 +52,14 @@ const shaft = cylinder(shaftLen + 6, 2.5).translate(0, 0, -6).subtract(flat);
 const socket = box(16, 5.5, 6.5).translate(-8, -SQ / 2 - 5.5 + 0.01, -L + 1)
   .subtract(box(14.6, 4.5, 5.2).translate(-7.3, -SQ / 2 - 5.5 - 0.01, -L + 1.65));
 
-const model = { 34: "17HS3401", 40: "17HS4401", 48: "17HS8401" }[L];
-const typical = { 34: [230, 10.5], 40: [280, 11.5], 48: [350, 13.5] }[L];
-if (!typical) throw new Error(`no NEMA 17 body length ${L} in the table (34, 40, 48)`);
+const model = { 23: "17HS10-0704S", 34: "17HS3401", 40: "17HS4401", 48: "17HS8401" }[L];
+const typical = { 23: [140, 10.9], 34: [230, 10.5], 40: [280, 11.5], 48: [350, 13.5] }[L];
+if (!typical) throw new Error(`no NEMA 17 body length ${L} in the table (23, 34, 40, 48)`);
 const [massG, price] = typical;
 stock({
   standard: "NEMA 17",
   partNumber: `NEMA17-42x${num(L)}-1.8`,
-  description: `NEMA 17 stepper motor 42×42×${num(L)} mm, 1.8°, Ø5 mm D-shaft, 6-pin JST-PH (typ. ${model})`,
+  description: `NEMA 17 ${L === 23 ? "pancake " : ""}stepper motor 42×42×${num(L)} mm, 1.8°, Ø5 mm D-shaft, 6-pin JST-PH (typ. ${model})`,
   mpn: L === 40 ? "17HS4401" : undefined,
   unitPrice: price,
   currency: "USD",

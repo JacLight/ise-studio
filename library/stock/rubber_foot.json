@@ -1,0 +1,164 @@
+{
+ "id": "rubber_foot",
+ "name": "Screw-on rubber foot",
+ "category": "Seals & feet",
+ "summary": "Black rubber equipment foot with a moulded-in steel washer, screwed on from the floor side. Mounting face on z = 0, foot down −Z.",
+ "keywords": [
+  "rubber feet",
+  "rubber foot",
+  "equipment foot",
+  "screw-on foot",
+  "bumper",
+  "foot",
+  "anti-slip",
+  "anti-vibration"
+ ],
+ "source": [
+  "common.js",
+  "rubber_foot.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "NBR rubber": 1250,
+  "Steel, zinc plated": 7850
+ },
+ "params": [
+  {
+   "key": "D",
+   "label": "Diameter",
+   "value": 20,
+   "unit": "mm",
+   "min": 8,
+   "max": 60
+  },
+  {
+   "key": "H",
+   "label": "Height",
+   "value": 10,
+   "unit": "mm",
+   "min": 4,
+   "max": 30
+  },
+  {
+   "key": "d",
+   "label": "Screw",
+   "value": 4,
+   "unit": "mm",
+   "min": 3,
+   "max": 6,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "D",
+  "H",
+  "d"
+ ],
+ "rows": [
+  {
+   "name": "Ø12×6 M3",
+   "values": {
+    "D": 12,
+    "H": 6,
+    "d": 3
+   }
+  },
+  {
+   "name": "Ø15×8 M3",
+   "values": {
+    "D": 15,
+    "H": 8,
+    "d": 3
+   }
+  },
+  {
+   "name": "Ø20×10 M3",
+   "values": {
+    "D": 20,
+    "H": 10,
+    "d": 3
+   }
+  },
+  {
+   "name": "Ø20×10 M4",
+   "values": {
+    "D": 20,
+    "H": 10,
+    "d": 4
+   }
+  },
+  {
+   "name": "Ø25×12 M4",
+   "values": {
+    "D": 25,
+    "H": 12,
+    "d": 4
+   }
+  },
+  {
+   "name": "Ø30×15 M4",
+   "values": {
+    "D": 30,
+    "H": 15,
+    "d": 4
+   }
+  },
+  {
+   "name": "Ø30×15 M5",
+   "values": {
+    "D": 30,
+    "H": 15,
+    "d": 5
+   }
+  },
+  {
+   "name": "Ø40×20 M5",
+   "values": {
+    "D": 40,
+    "H": 20,
+    "d": 5
+   }
+  },
+  {
+   "name": "Ø40×20 M6",
+   "values": {
+    "D": 40,
+    "H": 20,
+    "d": 6
+   }
+  }
+ ],
+ "default": "Ø20×10 M4",
+ "checks": {
+  "Ø20×10 M4": {
+   "size": [
+    20,
+    20,
+    10
+   ],
+   "connectors": [
+    "Mount face",
+    "Floor contact",
+    "Screw seat",
+    "Axis"
+   ],
+   "connector_at": {
+    "Screw seat": [
+     0,
+     0,
+     -4.8
+    ],
+    "Floor contact": [
+     0,
+     0,
+     -10
+    ]
+   },
+   "metrics": {
+    "Screw": 4,
+    "Screw seat depth": 4.8
+   },
+   "partNumber": "Rubber foot Ø20×10 M4 NBR"
+  }
+ }
+}

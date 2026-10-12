@@ -1,0 +1,353 @@
+{
+ "id": "bearing_flanged",
+ "name": "Flanged ball bearing",
+ "standard": "ISO 15 (flanged)",
+ "category": "Bearings & motion",
+ "summary": "Flanged deep groove ball bearing (F…, MF…), sealed (-2RS) or shielded (ZZ): rings with true raceways and the flange on the outer ring, balls, cage, seals or shields. Axis +Z, flanged face A on z = 0, flange seat on z = Bf",
+ "keywords": [
+  "flanged bearing",
+  "flange bearing",
+  "F623",
+  "F624",
+  "F625",
+  "F608",
+  "F688",
+  "F695",
+  "MF105",
+  "MF85",
+  "MF128",
+  "F623ZZ",
+  "F625ZZ",
+  "F688ZZ",
+  "idler bearing",
+  "2RS",
+  "ZZ",
+  "3D printer"
+ ],
+ "source": [
+  "common.js",
+  "bearing.js",
+  "bearing_flanged.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Bearing steel 52100": 7810,
+  "Nitrile rubber (NBR)": 1300,
+  "Steel (cage)": 7850,
+  "Steel (shield)": 7850
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Bore",
+   "value": 8,
+   "unit": "mm",
+   "min": 1,
+   "max": 100
+  },
+  {
+   "key": "D",
+   "label": "Outside diameter",
+   "value": 22,
+   "unit": "mm",
+   "min": 3,
+   "max": 200
+  },
+  {
+   "key": "B",
+   "label": "Width",
+   "value": 7,
+   "unit": "mm",
+   "min": 1,
+   "max": 50
+  },
+  {
+   "key": "shield",
+   "label": "Metal shields ZZ (1) or rubber seals 2RS (0)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "d",
+  "D",
+  "B",
+  "shield"
+ ],
+ "rows": [
+  {
+   "name": "F623-2RS",
+   "values": {
+    "d": 3,
+    "D": 10,
+    "B": 4,
+    "shield": 0
+   },
+   "description": "3×10×4 mm, flange Ø11.5×1, rubber seals"
+  },
+  {
+   "name": "F623ZZ",
+   "values": {
+    "d": 3,
+    "D": 10,
+    "B": 4,
+    "shield": 1
+   },
+   "description": "3×10×4 mm, flange Ø11.5×1, metal shields"
+  },
+  {
+   "name": "F624-2RS",
+   "values": {
+    "d": 4,
+    "D": 13,
+    "B": 5,
+    "shield": 0
+   },
+   "description": "4×13×5 mm, flange Ø15×1, rubber seals"
+  },
+  {
+   "name": "F624ZZ",
+   "values": {
+    "d": 4,
+    "D": 13,
+    "B": 5,
+    "shield": 1
+   },
+   "description": "4×13×5 mm, flange Ø15×1, metal shields"
+  },
+  {
+   "name": "F625-2RS",
+   "values": {
+    "d": 5,
+    "D": 16,
+    "B": 5,
+    "shield": 0
+   },
+   "description": "5×16×5 mm, flange Ø18×1, rubber seals"
+  },
+  {
+   "name": "F625ZZ",
+   "values": {
+    "d": 5,
+    "D": 16,
+    "B": 5,
+    "shield": 1
+   },
+   "description": "5×16×5 mm, flange Ø18×1, metal shields"
+  },
+  {
+   "name": "F626-2RS",
+   "values": {
+    "d": 6,
+    "D": 19,
+    "B": 6,
+    "shield": 0
+   },
+   "description": "6×19×6 mm, flange Ø22×1.5, rubber seals"
+  },
+  {
+   "name": "F626ZZ",
+   "values": {
+    "d": 6,
+    "D": 19,
+    "B": 6,
+    "shield": 1
+   },
+   "description": "6×19×6 mm, flange Ø22×1.5, metal shields"
+  },
+  {
+   "name": "F608-2RS",
+   "values": {
+    "d": 8,
+    "D": 22,
+    "B": 7,
+    "shield": 0
+   },
+   "description": "8×22×7 mm, flange Ø25×1.5, rubber seals"
+  },
+  {
+   "name": "F608ZZ",
+   "values": {
+    "d": 8,
+    "D": 22,
+    "B": 7,
+    "shield": 1
+   },
+   "description": "8×22×7 mm, flange Ø25×1.5, metal shields"
+  },
+  {
+   "name": "F688-2RS",
+   "values": {
+    "d": 8,
+    "D": 16,
+    "B": 5,
+    "shield": 0
+   },
+   "description": "8×16×5 mm, flange Ø18×1.1, rubber seals"
+  },
+  {
+   "name": "F688ZZ",
+   "values": {
+    "d": 8,
+    "D": 16,
+    "B": 5,
+    "shield": 1
+   },
+   "description": "8×16×5 mm, flange Ø18×1.1, metal shields"
+  },
+  {
+   "name": "F695-2RS",
+   "values": {
+    "d": 5,
+    "D": 13,
+    "B": 4,
+    "shield": 0
+   },
+   "description": "5×13×4 mm, flange Ø15×1, rubber seals"
+  },
+  {
+   "name": "F695ZZ",
+   "values": {
+    "d": 5,
+    "D": 13,
+    "B": 4,
+    "shield": 1
+   },
+   "description": "5×13×4 mm, flange Ø15×1, metal shields"
+  },
+  {
+   "name": "MF63-2RS",
+   "values": {
+    "d": 3,
+    "D": 6,
+    "B": 2.5,
+    "shield": 0
+   },
+   "description": "3×6×2.5 mm, flange Ø7.2×0.6, rubber seals"
+  },
+  {
+   "name": "MF63ZZ",
+   "values": {
+    "d": 3,
+    "D": 6,
+    "B": 2.5,
+    "shield": 1
+   },
+   "description": "3×6×2.5 mm, flange Ø7.2×0.6, metal shields"
+  },
+  {
+   "name": "MF85-2RS",
+   "values": {
+    "d": 5,
+    "D": 8,
+    "B": 2.5,
+    "shield": 0
+   },
+   "description": "5×8×2.5 mm, flange Ø9.2×0.6, rubber seals"
+  },
+  {
+   "name": "MF85ZZ",
+   "values": {
+    "d": 5,
+    "D": 8,
+    "B": 2.5,
+    "shield": 1
+   },
+   "description": "5×8×2.5 mm, flange Ø9.2×0.6, metal shields"
+  },
+  {
+   "name": "MF105-2RS",
+   "values": {
+    "d": 5,
+    "D": 10,
+    "B": 4,
+    "shield": 0
+   },
+   "description": "5×10×4 mm, flange Ø11.5×1, rubber seals"
+  },
+  {
+   "name": "MF105ZZ",
+   "values": {
+    "d": 5,
+    "D": 10,
+    "B": 4,
+    "shield": 1
+   },
+   "description": "5×10×4 mm, flange Ø11.5×1, metal shields"
+  },
+  {
+   "name": "MF128-2RS",
+   "values": {
+    "d": 8,
+    "D": 12,
+    "B": 3.5,
+    "shield": 0
+   },
+   "description": "8×12×3.5 mm, flange Ø13.6×0.8, rubber seals"
+  },
+  {
+   "name": "MF128ZZ",
+   "values": {
+    "d": 8,
+    "D": 12,
+    "B": 3.5,
+    "shield": 1
+   },
+   "description": "8×12×3.5 mm, flange Ø13.6×0.8, metal shields"
+  }
+ ],
+ "default": "F623ZZ",
+ "checks": {
+  "F623ZZ": {
+   "size": [
+    11.5,
+    11.5,
+    4
+   ],
+   "connectors": [
+    "Bore",
+    "Outer seat",
+    "Face A",
+    "Face B",
+    "Flange seat"
+   ],
+   "connector_at": {
+    "Flange seat": [
+     0,
+     0,
+     1
+    ],
+    "Face B": [
+     0,
+     0,
+     4
+    ]
+   },
+   "metrics": {
+    "Bore": 3,
+    "Flange diameter": 11.5
+   },
+   "partNumber": "F623ZZ",
+   "massG": 1.7
+  },
+  "F608-2RS": {
+   "size": [
+    25,
+    25,
+    7
+   ],
+   "partNumber": "F608-2RS",
+   "massG": 13
+  },
+  "MF105ZZ": {
+   "size": [
+    11.5,
+    11.5,
+    4
+   ]
+  }
+ }
+}

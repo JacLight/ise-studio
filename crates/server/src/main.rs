@@ -10,6 +10,7 @@
 mod ai;
 mod history;
 mod machines;
+mod meshes;
 mod pcb;
 mod pcb_library;
 mod pcb_schematic;
@@ -481,7 +482,8 @@ struct EntityView<'a> {
     components: BTreeMap<&'static str, Value>,
     status: Option<&'a Status>,
     mass: Option<&'a MassProperties>,
-    mesh: Option<&'a DisplayMesh>,
+    /// The display mesh by content: fetched once from `GET /mesh/<ref>`.
+    mesh: Option<meshes::MeshRef>,
     result: Option<&'a RequirementResult>,
     shape: Option<&'a ShapeStats>,
     /// Parameter values after formulas, and the formulas in readable names.
@@ -500,10 +502,22 @@ struct EntityView<'a> {
     /// An instance showing a configuration of its shape: that configuration's
     /// stats, mesh and mass.
     #[serde(skip_serializing_if = "Option::is_none")]
-    configured: Option<&'a de_shape::configs::Configured>,
+    configured: Option<ConfiguredView<'a>>,
     /// Mass (kg) of each part of an assembly, in the order of `shape.parts`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     part_masses: Vec<Option<f64>>,
+}
+
+/// A configuration as an instance shows it, its mesh named by content.
+#[derive(Serialize)]
+struct ConfiguredView<'a> {
+    config: &'a str,
+    name: &'a str,
+    stats: &'a ShapeStats,
+    mesh: meshes::MeshRef,
+    mass: &'a MassProperties,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    part_masses: &'a [Option<f64>],
 }
 
 fn view(project: &Project, id: StableId) -> Option<EntityView<'_>> {
@@ -512,12 +526,19 @@ fn view(project: &Project, id: StableId) -> Option<EntityView<'_>> {
         components: project.entity_state(id)?,
         status: project.get::<Status>(id),
         mass: project.get::<MassProperties>(id),
-        mesh: project.get::<DisplayMesh>(id),
+        mesh: project.get::<DisplayMesh>(id).map(meshes::reference),
         result: project.get::<RequirementResult>(id),
         shape: project.get::<ShapeSolid>(id).map(|s| &s.stats),
         assembly: project.get::<de_assembly::AssemblyStats>(id),
         placed: project.get::<de_assembly::joints::Placed>(id),
-        configured: project.get::<de_assembly::InstanceConfigured>(id).and_then(|c| c.0.as_deref()),
+        configured: project.get::<de_assembly::InstanceConfigured>(id).and_then(|c| c.0.as_deref()).map(|c| ConfiguredView {
+            config: &c.config,
+            name: &c.name,
+            stats: &c.stats,
+            mesh: meshes::reference(&c.mesh),
+            mass: &c.mass,
+            part_masses: &c.part_masses,
+        }),
         sketch: project.get::<de_shape::sketch::SolvedSketch>(id),
         params: project.get::<de_shape::ResolvedParams>(id),
         formulas: project
@@ -2379,6 +2400,12 @@ async fn main() -> std::io::Result<()> {
     let ai = Arc::new(ai::AiConfig { repo: root.canonicalize().unwrap_or(root.clone()), port, claude, model: std::env::var("FORMA_AI_MODEL").ok() });
     // Imported files, stored by content, shared by every project in the folder.
     de_shape::assets::set_dir(dir.join("assets"));
+    // Slow results (motion sweeps) kept between runs, by what they came from.
+    de_shape::cache::set_dir(dir.join(".cache"));
+    // The stock library's sizes, worked out while nobody waits (the I key's browser reads them).
+    std::thread::spawn(|| {
+        let _ = de_shape::library::summary();
+    });
     let engine = engine_id(&dir)?;
     println!("engine {engine}");
     let machines = machines::MachineQueries::new(&root);
@@ -2424,6 +2451,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
     let ui = ServeDir::new(web).fallback(ServeFile::new(web.join("index.html")));
     Router::new()
         .route("/ws", get(websocket))
+        .route("/mesh/{key}", get(meshes::fetch))
         .route("/export/{file}", get(export))
         .route("/projects", get(projects))
         .route("/projects/{name}/info", axum::routing::post(project_info))
@@ -2506,6 +2534,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         // View-only links: the page and its read-only session, for the link's project only.
         .route("/view/{token}", get(share::page))
         .route("/view/{token}/ws", get(share::socket))
+        .route("/view/{token}/mesh/{key}", get(meshes::fetch_shared))
         // The web app's bundles (static, named by content), for the view-only page.
         .nest_service("/assets", ServeDir::new(web.join("assets")).append_index_html_on_directories(false))
         .layer(axum::middleware::from_fn(cache_policy))

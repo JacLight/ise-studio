@@ -1,0 +1,258 @@
+{
+ "id": "pin_header",
+ "name": "Pin header 2.54 mm",
+ "category": "Electronics",
+ "summary": "2.54 mm (0.1\") straight through-hole pin headers: male strips (1 and 2 rows) and female sockets. On the board (z = 0), pin 1 at the origin, pins along +X, row 2 at y = −2.54.",
+ "keywords": [
+  "pin header",
+  "header",
+  "2.54mm",
+  "0.1 inch",
+  "male header",
+  "female header",
+  "socket strip",
+  "breakaway header",
+  "Arduino header",
+  "Raspberry Pi header",
+  "2x20"
+ ],
+ "source": [
+  "common.js",
+  "elec.js",
+  "pin_header.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Polyamide (black)": 1140,
+  "Brass, tin-plated": 8500,
+  "Phosphor bronze, tin-plated": 8800
+ },
+ "params": [
+  {
+   "key": "kind",
+   "label": "Kind (0 male, 1 female)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  },
+  {
+   "key": "rows",
+   "label": "Rows",
+   "value": 1,
+   "unit": "",
+   "min": 1,
+   "max": 2,
+   "step": 1
+  },
+  {
+   "key": "pins",
+   "label": "Pins per row",
+   "value": 4,
+   "unit": "",
+   "min": 1,
+   "max": 40,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "kind",
+  "rows",
+  "pins"
+ ],
+ "rows": [
+  {
+   "name": "1×2 male",
+   "values": {
+    "kind": 0,
+    "rows": 1,
+    "pins": 2
+   }
+  },
+  {
+   "name": "1×3 male",
+   "values": {
+    "kind": 0,
+    "rows": 1,
+    "pins": 3
+   }
+  },
+  {
+   "name": "1×4 male",
+   "values": {
+    "kind": 0,
+    "rows": 1,
+    "pins": 4
+   }
+  },
+  {
+   "name": "1×5 male",
+   "values": {
+    "kind": 0,
+    "rows": 1,
+    "pins": 5
+   }
+  },
+  {
+   "name": "1×6 male",
+   "values": {
+    "kind": 0,
+    "rows": 1,
+    "pins": 6
+   }
+  },
+  {
+   "name": "1×8 male",
+   "values": {
+    "kind": 0,
+    "rows": 1,
+    "pins": 8
+   }
+  },
+  {
+   "name": "1×10 male",
+   "values": {
+    "kind": 0,
+    "rows": 1,
+    "pins": 10
+   }
+  },
+  {
+   "name": "1×20 male",
+   "values": {
+    "kind": 0,
+    "rows": 1,
+    "pins": 20
+   }
+  },
+  {
+   "name": "1×40 male",
+   "values": {
+    "kind": 0,
+    "rows": 1,
+    "pins": 40
+   }
+  },
+  {
+   "name": "2×3 male",
+   "values": {
+    "kind": 0,
+    "rows": 2,
+    "pins": 3
+   }
+  },
+  {
+   "name": "2×5 male",
+   "values": {
+    "kind": 0,
+    "rows": 2,
+    "pins": 5
+   }
+  },
+  {
+   "name": "2×10 male",
+   "values": {
+    "kind": 0,
+    "rows": 2,
+    "pins": 10
+   }
+  },
+  {
+   "name": "2×20 male",
+   "values": {
+    "kind": 0,
+    "rows": 2,
+    "pins": 20
+   }
+  },
+  {
+   "name": "1×3 female",
+   "values": {
+    "kind": 1,
+    "rows": 1,
+    "pins": 3
+   }
+  },
+  {
+   "name": "1×4 female",
+   "values": {
+    "kind": 1,
+    "rows": 1,
+    "pins": 4
+   }
+  },
+  {
+   "name": "1×6 female",
+   "values": {
+    "kind": 1,
+    "rows": 1,
+    "pins": 6
+   }
+  },
+  {
+   "name": "1×8 female",
+   "values": {
+    "kind": 1,
+    "rows": 1,
+    "pins": 8
+   }
+  },
+  {
+   "name": "1×10 female",
+   "values": {
+    "kind": 1,
+    "rows": 1,
+    "pins": 10
+   }
+  },
+  {
+   "name": "1×20 female",
+   "values": {
+    "kind": 1,
+    "rows": 1,
+    "pins": 20
+   }
+  },
+  {
+   "name": "2×20 female",
+   "values": {
+    "kind": 1,
+    "rows": 2,
+    "pins": 20
+   }
+  }
+ ],
+ "default": "1×4 male",
+ "checks": {
+  "1×4 male": {
+   "size": [
+    10.16,
+    2.54,
+    11.6
+   ],
+   "tolerance": 0.05,
+   "partNumber": "Pin header 2.54 1×4 male",
+   "connectors": [
+    "Board",
+    "Pin 1",
+    "Mating face"
+   ],
+   "connector_at": {
+    "Mating face": [
+     0,
+     0,
+     2.5
+    ]
+   }
+  },
+  "2×20 female": {
+   "size": [
+    50.8,
+    5.08,
+    11.5
+   ],
+   "tolerance": 0.05
+  }
+ }
+}

@@ -1,0 +1,380 @@
+{
+ "id": "linear_rail_mgn",
+ "name": "Miniature linear guide rail",
+ "standard": "HIWIN MGN",
+ "category": "Bearings & motion",
+ "summary": "MGN7/9/12/15 miniature profile rail (HIWIN MGN…R pattern), cut to length with counterbored holes on the standard pitch, equal end distances. Lies along +X from x = 0, base on z = 0; Slide connector runs along it",
+ "keywords": [
+  "MGN",
+  "MGN12",
+  "MGN9",
+  "MGN7",
+  "MGN15",
+  "linear rail",
+  "linear guide",
+  "profile rail",
+  "HIWIN",
+  "guideway",
+  "MGN12R",
+  "3D printer",
+  "Voron"
+ ],
+ "source": [
+  "common.js",
+  "mgn.js",
+  "linear_rail_mgn.js"
+ ],
+ "display_tolerance": 0.02,
+ "material": "Steel S55C, hardened",
+ "materials": {
+  "Steel S55C, hardened": 7850
+ },
+ "params": [
+  {
+   "key": "series",
+   "label": "Rail width (MGN series)",
+   "value": 12,
+   "unit": "mm",
+   "min": 7,
+   "max": 15,
+   "step": 1
+  },
+  {
+   "key": "length",
+   "label": "Length",
+   "value": 300,
+   "unit": "mm",
+   "min": 50,
+   "max": 2000
+  }
+ ],
+ "columns": [
+  "series",
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "MGN7×100",
+   "values": {
+    "series": 7,
+    "length": 100
+   }
+  },
+  {
+   "name": "MGN7×150",
+   "values": {
+    "series": 7,
+    "length": 150
+   }
+  },
+  {
+   "name": "MGN7×200",
+   "values": {
+    "series": 7,
+    "length": 200
+   }
+  },
+  {
+   "name": "MGN7×250",
+   "values": {
+    "series": 7,
+    "length": 250
+   }
+  },
+  {
+   "name": "MGN7×300",
+   "values": {
+    "series": 7,
+    "length": 300
+   }
+  },
+  {
+   "name": "MGN7×400",
+   "values": {
+    "series": 7,
+    "length": 400
+   }
+  },
+  {
+   "name": "MGN9×100",
+   "values": {
+    "series": 9,
+    "length": 100
+   }
+  },
+  {
+   "name": "MGN9×150",
+   "values": {
+    "series": 9,
+    "length": 150
+   }
+  },
+  {
+   "name": "MGN9×200",
+   "values": {
+    "series": 9,
+    "length": 200
+   }
+  },
+  {
+   "name": "MGN9×250",
+   "values": {
+    "series": 9,
+    "length": 250
+   }
+  },
+  {
+   "name": "MGN9×300",
+   "values": {
+    "series": 9,
+    "length": 300
+   }
+  },
+  {
+   "name": "MGN9×350",
+   "values": {
+    "series": 9,
+    "length": 350
+   }
+  },
+  {
+   "name": "MGN9×400",
+   "values": {
+    "series": 9,
+    "length": 400
+   }
+  },
+  {
+   "name": "MGN9×500",
+   "values": {
+    "series": 9,
+    "length": 500
+   }
+  },
+  {
+   "name": "MGN9×600",
+   "values": {
+    "series": 9,
+    "length": 600
+   }
+  },
+  {
+   "name": "MGN12×100",
+   "values": {
+    "series": 12,
+    "length": 100
+   }
+  },
+  {
+   "name": "MGN12×150",
+   "values": {
+    "series": 12,
+    "length": 150
+   }
+  },
+  {
+   "name": "MGN12×200",
+   "values": {
+    "series": 12,
+    "length": 200
+   }
+  },
+  {
+   "name": "MGN12×250",
+   "values": {
+    "series": 12,
+    "length": 250
+   }
+  },
+  {
+   "name": "MGN12×300",
+   "values": {
+    "series": 12,
+    "length": 300
+   }
+  },
+  {
+   "name": "MGN12×350",
+   "values": {
+    "series": 12,
+    "length": 350
+   }
+  },
+  {
+   "name": "MGN12×400",
+   "values": {
+    "series": 12,
+    "length": 400
+   }
+  },
+  {
+   "name": "MGN12×450",
+   "values": {
+    "series": 12,
+    "length": 450
+   }
+  },
+  {
+   "name": "MGN12×500",
+   "values": {
+    "series": 12,
+    "length": 500
+   }
+  },
+  {
+   "name": "MGN12×550",
+   "values": {
+    "series": 12,
+    "length": 550
+   }
+  },
+  {
+   "name": "MGN12×600",
+   "values": {
+    "series": 12,
+    "length": 600
+   }
+  },
+  {
+   "name": "MGN12×700",
+   "values": {
+    "series": 12,
+    "length": 700
+   }
+  },
+  {
+   "name": "MGN12×800",
+   "values": {
+    "series": 12,
+    "length": 800
+   }
+  },
+  {
+   "name": "MGN12×1000",
+   "values": {
+    "series": 12,
+    "length": 1000
+   }
+  },
+  {
+   "name": "MGN15×200",
+   "values": {
+    "series": 15,
+    "length": 200
+   }
+  },
+  {
+   "name": "MGN15×300",
+   "values": {
+    "series": 15,
+    "length": 300
+   }
+  },
+  {
+   "name": "MGN15×400",
+   "values": {
+    "series": 15,
+    "length": 400
+   }
+  },
+  {
+   "name": "MGN15×500",
+   "values": {
+    "series": 15,
+    "length": 500
+   }
+  },
+  {
+   "name": "MGN15×600",
+   "values": {
+    "series": 15,
+    "length": 600
+   }
+  },
+  {
+   "name": "MGN15×800",
+   "values": {
+    "series": 15,
+    "length": 800
+   }
+  },
+  {
+   "name": "MGN15×1000",
+   "values": {
+    "series": 15,
+    "length": 1000
+   }
+  }
+ ],
+ "default": "MGN12×300",
+ "checks": {
+  "MGN12×300": {
+   "size": [
+    300,
+    12,
+    8
+   ],
+   "connectors": [
+    "Slide",
+    "Base",
+    "Top",
+    "End A",
+    "End B",
+    "Hole 1",
+    "Hole 12"
+   ],
+   "connector_at": {
+    "End B": [
+     300,
+     0,
+     4
+    ],
+    "Hole 1": [
+     12.5,
+     0,
+     3.5
+    ],
+    "Hole 12": [
+     287.5,
+     0,
+     3.5
+    ]
+   },
+   "metrics": {
+    "Holes": 12,
+    "End distance": 12.5,
+    "Hole pitch": 25
+   },
+   "partNumber": "MGN12R-300",
+   "massG": 195
+  },
+  "MGN7×100": {
+   "size": [
+    100,
+    7,
+    4.8
+   ],
+   "metrics": {
+    "Holes": 7,
+    "End distance": 5
+   }
+  },
+  "MGN15×1000": {
+   "size": [
+    1000,
+    15,
+    10
+   ],
+   "metrics": {
+    "Holes": 25,
+    "End distance": 20
+   }
+  },
+  "MGN9×250": {
+   "metrics": {
+    "Holes": 13,
+    "End distance": 5
+   }
+  }
+ }
+}

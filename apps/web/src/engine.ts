@@ -86,7 +86,25 @@ export type PartStats = {
   index_count: number;
 };
 
-export type MeshData = { positions: number[]; normals?: number[]; indices: number[] };
+/** A triangle mesh in metres. Meshes from the engine arrive as typed arrays, shared by every entity showing the same content. */
+export type MeshData = { positions: number[] | Float32Array; normals?: number[] | Float32Array; indices: number[] | Uint32Array; ref?: string };
+/** How an entity view names its mesh on the wire, until it is fetched. */
+type MeshRef = { ref: string; triangles: number };
+const isRef = (m: unknown): m is MeshRef => !!m && typeof (m as MeshRef).ref === "string" && !("positions" in (m as object));
+
+/** Reads one mesh from its binary form (see crates/server/src/meshes.rs). */
+function decodeMesh(ref: string, buf: ArrayBuffer): MeshData {
+  const head = new Uint32Array(buf, 0, 4);
+  if (head[0] !== 0x31304d46) throw new Error(`mesh ${ref}: not a Forma mesh`);
+  const [np, nn, ni] = [head[1], head[2], head[3]];
+  let at = 16;
+  const positions = new Float32Array(buf, at, np);
+  at += np * 4;
+  const normals = new Float32Array(buf, at, nn);
+  at += nn * 4;
+  const indices = new Uint32Array(buf, at, ni);
+  return { positions, normals: nn ? normals : undefined, indices, ref };
+}
 
 export type EntityView = {
   id: string;
@@ -284,6 +302,10 @@ export class Engine {
   private pending = new Map<number, Pending>();
   private nextRequest = 1;
   private retryDelay = 500;
+  /** Meshes held, by content: fetched once, shared by every entity that shows one. */
+  private meshes = new Map<string, MeshData>();
+  /** Messages are taken in order; one naming meshes not held yet waits for them. */
+  private inbox: Promise<void> = Promise.resolve();
   state: EngineState = {
     connection: "connecting",
     revision: 0,
@@ -306,7 +328,22 @@ export class Engine {
     socket.onopen = () => {
       this.retryDelay = 500;
     };
-    socket.onmessage = (event) => this.receive(JSON.parse(event.data));
+    socket.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      const missing = this.missingMeshes(message);
+      // The common case (nothing to fetch) is handled at once, in order.
+      if (!missing.length && this.idle) return this.receive(message);
+      this.idle = false;
+      const done = (this.inbox = this.inbox
+        .then(() => this.fetchMeshes(missing))
+        .then(
+          () => this.receive(message),
+          () => this.send({ type: "snapshot" }),
+        )
+        .finally(() => {
+          if (this.inbox === done) this.idle = true;
+        }));
+    };
     socket.onclose = () => {
       for (const [, p] of this.pending) p.reject({ code: "DISCONNECTED", message: "Lost connection to the engine" });
       this.pending.clear();
@@ -314,6 +351,60 @@ export class Engine {
       setTimeout(() => this.connect(), this.retryDelay);
       this.retryDelay = Math.min(this.retryDelay * 2, 8000);
     };
+  }
+
+  private idle = true;
+
+  /** Where meshes are fetched: this engine, or a view-only link's own path. */
+  private meshUrl(ref: string) {
+    const link = this.wsPath?.match(/^\/view\/([^/]+)\/ws/);
+    return link ? `/view/${link[1]}/mesh/${ref}` : `/mesh/${ref}`;
+  }
+
+  /** Mesh refs a message names that are not held yet. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private missingMeshes(message: any): string[] {
+    const list = message.type === "snapshot" || message.type === "changed" || message.type === "refreshed" ? (message.entities as EntityView[]) : null;
+    if (!list) return [];
+    const out = new Set<string>();
+    for (const e of list) {
+      for (const m of [e.mesh, e.configured?.mesh]) if (isRef(m) && !this.meshes.has(m.ref)) out.add(m.ref);
+    }
+    return [...out];
+  }
+
+  /** Fetches meshes (several at a time); each is kept by its ref. */
+  private async fetchMeshes(refs: string[]) {
+    let next = 0;
+    const worker = async () => {
+      while (next < refs.length) {
+        const ref = refs[next++];
+        if (this.meshes.has(ref)) continue;
+        const r = await fetch(this.meshUrl(ref));
+        if (!r.ok) throw new Error(`mesh ${ref}: ${r.status}`);
+        this.meshes.set(ref, decodeMesh(ref, await r.arrayBuffer()));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(8, refs.length) }, worker));
+  }
+
+  /** Swaps mesh refs for the meshes held (one object per content, so equal meshes are the same object). */
+  private resolveMeshes(list: EntityView[]) {
+    for (const e of list) {
+      if (isRef(e.mesh)) e.mesh = this.meshes.get(e.mesh.ref) ?? null;
+      if (e.configured && isRef(e.configured.mesh)) e.configured = { ...e.configured, mesh: this.meshes.get(e.configured.mesh.ref)! };
+    }
+  }
+
+  /** Lets go of meshes no entity shows any more. */
+  private pruneMeshes() {
+    if (this.meshes.size < 64) return;
+    const used = new Set<string>();
+    for (const e of this.state.entities.values()) {
+      if (e.mesh?.ref) used.add(e.mesh.ref);
+      if (e.configured?.mesh.ref) used.add(e.configured.mesh.ref);
+    }
+    for (const k of this.meshes.keys()) if (!used.has(k)) this.meshes.delete(k);
   }
 
   subscribe = (listener: () => void) => {
@@ -471,6 +562,7 @@ export class Engine {
   private receive(message: any) {
     switch (message.type) {
       case "snapshot": {
+        this.resolveMeshes(message.entities);
         const entities = new Map<string, EntityView>();
         for (const e of message.entities as EntityView[]) entities.set(e.id, e);
         this.update({
@@ -482,6 +574,7 @@ export class Engine {
           ai: { ...this.state.ai, ...(message.ai ?? {}), streaming: "", thinking: false },
           readOnly: (message.read_only as ReadOnlyInfo | undefined) ?? null,
         });
+        this.pruneMeshes();
         break;
       }
       case "view": {
@@ -513,6 +606,7 @@ export class Engine {
         break;
       }
       case "changed": {
+        this.resolveMeshes(message.entities);
         const entities = new Map(this.state.entities);
         for (const e of message.entities as EntityView[]) entities.set(e.id, e);
         for (const id of message.removed as string[]) entities.delete(id);
@@ -536,6 +630,7 @@ export class Engine {
         break;
       case "refreshed": {
         // Recomputed in place (an imported file arrived): no new revision.
+        this.resolveMeshes(message.entities);
         const entities = new Map(this.state.entities);
         for (const e of message.entities as EntityView[]) entities.set(e.id, e);
         this.update({ entities });
