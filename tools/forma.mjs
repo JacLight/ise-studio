@@ -10,6 +10,7 @@
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
+//   node tools/forma.mjs pcb route|drag|cleanup|optimize …   the interactive router: pad to pad (walkaround/shove), drag a track or via, tidy copper
 //   node tools/forma.mjs simulate <schematic> [--tran 30ms] [--expect "min(V(3V3), burst) > 3.0"] [--save name]   ngspice on a schematic
 //   node tools/forma.mjs list                 every entity, one line each
 //   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
@@ -301,8 +302,40 @@ if (command === "run") {
       }
       const s = await get("/pcb/kicad");
       console.log(`KiCad libraries in ${s.root}\n  footprints: ${s.footprints ?? "not downloaded yet"}\n  symbols:    ${s.symbols ?? "not downloaded yet"}\n  ${s.licence}`);
+    } else if (sub === "route" || sub === "drag" || sub === "cleanup" || sub === "optimize") {
+      // The interactive router from the shell: lay a route pad to pad, drag a track or via, tidy copper.
+      const point = (v) => (/^-?[\d.]+,-?[\d.]+$/.test(v) ? v.split(",").map(Number) : v);
+      const mode = flag("--mode");
+      const layer = flag("--layer");
+      const index = flag("--index");
+      const kind = flag("--kind");
+      const [, , board, a, b] = args;
+      let op;
+      let params;
+      if (sub === "route") {
+        if (!board || !a || !b) throw new Error("usage: forma pcb route <board> <from: U1.3 | x,y> <to: R4.1 | x,y> [--mode walkaround|shove|highlight] [--layer top]");
+        op = "pcb.route.interactive";
+        params = { board, from: point(a), to: point(b), ...(mode ? { mode } : {}), ...(layer ? { layer } : {}) };
+      } else if (sub === "drag") {
+        if (!board || !a || !b) throw new Error("usage: forma pcb drag <board> <track or via id> <x,y> [--index n] [--kind segment|corner|arc|via] [--mode shove|highlight]");
+        op = "pcb.route.drag";
+        params = { board, target: a, to: point(b), ...(index ? { index: Number(index) } : {}), ...(kind ? { kind } : {}), ...(mode ? { mode } : {}) };
+      } else {
+        if (!board) throw new Error(`usage: forma pcb ${sub} <board>`);
+        op = sub === "cleanup" ? "pcb.route.cleanup" : "pcb.route.optimize";
+        params = { board };
+      }
+      const r = await engine.commit(op, params);
+      if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
+      const o = r.value.output;
+      if (sub === "route" || sub === "drag") {
+        console.log(`${o.ok ? "✓" : "✗"} ${sub === "route" ? `${o.net ?? "no net"}: ${o.tracks.length} track(s), ${o.vias.length} via(s)` : "dragged"} in ${o.mode}${o.reached === false ? ", stopped short" : ""}; pushed ${o.pushed_tracks} track(s), ${o.pushed_vias} via(s) (rev ${r.value.revision})`);
+        for (const c of o.collisions) console.log(`  ✗ ${c.layer ?? ""} too close to ${c.with}: ${c.gap} mm (needs ${c.need}) at ${c.at.map((x) => x.toFixed(2)).join(", ")}`);
+        for (const n of o.notes) console.log(`  · ${n}`);
+        failed = !o.ok;
+      } else console.log(`✓ ${JSON.stringify(o)} (rev ${r.value.revision})`);
     } else {
-      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | library [update]");
+      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | library [update] | route <board> <from> <to> [--mode shove] | drag <board> <item> <x,y> | cleanup <board> | optimize <board>");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);

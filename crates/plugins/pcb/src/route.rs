@@ -853,7 +853,7 @@ fn emit_track(tx: &mut Tx, board: StableId, net: &str, layer: &str, w: f64, run:
         out.obstacles.push(Obstacle { prim: Prim::capsule(s[0], s[1], w / 2.0), layers: 1 << li, net: Some(net.to_string()) });
     }
     let id = tx.create();
-    tx.set(id, Track { board, net: Some(net.to_string()), layer: layer.to_string(), width: w, points, auto: true, reroute: false })?;
+    tx.set(id, Track { board, net: Some(net.to_string()), layer: layer.to_string(), width: w, points, auto: true, reroute: false, bulges: vec![] })?;
     tx.add_dependency(board, id)?;
     out.created.push(id);
     out.tracks += 1;
