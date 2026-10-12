@@ -273,6 +273,11 @@ pub struct InsertStock {
     /// The instance's properties (e.g. "step": the assembly step it goes in at).
     #[serde(default)]
     pub properties: BTreeMap<String, String>,
+    /// Cut length (mm) for an item sold by length (sections, rod, extrusion,
+    /// rails): adds the size cut to it as a configuration of its own
+    /// ("IPE 200 × 2350"), so beams of many lengths share one definition and
+    /// each is costed by its own length.
+    pub length: Option<f64>,
 }
 
 fn yes() -> bool {
@@ -291,13 +296,28 @@ impl Command for InsertStock {
             invalid(format!("{} has no size “{size}” (sizes: {}{})", fam.title(), some.join(", "), if fam.rows.len() > 12 { ", …" } else { "" }))
         })?;
         let source = fam.program_source();
+        // A size cut to a length of its own: a configuration added to the family's.
+        let cut = match self.length {
+            None => None,
+            Some(l) => {
+                let p = fam.params.iter().find(|p| p.key == "length" && !fam.columns.contains(&p.key)).ok_or_else(|| invalid(format!("{} is not cut to length (its sizes fix every dimension)", fam.title())))?;
+                if !(l.is_finite() && l > 0.0) || p.min.is_some_and(|m| l < m) || p.max.is_some_and(|m| l > m) {
+                    return Err(invalid(format!("{} is cut between {} and {} mm, not {l}", fam.title(), p.min.unwrap_or(0.0), p.max.unwrap_or(f64::INFINITY))));
+                }
+                let mut values = row.values.clone();
+                values.insert("length".into(), l);
+                Some(crate::ConfigRow { name: format!("{} × {}", row.name, (l * 1000.0).round() / 1000.0), values, description: String::new(), suppress: vec![], parts_off: vec![] })
+            }
+        };
         let (definition, created, updated) = match definition_of(tx.world(), &fam.id) {
             Some(id) => {
                 // Reused. A definition made from an older library is brought
                 // up to date (program and sizes), keeping its id and instances.
                 let current = tx.get::<ShapeProgram>(id).cloned();
                 let stale = current.as_ref().is_some_and(|p| p.source != source || p.params.iter().map(|q| &q.key).ne(fam.params.iter().map(|q| &q.key)));
-                let table_stale = tx.get::<crate::ShapeConfigurations>(id).is_none_or(|t| t.rows != fam.rows || t.params != fam.columns);
+                let current_table = tx.get::<crate::ShapeConfigurations>(id).cloned();
+                let (params, rows) = table_for(fam, current_table.as_ref(), cut.as_ref());
+                let table_stale = current_table.is_none_or(|t| t.rows != rows || t.params != params);
                 if stale {
                     let materials = ensure_materials(tx, fam)?;
                     tx.run(
@@ -306,7 +326,7 @@ impl Command for InsertStock {
                     )?;
                 }
                 if stale || table_stale {
-                    tx.run("shape.config.set_table", json!({ "target": id, "params": fam.columns, "rows": fam.rows }))?;
+                    tx.run("shape.config.set_table", json!({ "target": id, "params": params, "rows": rows }))?;
                 }
                 (id, false, stale || table_stale)
             }
@@ -328,21 +348,54 @@ impl Command for InsertStock {
                 let out = tx.run("shape.create", create)?;
                 let id: StableId = serde_json::from_value(out["id"].clone()).map_err(|e| CommandError::new(ErrorCode::Internal, e.to_string()))?;
                 tx.set(id, StockFamily { family: fam.id.clone() })?;
-                tx.run("shape.config.set_table", json!({ "target": id, "params": fam.columns, "rows": fam.rows, "active": fam.default }))?;
+                let (params, rows) = table_for(fam, None, cut.as_ref());
+                tx.run("shape.config.set_table", json!({ "target": id, "params": params, "rows": rows, "active": fam.default }))?;
                 (id, true, false)
             }
         };
+        let size = cut.as_ref().map_or(&row.name, |c| &c.name).clone();
         let mut instance = Value::Null;
         if self.place {
-            let name = self.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| format!("{} {}", fam.name, row.name));
+            let name = self.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| format!("{} {}", fam.name, size));
             let out = tx.run(
                 "assembly.instance.create",
-                json!({ "of": definition, "parent": self.parent, "name": name, "at": self.at, "rotation": self.rotation, "config": row.name, "properties": self.properties }),
+                json!({ "of": definition, "parent": self.parent, "name": name, "at": self.at, "rotation": self.rotation, "config": size, "properties": self.properties }),
             )?;
             instance = out["id"].clone();
         }
-        Ok(json!({ "id": instance, "definition": definition, "family": fam.id, "size": row.name, "created": created, "updated": updated }))
+        Ok(json!({ "id": instance, "definition": definition, "family": fam.id, "size": size, "created": created, "updated": updated }))
     }
+}
+
+/// The configuration table a family's definition should have: the library's
+/// sizes, plus the cut lengths the project has added (kept when the library's
+/// own sizes are brought up to date) and `cut`. With any cut length the table
+/// gains a `length` column; the library's sizes then show the family's
+/// default length.
+fn table_for(fam: &Family, current: Option<&crate::ShapeConfigurations>, cut: Option<&crate::ConfigRow>) -> (Vec<String>, Vec<crate::ConfigRow>) {
+    let mut extra: Vec<crate::ConfigRow> = current.map(|t| t.rows.iter().filter(|r| fam.row(&r.name).is_none() && r.values.contains_key("length")).cloned().collect()).unwrap_or_default();
+    if let Some(c) = cut
+        && !extra.iter().any(|r| r.name == c.name)
+    {
+        extra.push(c.clone());
+    }
+    if extra.is_empty() {
+        return (fam.columns.clone(), fam.rows.clone());
+    }
+    let default = fam.params.iter().find(|p| p.key == "length").map_or(0.0, |p| p.value);
+    let mut params = fam.columns.clone();
+    params.push("length".into());
+    let mut rows: Vec<crate::ConfigRow> = fam
+        .rows
+        .iter()
+        .map(|r| {
+            let mut r = r.clone();
+            r.values.entry("length".into()).or_insert(default);
+            r
+        })
+        .collect();
+    rows.extend(extra);
+    (params, rows)
 }
 
 /// The family's materials in the project: a material with the same name
