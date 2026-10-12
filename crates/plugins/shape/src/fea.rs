@@ -13,6 +13,7 @@
 //! Units: millimetres, newtons, megapascals (N/mm²).
 
 mod contact;
+pub mod materials;
 mod multigrid;
 mod refine;
 
@@ -31,89 +32,23 @@ pub struct Elastic {
     pub yield_strength: f64,
     /// Thermal expansion coefficient (1/K): strain per degree of warming.
     pub alpha: f64,
+    /// kg/m³: what gravity and spinning pull on.
+    pub density: f64,
+    /// Slope past yield (MPa) when the study lets the material yield
+    /// (bilinear plasticity; 0: perfectly plastic).
+    pub tangent: f64,
 }
 
-/// Typical properties by material name: design guidance, not a datasheet.
+/// Typical properties by material name: design guidance, not a datasheet
+/// (see `materials`).
 pub fn elastic(material: &str) -> Option<Elastic> {
-    let m = material.to_lowercase();
-    let (e, nu, y) = if m.contains("stainless") {
-        (193_000.0, 0.29, 215.0)
-    } else if m.contains("steel") {
-        (200_000.0, 0.29, 250.0)
-    } else if m.contains("alumin") {
-        (69_000.0, 0.33, 240.0)
-    } else if m.contains("titan") {
-        (114_000.0, 0.34, 880.0)
-    } else if m.contains("brass") {
-        (100_000.0, 0.34, 200.0)
-    } else if m.contains("copper") {
-        (117_000.0, 0.34, 70.0)
-    } else if m.contains("pla") {
-        (3_500.0, 0.36, 50.0)
-    } else if m.contains("petg") {
-        (2_100.0, 0.38, 50.0)
-    } else if m.contains("abs") {
-        (2_200.0, 0.35, 40.0)
-    } else if m.contains("nylon") {
-        (2_700.0, 0.39, 70.0)
-    } else if m.contains("acetal") || m.contains("pom") {
-        (2_800.0, 0.35, 65.0)
-    } else if m.contains("oak") {
-        (11_000.0, 0.3, 40.0)
-    } else if m.contains("ply") {
-        (9_000.0, 0.3, 30.0)
-    } else if m.contains("mdf") {
-        (3_500.0, 0.25, 15.0)
-    } else if m.contains("glass") {
-        (70_000.0, 0.22, 33.0)
-    } else if m.contains("concrete") {
-        (30_000.0, 0.2, 3.0)
-    } else {
-        return None;
-    };
-    Some(Elastic { e, nu, yield_strength: y, alpha: expansion(material).unwrap_or(0.0) })
+    materials::lookup(material).map(|m| m.elastic())
 }
 
 /// Linear thermal expansion coefficient (1/K), typical by material name:
 /// how much longer per unit length each degree of warming makes it.
 pub fn expansion(material: &str) -> Option<f64> {
-    let m = material.to_lowercase();
-    let per_million = if m.contains("stainless") {
-        17.3
-    } else if m.contains("steel") {
-        12.0
-    } else if m.contains("alumin") {
-        23.1
-    } else if m.contains("titan") {
-        8.6
-    } else if m.contains("brass") {
-        19.0
-    } else if m.contains("copper") {
-        16.5
-    } else if m.contains("pla") {
-        68.0
-    } else if m.contains("petg") {
-        60.0
-    } else if m.contains("abs") {
-        90.0
-    } else if m.contains("nylon") {
-        80.0
-    } else if m.contains("acetal") || m.contains("pom") {
-        110.0
-    } else if m.contains("oak") {
-        5.0 // along the grain
-    } else if m.contains("ply") {
-        7.0
-    } else if m.contains("mdf") {
-        10.0
-    } else if m.contains("glass") {
-        9.0
-    } else if m.contains("concrete") {
-        12.0
-    } else {
-        return None;
-    };
-    Some(per_million * 1e-6)
+    materials::lookup(material).map(|m| m.expansion)
 }
 
 /// A face as picked: a point on it, its outward normal there, and its
@@ -381,12 +316,139 @@ pub struct Study {
     /// the surface (see `refine`).
     #[serde(default)]
     pub refine: bool,
+    /// Gravity (m/s², e.g. [0, 0, −9.81]) pulling on every part's own mass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gravity: Option<[f64; 3]>,
+    /// Spinning about an axis: every bit pulled outward by ρ·ω²·r.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spin: Option<Spin>,
+    /// A shaft pressing in a bore (or a bearing on a shaft): the force spread
+    /// over the half of the round face it pushes into, most where it pushes squarely.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bearing_loads: Vec<BearingLoad>,
+    /// A force and moment at a point off the part, carried to a face as by a
+    /// rigid bracket (a motor's torque, a lever's pull).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remote_loads: Vec<RemoteLoad>,
+    /// Faces that slide: held square to themselves only (a symmetry plane, a
+    /// frictionless support, a bearing seat that holds radially).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sliding: Vec<Face>,
+    /// Faces moved by set amounts along some axes (free along the others).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub displacements: Vec<Displacement>,
+    /// Faces resting on springs (a rubber foot, a foundation).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub elastic_supports: Vec<ElasticSupport>,
+    /// Bolts pulled tight before the loads come on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bolts: Vec<Bolt>,
+    /// Let the material yield: bilinear plasticity (von Mises, hardening at
+    /// the material's tangent modulus), the loads applied in steps.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub plastic: bool,
 }
 
 impl Default for Study {
     fn default() -> Study {
-        Study { supports: vec![], loads: vec![], bore_supports: vec![], bore_loads: vec![], resolution: default_resolution(), contacts: vec![], heat: None, refine: false }
+        Study {
+            supports: vec![],
+            loads: vec![],
+            bore_supports: vec![],
+            bore_loads: vec![],
+            resolution: default_resolution(),
+            contacts: vec![],
+            heat: None,
+            refine: false,
+            gravity: None,
+            spin: None,
+            bearing_loads: vec![],
+            remote_loads: vec![],
+            sliding: vec![],
+            displacements: vec![],
+            elastic_supports: vec![],
+            bolts: vec![],
+            plastic: false,
+        }
     }
+}
+
+impl Study {
+    /// Whether anything holds the parts (a support of any kind).
+    pub fn held(&self) -> bool {
+        !self.supports.is_empty() || !self.bore_supports.is_empty() || !self.sliding.is_empty() || !self.displacements.is_empty() || !self.elastic_supports.is_empty()
+    }
+
+    /// Whether anything loads them besides heat and press fits.
+    pub fn loaded(&self) -> bool {
+        !self.loads.is_empty()
+            || !self.bore_loads.is_empty()
+            || self.gravity.is_some()
+            || self.spin.is_some()
+            || !self.bearing_loads.is_empty()
+            || !self.remote_loads.is_empty()
+            || !self.bolts.is_empty()
+            || self.displacements.iter().any(|d| d.by.iter().any(|v| v.is_some_and(|v| v != 0.0)))
+    }
+}
+
+/// Spinning about an axis.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+pub struct Spin {
+    /// A point on the axis (mm) and its direction.
+    pub at: [f64; 3],
+    pub axis: [f64; 3],
+    pub rpm: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BearingLoad {
+    /// A round face (a bore or a shaft's side).
+    pub face: Face,
+    /// N.
+    pub force: [f64; 3],
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RemoteLoad {
+    pub face: Face,
+    /// Where the force acts (mm), and the force (N) and moment (N·mm) there.
+    pub point: [f64; 3],
+    #[serde(default)]
+    pub force: [f64; 3],
+    #[serde(default)]
+    pub moment: [f64; 3],
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Displacement {
+    pub face: Face,
+    /// mm along x, y, z; null leaves that direction free.
+    pub by: [Option<f64>; 3],
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ElasticSupport {
+    pub face: Face,
+    /// Stiffness per area (N/mm per mm², i.e. N/mm³: a foundation modulus).
+    pub stiffness: f64,
+    /// Only square to the face (it still slides along it).
+    #[serde(default)]
+    pub normal_only: bool,
+}
+
+/// A bolt pretensioned: the bolt part is shortened across its section at
+/// `at` until it pulls with `preload`, then held at that length while the loads come on.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+pub struct Bolt {
+    /// The bolt's part (none: the first part).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<String>,
+    /// A point on the shank (mm) and the bolt's axis.
+    pub at: [f64; 3],
+    pub axis: [f64; 3],
+    /// N.
+    pub preload: f64,
 }
 
 /// Temperatures loading a stress study.
@@ -445,6 +507,26 @@ pub struct Result_ {
     /// The most stressed spot re-solved on finer cubes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub peak: Option<Peak>,
+    /// Where the largest stress and the largest movement are (mm).
+    pub max_stress_at: [f64; 3],
+    pub max_displacement_at: [f64; 3],
+    /// What each hold pushes back with.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<Reaction>,
+    /// Pretensioned bolts: their preload and their pull under the loads.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bolts: Vec<BoltResult>,
+    /// Plasticity: what yielded, and each cube's equivalent plastic strain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plastic: Option<PlasticSummary>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub plastic_strain: Vec<f32>,
+    /// Each cube's stress (xx yy zz xy yz zx, MPa), for probes, sections and fatigue.
+    #[serde(skip)]
+    pub tensors: Vec<[f32; 6]>,
+    /// Each part's yield strength (MPa), for the safety map.
+    #[serde(skip)]
+    pub yields: Vec<f64>,
 }
 
 /// What heat did in a stress study.
@@ -1096,10 +1178,19 @@ struct Model {
     floating: Vec<Option<f64>>,
     /// Coarse grids that speed up the solve on big or thin parts.
     mg: Option<multigrid::Multigrid>,
+    /// Springs that are part of the study itself (elastic supports, sliding
+    /// faces at a slant), kept under whatever contact adds.
+    base: Vec<Spring>,
+    /// Geometric stiffness from a stress state, 8 × 8 per cube (the same for
+    /// each direction): a prestressed part, or the buckling eigenproblem.
+    geo: Option<Vec<[f64; 64]>>,
 }
 
 impl Model {
     fn build(positions: &[f32], triangles: &[u32], material: &Elastic, supports: &[Face], bores: &[Bore], resolution: usize) -> Result<Model, String> {
+        if supports.is_empty() && bores.is_empty() {
+            return Err("add a support: a face the part is held by".into());
+        }
         let grid = voxelize(positions, triangles, resolution.clamp(8, 160));
         let fill = grid.fill.clone();
         let supports: Vec<(usize, &Face)> = supports.iter().map(|f| (0, f)).collect();
@@ -1115,9 +1206,6 @@ impl Model {
     /// needs a support and every support must touch it (a piece of a part,
     /// re-solved finer, is held at its cut instead).
     fn assemble(mut grid: Grid, fills: &[Vec<f32>], materials: &[Elastic], names: &[String], supports: &[(usize, &Face)], bores: &[(usize, &Bore)], whole: bool) -> Result<Model, String> {
-        if whole && supports.is_empty() && bores.is_empty() {
-            return Err("add a support: a face the part is held by".into());
-        }
         let parts = fills.len();
         let count = grid.fill.len();
         // A cube's stiffness counts all the material in it, whichever part has most.
@@ -1195,12 +1283,12 @@ impl Model {
         }
         let kes: Vec<Vec<f64>> = materials.iter().map(|m| element_stiffness(m, grid.h)).collect();
         let weight: Vec<f64> = cells.iter().map(|&[i, j, k]| (grid.fill[grid.cell(i, j, k)] as f64).min(1.0)).collect();
-        Ok(Model { grid, blocks, corners, cells, part, nodes, used, fixed, kes, weight, el_diag: vec![], diag: vec![], springs: vec![], floating: vec![None; parts], mg: None })
+        Ok(Model { grid, blocks, corners, cells, part, nodes, used, fixed, kes, weight, el_diag: vec![], diag: vec![], springs: vec![], floating: vec![None; parts], mg: None, base: vec![], geo: None })
     }
 
     /// Whether each part is held by a support of its own.
     fn held(&self) -> Vec<bool> {
-        self.blocks.iter().map(|b| (b.first..b.end()).any(|n| self.fixed[3 * n])).collect()
+        self.blocks.iter().map(|b| (b.first..b.end()).any(|n| self.used[n] && (self.fixed[3 * n] || self.fixed[3 * n + 1] || self.fixed[3 * n + 2])) || self.base.iter().any(|s| s.g.iter().any(|&(i, _)| (b.first..b.end()).contains(&(i / 3))))).collect()
     }
 
     /// Finishes the stiffness: parts marked `loose` (held by no support,
@@ -1221,8 +1309,9 @@ impl Model {
                 }
             }
         }
-        self.diag = el_diag.clone();
         self.el_diag = el_diag;
+        self.mg = None;
+        self.set_springs(vec![]);
         self.mg = multigrid::Multigrid::build(self);
     }
 
@@ -1270,7 +1359,8 @@ impl Model {
 
     /// Puts links between parts in the stiffness (replacing any before),
     /// dropping their held ends, and brings the coarse grids up to date.
-    fn set_springs(&mut self, mut springs: Vec<Spring>) {
+    fn set_springs(&mut self, springs: Vec<Spring>) {
+        let mut springs: Vec<Spring> = self.base.iter().cloned().chain(springs).collect();
         for s in springs.iter_mut() {
             s.g.retain(|&(i, c)| c != 0.0 && self.free(i));
         }
@@ -1290,6 +1380,13 @@ impl Model {
 
     /// K·x, element by element, in parallel (held and unused entries zero).
     fn apply(&self, x: &[f64]) -> Vec<f64> {
+        let mut y = self.apply_raw(x);
+        self.mask(&mut y);
+        y
+    }
+
+    /// K·x with every entry (a held node's is the force holding it there).
+    fn apply_raw(&self, x: &[f64]) -> Vec<f64> {
         let n3 = 3 * self.nodes;
         let mut y = self
             .corners
@@ -1319,8 +1416,21 @@ impl Model {
                 a.iter_mut().zip(&b).for_each(|(x, y)| *x += y);
                 a
             });
+        if let Some(geo) = &self.geo {
+            for (c, g) in self.corners.iter().zip(geo) {
+                for (a, &na) in c.iter().enumerate() {
+                    for (b, &nb) in c.iter().enumerate() {
+                        let k = g[8 * a + b];
+                        if k != 0.0 {
+                            for d in 0..3 {
+                                y[3 * na + d] += k * x[3 * nb + d];
+                            }
+                        }
+                    }
+                }
+            }
+        }
         add_springs(&self.springs, x, &mut y);
-        self.mask(&mut y);
         y
     }
 
@@ -1387,168 +1497,138 @@ pub fn solve(positions: &[f32], triangles: &[u32], material: &Elastic, study: &S
 /// `contact`). Faces name the part they are on (none: the first part); bores
 /// are on the first part.
 pub fn solve_parts(bodies: &[Body], study: &Study) -> Result<Result_, String> {
-    if bodies.is_empty() {
-        return Err("nothing to study".into());
-    }
-    let press_fit = bodies.len() > 1 && study.contacts.iter().any(|c| c.press_fit);
-    if study.loads.is_empty() && study.bore_loads.is_empty() && study.heat.is_none() && !press_fit {
-        return Err("add a load: a face and the force on it".into());
-    }
+    let mut s = Setup::new(bodies, study)?;
     let several = bodies.len() > 1;
-    let mut lo = [f64::INFINITY; 3];
-    let mut hi = [f64::NEG_INFINITY; 3];
-    for b in bodies {
-        let (l, u) = bounds(b.positions, b.triangles);
-        for d in 0..3 {
-            lo[d] = lo[d].min(l[d]);
-            hi[d] = hi[d].max(u[d]);
-        }
-    }
-    let grid = grid_around(lo, hi, study.resolution.clamp(8, 160));
-    let fills: Vec<Vec<f32>> = bodies.par_iter().map(|b| fill_of(&grid, b.positions, b.triangles)).collect();
-    let names: Vec<String> = bodies.iter().map(|b| b.name.clone()).collect();
-    let materials: Vec<Elastic> = bodies.iter().map(|b| b.material).collect();
-    let part_of = |what: String, name: &Option<String>| -> Result<usize, String> {
-        match name {
-            None => Ok(0),
-            Some(n) => names.iter().position(|m| m == n).ok_or_else(|| format!("{what} is on “{n}”, which is not in the study")),
-        }
-    };
-    let supports = study.supports.iter().enumerate().map(|(i, f)| Ok((part_of(format!("support {}", i + 1), &f.part)?, f))).collect::<Result<Vec<_>, String>>()?;
-    let bores: Vec<(usize, &Bore)> = study.bore_supports.iter().map(|b| (0, b)).collect();
-    let shown: Vec<String> = if several { names.clone() } else { vec!["the part".into()] };
-    let mut model = Model::assemble(grid, &fills, &materials, &shown, &supports, &bores, true)?;
-    let meshes: Vec<(&[f32], &[u32])> = bodies.iter().map(|b| (b.positions, b.triangles)).collect();
-    let pairs = several.then(|| contact::find(&model, &fills, &materials, &names, &study.contacts, &meshes));
-    let anchored = match &pairs {
-        Some(found) => found.anchored(model.held()),
-        None => model.held(),
-    };
-    model.finish(&anchored.iter().map(|a| !a).collect::<Vec<_>>());
-    let (nodes, h) = (model.nodes, model.grid.h);
-    let mut notes = vec![];
-    let mut f = vec![0.0; 3 * nodes];
-    // Where loads make a sharp peak of their own (every load but a pressure
-    // all over a curved face, which ends nowhere): the re-solve keeps off them.
-    let mut pointed = vec![false; nodes];
-    let share = node_shares(nodes, &model.corners, &model.weight);
-    let mut applied = 0.0;
-    for (l, load) in study.loads.iter().enumerate() {
-        let p = part_of(format!("load {}", l + 1), &load.face.part)?;
-        let on: Vec<usize> = nodes_on_face(model.part_nodes(p), |id| model.position(id), h, &load.face).into_iter().filter(|&n| !model.fixed[3 * n]).collect();
-        if on.is_empty() {
-            return Err(format!("load {} touches no free part of the part", l + 1));
-        }
-        let smooth = load.face.curved && load.force == [0.0; 3];
-        for (n, v) in load_forces(&on, |id| model.position(id), h, &share, load, |_| true) {
-            for d in 0..3 {
-                f[3 * n + d] += v[d];
+    let count = bodies.len();
+    let nodes = s.model.nodes;
+    let h = s.model.grid.h;
+    let mut notes = std::mem::take(&mut s.notes);
+    let ds: Vec<[[f64; 6]; 6]> = s.materials.iter().map(d_matrix).collect();
+    let mut u = s.u0.clone();
+    let mut slides = vec![false; count];
+    // Bolts: each shortened across its section until it pulls with its preload (no loads yet), then held at that length.
+    let mut bolt_scale = vec![0.0; study.bolts.len()];
+    let mut bolt_results = vec![];
+    if !study.bolts.is_empty() {
+        let slabs = bolt_slabs(&s.model, study, &s.part_of_name, &s.names)?;
+        // A first guess: the strain that pulls a bar of the slab's section with the preload.
+        for (b, bolt) in study.bolts.iter().enumerate() {
+            let (cubes, area, e) = (&slabs[b].0, slabs[b].1, s.materials[slabs[b].2].e);
+            if cubes.is_empty() || area <= 0.0 {
+                return Err(format!("bolt {} crosses no part of its bolt at its point", b + 1));
             }
-            pointed[n] |= !smooth;
+            bolt_scale[b] = bolt.preload / (e * area);
         }
-        applied += load_size(load);
-    }
-    for (l, load) in study.bore_loads.iter().enumerate() {
-        let on: Vec<usize> = nodes_near_axis(model.part_nodes(0), |id| model.position(id), h, &load.bore).into_iter().filter(|&n| !model.fixed[3 * n]).collect();
-        if on.is_empty() {
-            return Err(format!("bore load {} touches no free part of the part", l + 1));
-        }
-        for d in 0..3 {
-            for (n, v) in spread(&on, &share, load.force[d]) {
-                f[3 * n + d] += v;
+        let mut pre = vec![0.0; 3 * nodes];
+        let mut ok = false;
+        for _ in 0..8 {
+            let eps = bolt_strains(&s.model, study, &slabs, &bolt_scale);
+            let rhs = eigen_forces(&s.model, &ds, &eps);
+            solve_rhs(&mut s.model, s.pairs.as_ref(), &rhs, &mut pre);
+            let tensors = strain_stresses(&s.model, &ds, &pre, &eps);
+            let forces: Vec<f64> = (0..study.bolts.len()).map(|b| bolt_force(&s.model, &tensors, study, &slabs, b)).collect();
+            ok = forces.iter().zip(&study.bolts).all(|(f, bolt)| (f - bolt.preload).abs() <= 0.005 * bolt.preload.abs());
+            if ok {
+                break;
+            }
+            for (b, f) in forces.iter().enumerate() {
+                if f.abs() > 1e-9 {
+                    bolt_scale[b] *= study.bolts[b].preload / f;
+                }
             }
         }
-        on.iter().for_each(|&n| pointed[n] = true);
-        applied += load.force.iter().map(|c| c * c).sum::<f64>().sqrt();
+        if !ok {
+            notes.push("The bolts' preload did not settle to within 0.5 %: the clamp force is approximate.".into());
+        }
+        s.bolt_slabs = Some(slabs);
     }
-    let mechanical = applied > 0.0;
-    // Heat: each cube's warming above the stress-free temperature, and the push its expansion makes.
-    let warmth = study.heat.as_ref().map(Warmth::new);
-    let dt: Vec<f64> = match &warmth {
-        Some(w) => model.cells.iter().zip(&model.part).map(|(&c, &p)| w.at(p, cell_centre(&model.grid, c))).collect(),
-        None => vec![0.0; model.cells.len()],
+    let bolt_eps = match &s.bolt_slabs {
+        Some(slabs) => bolt_strains(&s.model, study, slabs, &bolt_scale),
+        None => vec![[0.0; 6]; s.model.cells.len()],
     };
-    let f_heat = warmth.as_ref().map(|_| thermal_forces(&model, &materials, &dt));
-    if let Some(fh) = &f_heat {
-        applied += fh.chunks_exact(3).map(|v| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()).sum::<f64>() / 2.0;
-    }
-    let mut u = vec![0.0; 3 * nodes];
-    if pairs.as_ref().is_some_and(|p| p.overlap) {
-        notes.push("Some parts overlap rather than touch: they are taken as just touching (no squeeze). Mark the contact a press fit to squeeze the overlap out.".to_string());
-    }
-    let ds: Vec<[[f64; 6]; 6]> = materials.iter().map(d_matrix).collect();
-    let mut slides = vec![false; bodies.len()];
-    // Heat and loads apart (the map shows their sum), when no contact ties them together.
+    let mechanical = s.applied > 0.0;
+    // Heat and loads apart (the map shows their sum), when nothing ties them together.
     let mut split: Option<(f64, f64)> = None;
-    let (iterations, converged, contact, tensors) = if let Some(pairs) = pairs.filter(|p| !p.is_empty()) {
-        let total: Vec<f64> = match &f_heat {
-            Some(fh) => f.iter().zip(fh).map(|(a, b)| a + b).collect(),
-            None => f.clone(),
-        };
-        let out = contact::solve(&mut model, &total, &mut u, &pairs);
-        slides = contact::slipping(&pairs, &out, bodies.len());
-        if !out.settled {
-            notes.push(format!("The contacts did not fully settle in {} rounds: pressures are approximate.", out.rounds));
-        }
-        let report = contact::report(&model, &pairs, &out, &names);
-        applied = applied.max(report.pairs.iter().map(|p| p.normal_force.abs()).sum::<f64>());
-        let tensors = cube_stresses(&model, &ds, &materials, &u, &dt);
-        (out.iterations, out.converged, Some(report), tensors)
+    let mut plastic_out: Option<(Vec<[f64; 6]>, Vec<f64>, PlasticSummary)> = None;
+    let mut contact_out = None;
+    let heat_on = s.eps_heat.iter().any(|e| e[0] != 0.0);
+    let base_eps: Vec<[f64; 6]> = s.eps_heat.iter().zip(&bolt_eps).map(|(a, b)| std::array::from_fn(|r| a[r] + b[r])).collect();
+    let (iterations, converged, tensors) = if study.plastic {
+        let (tensors, its, ok, summary, ep) = plastic_solve(&mut s, &ds, &base_eps, &mut u, &mut notes)?;
+        plastic_out = Some((ep, vec![], summary));
+        (its, ok, tensors)
+    } else if heat_on && mechanical && s.pairs.is_none() && study.bolts.is_empty() {
+        let mut ut = vec![0.0; 3 * nodes];
+        let (a, oka) = s.model.cg(&s.f, &mut u, 1e-9);
+        let fh = eigen_forces(&s.model, &ds, &s.eps_heat);
+        let (b, okb) = s.model.cg(&fh, &mut ut, 1e-9);
+        let zero = vec![[0.0; 6]; s.eps_heat.len()];
+        let sm = strain_stresses(&s.model, &ds, &u, &zero);
+        let st = strain_stresses(&s.model, &ds, &ut, &s.eps_heat);
+        let peak = |t: &[[f64; 6]]| t.iter().map(von_mises).fold(0.0, f64::max);
+        split = Some((peak(&st), peak(&sm)));
+        u.iter_mut().zip(&ut).for_each(|(a, b)| *a += b);
+        (a + b, oka && okb, sm.iter().zip(&st).map(|(a, b)| std::array::from_fn(|r| a[r] + b[r])).collect())
     } else {
-        if several {
-            notes.push("The parts do not touch anywhere: each carries only its own loads.".to_string());
-        }
-        match &f_heat {
-            Some(fh) if mechanical => {
-                let mut ut = vec![0.0; 3 * nodes];
-                let (a, oka) = model.cg(&f, &mut u, 1e-9);
-                let (b, okb) = model.cg(fh, &mut ut, 1e-9);
-                let sm = cube_stresses(&model, &ds, &materials, &u, &vec![0.0; dt.len()]);
-                let st = cube_stresses(&model, &ds, &materials, &ut, &dt);
-                let peak = |s: &[[f64; 6]]| s.iter().map(von_mises).fold(0.0, f64::max);
-                split = Some((peak(&st), peak(&sm)));
-                u.iter_mut().zip(&ut).for_each(|(a, b)| *a += b);
-                let sum = sm.iter().zip(&st).map(|(a, b)| std::array::from_fn(|r| a[r] + b[r])).collect();
-                (a + b, oka && okb, None, sum)
-            }
-            _ => {
-                let rhs = f_heat.as_ref().unwrap_or(&f);
-                let (it, ok) = model.cg(rhs, &mut u, 1e-9);
-                (it, ok, None, cube_stresses(&model, &ds, &materials, &u, &dt))
-            }
-        }
+        let fe = eigen_forces(&s.model, &ds, &base_eps);
+        let rhs: Vec<f64> = s.f.iter().zip(&fe).map(|(a, b)| a + b).collect();
+        let (it, ok, out) = solve_rhs(&mut s.model, s.pairs.as_ref(), &rhs, &mut u);
+        contact_out = out;
+        (it, ok, strain_stresses(&s.model, &ds, &u, &base_eps))
     };
+    let mut applied = s.applied;
+    if heat_on {
+        applied += eigen_forces(&s.model, &ds, &s.eps_heat).chunks_exact(3).map(|v| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()).sum::<f64>() / 2.0;
+    }
+    applied += study.bolts.iter().map(|b| b.preload.abs()).sum::<f64>();
+    let contact = match (&s.pairs, &contact_out) {
+        (Some(pairs), Some(out)) => {
+            slides = contact::slipping(pairs, out, count);
+            if !out.settled {
+                notes.push(format!("The contacts did not fully settle in {} rounds: pressures are approximate.", out.rounds));
+            }
+            let report = contact::report(&s.model, pairs, out, &s.names);
+            applied = applied.max(report.pairs.iter().map(|p| p.normal_force.abs()).sum::<f64>());
+            Some(report)
+        }
+        _ => None,
+    };
+    if s.pairs.is_none() && several {
+        notes.push("The parts do not touch anywhere: each carries only its own loads.".to_string());
+    }
     if !converged {
         notes.push("The solve did not fully settle: is the part held so it cannot spin or slide? Results are approximate.".into());
     }
+    if let Some(slabs) = &s.bolt_slabs {
+        for (b, bolt) in study.bolts.iter().enumerate() {
+            let force = bolt_force(&s.model, &tensors, study, slabs, b);
+            bolt_results.push(BoltResult { part: bolt.part.clone().unwrap_or_else(|| s.names[0].clone()), preload: bolt.preload, force, shortening: bolt_scale[b] * 2.0 * h });
+        }
+    }
     let stresses: Vec<f64> = tensors.iter().map(von_mises).collect();
-    let count = bodies.len();
-    // A part no support holds, that its contacts let go: what its weak tie carries.
-    let free: Vec<bool> = (0..count)
-        .map(|p| {
-            if model.floating[p].is_none() {
-                return false;
-            }
-            // Slipping wherever it presses, or pulled about by its weak tie: held by nothing.
-            slides[p] || model.tie_pull(p, &u) > DRIFT * applied.max(1e-12)
-        })
-        .collect();
+    let model = &s.model;
+    let free: Vec<bool> = (0..count).map(|p| model.floating[p].is_some() && (slides[p] || model.tie_pull(p, &u) > DRIFT * applied.max(1e-12))).collect();
     for p in (0..count).filter(|&p| free[p]) {
-        notes.push(format!("“{}” is held by no support and its contacts do not hold it: it slides or lifts away freely, so how far it moves means nothing. Hold it, or glue it with a bonded contact.", names[p]));
+        notes.push(format!("“{}” is held by no support and its contacts do not hold it: it slides or lifts away freely, so how far it moves means nothing. Hold it, or glue it with a bonded contact.", s.names[p]));
     }
     let mut part_stress = vec![0.0f64; count];
-    for (s, &p) in stresses.iter().zip(&model.part) {
-        part_stress[p] = part_stress[p].max(*s);
+    for (st, &p) in stresses.iter().zip(&model.part) {
+        part_stress[p] = part_stress[p].max(*st);
     }
     let mut part_move = vec![0.0f64; count];
     let mut displacements = vec![];
     let mut node_parts = vec![];
+    let mut farthest = (0.0, [0.0; 3]);
     for n in (0..nodes).filter(|&n| model.used[n]) {
         let p = block_of(&model.blocks, n);
         let v = [u[3 * n], u[3 * n + 1], u[3 * n + 2]];
-        part_move[p] = part_move[p].max((v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt());
+        let size = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        part_move[p] = part_move[p].max(size);
         if free[p] {
             continue; // drifting: drawn where it is
+        }
+        if size > farthest.0 {
+            farthest = (size, model.position(n));
         }
         displacements.push((model.node_at(n).map(|c| c as u32), v.map(|c| c as f32)));
         if several {
@@ -1556,19 +1636,61 @@ pub fn solve_parts(bodies: &[Body], study: &Study) -> Result<Result_, String> {
         }
     }
     let mut max_stress = stresses.iter().cloned().fold(0.0, f64::max);
+    let hottest = (0..stresses.len()).max_by(|&a, &b| stresses[a].total_cmp(&stresses[b])).unwrap_or(0);
+    let mut max_stress_at = cell_centre(&model.grid, model.cells[hottest]);
     let max_displacement = (0..count).filter(|&p| !free[p]).map(|p| part_move[p]).fold(0.0, f64::max);
-    let heat = warmth.as_ref().map(|w| {
-        let (lo, hi) = dt.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &t| (a.min(t), b.max(t)));
+    let heat = s.warmth.as_ref().map(|w| {
+        let (lo, hi) = s.dt.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &t| (a.min(t), b.max(t)));
         notes.extend(w.notes(several));
         let alone = (!mechanical && contact.is_none()).then_some(max_stress);
-        HeatSummary { reference: w.reference, min: w.reference + lo, max: w.reference + hi, thermal_stress: split.map(|s| s.0).or(alone), mechanical_stress: split.map(|s| s.1) }
+        HeatSummary { reference: w.reference, min: w.reference + lo, max: w.reference + hi, thermal_stress: split.map(|x| x.0).or(alone), mechanical_stress: split.map(|x| x.1) }
     });
-    // The most stressed spot, re-solved finer (one part, no contact: its cut is held by the coarse solution).
+    // Reactions: what each hold pushes back with (K·u − f at its held directions, or its springs).
+    let fe = eigen_forces(model, &ds, &tensors_eps(&base_eps, plastic_out.as_ref().map(|p| &p.0)));
+    let ku = model.apply_raw(&u);
+    let reactions = s
+        .holds
+        .iter()
+        .map(|g| {
+            let mut force = [0.0; 3];
+            let mut moment = [0.0; 3];
+            let c = g.centre;
+            let mut add = |n: usize, v: [f64; 3]| {
+                let r = v_sub(model.position(n), c);
+                let m = v_cross(r, v);
+                for d in 0..3 {
+                    force[d] += v[d];
+                    moment[d] += m[d];
+                }
+            };
+            for &n in &g.nodes {
+                let v: [f64; 3] = std::array::from_fn(|d| if model.fixed[3 * n + d] { ku[3 * n + d] - s.f[3 * n + d] - fe[3 * n + d] } else { 0.0 });
+                add(n, v);
+            }
+            for sp in &g.springs {
+                let stretch: f64 = sp.g.iter().map(|&(i, c)| c * u[i]).sum();
+                // A spring along one node's direction: its pull back on that node.
+                if let Some(&(i, _)) = sp.g.first() {
+                    let mut v = [0.0; 3];
+                    for &(j, cj) in &sp.g {
+                        v[j % 3] -= sp.k * stretch * cj;
+                    }
+                    add(i / 3, v);
+                }
+            }
+            Reaction { name: g.name.clone(), force: force.map(round6), moment: moment.map(round6), at: c }
+        })
+        .collect::<Vec<_>>();
+    // The most stressed spot, re-solved finer (one part, plain supports and face loads: its cut is held by the coarse solution).
     let mut peak = None;
-    if study.refine && !several {
-        let warm = |x: [f64; 3]| warmth.as_ref().map_or(0.0, |w| w.at(0, x));
-        let ctx = refine::Context { positions: bodies[0].positions, triangles: bodies[0].triangles, material: materials[0], study, warm: &warm };
-        match refine::sharpen(&model, &u, &pointed, &stresses, &ctx) {
+    let simple = study.bolts.is_empty() && !study.plastic && study.sliding.is_empty() && study.displacements.is_empty() && study.elastic_supports.is_empty() && study.bearing_loads.is_empty() && study.remote_loads.is_empty() && study.gravity.is_none() && study.spin.is_none();
+    if study.refine && !several && !simple {
+        notes.push("Peak sharpening is for studies held by plain supports and loaded on faces: this one reads its stress at the cube centres.".into());
+    }
+    if study.refine && !several && simple {
+        let warm = |x: [f64; 3]| s.warmth.as_ref().map_or(0.0, |w| w.at(0, x));
+        let ctx = refine::Context { positions: bodies[0].positions, triangles: bodies[0].triangles, material: s.materials[0], study, warm: &warm };
+        match refine::sharpen(model, &u, &s.pointed, &stresses, &ctx) {
             Ok((p, more)) => {
                 notes.extend(more);
                 // A higher peak always counts. A lower one replaces the largest only when it is the
@@ -1578,12 +1700,14 @@ pub fn solve_parts(bodies: &[Body], study: &Study) -> Result<Result_, String> {
                 if !p.singular && (p.stress > max_stress || same_spot_settled) {
                     part_stress[0] = p.stress;
                     max_stress = p.stress;
+                    max_stress_at = p.at;
                 }
                 peak = Some(p);
             }
             Err(why) => notes.push(why),
         }
     }
+    let materials = &s.materials;
     let safety_of = |p: usize| if part_stress[p] > 0.0 { materials[p].yield_strength / part_stress[p] } else { f64::INFINITY };
     // The part nearest to yielding sets the study's safety.
     let worst = (0..count).min_by(|&a, &b| safety_of(a).total_cmp(&safety_of(b))).unwrap_or(0);
@@ -1592,11 +1716,15 @@ pub fn solve_parts(bodies: &[Body], study: &Study) -> Result<Result_, String> {
     } else {
         notes.insert(0, format!("{} cubes of {} mm.", model.cells.len(), crate::drawing::length_text(h)));
     }
+    let (plastic, plastic_strain) = match plastic_out {
+        Some((ep, _, summary)) => (Some(summary), ep.iter().map(|e| equivalent_strain(e) as f32).collect()),
+        None => (None, vec![]),
+    };
     Ok(Result_ {
         cell: h,
         origin: model.grid.origin,
         counts: model.grid.n,
-        cells: model.cells.iter().zip(&stresses).map(|(c, s)| (c.map(|v| v as u32), *s as f32)).collect(),
+        cells: model.cells.iter().zip(&stresses).map(|(c, st)| (c.map(|v| v as u32), *st as f32)).collect(),
         displacements,
         max_stress,
         max_displacement,
@@ -1606,7 +1734,7 @@ pub fn solve_parts(bodies: &[Body], study: &Study) -> Result<Result_, String> {
         iterations,
         notes,
         parts: if several {
-            (0..count).map(|p| PartResult { name: names[p].clone(), max_stress: part_stress[p], max_displacement: part_move[p], yield_strength: materials[p].yield_strength, safety: safety_of(p), floating: free[p] }).collect()
+            (0..count).map(|p| PartResult { name: s.names[p].clone(), max_stress: part_stress[p], max_displacement: part_move[p], yield_strength: materials[p].yield_strength, safety: safety_of(p), floating: free[p] }).collect()
         } else {
             vec![]
         },
@@ -1615,7 +1743,616 @@ pub fn solve_parts(bodies: &[Body], study: &Study) -> Result<Result_, String> {
         contact,
         heat,
         peak,
+        max_stress_at,
+        max_displacement_at: farthest.1,
+        reactions,
+        bolts: bolt_results,
+        plastic,
+        plastic_strain,
+        tensors: tensors.iter().map(|t| t.map(|v| v as f32)).collect(),
+        yields: materials.iter().map(|m| m.yield_strength).collect(),
     })
+}
+
+fn round6(v: f64) -> f64 {
+    if v.abs() < 1e-9 { 0.0 } else { v }
+}
+
+/// The strains a solution's stresses are taken from (heat and bolts, and
+/// the plastic strain when the material yielded).
+fn tensors_eps(base: &[[f64; 6]], plastic: Option<&Vec<[f64; 6]>>) -> Vec<[f64; 6]> {
+    match plastic {
+        Some(ep) => base.iter().zip(ep).map(|(a, b)| std::array::from_fn(|r| a[r] + b[r])).collect(),
+        None => base.to_vec(),
+    }
+}
+
+/// What a hold pushes back with.
+#[derive(Clone, Debug, Serialize)]
+pub struct Reaction {
+    /// "support 1", "sliding 1", "displacement 1", "elastic 1", "bore 1".
+    pub name: String,
+    /// N, on the part; and N·mm about `at` (the middle of the held face).
+    pub force: [f64; 3],
+    pub moment: [f64; 3],
+    pub at: [f64; 3],
+}
+
+/// A pretensioned bolt after the loads came on.
+#[derive(Clone, Debug, Serialize)]
+pub struct BoltResult {
+    pub part: String,
+    /// N: what it was pulled tight with, and what it pulls with now.
+    pub preload: f64,
+    pub force: f64,
+    /// How much its section was shortened to get the preload (mm).
+    pub shortening: f64,
+}
+
+/// What yielding did.
+#[derive(Clone, Debug, Serialize)]
+pub struct PlasticSummary {
+    /// Largest equivalent plastic strain (mm/mm) and where.
+    pub max_strain: f64,
+    pub at: [f64; 3],
+    /// Cubes that yielded, of all.
+    pub yielded: usize,
+    pub steps: usize,
+    pub settled: bool,
+    /// The material's tangent modulus used (MPa).
+    pub tangent: f64,
+}
+
+/// A hold's nodes, for its reaction.
+struct HoldGroup {
+    name: String,
+    nodes: Vec<usize>,
+    springs: Vec<Spring>,
+    centre: [f64; 3],
+}
+
+/// A study set up on its cubes: the model with every hold, the loads on its
+/// nodes, and the strains heat puts in each cube.
+struct Setup {
+    model: Model,
+    pairs: Option<contact::Found>,
+    materials: Vec<Elastic>,
+    names: Vec<String>,
+    part_of_name: Vec<Option<String>>,
+    /// External forces on the nodes, and the prescribed movements (on held directions).
+    f: Vec<f64>,
+    u0: Vec<f64>,
+    pointed: Vec<bool>,
+    applied: f64,
+    holds: Vec<HoldGroup>,
+    warmth: Option<Warmth>,
+    dt: Vec<f64>,
+    eps_heat: Vec<[f64; 6]>,
+    bolt_slabs: Option<Vec<(Vec<usize>, f64, usize)>>,
+    notes: Vec<String>,
+}
+
+impl Setup {
+    fn new(bodies: &[Body], study: &Study) -> Result<Setup, String> {
+        if bodies.is_empty() {
+            return Err("nothing to study".into());
+        }
+        let press_fit = bodies.len() > 1 && study.contacts.iter().any(|c| c.press_fit);
+        if !study.loaded() && study.heat.is_none() && !press_fit {
+            return Err("add a load: a face and the force on it".into());
+        }
+        if !study.held() {
+            return Err("add a support: a face the part is held by".into());
+        }
+        let several = bodies.len() > 1;
+        let mut lo = [f64::INFINITY; 3];
+        let mut hi = [f64::NEG_INFINITY; 3];
+        for b in bodies {
+            let (l, u) = bounds(b.positions, b.triangles);
+            for d in 0..3 {
+                lo[d] = lo[d].min(l[d]);
+                hi[d] = hi[d].max(u[d]);
+            }
+        }
+        let grid = grid_around(lo, hi, study.resolution.clamp(8, 160));
+        let fills: Vec<Vec<f32>> = bodies.par_iter().map(|b| fill_of(&grid, b.positions, b.triangles)).collect();
+        let names: Vec<String> = bodies.iter().map(|b| b.name.clone()).collect();
+        let materials: Vec<Elastic> = bodies.iter().map(|b| b.material).collect();
+        let part_of = |what: String, name: &Option<String>| -> Result<usize, String> {
+            match name {
+                None => Ok(0),
+                Some(n) => names.iter().position(|m| m == n).ok_or_else(|| format!("{what} is on “{n}”, which is not in the study")),
+            }
+        };
+        let supports = study.supports.iter().enumerate().map(|(i, f)| Ok((part_of(format!("support {}", i + 1), &f.part)?, f))).collect::<Result<Vec<_>, String>>()?;
+        let bores: Vec<(usize, &Bore)> = study.bore_supports.iter().map(|b| (0, b)).collect();
+        let shown: Vec<String> = if several { names.clone() } else { vec!["the part".into()] };
+        let mut model = Model::assemble(grid, &fills, &materials, &shown, &supports, &bores, true)?;
+        let h = model.grid.h;
+        let mut notes = vec![];
+        let mut holds = vec![];
+        let centre = |m: &Model, on: &[usize]| -> [f64; 3] {
+            let mut c = [0.0; 3];
+            for &n in on {
+                let p = m.position(n);
+                (0..3).for_each(|d| c[d] += p[d] / on.len().max(1) as f64);
+            }
+            c
+        };
+        for (i, &(p, face)) in supports.iter().enumerate() {
+            let on = nodes_on_face(model.part_nodes(p), |id| model.position(id), h, face);
+            holds.push(HoldGroup { name: format!("support {}", i + 1), centre: centre(&model, &on), nodes: on, springs: vec![] });
+        }
+        for (i, &(p, bore)) in bores.iter().enumerate() {
+            let on = nodes_near_axis(model.part_nodes(p), |id| model.position(id), h, bore);
+            holds.push(HoldGroup { name: format!("bore {}", i + 1), centre: centre(&model, &on), nodes: on, springs: vec![] });
+        }
+        // Stiff enough to hold, soft enough to solve: a thousand times a cube's own stiffness per node.
+        let stiff = |m: &Model, p: usize| 1e3 * (0..24).map(|r| m.kes[p][r * 25]).sum::<f64>() / 24.0;
+        let mut slanted = false;
+        for (i, face) in study.sliding.iter().enumerate() {
+            let p = part_of(format!("sliding face {}", i + 1), &face.part)?;
+            let on = nodes_on_face(model.part_nodes(p), |id| model.position(id), h, face);
+            if on.is_empty() {
+                return Err(format!("sliding face {} touches no part of the part at this resolution", i + 1));
+            }
+            let mut springs = vec![];
+            let normals: Vec<[f64; 3]> = if face.curved {
+                // Each node square to the bit of surface nearest it.
+                let per: HashMap<usize, [f64; 3]> = area_on_nodes(&on, |id| model.position(id), h, face, |_| true).into_iter().map(|(n, _, av)| (n, av.map(|c| c / v_norm(av).max(1e-300)))).collect();
+                on.iter().map(|n| per.get(n).copied().unwrap_or(face.normal)).collect()
+            } else {
+                let n = face.normal;
+                vec![n.map(|c| c / v_norm(n).max(1e-12)); on.len()]
+            };
+            let k = stiff(&model, p);
+            for (&node, nrm) in on.iter().zip(&normals) {
+                match (0..3).find(|&d| nrm[d].abs() > 0.9999) {
+                    Some(d) => model.fixed[3 * node + d] = true,
+                    None => {
+                        slanted = true;
+                        springs.push(Spring { k, g: (0..3).map(|d| (3 * node + d, nrm[d])).collect() });
+                    }
+                }
+            }
+            model.base.extend(springs.iter().cloned());
+            holds.push(HoldGroup { name: format!("sliding {}", i + 1), centre: centre(&model, &on), nodes: on, springs });
+        }
+        if slanted {
+            notes.push("Sliding faces at a slant (or round) are held by stiff springs square to them: they give about 0.1 % of a cube's movement.".into());
+        }
+        let mut u0 = vec![0.0; 3 * model.nodes];
+        for (i, disp) in study.displacements.iter().enumerate() {
+            let p = part_of(format!("displacement {}", i + 1), &disp.face.part)?;
+            let on = nodes_on_face(model.part_nodes(p), |id| model.position(id), h, &disp.face);
+            if on.is_empty() {
+                return Err(format!("displaced face {} touches no part of the part at this resolution", i + 1));
+            }
+            for &n in &on {
+                for d in 0..3 {
+                    if let Some(v) = disp.by[d] {
+                        model.fixed[3 * n + d] = true;
+                        u0[3 * n + d] = v;
+                    }
+                }
+            }
+            holds.push(HoldGroup { name: format!("displacement {}", i + 1), centre: centre(&model, &on), nodes: on, springs: vec![] });
+        }
+        let share = node_shares(model.nodes, &model.corners, &model.weight);
+        for (i, es) in study.elastic_supports.iter().enumerate() {
+            let p = part_of(format!("elastic support {}", i + 1), &es.face.part)?;
+            let on = nodes_on_face(model.part_nodes(p), |id| model.position(id), h, &es.face);
+            if on.is_empty() {
+                return Err(format!("elastic support {} touches no part of the part at this resolution", i + 1));
+            }
+            // Each node's share of the face's area and the way it faces.
+            let pieces: Vec<(usize, f64, [f64; 3])> = if es.face.curved {
+                area_on_nodes(&on, |id| model.position(id), h, &es.face, |_| true).into_iter().map(|(n, a, av)| (n, a, av.map(|c| c / v_norm(av).max(1e-300)))).collect()
+            } else {
+                let n = es.face.normal;
+                let n = n.map(|c| c / v_norm(n).max(1e-12));
+                spread(&on, &share, es.face.area()).into_iter().map(|(node, a)| (node, a, n)).collect()
+            };
+            let mut springs = vec![];
+            for (node, a, n) in pieces {
+                let k = es.stiffness * a;
+                if es.normal_only {
+                    springs.push(Spring { k, g: (0..3).map(|d| (3 * node + d, n[d])).collect() });
+                } else {
+                    springs.extend((0..3).map(|d| Spring { k, g: vec![(3 * node + d, 1.0)] }));
+                }
+            }
+            model.base.extend(springs.iter().cloned());
+            holds.push(HoldGroup { name: format!("elastic {}", i + 1), centre: centre(&model, &on), nodes: on, springs });
+        }
+        let meshes: Vec<(&[f32], &[u32])> = bodies.iter().map(|b| (b.positions, b.triangles)).collect();
+        let pairs = several.then(|| contact::find(&model, &fills, &materials, &names, &study.contacts, &meshes));
+        let anchored = match &pairs {
+            Some(found) => found.anchored(model.held()),
+            None => model.held(),
+        };
+        model.finish(&anchored.iter().map(|a| !a).collect::<Vec<_>>());
+        let nodes = model.nodes;
+        let mut f = vec![0.0; 3 * nodes];
+        // Where loads make a sharp peak of their own (every load but a pressure
+        // all over a curved face, which ends nowhere): the re-solve keeps off them.
+        let mut pointed = vec![false; nodes];
+        let share = node_shares(nodes, &model.corners, &model.weight);
+        let mut applied = 0.0;
+        let free_on = |m: &Model, p: usize, face: &Face| -> Vec<usize> { nodes_on_face(m.part_nodes(p), |id| m.position(id), h, face).into_iter().filter(|&n| !(0..3).all(|d| m.fixed[3 * n + d])).collect() };
+        for (l, load) in study.loads.iter().enumerate() {
+            let p = part_of(format!("load {}", l + 1), &load.face.part)?;
+            let on = free_on(&model, p, &load.face);
+            if on.is_empty() {
+                return Err(format!("load {} touches no free part of the part", l + 1));
+            }
+            let smooth = load.face.curved && load.force == [0.0; 3];
+            for (n, v) in load_forces(&on, |id| model.position(id), h, &share, load, |_| true) {
+                for d in 0..3 {
+                    f[3 * n + d] += v[d];
+                }
+                pointed[n] |= !smooth;
+            }
+            applied += load_size(load);
+        }
+        for (l, load) in study.bore_loads.iter().enumerate() {
+            let on: Vec<usize> = nodes_near_axis(model.part_nodes(0), |id| model.position(id), h, &load.bore).into_iter().filter(|&n| !model.fixed[3 * n]).collect();
+            if on.is_empty() {
+                return Err(format!("bore load {} touches no free part of the part", l + 1));
+            }
+            for d in 0..3 {
+                for (n, v) in spread(&on, &share, load.force[d]) {
+                    f[3 * n + d] += v;
+                }
+            }
+            on.iter().for_each(|&n| pointed[n] = true);
+            applied += v_norm(load.force);
+        }
+        for (l, load) in study.bearing_loads.iter().enumerate() {
+            let p = part_of(format!("bearing load {}", l + 1), &load.face.part)?;
+            let on = free_on(&model, p, &load.face);
+            let size = v_norm(load.force);
+            if on.is_empty() || size <= 0.0 {
+                return Err(format!("bearing load {} touches no free part of the part", l + 1));
+            }
+            for (n, v) in bearing_forces(&on, |id| model.position(id), h, &load.face, load.force)? {
+                (0..3).for_each(|d| f[3 * n + d] += v[d]);
+                pointed[n] = true;
+            }
+            applied += size;
+        }
+        for (l, load) in study.remote_loads.iter().enumerate() {
+            let p = part_of(format!("remote load {}", l + 1), &load.face.part)?;
+            let on = free_on(&model, p, &load.face);
+            if on.is_empty() {
+                return Err(format!("remote load {} touches no free part of the part", l + 1));
+            }
+            for (n, v) in remote_forces(&on, |id| model.position(id), &share, load) {
+                (0..3).for_each(|d| f[3 * n + d] += v[d]);
+                pointed[n] = true;
+            }
+            applied += v_norm(load.force) + v_norm(load.moment) / (h * 10.0);
+        }
+        // Gravity and spinning: each cube's mass pulled, shared by its corners.
+        if study.gravity.is_some() || study.spin.is_some() {
+            let g = study.gravity.unwrap_or([0.0; 3]);
+            let spin = study.spin.map(|sp| {
+                let a = sp.axis.map(|c| c / v_norm(sp.axis).max(1e-12));
+                let w = sp.rpm * std::f64::consts::TAU / 60.0;
+                (sp.at, a, w * w)
+            });
+            for (e, (c, &p)) in model.cells.iter().zip(&model.part).enumerate() {
+                let mass = materials[p].density * 1e-9 * h * h * h * model.weight[e];
+                let x = cell_centre(&model.grid, *c);
+                let mut acc = g;
+                if let Some((at, a, w2)) = spin {
+                    let r = v_sub(x, at);
+                    let along = v_dot(r, a);
+                    // ω²·r outward, r in metres.
+                    (0..3).for_each(|d| acc[d] += w2 * (r[d] - along * a[d]) * 1e-3);
+                }
+                for &n in &model.corners[e] {
+                    (0..3).for_each(|d| f[3 * n + d] += mass * acc[d] / 8.0);
+                }
+                applied += mass * v_norm(acc);
+            }
+            if materials.iter().any(|m| m.density <= 0.0) {
+                notes.push("A part has no density: gravity and spinning do not pull on it.".into());
+            }
+        }
+        // Prescribed movements load the part too.
+        if u0.iter().any(|v| *v != 0.0) {
+            applied += model.apply_raw(&u0).iter().enumerate().filter(|(i, _)| model.free(*i)).map(|(_, v)| v.abs()).sum::<f64>() / 2.0;
+        }
+        if pairs.as_ref().is_some_and(|p| p.overlap) {
+            notes.push("Some parts overlap rather than touch: they are taken as just touching (no squeeze). Mark the contact a press fit to squeeze the overlap out.".to_string());
+        }
+        // Heat: each cube's warming above the stress-free temperature, as a strain.
+        let warmth = study.heat.as_ref().map(Warmth::new);
+        let dt: Vec<f64> = match &warmth {
+            Some(w) => model.cells.iter().zip(&model.part).map(|(&c, &p)| w.at(p, cell_centre(&model.grid, c))).collect(),
+            None => vec![0.0; model.cells.len()],
+        };
+        let eps_heat: Vec<[f64; 6]> = dt.iter().zip(&model.part).map(|(&t, &p)| {
+            let e = materials[p].alpha * t;
+            [e, e, e, 0.0, 0.0, 0.0]
+        }).collect();
+        let part_of_name = study.bolts.iter().map(|b| b.part.clone()).collect();
+        let pairs = pairs.filter(|p| !p.is_empty());
+        Ok(Setup { model, pairs, materials, names, part_of_name, f, u0, pointed, applied, holds, warmth, dt, eps_heat, bolt_slabs: None, notes })
+    }
+}
+
+/// Solves K·u = rhs from `u`, with contact when there is any: the
+/// iterations, whether it settled, and how the contacts ended up.
+fn solve_rhs(model: &mut Model, pairs: Option<&contact::Found>, rhs: &[f64], u: &mut Vec<f64>) -> (usize, bool, Option<contact::Outcome>) {
+    match pairs {
+        Some(pairs) => {
+            let out = contact::solve(model, rhs, u, pairs);
+            (out.iterations, out.converged, Some(out))
+        }
+        None => {
+            let (it, ok) = model.cg(rhs, u, 1e-9);
+            (it, ok, None)
+        }
+    }
+}
+
+/// A bearing's push on a round face: over the half it pushes into, each
+/// bit pressed straight in, as much as it faces the force (a cosine), all
+/// adding up to the force.
+fn bearing_forces(on: &[usize], position: impl Fn(usize) -> [f64; 3], h: f64, face: &Face, force: [f64; 3]) -> Result<Vec<(usize, [f64; 3])>, String> {
+    let size = v_norm(force);
+    let dir = force.map(|c| c / size);
+    let pieces: Vec<(usize, f64, [f64; 3])> = if face.curved {
+        area_on_nodes(on, &position, h, face, |_| true).into_iter().map(|(n, a, av)| (n, a, av.map(|c| c / v_norm(av).max(1e-300)))).collect()
+    } else {
+        let n = face.normal.map(|c| c / v_norm(face.normal).max(1e-12));
+        on.iter().map(|&id| (id, 1.0, n)).collect()
+    };
+    // Pressed where the face looks against the force; pushed along its inward normal.
+    let weighted: Vec<(usize, f64, [f64; 3])> = pieces.into_iter().map(|(n, a, nrm)| (n, a * (-v_dot(nrm, dir)).max(0.0), nrm.map(|c| -c))).filter(|(_, w, _)| *w > 0.0).collect();
+    let along: f64 = weighted.iter().map(|(_, w, inward)| w * v_dot(*inward, dir)).sum();
+    if along <= 0.0 {
+        return Err("a bearing load needs a round face that faces against its force".into());
+    }
+    let s = size / along;
+    Ok(weighted.into_iter().map(|(n, w, inward)| (n, inward.map(|c| c * s * w))).collect())
+}
+
+/// A force and moment at a point, carried to a face's nodes as by a rigid
+/// link: the force shared by the nodes' shares, the moment (about their
+/// middle, with the force's own lever) as forces growing with distance.
+fn remote_forces(on: &[usize], position: impl Fn(usize) -> [f64; 3], share: &[f64], load: &RemoteLoad) -> Vec<(usize, [f64; 3])> {
+    let w: Vec<f64> = on.iter().map(|&n| share[n].max(1e-12)).collect();
+    let total: f64 = w.iter().sum();
+    let mut c = [0.0; 3];
+    for (&n, wi) in on.iter().zip(&w) {
+        let p = position(n);
+        (0..3).for_each(|d| c[d] += wi * p[d] / total);
+    }
+    let lever = v_cross(v_sub(load.point, c), load.force);
+    let m: [f64; 3] = std::array::from_fn(|d| load.moment[d] + lever[d]);
+    // J = Σ w (|r|² I − r rᵀ); the nodes' forces w·(J⁻¹M × r) add up to M.
+    let mut j = [0.0; 9];
+    for (&n, wi) in on.iter().zip(&w) {
+        let r = v_sub(position(n), c);
+        let rr = v_dot(r, r);
+        for a in 0..3 {
+            for b in 0..3 {
+                j[3 * a + b] += wi * (if a == b { rr } else { 0.0 } - r[a] * r[b]);
+            }
+        }
+    }
+    // Nodes in a line cannot take a moment about it: a little stiffness there keeps J invertible.
+    let trace = j[0] + j[4] + j[8];
+    (0..3).for_each(|a| j[4 * a] += 1e-9 * trace.max(1e-300));
+    let inv = invert(&j, 3);
+    let alpha: [f64; 3] = std::array::from_fn(|a| (0..3).map(|b| inv[3 * a + b] * m[b]).sum());
+    on.iter()
+        .zip(&w)
+        .map(|(&n, wi)| {
+            let r = v_sub(position(n), c);
+            let turn = v_cross(alpha, r);
+            (n, std::array::from_fn(|d| load.force[d] * wi / total + wi * turn[d]))
+        })
+        .collect()
+}
+
+/// Each bolt's slab: the cubes of its part whose centres lie within a cube of
+/// its point along its axis, the slab's section area (mm²), and the part.
+fn bolt_slabs(model: &Model, study: &Study, parts: &[Option<String>], names: &[String]) -> Result<Vec<(Vec<usize>, f64, usize)>, String> {
+    let h = model.grid.h;
+    study
+        .bolts
+        .iter()
+        .zip(parts)
+        .enumerate()
+        .map(|(b, (bolt, part))| {
+            let p = match part {
+                None => 0,
+                Some(n) => names.iter().position(|m| m == n).ok_or_else(|| format!("bolt {} is on “{n}”, which is not in the study", b + 1))?,
+            };
+            let a = bolt.axis.map(|c| c / v_norm(bolt.axis).max(1e-12));
+            let cubes: Vec<usize> = (0..model.cells.len()).filter(|&e| model.part[e] == p && v_dot(v_sub(cell_centre(&model.grid, model.cells[e]), bolt.at), a).abs() < h).collect();
+            let volume: f64 = cubes.iter().map(|&e| model.weight[e] * h * h * h).sum();
+            Ok((cubes, volume / (2.0 * h), p))
+        })
+        .collect()
+}
+
+/// The shortening strain of each bolt's slab, `scale` along its axis.
+fn bolt_strains(model: &Model, study: &Study, slabs: &[(Vec<usize>, f64, usize)], scale: &[f64]) -> Vec<[f64; 6]> {
+    let mut eps = vec![[0.0; 6]; model.cells.len()];
+    for ((bolt, (cubes, _, _)), &s) in study.bolts.iter().zip(slabs).zip(scale) {
+        let a = bolt.axis.map(|c| c / v_norm(bolt.axis).max(1e-12));
+        // Shorten along the axis: −s·a aᵀ (engineering shears twice the tensor's).
+        let e = [-s * a[0] * a[0], -s * a[1] * a[1], -s * a[2] * a[2], -2.0 * s * a[0] * a[1], -2.0 * s * a[1] * a[2], -2.0 * s * a[2] * a[0]];
+        for &c in cubes {
+            (0..6).for_each(|r| eps[c][r] += e[r]);
+        }
+    }
+    eps
+}
+
+/// The pull through a bolt's section (N): the axial stress over its slab's volume, per its thickness.
+fn bolt_force(model: &Model, tensors: &[[f64; 6]], study: &Study, slabs: &[(Vec<usize>, f64, usize)], b: usize) -> f64 {
+    let h = model.grid.h;
+    let a = study.bolts[b].axis.map(|c| c / v_norm(study.bolts[b].axis).max(1e-12));
+    slabs[b]
+        .0
+        .iter()
+        .map(|&e| {
+            let s = &tensors[e];
+            let axial = s[0] * a[0] * a[0] + s[1] * a[1] * a[1] + s[2] * a[2] * a[2] + 2.0 * (s[3] * a[0] * a[1] + s[4] * a[1] * a[2] + s[5] * a[2] * a[0]);
+            axial * model.weight[e] * h * h * h
+        })
+        .sum::<f64>()
+        / (2.0 * h)
+}
+
+/// The stress at each cube's centre from the movement, less a strain the
+/// cube takes freely (heat, a bolt's shortening, plastic flow): σ = D·(B(0)·uₑ − ε₀).
+fn strain_stresses(model: &Model, ds: &[[[f64; 6]; 6]], u: &[f64], eps0: &[[f64; 6]]) -> Vec<[f64; 6]> {
+    let b0 = b_matrix([0.0; 3], model.grid.h);
+    model
+        .corners
+        .par_iter()
+        .zip(&model.part)
+        .zip(eps0)
+        .map(|((c, &p), e0)| {
+            let d = &ds[p];
+            let mut ue = [0.0; 24];
+            for (a, &n) in c.iter().enumerate() {
+                ue[3 * a..3 * a + 3].copy_from_slice(&u[3 * n..3 * n + 3]);
+            }
+            let eps: [f64; 6] = std::array::from_fn(|r| (0..24).map(|j| b0[r][j] * ue[j]).sum::<f64>() - e0[r]);
+            std::array::from_fn(|r| (0..6).map(|k| d[r][k] * eps[k]).sum())
+        })
+        .collect()
+}
+
+/// The forces a strain each cube would take freely puts on the nodes when
+/// it cannot: w·h³·B(0)ᵀ·D·ε₀ (exact for a strain constant over the cube).
+fn eigen_forces(model: &Model, ds: &[[[f64; 6]; 6]], eps0: &[[f64; 6]]) -> Vec<f64> {
+    let h = model.grid.h;
+    let b0 = b_matrix([0.0; 3], h);
+    let mut f = vec![0.0; 3 * model.nodes];
+    for (((c, &w), &p), e0) in model.corners.iter().zip(&model.weight).zip(&model.part).zip(eps0) {
+        if e0.iter().all(|v| *v == 0.0) {
+            continue;
+        }
+        let d = &ds[p];
+        let sig: [f64; 6] = std::array::from_fn(|r| (0..6).map(|k| d[r][k] * e0[k]).sum::<f64>() * w * h * h * h);
+        for (a, &n) in c.iter().enumerate() {
+            for dd in 0..3 {
+                f[3 * n + dd] += (0..6).map(|r| b0[r][3 * a + dd] * sig[r]).sum::<f64>();
+            }
+        }
+    }
+    f
+}
+
+/// Equivalent (von Mises) strain of a plastic strain (engineering shears).
+fn equivalent_strain(e: &[f64; 6]) -> f64 {
+    let (a, b, c) = (e[0], e[1], e[2]);
+    let (x, y, z) = (e[3] / 2.0, e[4] / 2.0, e[5] / 2.0);
+    (2.0 / 3.0 * (a * a + b * b + c * c + 2.0 * (x * x + y * y + z * z))).sqrt()
+}
+
+/// Radial return for von Mises with linear hardening: the plastic strain
+/// a trial stress makes (engineering shears) and the hardening it adds, or
+/// None when it stays elastic.
+fn return_map(trial: &[f64; 6], m: &Elastic, hardened: f64) -> Option<([f64; 6], f64)> {
+    let p = (trial[0] + trial[1] + trial[2]) / 3.0;
+    let s = [trial[0] - p, trial[1] - p, trial[2] - p, trial[3], trial[4], trial[5]];
+    let ss = s[0] * s[0] + s[1] * s[1] + s[2] * s[2] + 2.0 * (s[3] * s[3] + s[4] * s[4] + s[5] * s[5]);
+    let q = (1.5 * ss).sqrt();
+    let hmod = plastic_modulus(m);
+    let over = q - (m.yield_strength + hmod * hardened);
+    if over <= 0.0 || q <= 0.0 {
+        return None;
+    }
+    let g = m.e / (2.0 * (1.0 + m.nu));
+    let dgamma = over / (3.0 * g + hmod);
+    let k = 1.5 * dgamma / q;
+    Some(([k * s[0], k * s[1], k * s[2], 2.0 * k * s[3], 2.0 * k * s[4], 2.0 * k * s[5]], dgamma))
+}
+
+/// Hardening per unit plastic strain from the tangent modulus: H = E·Et/(E − Et).
+fn plastic_modulus(m: &Elastic) -> f64 {
+    if m.tangent <= 0.0 { 0.0 } else { m.e * m.tangent / (m.e - m.tangent).max(1e-9 * m.e) }
+}
+
+/// Bilinear plasticity by the initial-strain method: the loads in steps;
+/// in each, the plastic strain is found by solving the elastic part with
+/// the plastic strain as a strain the cubes take freely, returning each
+/// cube's trial stress to the yield surface, until the plastic strain stops changing.
+fn plastic_solve(s: &mut Setup, ds: &[[[f64; 6]; 6]], base: &[[f64; 6]], u: &mut Vec<f64>, notes: &mut Vec<String>) -> Result<(Vec<[f64; 6]>, usize, bool, PlasticSummary, Vec<[f64; 6]>), String> {
+    const STEPS: usize = 10;
+    const ROUNDS: usize = 80;
+    let cells = s.model.cells.len();
+    let mut ep = vec![[0.0; 6]; cells];
+    let mut hardened = vec![0.0; cells];
+    let mut iterations = 0;
+    let mut settled = true;
+    let mut tensors = vec![[0.0; 6]; cells];
+    let fixed_dofs: Vec<usize> = (0..u.len()).filter(|&i| s.model.used[i / 3] && s.model.fixed[i]).collect();
+    for step in 1..=STEPS {
+        let frac = step as f64 / STEPS as f64;
+        for &i in &fixed_dofs {
+            u[i] = s.u0[i] * frac;
+        }
+        let mut trial_ep = ep.clone();
+        let mut new_hard = hardened.clone();
+        let mut done = false;
+        for _ in 0..ROUNDS {
+            let eps: Vec<[f64; 6]> = (0..cells).map(|e| std::array::from_fn(|r| base[e][r] * frac + trial_ep[e][r])).collect();
+            let fe = eigen_forces(&s.model, ds, &eps);
+            let rhs: Vec<f64> = s.f.iter().zip(&fe).map(|(a, b)| a * frac + b).collect();
+            let (it, _, _) = solve_rhs(&mut s.model, s.pairs.as_ref(), &rhs, u);
+            iterations += it;
+            // Trial stresses against the plastic strain at the start of the step.
+            let committed: Vec<[f64; 6]> = (0..cells).map(|e| std::array::from_fn(|r| base[e][r] * frac + ep[e][r])).collect();
+            let trial = strain_stresses(&s.model, ds, u, &committed);
+            let mut change: f64 = 0.0;
+            let mut scale: f64 = 0.0;
+            for e in 0..cells {
+                let m = &s.materials[s.model.part[e]];
+                scale = scale.max(m.yield_strength / m.e);
+                let (next, dh) = match return_map(&trial[e], m, hardened[e]) {
+                    Some((dep, dh)) => (std::array::from_fn(|r| ep[e][r] + dep[r]), dh),
+                    None => (ep[e], 0.0),
+                };
+                change = change.max((0..6).map(|r| (next[r] - trial_ep[e][r]).abs()).fold(0.0, f64::max));
+                trial_ep[e] = next;
+                new_hard[e] = hardened[e] + dh;
+            }
+            if change <= 1e-4 * scale {
+                done = true;
+                break;
+            }
+        }
+        settled &= done;
+        ep = trial_ep;
+        hardened = new_hard;
+        let eps: Vec<[f64; 6]> = (0..cells).map(|e| std::array::from_fn(|r| base[e][r] * frac + ep[e][r])).collect();
+        tensors = strain_stresses(&s.model, ds, u, &eps);
+    }
+    let yielded = hardened.iter().filter(|&&a| a > 0.0).count();
+    let top = (0..cells).max_by(|&a, &b| hardened[a].total_cmp(&hardened[b])).unwrap_or(0);
+    let tangent = s.materials[0].tangent;
+    if !settled {
+        notes.push("The plastic flow did not settle in every load step: the part may be near collapse (it cannot carry much more), and the figures are approximate.".into());
+    }
+    notes.push(format!(
+        "Plasticity: von Mises with linear hardening ({} MPa past yield), the loads applied in {STEPS} steps; {} of {} cubes yielded.",
+        trim(tangent),
+        yielded,
+        cells
+    ));
+    let summary = PlasticSummary { max_strain: equivalent_strain(&ep[top]), at: cell_centre(&s.model.grid, s.model.cells[top]), yielded, steps: STEPS, settled, tangent };
+    Ok((tensors, iterations, settled, summary, ep))
 }
 
 /// The centre of a grid cube.
@@ -1985,42 +2722,7 @@ pub fn modes(positions: &[f32], triangles: &[u32], material: &Elastic, density: 
 
 /// Thermal conductivity (W/m·K), typical by material name.
 pub fn conductivity(material: &str) -> Option<f64> {
-    let m = material.to_lowercase();
-    Some(if m.contains("stainless") {
-        16.0
-    } else if m.contains("steel") {
-        50.0
-    } else if m.contains("alumin") {
-        167.0
-    } else if m.contains("copper") {
-        400.0
-    } else if m.contains("brass") {
-        110.0
-    } else if m.contains("titan") {
-        7.0
-    } else if m.contains("pla") {
-        0.13
-    } else if m.contains("petg") {
-        0.2
-    } else if m.contains("abs") {
-        0.17
-    } else if m.contains("nylon") {
-        0.25
-    } else if m.contains("acetal") || m.contains("pom") {
-        0.31
-    } else if m.contains("oak") {
-        0.17
-    } else if m.contains("ply") {
-        0.13
-    } else if m.contains("mdf") {
-        0.12
-    } else if m.contains("glass") {
-        1.0
-    } else if m.contains("concrete") {
-        1.7
-    } else {
-        return None;
-    })
+    materials::lookup(material).map(|m| m.conductivity)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
