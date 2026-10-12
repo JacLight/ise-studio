@@ -22,6 +22,7 @@ pub mod pathfinder;
 pub mod pattern;
 pub mod project;
 pub mod runtime;
+pub mod sheet;
 pub mod sketch;
 pub mod stock;
 pub mod trim;
@@ -584,6 +585,10 @@ pub struct ShapeStats {
     /// Stock items and connectors the program declared (see `stock`).
     #[serde(skip_serializing_if = "stock::Declared::is_empty")]
     pub declared: stock::Declared,
+    /// Sheet-metal parts by name ("" for a program returning one solid):
+    /// thickness, material, K-factor, flat size, bend table and checks.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub sheet_metal: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// One part of an assembly, in millimeters (program coordinates).
@@ -1250,6 +1255,7 @@ pub(crate) fn stats_of(e: &runtime::Evaluated) -> ShapeStats {
         linkage: e.mechanism.as_ref().is_some_and(|m| m.get("joints").and_then(serde_json::Value::as_array).is_some_and(|j| !j.is_empty())),
         left_out: e.left_out.clone(),
         declared: e.declared.clone(),
+        sheet_metal: e.sheets.iter().map(|s| (s.part.clone(), s.data.clone())).collect(),
     }
 }
 
