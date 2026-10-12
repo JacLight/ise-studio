@@ -1,0 +1,334 @@
+{
+ "id": "angle_unequal",
+ "name": "Unequal angle",
+ "standard": "EN 10056-1",
+ "category": "Structural sections",
+ "summary": "Unequal-leg steel angles 30×20×3 to 200×100×12 (EN 10056-1), S235JR, cut to length. Heel on the origin, leg a up +Y, leg b along +X, length along +Z.",
+ "keywords": [
+  "angle",
+  "L-profile",
+  "angle iron",
+  "L section",
+  "EN 10056",
+  "steel angle",
+  "unequal angle"
+ ],
+ "source": [
+  "common.js",
+  "sections.js",
+  "angle_unequal.js"
+ ],
+ "display_tolerance": 0.05,
+ "material": "Structural steel S235JR",
+ "materials": {
+  "Structural steel S235JR": 7850
+ },
+ "params": [
+  {
+   "key": "a",
+   "label": "Long leg",
+   "value": 100,
+   "unit": "mm",
+   "min": 30,
+   "max": 200
+  },
+  {
+   "key": "b",
+   "label": "Short leg",
+   "value": 50,
+   "unit": "mm",
+   "min": 20,
+   "max": 150
+  },
+  {
+   "key": "t",
+   "label": "Thickness",
+   "value": 8,
+   "unit": "mm",
+   "min": 3,
+   "max": 20
+  },
+  {
+   "key": "length",
+   "label": "Length (cut)",
+   "value": 1000,
+   "unit": "mm",
+   "min": 10,
+   "max": 12000
+  }
+ ],
+ "columns": [
+  "a",
+  "b",
+  "t"
+ ],
+ "rows": [
+  {
+   "name": "L 30×20×3",
+   "values": {
+    "a": 30,
+    "b": 20,
+    "t": 3
+   }
+  },
+  {
+   "name": "L 40×20×4",
+   "values": {
+    "a": 40,
+    "b": 20,
+    "t": 4
+   }
+  },
+  {
+   "name": "L 40×25×4",
+   "values": {
+    "a": 40,
+    "b": 25,
+    "t": 4
+   }
+  },
+  {
+   "name": "L 45×30×4",
+   "values": {
+    "a": 45,
+    "b": 30,
+    "t": 4
+   }
+  },
+  {
+   "name": "L 50×30×5",
+   "values": {
+    "a": 50,
+    "b": 30,
+    "t": 5
+   }
+  },
+  {
+   "name": "L 60×30×5",
+   "values": {
+    "a": 60,
+    "b": 30,
+    "t": 5
+   }
+  },
+  {
+   "name": "L 60×40×5",
+   "values": {
+    "a": 60,
+    "b": 40,
+    "t": 5
+   }
+  },
+  {
+   "name": "L 60×40×6",
+   "values": {
+    "a": 60,
+    "b": 40,
+    "t": 6
+   }
+  },
+  {
+   "name": "L 65×50×5",
+   "values": {
+    "a": 65,
+    "b": 50,
+    "t": 5
+   }
+  },
+  {
+   "name": "L 70×50×6",
+   "values": {
+    "a": 70,
+    "b": 50,
+    "t": 6
+   }
+  },
+  {
+   "name": "L 75×50×6",
+   "values": {
+    "a": 75,
+    "b": 50,
+    "t": 6
+   }
+  },
+  {
+   "name": "L 75×50×8",
+   "values": {
+    "a": 75,
+    "b": 50,
+    "t": 8
+   }
+  },
+  {
+   "name": "L 80×40×6",
+   "values": {
+    "a": 80,
+    "b": 40,
+    "t": 6
+   }
+  },
+  {
+   "name": "L 80×40×8",
+   "values": {
+    "a": 80,
+    "b": 40,
+    "t": 8
+   }
+  },
+  {
+   "name": "L 80×60×7",
+   "values": {
+    "a": 80,
+    "b": 60,
+    "t": 7
+   }
+  },
+  {
+   "name": "L 100×50×6",
+   "values": {
+    "a": 100,
+    "b": 50,
+    "t": 6
+   }
+  },
+  {
+   "name": "L 100×50×8",
+   "values": {
+    "a": 100,
+    "b": 50,
+    "t": 8
+   }
+  },
+  {
+   "name": "L 100×65×7",
+   "values": {
+    "a": 100,
+    "b": 65,
+    "t": 7
+   }
+  },
+  {
+   "name": "L 100×75×8",
+   "values": {
+    "a": 100,
+    "b": 75,
+    "t": 8
+   }
+  },
+  {
+   "name": "L 100×75×10",
+   "values": {
+    "a": 100,
+    "b": 75,
+    "t": 10
+   }
+  },
+  {
+   "name": "L 120×80×8",
+   "values": {
+    "a": 120,
+    "b": 80,
+    "t": 8
+   }
+  },
+  {
+   "name": "L 120×80×10",
+   "values": {
+    "a": 120,
+    "b": 80,
+    "t": 10
+   }
+  },
+  {
+   "name": "L 125×75×8",
+   "values": {
+    "a": 125,
+    "b": 75,
+    "t": 8
+   }
+  },
+  {
+   "name": "L 150×75×10",
+   "values": {
+    "a": 150,
+    "b": 75,
+    "t": 10
+   }
+  },
+  {
+   "name": "L 150×90×10",
+   "values": {
+    "a": 150,
+    "b": 90,
+    "t": 10
+   }
+  },
+  {
+   "name": "L 150×100×10",
+   "values": {
+    "a": 150,
+    "b": 100,
+    "t": 10
+   }
+  },
+  {
+   "name": "L 200×100×10",
+   "values": {
+    "a": 200,
+    "b": 100,
+    "t": 10
+   }
+  },
+  {
+   "name": "L 200×100×12",
+   "values": {
+    "a": 200,
+    "b": 100,
+    "t": 12
+   }
+  }
+ ],
+ "default": "L 100×50×8",
+ "checks": {
+  "L 100×50×8": {
+   "size": [
+    50,
+    100,
+    1000
+   ],
+   "partNumber": "L 100×50×8 × 1000 S235JR",
+   "massG": 8970.0,
+   "connectors": [
+    "End A",
+    "End B",
+    "Axis",
+    "Leg A back",
+    "Leg A inside",
+    "Leg B back",
+    "Leg B inside"
+   ],
+   "connector_at": {
+    "Leg A back": [
+     0,
+     50.0,
+     500.0
+    ],
+    "Leg B back": [
+     25.0,
+     0,
+     500.0
+    ]
+   },
+   "metrics": {
+    "Mass per metre": 8.97
+   }
+  },
+  "L 200×100×12": {
+   "size": [
+    100,
+    200,
+    1000
+   ]
+  }
+ }
+}

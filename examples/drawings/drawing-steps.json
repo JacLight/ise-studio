@@ -1,0 +1,48 @@
+[
+  {
+    "operation": "shape.set_drawing",
+    "parameters": {
+      "target": "$BRACKET",
+      "drawing": {
+        "threads": [{ "diameter": 5, "size": "M6", "class": "6H", "depth": 10 }],
+        "hole_fits": [{ "diameter": 8, "fit": "H7" }, { "diameter": 22, "fit": "H7" }],
+        "auto": { "tolerances": [{ "key": "z:50", "tolerance": { "type": "symmetric", "value": 0.02 } }] },
+        "roughness": { "ra": 3.2 },
+        "finishes": [{ "view": "right", "at": [40, 61], "ra": 0.8, "process": "reamed" }],
+        "datums": [{ "view": "front", "at": [60, 0], "letter": "A" }],
+        "frames": [{ "view": "right", "at": [29, 50], "symbol": "perpendicularity", "tolerance": 0.02, "diameter_zone": true, "datums": ["A"] }],
+        "notes": ["Remove all burrs and break sharp edges 0.2–0.5.", "Anodise clear to MIL-A-8625 Type II after machining; mask the ⌀22 H7 bore."],
+        "revisions": [{ "rev": "A", "description": "First issue", "date": "2026-10-12", "by": "Forma" }],
+        "title_block": { "company": "Forma examples", "finish": "Anodise clear" },
+        "sheets": [{ "views": ["front"], "section": 50, "scale": 1 }]
+      }
+    }
+  },
+  {
+    "operation": "shape.set_drawing",
+    "parameters": {
+      "target": "$SHAFT",
+      "drawing": {
+        "threads": [{ "diameter": 16, "size": "M16×1.5", "class": "6g" }],
+        "hole_fits": [{ "diameter": 20, "fit": "g6" }, { "diameter": 22, "fit": "k6" }],
+        "roughness": { "ra": 3.2 },
+        "finishes": [{ "view": "front", "at": [34, 10], "ra": 0.8, "process": "ground" }, { "view": "front", "at": [74, 11], "ra": 0.8, "process": "ground" }],
+        "datums": [{ "view": "front", "at": [30, -10], "letter": "A" }],
+        "frames": [{ "view": "front", "at": [74, -11], "symbol": "circular_runout", "tolerance": 0.01, "datums": ["A"] }],
+        "notes": ["Through-harden 40–45 HRC.", "Undercut to DIN 76-1 form A."],
+        "title_block": { "company": "Forma examples", "finish": "Black oxide" }
+      }
+    }
+  },
+  {
+    "operation": "shape.set_drawing",
+    "parameters": {
+      "target": "$GEARBOX",
+      "drawing": {
+        "explode": { "axis": "z" },
+        "notes": ["Grease gears with NLGI 2 lithium grease before closing."],
+        "sheets": [{ "views": ["front", "top", "right", "iso"] }]
+      }
+    }
+  }
+]

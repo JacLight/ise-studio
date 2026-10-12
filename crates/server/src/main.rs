@@ -8,10 +8,15 @@
 //! Clients pick a project with `?project=<name>` on `/ws` and `/export`.
 
 mod ai;
+mod data;
+mod assembly_api;
+mod exact_files;
 mod history;
 mod machines;
+mod meshes;
 mod pcb;
 mod pcb_library;
+mod pcb_libs;
 mod pcb_schematic;
 mod peers;
 mod pictures;
@@ -481,7 +486,8 @@ struct EntityView<'a> {
     components: BTreeMap<&'static str, Value>,
     status: Option<&'a Status>,
     mass: Option<&'a MassProperties>,
-    mesh: Option<&'a DisplayMesh>,
+    /// The display mesh by content: fetched once from `GET /mesh/<ref>`.
+    mesh: Option<meshes::MeshRef>,
     result: Option<&'a RequirementResult>,
     shape: Option<&'a ShapeStats>,
     /// Parameter values after formulas, and the formulas in readable names.
@@ -500,10 +506,28 @@ struct EntityView<'a> {
     /// An instance showing a configuration of its shape: that configuration's
     /// stats, mesh and mass.
     #[serde(skip_serializing_if = "Option::is_none")]
-    configured: Option<&'a de_shape::configs::Configured>,
+    configured: Option<ConfiguredView<'a>>,
     /// Mass (kg) of each part of an assembly, in the order of `shape.parts`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     part_masses: Vec<Option<f64>>,
+    /// A sheet: what every cell shows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sheet: Option<&'a de_shape::sheet::SheetValues>,
+    /// A draft object where it is now: lines, label, measured value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    draft: Option<&'a de_draft::DraftShape>,
+}
+
+/// A configuration as an instance shows it, its mesh named by content.
+#[derive(Serialize)]
+struct ConfiguredView<'a> {
+    config: &'a str,
+    name: &'a str,
+    stats: &'a ShapeStats,
+    mesh: meshes::MeshRef,
+    mass: &'a MassProperties,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    part_masses: &'a [Option<f64>],
 }
 
 fn view(project: &Project, id: StableId) -> Option<EntityView<'_>> {
@@ -512,12 +536,19 @@ fn view(project: &Project, id: StableId) -> Option<EntityView<'_>> {
         components: project.entity_state(id)?,
         status: project.get::<Status>(id),
         mass: project.get::<MassProperties>(id),
-        mesh: project.get::<DisplayMesh>(id),
+        mesh: project.get::<DisplayMesh>(id).map(meshes::reference),
         result: project.get::<RequirementResult>(id),
         shape: project.get::<ShapeSolid>(id).map(|s| &s.stats),
         assembly: project.get::<de_assembly::AssemblyStats>(id),
         placed: project.get::<de_assembly::joints::Placed>(id),
-        configured: project.get::<de_assembly::InstanceConfigured>(id).and_then(|c| c.0.as_deref()),
+        configured: project.get::<de_assembly::InstanceConfigured>(id).and_then(|c| c.0.as_deref()).map(|c| ConfiguredView {
+            config: &c.config,
+            name: &c.name,
+            stats: &c.stats,
+            mesh: meshes::reference(&c.mesh),
+            mass: &c.mass,
+            part_masses: &c.part_masses,
+        }),
         sketch: project.get::<de_shape::sketch::SolvedSketch>(id),
         params: project.get::<de_shape::ResolvedParams>(id),
         formulas: project
@@ -525,6 +556,8 @@ fn view(project: &Project, id: StableId) -> Option<EntityView<'_>> {
             .and_then(|e| de_shape::params::params_of(project.world(), e))
             .map(|(_, ps)| ps.iter().filter_map(|p| p.expr.as_ref().map(|f| (p.key.clone(), de_shape::params::display(project.world(), f)))).collect())
             .unwrap_or_default(),
+        sheet: project.get::<de_shape::sheet::SheetValues>(id),
+        draft: project.get::<de_draft::DraftShape>(id),
         part_masses: match (project.entity(id), project.get::<ShapeSolid>(id)) {
             (Some(e), Some(s)) if !s.stats.parts.is_empty() => de_shape::part_masses(project.world(), e).unwrap_or_default(),
             _ => Vec::new(),
@@ -650,6 +683,7 @@ impl App {
                 let mut report = serde_json::to_value(de_intent::check(&project)).unwrap();
                 let mut boards = pcb::findings(&project);
                 boards.extend(pcb_schematic::findings(&project));
+                boards.extend(pcb_libs::findings(&project));
                 if !boards.is_empty() {
                     report["ok"] = json!(false);
                     if let Some(f) = report["findings"].as_array_mut() {
@@ -1179,7 +1213,10 @@ fn assembly_package(folder: &str, members: &[Source], tolerance: f64, step_of: &
 /// - `/export/<id>.stl?part=<name>` and `.dxf?part=<name>`: one part of an
 ///   assembly, at the origin; the DXF is laid flat with one layer per cut depth.
 /// - `/export/<id>.step`: exact B-rep (OpenCascade), every part named; with
-///   `?part=<name>` one part at the origin.
+///   `?part=<name>` one part at the origin; parts carry their colours (their
+///   material's, or what the program painted) and painted faces their names.
+/// - `/export/<id>.stpz` (compressed STEP) and `.brep` (OpenCascade BREP, one
+///   compound, no names): the same exact shapes.
 /// - `/export/<id>.zip`: the fabrication package (every distinct part's STL,
 ///   STEP and, for sheet parts, DXF, plus a cut list); `/export/project.zip`
 ///   does the same for every part.
@@ -1199,6 +1236,14 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
         return fail(StatusCode::BAD_REQUEST, "tolerance must be between 0.0001 and 10 mm".into());
     }
     let part = query.get("part").cloned();
+    if ext == "scad" {
+        let project = app.project.lock().unwrap();
+        let made = serde_json::from_value::<StableId>(json!(stem)).map_err(|_| format!("{stem} is not a part")).and_then(|id| data::scad_file(&project, id, tolerance));
+        return match made {
+            Ok((name, bytes)) => (StatusCode::OK, [(header::CONTENT_TYPE, "text/plain; charset=utf-8".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}\""))], bytes).into_response(),
+            Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        };
+    }
     let sources: Vec<Source> = {
         let project = app.project.lock().unwrap();
         if stem == "project" && ext == "zip" {
@@ -1296,6 +1341,7 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
                     }
                 }
             }
+            "stpz" | "stepz" | "brep" | "brp" => exact_files::export(&sources[0], part.as_deref(), &ext, tolerance),
             "3mf" => {
                 let s = &sources[0];
                 let (name, solid) = whole_solid(s, part.as_deref(), tolerance)?;
@@ -1879,14 +1925,14 @@ fn today() -> String {
 }
 
 /// A part's engineering drawing: `{id}` gives a sheet as JSON (the app draws
-/// it), `{id}.pdf` every sheet as pages, `{id}.dxf` a sheet and `{id}.zip`
-/// every sheet's DXF. Query: sheet (A4–A0), projection (first, third), part
+/// it), `{id}.pdf` every sheet as pages, `{id}.svg` and `{id}.dxf` a sheet,
+/// and `{id}.zip` every sheet's DXF. Query: sheet (A4–A0), projection (first, third), part
 /// (one part of an assembly), page (which sheet, from 1).
 async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
     use axum::http::header;
     let fail = |code: StatusCode, message: String| (code, message).into_response();
     let (id, format) = match file.rsplit_once('.') {
-        Some((id, f)) if f == "pdf" || f == "dxf" || f == "zip" => (id.to_string(), f),
+        Some((id, f)) if f == "pdf" || f == "dxf" || f == "zip" || f == "svg" => (id.to_string(), f),
         _ => (file.clone(), "json"),
     };
     let page: Option<usize> = match query.get("page").filter(|p| !p.is_empty()) {
@@ -1901,13 +1947,7 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
         Err(e) => return fail(StatusCode::BAD_REQUEST, e),
     };
     let base = de_shape::drawing::Options {
-        sheet: match query.get("sheet").map(String::as_str) {
-            Some("A4") => de_shape::drawing::Sheet::A4,
-            Some("A2") => de_shape::drawing::Sheet::A2,
-            Some("A1") => de_shape::drawing::Sheet::A1,
-            Some("A0") => de_shape::drawing::Sheet::A0,
-            _ => de_shape::drawing::Sheet::A3,
-        },
+        sheet: query.get("sheet").and_then(|q| de_shape::drawing::Sheet::ALL.into_iter().find(|s| s.name().replace(' ', "_").eq_ignore_ascii_case(&q.replace(' ', "_")))).unwrap_or_default(),
         projection: if query.get("projection").is_some_and(|p| p == "third") { de_shape::drawing::Projection::Third } else { de_shape::drawing::Projection::First },
         part: query.get("part").filter(|p| !p.is_empty()).cloned(),
         ..Default::default()
@@ -1957,16 +1997,37 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
                     None => masses.iter().copied().sum::<Option<f64>>(),
                     Some(n) => stats.iter().position(|p| &p.name == n).and_then(|i| masses.get(i).copied().flatten()),
                 };
-                // The parts list: one row per distinct part, with how many there are.
+                // The parts list: one row per distinct part, with how many there
+                // are; numbered copies of one part ("Spacer 1" … "Spacer 4": same
+                // material, process and volume) are one row, as the BOM has them.
                 let mut parts: Vec<de_shape::drawing::PartRow> = vec![];
+                let mut volumes: Vec<f64> = vec![];
                 if part.is_none() {
                     for (i, p) in stats.iter().enumerate() {
-                        if let Some(row) = parts.iter_mut().find(|r| r.name == p.name) {
+                        let base = de_sourcing::bom::base_name(&p.name).to_string();
+                        let same = |r: &de_shape::drawing::PartRow, v: f64| (r.name == p.name || de_sourcing::bom::base_name(&r.name) == base) && r.material == p.material.clone().unwrap_or_else(|| "—".into()) && r.process == p.process.clone().unwrap_or_default() && (v - p.volume_mm3).abs() <= 1e-6 * v.abs().max(1.0);
+                        if let Some(j) = parts.iter().zip(&volumes).position(|(r, v)| same(r, *v)) {
+                            let row = &mut parts[j];
                             row.quantity += 1;
+                            if !row.members.contains(&p.name) {
+                                row.members.push(p.name.clone());
+                            }
+                            // Two copies under one name: the row takes the shared name.
+                            if row.name != base && row.members.iter().all(|m| de_sourcing::bom::base_name(m) == base) {
+                                row.name = base.clone();
+                            }
                             continue;
                         }
                         let kg = masses.get(i).copied().flatten();
-                        parts.push(de_shape::drawing::PartRow { name: p.name.clone(), quantity: 1, material: p.material.clone().unwrap_or_else(|| "—".into()), mass: kg.map(kg_text).unwrap_or_else(|| "—".into()) });
+                        parts.push(de_shape::drawing::PartRow {
+                            name: p.name.clone(),
+                            quantity: 1,
+                            material: p.material.clone().unwrap_or_else(|| "—".into()),
+                            mass: kg.map(kg_text).unwrap_or_else(|| "—".into()),
+                            process: p.process.clone().unwrap_or_default(),
+                            members: vec![p.name.clone()],
+                        });
+                        volumes.push(p.volume_mm3);
                     }
                 }
                 (material, mass, parts)
@@ -2008,7 +2069,7 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
     }
     // One sheet for the app and a DXF; every sheet for the PDF and the zip, unless one is asked for.
     let wanted: Vec<usize> = match (format, page) {
-        ("json" | "dxf", p) => vec![p.unwrap_or(1) - 1],
+        ("json" | "dxf" | "svg", p) => vec![p.unwrap_or(1) - 1],
         (_, Some(p)) => vec![p - 1],
         _ => (0..pages).collect(),
     };
@@ -2052,6 +2113,7 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
             let file = if wanted.len() == 1 && pages > 1 { format!("{safe}{}", suffix(wanted[0])) } else { safe.clone() };
             ([(header::CONTENT_TYPE, "application/pdf".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{file}.pdf\""))], de_shape::drawing::pdf_pages(&all)).into_response()
         }
+        "svg" => ([(header::CONTENT_TYPE, "image/svg+xml".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{safe}{}.svg\"", suffix(wanted[0])))], de_shape::drawing::svg(&made[0])).into_response(),
         "dxf" => ([(header::CONTENT_TYPE, "application/dxf".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{safe}{}.dxf\"", suffix(wanted[0])))], de_shape::drawing::dxf(&made[0])).into_response(),
         "zip" => {
             let files: Vec<(String, Vec<u8>)> = wanted.iter().zip(&made).map(|(&i, d)| (format!("{safe}{}.dxf", suffix(i)), de_shape::drawing::dxf(d).into_bytes())).collect();
@@ -2251,9 +2313,20 @@ async fn import(
 ) -> axum::response::Response {
     let fail = |code: StatusCode, message: String| (code, message).into_response();
     let lower = file.to_lowercase();
-    if !(lower.ends_with(".step") || lower.ends_with(".stp")) {
-        return fail(StatusCode::BAD_REQUEST, "Forma imports STEP files (.step, .stp)".into());
+    if [".scad", ".csv", ".tsv", ".xlsx", ".xlsm"].iter().any(|x| lower.ends_with(x)) {
+        return match server.project(query.get("project")) {
+            Ok(app) => data::import_data(app, &file, &query, &body).await,
+            Err(e) => fail(StatusCode::BAD_REQUEST, e),
+        };
     }
+    if !exact_files::importable(&lower) {
+        return fail(StatusCode::BAD_REQUEST, "Forma imports STEP (.step, .stp, compressed .stpz), OpenCascade BREP (.brep), OpenSCAD (.scad) and tables (.csv, .xlsx)".into());
+    }
+    // Stored as STEP whatever it came as (compressed STEP unpacked, BREP translated).
+    let body = match exact_files::to_step(&lower, &body) {
+        Ok(b) => axum::body::Bytes::from(b),
+        Err(e) => return fail(StatusCode::UNPROCESSABLE_ENTITY, format!("{file} could not be read: {e}")),
+    };
     let app = match server.project(query.get("project")) {
         Ok(app) => app,
         Err(e) => return fail(StatusCode::BAD_REQUEST, e),
@@ -2299,7 +2372,7 @@ async fn import(
     // Show it about as finely as its size calls for (a bolt to ±0.01 mm, a building to ±5).
     let size = (0..3).map(|k| bounds[k + 3] - bounds[k]).fold(0.0, f64::max);
     let shown = (size / 4000.0).clamp(0.005, 5.0);
-    let name = file.rsplit_once('.').map(|(n, _)| n).unwrap_or(&file).replace(['_', '-'], " ");
+    let name = exact_files::stem(&file).replace(['_', '-'], " ");
     let source = format!(
         "// Imported from “{file}” ({count} {}). The geometry is the file's own exact B-rep:\n// the view meshes it, STEP exports pass it through untouched.\nreturn importStep(\"{sha}\");",
         if count == 1 { "body" } else { "bodies" }
@@ -2370,7 +2443,7 @@ async fn main() -> std::io::Result<()> {
     let dir = project_path.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
     std::fs::create_dir_all(&dir)?;
     let default = project_path.file_stem().and_then(|s| s.to_str()).unwrap_or("default").to_string();
-    let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
+    let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &de_draft::DraftPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
     let claude = ai::AiConfig::find_claude();
     match &claude {
         Some(p) => println!("Forma AI: Claude Code at {}", p.display()),
@@ -2379,6 +2452,12 @@ async fn main() -> std::io::Result<()> {
     let ai = Arc::new(ai::AiConfig { repo: root.canonicalize().unwrap_or(root.clone()), port, claude, model: std::env::var("FORMA_AI_MODEL").ok() });
     // Imported files, stored by content, shared by every project in the folder.
     de_shape::assets::set_dir(dir.join("assets"));
+    // Slow results (motion sweeps) kept between runs, by what they came from.
+    de_shape::cache::set_dir(dir.join(".cache"));
+    // The stock library's sizes, worked out while nobody waits (the I key's browser reads them).
+    std::thread::spawn(|| {
+        let _ = de_shape::library::summary();
+    });
     let engine = engine_id(&dir)?;
     println!("engine {engine}");
     let machines = machines::MachineQueries::new(&root);
@@ -2424,12 +2503,16 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
     let ui = ServeDir::new(web).fallback(ServeFile::new(web.join("index.html")));
     Router::new()
         .route("/ws", get(websocket))
+        .route("/mesh/{key}", get(meshes::fetch))
         .route("/export/{file}", get(export))
         .route("/projects", get(projects))
         .route("/projects/{name}/info", axum::routing::post(project_info))
         .route("/projects/{name}/duplicate", axum::routing::post(project_duplicate))
         .route("/projects/{name}/delete", axum::routing::post(project_delete))
         .route("/projects/trash", get(trash_list))
+        .route("/projects/{name}/bundle", get(data::bundle))
+        .route("/projects/import", axum::routing::post(data::import_bundle).layer(axum::extract::DefaultBodyLimit::max(1024 * 1024 * 1024)))
+        .route("/table/{file}", get(data::table_file))
         .route("/projects/trash/{entry}/restore", axum::routing::post(trash_restore))
         .route("/projects/{name}/thumbnail", get(thumbnail_get).post(thumbnail_put).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024)))
         .route("/slicer/{file}", axum::routing::post(send_to_slicer))
@@ -2440,6 +2523,16 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/assembly-motion/{id}", get(assembly_motion))
         .route("/connectors/{id}", get(connectors))
         .route("/fit/{id}", get(fit_report))
+        .route("/check-geometry/{id}", get(exact_files::check))
+        .route("/assembly-dof/{id}", get(assembly_api::dof))
+        .route("/interference/{id}", get(assembly_api::interference))
+        .route("/explode/{id}", get(assembly_api::explode))
+        .route("/motion-study/{id}", get(assembly_api::motion_study))
+        .route("/robot/{tip}", get(assembly_api::chain))
+        .route("/robot/{tip}/fk", get(assembly_api::fk))
+        .route("/robot/{tip}/ik", get(assembly_api::ik))
+        .route("/robot/{tip}/reach", get(assembly_api::reach))
+        .route("/robot/{tip}/trajectory", get(assembly_api::trajectory))
         .route("/measure/{id}", get(measure_report))
         .route("/stress/{id}", axum::routing::post(stress))
         .route("/modes/{id}", axum::routing::post(modes))
@@ -2483,6 +2576,23 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/kicad/footprint/{id}", get(pcb_library::footprint))
         .route("/pcb/kicad/symbol/{id}", get(pcb_library::symbol))
         .route("/pcb/verify-footprints", get(pcb_library::verify))
+        .route("/pcb/libs", get(pcb_libs::index))
+        .route("/pcb/libs/symbol/preview", axum::routing::post(pcb_libs::symbol_preview))
+        .route("/pcb/libs/symbol/{id}", get(pcb_libs::symbol))
+        .route("/pcb/libs/symbol/{id}/svg", get(pcb_libs::symbol_svg))
+        .route("/pcb/libs/footprint/preview", axum::routing::post(pcb_libs::footprint_preview))
+        .route("/pcb/libs/footprint/{id}", get(pcb_libs::footprint))
+        .route("/pcb/libs/footprint/{id}/svg", get(pcb_libs::footprint_svg))
+        .route("/pcb/libs/wizards", get(pcb_libs::wizard_presets))
+        .route("/pcb/libs/wizard", axum::routing::post(pcb_libs::wizard))
+        .route("/pcb/libs/bitmap", axum::routing::post(pcb_libs::bitmap))
+        .route("/pcb/libs/global", get(pcb_libs::global_index))
+        .route("/pcb/libs/global/{name}", get(pcb_libs::global_get).post(pcb_libs::global_post).delete(pcb_libs::global_delete))
+        .route("/pcb/libs/global/{name}/from-project", axum::routing::post(pcb_libs::global_from_project))
+        .route("/pcb/libs/assign/{id}", get(pcb_libs::assign))
+        .route("/pcb/variants/{id}", get(pcb_libs::variant_list))
+        .route("/pcb/{id}/variant/{name}/{file}", get(pcb_libs::variant_file))
+        .route("/pcb/blocks", get(pcb_libs::blocks_list))
         .route("/pcb/boards", get(pcb::boards))
         .route("/pcb/buy", get(pcb::buy))
         .route("/pcb/settings", get(pcb::settings_get).post(pcb::settings_post))
@@ -2506,6 +2616,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         // View-only links: the page and its read-only session, for the link's project only.
         .route("/view/{token}", get(share::page))
         .route("/view/{token}/ws", get(share::socket))
+        .route("/view/{token}/mesh/{key}", get(meshes::fetch_shared))
         // The web app's bundles (static, named by content), for the view-only page.
         .nest_service("/assets", ServeDir::new(web.join("assets")).append_index_html_on_directories(false))
         .layer(axum::middleware::from_fn(cache_policy))
@@ -2524,7 +2635,7 @@ mod tests {
     }
 
     fn server_in(dir: &std::path::Path) -> Arc<Server> {
-        let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
+        let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &de_draft::DraftPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let ai = Arc::new(ai::AiConfig { repo: root.clone(), port: 0, claude: None, model: None });
         let web = dir.join("web");

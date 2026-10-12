@@ -26,7 +26,7 @@
    "value": 3,
    "unit": "mm",
    "min": 2,
-   "max": 8,
+   "max": 12,
    "step": 0.5
   },
   {
@@ -84,6 +84,18 @@
    "values": {
     "d": 8
    }
+  },
+  {
+   "name": "M10",
+   "values": {
+    "d": 10
+   }
+  },
+  {
+   "name": "M12",
+   "values": {
+    "d": 12
+   }
   }
  ],
  "default": "M3",
@@ -135,6 +147,19 @@
      6.8
     ]
    }
+  },
+  "M12": {
+   "size": [
+    18,
+    20.784609690826528,
+    10.8
+   ],
+   "tolerance": 0.06,
+   "metrics": {
+    "Across flats": 18,
+    "Height": 10.8
+   },
+   "partNumber": "ISO 4032 M12 A2-70"
   }
  }
 }

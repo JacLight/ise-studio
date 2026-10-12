@@ -236,6 +236,22 @@ fn a_nut_in_a_hex_trap_and_in_one_too_small() {
 }
 
 #[test]
+fn a_nyloc_nut_is_checked_in_its_trap_like_a_plain_nut() {
+    for (af, want) in [(5.8, FitStatus::Pass), (5.3, FitStatus::Fail)] {
+        let mut p = project();
+        // ISO 10511 M3: 5.5 across flats, hex 2.4 high under its collar.
+        let src = format!("return [part('Block', box(20, 20, 6).translate(-10, -10, 0).subtract(regularPolygon(6, {af} / Math.sqrt(3), {{ rotate: 30 }}).extrude(5).translate(0, 0, -0.01)).subtract(cylinder(7, 1.7).translate(0, 0, -0.5)), {{ process: '3d_print' }})];");
+        let block = id(&run(&mut p, "shape.create", json!({ "name": "Block", "definition": true, "display_tolerance": 0.01, "source": src, "params": [] })).unwrap());
+        let asm = id(&run(&mut p, "assembly.create", json!({ "name": "Trap" })).unwrap());
+        run(&mut p, "assembly.instance.create", json!({ "of": block, "parent": asm, "name": "Block" })).unwrap();
+        run(&mut p, "stock.insert", json!({ "family": "iso10511", "size": "M3", "parent": asm, "name": "Nyloc", "at": [0, 0, 0.3] })).unwrap();
+        let r = fit::report(p.world(), Some(asm), &FitOptions { motion: false, steps: 12 }).unwrap();
+        let c = check(find(&r, "nut"), "Nut trap");
+        assert_eq!(c.status, want, "{}", c.text);
+    }
+}
+
+#[test]
 fn the_printer_profile_is_a_project_setting() {
     let mut p = project();
     assert_eq!(fit::profile(p.world()).clearance, 0.4);

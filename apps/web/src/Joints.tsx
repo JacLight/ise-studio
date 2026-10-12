@@ -10,11 +10,14 @@ import { Icon } from "./icons";
 import { type Transform, type V3, applyT, childrenOf, fmt, instance, qrotate } from "./model";
 import { ScrubField } from "./ScrubField";
 import { LinkNote } from "./Panels";
+import type { AssemblyOverlay, GeometryHit } from "./Viewport";
+import { Couplings, DofSummary, MateBuilder, MateGlyph, type MateKind, couplingOf, isMate } from "./AssemblyTools";
 
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
 
-export type JointKind = "fixed" | "hinge" | "slider" | "cylinder" | "ball";
-type End = { instance: string; connector: string } | "ground" | { at: V3; axis?: V3; x?: V3 };
+export type JointKind = "fixed" | "hinge" | "slider" | "cylinder" | "ball" | MateKind;
+type Geometry = { type: string; at?: V3; normal?: V3; dir?: V3; radius?: number; points?: V3[] };
+type End = { instance: string; connector: string } | { instance: string; geometry: Geometry } | "ground" | { at: V3; axis?: V3; x?: V3 };
 export type JointData = { kind: JointKind; assembly?: string; a: End; b: End; offset?: number; aligned?: boolean; free?: boolean };
 type Param = { key: string; label: string; value: number; unit: string; min?: number | null; max?: number | null; step?: number | null; expr?: string };
 
@@ -24,8 +27,17 @@ export const jointName = (e: EntityView) => paramsOf(e).name;
 
 /** What picking connectors in the view needs: the triads to draw and what a click on one does. */
 export type ConnectorPick = { picture: ConnectorPicture; onPick: (key: string) => void };
-/** How the joints panel reaches the view. */
-export type JointView = { pick: (p: ConnectorPick | null) => void; poses: (m: Map<string, Transform> | null) => void };
+/** How the joints panel (and the assembly tools) reach the view. */
+export type JointView = {
+  pick: (p: ConnectorPick | null) => void;
+  poses: (m: Map<string, Transform> | null) => void;
+  /** Lines and dots over the model (project mm), or none. */
+  overlay: (o: AssemblyOverlay | null) => void;
+  /** Clicks on parts report the face picked (null: back to selecting). */
+  geometry: (f: ((hit: GeometryHit) => void) | null) => void;
+  /** The view as a PNG data URL, rendered now. */
+  snapshot: () => string | null;
+};
 
 const KINDS: { kind: JointKind; label: string; hint: string }[] = [
   { kind: "fixed", label: "Fixed", hint: "Held together, no motion" },
@@ -39,7 +51,8 @@ const n = (v: number, d = 1) => Number(v.toFixed(d)).toLocaleString("en-US");
 
 /** A small drawing of each kind of joint. */
 export function JointGlyph({ kind }: { kind: JointKind }) {
-  const paths: Record<JointKind, React.ReactNode> = {
+  if (isMate(kind)) return <MateGlyph kind={kind} />;
+  const paths: Record<Exclude<JointKind, MateKind>, React.ReactNode> = {
     fixed: (
       <>
         <rect x="2.5" y="8.5" width="11" height="5" rx="1.2" />
@@ -85,9 +98,11 @@ export function JointGlyph({ kind }: { kind: JointKind }) {
   );
 }
 
+const GEOMETRY_WORDS: Record<string, string> = { face: "face", edge: "edge", point: "point", line: "axis", plane: "plane", cylinder: "round face", sphere: "sphere", origin: "origin" };
+
 function endText(end: End, entities: ReadonlyMap<string, EntityView>) {
   if (end === "ground") return "Ground";
-  if ("instance" in end) return `${instance(entities.get(end.instance))?.name ?? "Missing"} · ${end.connector}`;
+  if ("instance" in end) return `${instance(entities.get(end.instance))?.name ?? "Missing"} · ${"connector" in end ? end.connector : (GEOMETRY_WORDS[end.geometry.type] ?? end.geometry.type)}`;
   return `Ground at ${end.at.map((v) => fmt(v)).join(", ")}`;
 }
 
@@ -177,6 +192,19 @@ export function AssemblyJoints(props: {
   );
   const [open, setOpen] = useState<string | null>(null);
   const [builder, setBuilder] = useState<Builder | null>(null);
+  const [mating, setMating] = useState(false);
+  // Joints a coupling drives: which coupling.
+  const follows = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const e of entities.values()) {
+      const c = couplingOf(e);
+      if (c && (c.assembly ?? null) === scope) m.set(c.follower, c.name);
+    }
+    return m;
+  }, [entities, scope]);
+  // The degrees-of-freedom check re-reads when any joint here changes.
+  const allJoints = useMemo(() => [...entities.values()].filter((e) => (jointOf(e)?.assembly ?? null) === scope), [entities, scope]);
+  const stamp = useMemo(() => allJoints.map((e) => `${e.id}:${JSON.stringify(e.components)}:${JSON.stringify(e.params ?? {})}`).join("|") + `|${[...follows.values()].join()}`, [allJoints, follows]);
   const [check, setCheck] = useState<{ joint: string; state: "busy" } | { joint: string; state: "done"; sweep: AssemblySweep } | { joint: string; state: "error"; text: string } | null>(null);
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -196,14 +224,34 @@ export function AssemblyJoints(props: {
     <section className="props-section aj">
       <header>
         <h3>{props.title}</h3>
-        {!builder && members.length > 1 ? (
-          <button type="button" className="aj-add" onClick={() => setBuilder({ step: "moving" })} title="Join two instances at their connectors">
-            <Icon name="plus" /> Add joint
-          </button>
+        {!builder && !mating && members.length > 1 ? (
+          <span className="aj-adds">
+            <button type="button" className="aj-add" onClick={() => setMating(true)} title="Pick a face on each of two parts: coincident, concentric, parallel, distance, tangent…">
+              <Icon name="plus" /> Mate
+            </button>
+            <button type="button" className="aj-add" onClick={() => setBuilder({ step: "moving" })} title="Join two instances at their connectors">
+              <Icon name="plus" /> Joint
+            </button>
+          </span>
         ) : (
           joints.length > 0 && <span className="section-note">{joints.length}</span>
         )}
       </header>
+      {mating && (
+        <MateBuilder
+          scope={scope}
+          entities={entities}
+          view={view}
+          onCancel={() => setMating(false)}
+          onCreate={async (params) => {
+            const out = (await run("assembly.joint.create", params)) as { id: string } | null;
+            if (out) {
+              setMating(false);
+              setOpen(out.id);
+            }
+          }}
+        />
+      )}
       {builder && (
         <JointBuilder
           builder={builder}
@@ -222,19 +270,21 @@ export function AssemblyJoints(props: {
           }}
         />
       )}
-      {!builder && !joints.length && (
+      {!builder && !mating && !joints.length && (
         <p className="aj-empty">
           {members.length > 1
-            ? "Join instances at their connectors — a servo on its bracket, a horn on its shaft. Each joint's value is a parameter you can scrub, limit and link."
+            ? "Mate faces (coincident, concentric, distance, tangent…) or join instances at their connectors — a servo on its bracket, a horn on its shaft. Each value is a parameter you can scrub, limit and link."
             : "Place two or more components here to join them."}
         </p>
       )}
+      {!focus && allJoints.length > 0 && <DofSummary scope={scope} stamp={stamp} />}
       {joints.length > 0 && (
         <ul className="aj-list">
           {joints.map((e) => (
             <JointRow
               key={e.id}
               joint={e}
+              follows={follows.get(e.id)}
               entities={entities}
               open={open === e.id}
               onToggle={() => setOpen((o) => (o === e.id ? null : e.id))}
@@ -258,6 +308,7 @@ export function AssemblyJoints(props: {
           ))}
         </ul>
       )}
+      {!focus && <Couplings scope={scope} joints={allJoints} entities={entities} run={run} />}
     </section>
   );
 }
@@ -266,6 +317,8 @@ export function AssemblyJoints(props: {
 
 function JointRow(props: {
   joint: EntityView;
+  /** The coupling that drives its value, if one does. */
+  follows?: string;
   entities: ReadonlyMap<string, EntityView>;
   open: boolean;
   onToggle: () => void;
@@ -284,7 +337,10 @@ function JointRow(props: {
   const heldIds = [j.a, j.b].flatMap((end) => (typeof end === "object" && "instance" in end ? [end.instance] : []));
   const heldProblem = heldIds.map((id) => entities.get(id)).find((x) => x?.status?.state === "failed");
   const solved = heldIds.map((id) => entities.get(id)?.placed?.values?.[e.id]).find((v) => v);
-  const value = (p: Param, k: number) => (j.free && solved ? solved[k] : (e.params?.[p.key] ?? p.value));
+  const following = j.free || !!props.follows;
+  const value = (p: Param, k: number) => (following && solved ? solved[k] : (e.params?.[p.key] ?? p.value));
+  const mate = isMate(j.kind);
+  const planes = j.kind === "coincident" || j.kind === "distance" || j.kind === "parallel";
   // Scrubbing: the motion through the value's range, fetched once, played in the view.
   const sweeps = useRef(new Map<string, Promise<AssemblySweep | null>>());
   useEffect(() => sweeps.current.clear(), [entities]);
@@ -325,7 +381,7 @@ function JointRow(props: {
               {e.formulas?.[primary.key] && <Icon name="link" />}
             </>
           ) : (
-            <small>{j.offset ? `${fmt(j.offset)} mm gap` : "fixed"}</small>
+            <small>{mate ? j.kind : j.offset ? `${fmt(j.offset)} mm gap` : "fixed"}</small>
           )}
         </span>
         <Icon name="chevron" />
@@ -336,13 +392,13 @@ function JointRow(props: {
           {set.params.length > 0 && (
             <div className="param-list">
               {set.params.map((p, k) =>
-                j.free ? (
+                following ? (
                   <div key={p.key} className="param-row">
                     <span className="param-label">{p.label}</span>
-                    <span className="aj-follows" title="A free joint in a closed loop takes the value the other joints leave it">
+                    <span className="aj-follows" title={props.follows ? "A coupling drives this value from another joint's" : "A free joint in a closed loop takes the value the other joints leave it"}>
                       {n(value(p, k), 2)}
                       <small>{unitOf(p)}</small>
-                      <em>follows the loop</em>
+                      <em>{props.follows ? `follows ${props.follows}` : "follows the loop"}</em>
                     </span>
                   </div>
                 ) : (
@@ -373,7 +429,22 @@ function JointRow(props: {
               )}
             </div>
           )}
-          {primary && !j.free && <Limits param={primary} onSet={(l) => run("assembly.joint.update", { target: e.id, limits: l })} />}
+          {primary && !following && <Limits param={primary} onSet={(l) => run("assembly.joint.update", { target: e.id, limits: l })} />}
+          {mate ? (
+            planes && (
+              <div className="aj-options">
+                <div className="seg-toggle" role="group" aria-label="How flat faces face">
+                  <button type="button" className={!j.aligned ? "on" : ""} aria-pressed={!j.aligned} onClick={() => j.aligned && run("assembly.joint.update", { target: e.id, aligned: false })} title="Flat faces face each other">
+                    Face to face
+                  </button>
+                  <button type="button" className={j.aligned ? "on" : ""} aria-pressed={!!j.aligned} onClick={() => !j.aligned && run("assembly.joint.update", { target: e.id, aligned: true })} title="Flat faces point the same way">
+                    Same way
+                  </button>
+                </div>
+                {j.kind === "coincident" && <ScrubField label="Gap" chip="gap" value={j.offset ?? 0} unit="mm" step={0.5} onLive={() => {}} onCommit={(v) => run("assembly.joint.update", { target: e.id, offset: v })} />}
+              </div>
+            )
+          ) : (
           <div className="aj-options">
             <div className="seg-toggle" role="group" aria-label="How the connectors face">
               <button type="button" className={!j.aligned ? "on" : ""} aria-pressed={!j.aligned} onClick={() => j.aligned && run("assembly.joint.update", { target: e.id, aligned: false })} title="The connectors' axes point at each other: faces meet">
@@ -385,12 +456,15 @@ function JointRow(props: {
             </div>
             <ScrubField label="Gap" chip="gap" value={j.offset ?? 0} unit="mm" step={0.5} onLive={() => {}} onCommit={(v) => run("assembly.joint.update", { target: e.id, offset: v })} />
           </div>
-          <label className="aj-free" title="In a closed loop (a four-bar, a part held at two places) a free joint takes whatever value the others leave it">
-            <input type="checkbox" checked={!!j.free} onChange={(ev) => run("assembly.joint.update", { target: e.id, free: ev.target.checked })} />
-            Free in a loop
-          </label>
+          )}
+          {set.params.length > 0 && !props.follows && (
+            <label className="aj-free" title="In a closed loop (a four-bar, a part held at two places) a free joint takes whatever value the others leave it">
+              <input type="checkbox" checked={!!j.free} onChange={(ev) => run("assembly.joint.update", { target: e.id, free: ev.target.checked })} />
+              Free in a loop
+            </label>
+          )}
           <div className="row-buttons aj-actions">
-            {j.kind !== "fixed" && (
+            {set.params.length > 0 && !props.follows && (
               <button type="button" className="secondary" onClick={props.onCheck} disabled={props.checking?.state === "busy"} title="Move it through its range and watch every pair of parts">
                 <Icon name="collide" /> Check clashes
               </button>

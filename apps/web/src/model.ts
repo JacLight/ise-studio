@@ -118,13 +118,44 @@ export function definitionName(id: string, entities: ReadonlyMap<string, EntityV
 
 /** Instances placed inside an assembly definition, bottom to top, then by name. */
 export function childrenOf(defId: string, entities: ReadonlyMap<string, EntityView>): EntityView[] {
-  return [...entities.values()]
-    .filter((e) => instance(e)?.parent === defId)
-    .sort((a, b) => instance(a)!.at[2] - instance(b)!.at[2] || instance(a)!.name.localeCompare(instance(b)!.name, undefined, { numeric: true }));
+  const index = indexOf(entities);
+  let list = index.sorted.get(defId);
+  if (!list) {
+    list = (index.children.get(defId) ?? []).sort((a, b) => instance(a)!.at[2] - instance(b)!.at[2] || instance(a)!.name.localeCompare(instance(b)!.name, undefined, { numeric: true }));
+    index.sorted.set(defId, list);
+  }
+  return [...list];
 }
 
 /** How many instances use this definition. */
-export const usesOf = (defId: string, entities: ReadonlyMap<string, EntityView>) => [...entities.values()].filter((e) => instance(e)?.of === defId).length;
+export const usesOf = (defId: string, entities: ReadonlyMap<string, EntityView>) => indexOf(entities).uses.get(defId)?.length ?? 0;
+
+/** The first instance of a definition (where an assembly is placed), if any. */
+export const firstUseOf = (defId: string, entities: ReadonlyMap<string, EntityView>) => indexOf(entities).uses.get(defId)?.[0];
+
+type Index = { children: Map<string, EntityView[]>; sorted: Map<string, EntityView[]>; uses: Map<string, EntityView[]> };
+const indexes = new WeakMap<ReadonlyMap<string, EntityView>, Index>();
+
+/**
+ * Instances by the assembly they sit in and by what they place, built once
+ * per state of the project (every change makes a new entity map): asking for
+ * an assembly's children is then a lookup, not a pass over every entity,
+ * which a 10,000-part project asks thousands of times per update.
+ */
+function indexOf(entities: ReadonlyMap<string, EntityView>): Index {
+  let index = indexes.get(entities);
+  if (!index) {
+    index = { children: new Map(), sorted: new Map(), uses: new Map() };
+    for (const e of entities.values()) {
+      const inst = instance(e);
+      if (!inst) continue;
+      if (inst.parent) (index.children.get(inst.parent) ?? index.children.set(inst.parent, []).get(inst.parent)!).push(e);
+      (index.uses.get(inst.of) ?? index.uses.set(inst.of, []).get(inst.of)!).push(e);
+    }
+    indexes.set(entities, index);
+  }
+  return index;
+}
 
 export type V3 = [number, number, number];
 export type Quat = [number, number, number, number];
@@ -190,7 +221,7 @@ export function worldOf(id: string, entities: ReadonlyMap<string, EntityView>, p
     // `parent`: where it and its siblings are placed, without its own placement.
     if (!(parent && i === 0)) t = compose(t, placedOf(e));
     if (!inst.parent) break;
-    const owner = [...entities.values()].find((x) => instance(x)?.of === inst.parent);
+    const owner = firstUseOf(inst.parent, entities);
     if (!owner) break;
     current = owner.id;
   }
@@ -231,7 +262,7 @@ export function topInstanceOf(id: string, entities: ReadonlyMap<string, EntityVi
   for (let i = 0; i < 32; i++) {
     const inst = instance(entities.get(current));
     if (!inst?.parent) return current;
-    const parentUse = [...entities.values()].find((e) => instance(e)?.of === inst.parent);
+    const parentUse = firstUseOf(inst.parent, entities);
     if (!parentUse) return current;
     current = parentUse.id;
   }

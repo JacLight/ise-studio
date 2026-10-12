@@ -8,6 +8,7 @@ use crate::{
     value::CompValue,
 };
 use bevy_ecs::{component::Component, entity::Entity, world::World};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A transaction over the shared project space. Commands read anything and
@@ -18,11 +19,19 @@ pub struct Tx<'a> {
     registry: &'a Registry,
     actor: &'a Actor,
     ops: Vec<Op>,
+    /// Where each component written so far was recorded: writing it again
+    /// updates that op (first before, last after) instead of adding one, so a
+    /// list grown one item at a time (an assembly's dependencies, joint by
+    /// joint) journals once, not once per item with the whole list each time.
+    /// Only writes after the last entity created fold (a value naming the new
+    /// entity must not replay before it exists).
+    written: HashMap<(StableId, &'static str), usize>,
+    created_at: usize,
 }
 
 impl<'a> Tx<'a> {
     pub(crate) fn new(world: &'a mut World, registry: &'a Registry, actor: &'a Actor) -> Self {
-        Self { world, registry, actor, ops: Vec::new() }
+        Self { world, registry, actor, ops: Vec::new(), written: HashMap::new(), created_at: 0 }
     }
 
     pub(crate) fn into_ops(self) -> Vec<Op> {
@@ -69,6 +78,7 @@ impl<'a> Tx<'a> {
         let entity = self.world.spawn(id).id();
         self.world.resource_mut::<IdIndex>().insert(id, entity);
         self.ops.push(Op::Create { id });
+        self.created_at = self.ops.len();
         id
     }
 
@@ -80,19 +90,27 @@ impl<'a> Tx<'a> {
         }
         let after: CompValue = Arc::new(value.clone());
         self.world.entity_mut(entity).insert(value);
-        self.ops.push(Op::Set {
-            id,
-            kind: T::KIND,
-            before: before.map(|b| Arc::new(b) as CompValue),
-            after: Some(after),
-        });
+        self.record_set(id, T::KIND, before.map(|b| Arc::new(b) as CompValue), Some(after));
         Ok(())
+    }
+
+    /// Records a write, folding it into an earlier write of the same component.
+    fn record_set(&mut self, id: StableId, kind: &'static str, before: Option<CompValue>, after: Option<CompValue>) {
+        if let Some(&i) = self.written.get(&(id, kind))
+            && i >= self.created_at
+            && let Some(Op::Set { after: last, .. }) = self.ops.get_mut(i)
+        {
+            *last = after;
+            return;
+        }
+        self.written.insert((id, kind), self.ops.len());
+        self.ops.push(Op::Set { id, kind, before, after });
     }
 
     pub fn remove<T: Persist>(&mut self, id: StableId) -> Result<(), CommandError> {
         let entity = self.entity(id)?;
         if let Some(before) = self.world.entity_mut(entity).take::<T>() {
-            self.ops.push(Op::Set { id, kind: T::KIND, before: Some(Arc::new(before)), after: None });
+            self.record_set(id, T::KIND, Some(Arc::new(before)), None);
         }
         Ok(())
     }
@@ -110,6 +128,7 @@ impl<'a> Tx<'a> {
         }
         self.world.despawn(entity);
         self.world.resource_mut::<IdIndex>().remove(id);
+        self.written.retain(|(w, _), _| *w != id);
         self.ops.push(Op::Delete { id });
         Ok(())
     }

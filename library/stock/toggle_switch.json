@@ -1,0 +1,90 @@
+{
+ "id": "toggle_switch",
+ "name": "Toggle switch",
+ "category": "Electronics",
+ "summary": "MTS mini toggle switches, M6 bushing (Ø6.2 panel hole): MTS-101 SPST, MTS-102 SPDT ON-ON, MTS-103 ON-OFF-ON, MTS-202 DPDT; nut and washer. Panel back face on z = 0, lever up +Z.",
+ "keywords": [
+  "toggle switch",
+  "MTS-102",
+  "MTS-101",
+  "MTS-103",
+  "MTS-202",
+  "mini toggle",
+  "bat switch",
+  "panel switch",
+  "SPDT"
+ ],
+ "source": [
+  "common.js",
+  "elec.js",
+  "toggle_switch.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Polyamide (black)": 1140,
+  "Steel, nickel-plated": 7850,
+  "Brass, tin-plated": 8500
+ },
+ "params": [
+  {
+   "key": "model",
+   "label": "Model (0 MTS-101, 1 MTS-102, 2 MTS-103, 3 MTS-202)",
+   "value": 1,
+   "unit": "",
+   "min": 0,
+   "max": 3,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "model"
+ ],
+ "rows": [
+  {
+   "name": "MTS-101",
+   "values": {
+    "model": 0
+   }
+  },
+  {
+   "name": "MTS-102",
+   "values": {
+    "model": 1
+   }
+  },
+  {
+   "name": "MTS-103",
+   "values": {
+    "model": 2
+   }
+  },
+  {
+   "name": "MTS-202",
+   "values": {
+    "model": 3
+   }
+  }
+ ],
+ "default": "MTS-102",
+ "checks": {
+  "MTS-102": {
+   "partNumber": "MTS-102",
+   "metrics": {
+    "Lugs": 3,
+    "Panel hole": 6.2
+   },
+   "connectors": [
+    "Panel",
+    "Lever",
+    "Lug 1",
+    "Lug 2",
+    "Lug 3"
+   ]
+  },
+  "MTS-202": {
+   "metrics": {
+    "Lugs": 6
+   }
+  }
+ }
+}

@@ -195,7 +195,44 @@ fn the_robot_arm_builds_fits_moves_clear_and_has_a_clean_bom() {
     assert!(b.buy.iter().all(|l| l.stock.as_ref().is_some_and(|s| !s.part_number.is_empty() && !s.sources.is_empty())), "every bought line has a part number and a source");
     println!("BOM totals: {}", serde_json::to_string(&b.totals).unwrap());
     let mut p = p;
+    kinematics(&mut p, asm);
     reach_and_strength(&mut p, asm);
+}
+
+/// The arm as a robot: its chain from the base to the wrist housing, forward
+/// and inverse kinematics round trips, the reach envelope, and nothing left
+/// undetermined in the assembly.
+fn kinematics(p: &mut Project, asm: StableId) {
+    let world = p.world();
+    let tip = de_assembly::children(world, asm).into_iter().find(|(_, i)| i.name == "Wrist housing").expect("a wrist housing").0;
+    let rig = de_assembly::robot::Rig::new(world, tip, None, None).unwrap();
+    let names: Vec<&str> = rig.axes.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(names, ["Base yaw", "Shoulder", "Elbow", "Wrist"], "the chain from the base to the wrist");
+    // Forward then inverse: the joints found again put the tool back on the point.
+    let q = [20.0, 40.0, 30.0, -20.0];
+    let t = rig.fk(&q).unwrap();
+    let ik = rig.ik(&de_assembly::robot::Target { at: t.at, axis: None }, &rig.now()).unwrap();
+    assert!(ik.reached, "{ik:?}");
+    assert!((0..3).all(|k| (rig.fk(&ik.q).unwrap().at[k] - t.at[k]).abs() < 1e-3));
+    // With the approach direction too (four joints: position and the axis's two turns are reachable).
+    let ik = rig.ik(&de_assembly::robot::Target { at: t.at, axis: Some(t.turn([0.0, 0.0, 1.0])) }, &[0.0; 4]).unwrap();
+    assert!(ik.reached, "{ik:?}");
+    let reach = de_assembly::robot::reach(&rig, 400).unwrap();
+    println!("reach: {}–{} mm, box {:?} to {:?}", reach.min_reach, reach.max_reach, reach.bounds_min, reach.bounds_max);
+    assert!(reach.max_reach > 150.0, "{}", reach.max_reach);
+    // Every part is placed by its joints: nothing undetermined; it moves with its servos.
+    let d = de_assembly::dof::report(world, Some(asm)).unwrap();
+    println!("dof: {}", d.summary);
+    assert_eq!(d.free, 0, "{}", d.summary);
+    assert!(d.mobility >= 5, "{}", d.summary);
+    // Moving the tool to a point sets the chain's joints.
+    commit(p, "assembly.robot.move_to", json!({ "tip": tip, "to": t.at }));
+    let rig = de_assembly::robot::Rig::new(p.world(), tip, None, None).unwrap();
+    assert!((0..3).all(|k| (rig.fk(&rig.now()).unwrap().at[k] - t.at[k]).abs() < 1e-3));
+    // Back home for the strength checks.
+    commit(p, "assembly.pose.create", json!({ "assembly": asm, "name": "Home", "values": { "Base yaw": 0, "Shoulder": 0, "Elbow": 0, "Wrist": 0 } }));
+    let home = p.entity_ids().into_iter().find(|e| p.get::<de_assembly::views::Pose>(*e).is_some()).unwrap();
+    commit(p, "assembly.pose.apply", json!({ "target": home }));
 }
 
 /// Full horizontal reach with 100 g in the gripper: the holding torques at the

@@ -1,6 +1,7 @@
 // Hexagon nut, style 1, ISO 4032 (DIN 934 sizes), stainless A2-70.
 //
-// Source: ISO 4032:2012 table 1 — width across flats s (nominal), nut
+// Source: ISO 4032:2012 table 1 — width across flats s (nominal; M10 16,
+// M12 18 mm, where DIN 934 had 17/19), nut
 // height m (max); bearing face diameter dw (min ≈ 0.9 s, so the 30°
 // chamfer starts at 0.95 s across); countersink at the bore to d (max
 // 1.0–1.08 d); ISO 261 coarse pitch, ISO 68-1 internal thread.
@@ -20,9 +21,11 @@ const ISO4032 = {
   5: [8.0, 4.7],
   6: [10.0, 5.2],
   8: [13.0, 6.8],
+  10: [16.0, 8.4],
+  12: [18.0, 10.8],
 };
 // Typical price of one nut in a pack of 100 (stainless A2, USD).
-const PRICE = { 2: 0.03, 2.5: 0.03, 3: 0.025, 4: 0.03, 5: 0.035, 6: 0.045, 8: 0.08 };
+const PRICE = { 2: 0.03, 2.5: 0.03, 3: 0.025, 4: 0.03, 5: 0.035, 6: 0.045, 8: 0.08, 10: 0.13, 12: 0.19 };
 
 const d = p.d;
 const [s, m] = lookup(ISO4032, d, "ISO 4032");
