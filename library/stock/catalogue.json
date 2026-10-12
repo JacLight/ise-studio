@@ -27,6 +27,8 @@
     "shaft_collar",
     "gt2_pulley",
     "gt2_idler",
+    "gt2_belt_loop",
+    "gt2_belt_open",
     "servo_hobby",
     "servo_horn",
     "nema17",
