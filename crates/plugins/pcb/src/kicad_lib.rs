@@ -617,14 +617,24 @@ pub fn symbol_def(lib: &str, sym: &Sexp, parent: Option<&Sexp>) -> SymbolDef {
     let mut units: BTreeMap<u32, Vec<Gfx>> = BTreeMap::new();
     let mut common: Vec<Gfx> = Vec::new();
     let mut pins: Vec<PinDef> = Vec::new();
+    let mut alt: BTreeMap<u32, Vec<Gfx>> = BTreeMap::new();
+    let mut alt_pins: BTreeMap<String, crate::symbols::PinShape> = BTreeMap::new();
     for unit in body.find_all("symbol") {
-        // "<name>_<unit>_<style>": style 2 is the De Morgan alternate, not drawn.
+        // "<name>_<unit>_<style>": style 2 is the De Morgan alternate body.
         let id = unit.arg_text(0).unwrap_or("");
         let tail = id.strip_prefix(&body_name).unwrap_or(id).trim_start_matches('_');
         let mut it = tail.split('_');
         let u: u32 = it.next().and_then(|x| x.parse().ok()).unwrap_or(1);
         let style: u32 = it.next().and_then(|x| x.parse().ok()).unwrap_or(1);
         if style > 1 {
+            for g in unit.args() {
+                if g.is("pin") {
+                    let number = g.find("number").and_then(|n| n.arg_text(0)).unwrap_or("").to_string();
+                    alt_pins.insert(number, pin_shape(g.arg_text(1).unwrap_or("line")));
+                } else if let Some(gfx) = graphic(g) {
+                    alt.entry(u).or_default().push(gfx);
+                }
+            }
             continue;
         }
         for g in unit.args() {
@@ -650,6 +660,7 @@ pub fn symbol_def(lib: &str, sym: &Sexp, parent: Option<&Sexp>) -> SymbolDef {
                     hidden: hidden(g),
                     unit: u,
                     pads: vec![],
+                    shape: pin_shape(g.arg_text(1).unwrap_or("line")),
                 });
             } else if let Some(gfx) = graphic(g) {
                 if u == 0 { common.push(gfx) } else { units.entry(u).or_default().push(gfx) }
@@ -669,6 +680,7 @@ pub fn symbol_def(lib: &str, sym: &Sexp, parent: Option<&Sexp>) -> SymbolDef {
     let known = mpn.as_deref().and_then(|m| crate::sourcing::KNOWN.iter().find(|k| k.mpn.eq_ignore_ascii_case(m) || k.mpn.to_ascii_uppercase().starts_with(&m.to_ascii_uppercase())));
     let description = field("Description").or_else(|| field("ki_description")).unwrap_or_default();
     let datasheet = field("Datasheet").filter(|d| d.starts_with("http"));
+    let datasheet_field = datasheet.clone();
     SymbolDef {
         name: format!("{lib}:{name}"),
         description: match datasheet {
@@ -689,6 +701,26 @@ pub fn symbol_def(lib: &str, sym: &Sexp, parent: Option<&Sexp>) -> SymbolDef {
         show_pin_names: !pin_names_hidden && !power,
         virtual_part: power,
         keywords: field("ki_keywords").map(|k| k.split_whitespace().map(str::to_string).collect()).unwrap_or_default(),
+        demorgan: if alt.is_empty() { vec![] } else { (1..=n_units).map(|u| alt.get(&0).cloned().unwrap_or_default().into_iter().chain(alt.get(&u).cloned().unwrap_or_default()).collect()).collect() },
+        demorgan_pins: if alt.is_empty() { Default::default() } else { alt_pins },
+        body_style: 1,
+        fields: datasheet_field.into_iter().map(|d| ("Datasheet".to_string(), d)).collect(),
+    }
+}
+
+/// KiCad's pin graphic style.
+pub fn pin_shape(s: &str) -> crate::symbols::PinShape {
+    use crate::symbols::PinShape::*;
+    match s {
+        "inverted" => Inverted,
+        "clock" => Clock,
+        "inverted_clock" => InvertedClock,
+        "input_low" => InputLow,
+        "clock_low" => ClockLow,
+        "output_low" => OutputLow,
+        "edge_clock_high" => EdgeClockHigh,
+        "non_logic" => NonLogic,
+        _ => Line,
     }
 }
 

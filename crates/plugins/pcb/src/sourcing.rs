@@ -142,7 +142,7 @@ pub fn key(mpn: Option<&str>, value: &str, footprint: &str) -> String {
 pub fn bom_lines(view: &BoardView, board: &Board) -> Vec<BomLine> {
     let mut by: BTreeMap<String, BomLine> = BTreeMap::new();
     for c in &view.components {
-        if c.kind == "hole" {
+        if c.kind == "hole" || c.kind == "logo" {
             continue;
         }
         let k = key(c.mpn.as_deref(), &c.value, &c.footprint);

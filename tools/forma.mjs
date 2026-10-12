@@ -10,6 +10,7 @@
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
+//   node tools/forma.mjs pcb lib|logo|assign|variant|block …   project/global libraries, wizards, logos, footprint assignment, variants, design blocks
 //   node tools/forma.mjs simulate <schematic> [--tran 30ms] [--expect "min(V(3V3), burst) > 3.0"] [--save name]   ngspice on a schematic
 //   node tools/forma.mjs list                 every entity, one line each
 //   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
@@ -33,6 +34,7 @@
 
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { pcbLib } from "./forma-pcblib.mjs";
 
 const args = process.argv.slice(2);
 const urlFlag = args.indexOf("--url");
@@ -301,8 +303,10 @@ if (command === "run") {
       }
       const s = await get("/pcb/kicad");
       console.log(`KiCad libraries in ${s.root}\n  footprints: ${s.footprints ?? "not downloaded yet"}\n  symbols:    ${s.symbols ?? "not downloaded yet"}\n  ${s.licence}`);
+    } else if (["lib", "logo", "assign", "variant", "block"].includes(sub)) {
+      failed = await pcbLib(sub, args, { engine, get, http, q });
     } else {
-      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | library [update]");
+      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | library [update] | lib … | logo <image> | assign <schematic> | variant <schematic> … | block …");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
