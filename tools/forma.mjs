@@ -241,7 +241,7 @@ if (command === "run") {
       if (d.marks.length) console.log(`  your dimensions: ${d.marks.length}`);
       const kinds2 = {};
       for (const a of d.annotations) kinds2[a.kind] = (kinds2[a.kind] ?? 0) + 1;
-      const ann = Object.entries(kinds2).filter(([k]) => k !== "hole").map(([k, n]) => `${n} ${k}${n > 1 ? "s" : ""}`);
+      const ann = Object.entries(kinds2).filter(([k]) => k !== "hole").map(([k, n]) => `${n} ${k}${n > 1 ? (k.endsWith("sh") ? "es" : "s") : ""}`);
       if (ann.length) console.log(`  annotations: ${ann.join(", ")}`);
       for (const w of d.warnings) console.log(`  ! ${w}`);
       for (const [a, b] of quality.overlaps) console.log(`  ✗ overlapping text: “${a}” and “${b}”`);

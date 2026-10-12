@@ -40,7 +40,14 @@ type Drawing = {
   page?: number;
   pages?: number;
   warnings?: string[];
+  /** The dimensions the engine found for itself, by key ("x:25", "d:20", "hole:5", "r:8", "c:1@0"). */
+  autos?: AutoMark[];
+  /** What the engine's checker measured on the sheet. */
+  quality?: { overlaps: [string, string][]; on_lines: string[]; off_sheet: string[]; duplicates: string[]; smallest_text: number };
 };
+type AutoMark = { key: string; text: string; view: ViewName; bounds: Box; value: number };
+export type AutoSpec = { off?: boolean; hide?: string[]; tolerances?: { key: string; tolerance: Tolerance }[] };
+export type ThreadSpec = { diameter: number; size: string; class?: string | null; depth?: number | null };
 export type Tolerance = { type: "symmetric"; value: number } | { type: "limits"; upper: number; lower: number } | { type: "fit"; fit: string };
 export type DimSpec = { view: ViewName; a: Pt; b: Pt; kind: DimKind; offset: number; tolerance?: Tolerance; diameter?: boolean; detail?: number };
 export type DetailSpec = { view: ViewName; center: Pt; radius: number; scale?: number | null; place?: Pt | null };
@@ -51,13 +58,13 @@ export type HoleFit = { diameter: number; fit: string };
 type ViewKind = "front" | "top" | "right" | "iso";
 type SheetSize = (typeof SHEETS)[number];
 /** What one sheet carries: its section and everything added on it. */
-type SheetFields = { section?: number | null; dimensions?: DimSpec[]; details?: DetailSpec[]; frames?: FrameSpec[]; datums?: DatumSpec[]; hole_fits?: HoleFit[] };
+type SheetFields = { section?: number | null; dimensions?: DimSpec[]; details?: DetailSpec[]; frames?: FrameSpec[]; datums?: DatumSpec[]; hole_fits?: HoleFit[]; auto?: AutoSpec; threads?: ThreadSpec[] };
 export type SheetSpec = SheetFields & { part?: string | null; views?: ViewKind[]; scale?: number | null; size?: SheetSize | null };
-export type DrawingSetup = { part: string | null; section: number | null; dimensions: DimSpec[]; details?: DetailSpec[]; frames?: FrameSpec[]; datums?: DatumSpec[]; hole_fits?: HoleFit[]; sheets?: SheetSpec[] };
+export type DrawingSetup = SheetFields & { part: string | null; section: number | null; dimensions: DimSpec[]; sheets?: SheetSpec[]; [more: string]: unknown };
 
 type Tool = "none" | "dimension" | "detail" | "datum" | "frame";
 
-const SHEETS = ["A4", "A3", "A2", "A1", "A0"] as const;
+const SHEETS = ["A4", "A3", "A2", "A1", "A0", "ANSI_A", "ANSI_B", "ANSI_C", "ANSI_D", "ANSI_E"] as const;
 const WIDTH: Record<Pen, number> = { visible: 0.5, hidden: 0.25, thin: 0.25, center: 0.25, frame: 0.7 };
 const DASH: Partial<Record<Pen, string>> = { hidden: "3 1.5", center: "8 1.5 0.5 1.5" };
 const ACCENT = "#6a4cdb";
@@ -272,7 +279,7 @@ function sheetLabel(setup: DrawingSetup, page: number, whole: string) {
   return views ? `${name} — ${views}` : name;
 }
 
-type Popover = { at: Pt } & ({ kind: "dimension"; index: number } | { kind: "hole"; diameter: number } | { kind: "frame"; view: ViewName; p: Pt } | { kind: "annotation"; mark: AnnotationMark });
+type Popover = { at: Pt } & ({ kind: "dimension"; index: number } | { kind: "hole"; diameter: number } | { kind: "auto"; mark: AutoMark } | { kind: "frame"; view: ViewName; p: Pt } | { kind: "annotation"; mark: AnnotationMark });
 /** Something added being dragged: where it was grabbed and where the pointer is now (sheet mm). */
 type Move = { kind: "dimension" | "frame" | "datum" | "detail"; index: number; bounds: Box; start: Pt; now: Pt; mark?: AnnotationMark; desk: Pt };
 
@@ -322,6 +329,8 @@ export function DrawingView(props: {
   const frames = cur.frames ?? [];
   const datums = cur.datums ?? [];
   const holeFits = cur.hole_fits ?? [];
+  const threads = cur.threads ?? (onPage > 1 ? (setup.threads ?? []) : []);
+  const auto: AutoSpec = cur.auto ?? {};
   const section = cur.section ?? null;
   // Datum letters belong to a part: those on every sheet of this one.
   const partLetters = useMemo(() => {
@@ -615,11 +624,15 @@ export function DrawingView(props: {
     if (!busyGesture && !move) {
       for (const m of d.marks)
         parts.push(markBox(`d-${m.dimension}`, m.bounds, "Click for its tolerance · drag to move it in or out", (e, p) => setMove({ kind: "dimension", index: m.dimension, bounds: m.bounds, start: p, now: p, desk: deskPoint(e) })));
+      for (const a of d.autos ?? []) {
+        if (a.key.startsWith("hole:")) continue; // the hole callout's own box
+        parts.push(markBox(`auto-${a.key}`, a.bounds, "Found by the drawing: click to tolerance or hide it", (e) => setPopover({ kind: "auto", mark: a, at: deskPoint(e) })));
+      }
       for (const a of d.annotations ?? []) {
         const key = `${a.kind}-${a.index}-${a.diameter ?? ""}`;
         // With the Dimension tool on, a detail view is for picking points on.
         if (a.kind === "detail" && tool === "dimension") continue;
-        if (a.kind === "hole") parts.push(markBox(key, a.bounds, "Set a fit on these holes", (e) => setPopover({ kind: "hole", diameter: a.diameter ?? 0, at: deskPoint(e) })));
+        if (a.kind === "hole") parts.push(markBox(key, a.bounds, "Set a fit or a thread on these holes, or hide the callout", (e) => setPopover({ kind: "hole", diameter: a.diameter ?? 0, at: deskPoint(e) })));
         else {
           const what = a.kind === "detail" ? "Detail view: click to change its scale · drag to move it" : a.kind === "frame" ? "Feature control frame: click to edit · drag to move it" : "Datum: click to change its letter · drag to move it";
           const kind = a.kind;
@@ -749,7 +762,9 @@ export function DrawingView(props: {
     setDrag(null);
     setPopover(null);
   };
-  const warnings = d?.warnings ?? [];
+  const q = d?.quality;
+  const findings = q ? [...q.overlaps.map(([a, b]) => `“${a}” overlaps “${b}”`), ...q.on_lines.map((t) => `“${t}” is over the part's lines`), ...q.off_sheet.map((t) => `“${t}” is off the sheet`), ...q.duplicates.map((k) => `${k} is dimensioned twice`)] : [];
+  const warnings = [...(d?.warnings ?? []), ...findings];
   const addSheet = () => {
     // The next part of the assembly without a sheet of its own, else the whole thing's views again.
     const drawn = new Set(sheetParts(setup).filter(Boolean));
@@ -849,13 +864,26 @@ export function DrawingView(props: {
               GD&amp;T{frames.length ? ` · ${frames.length}` : ""}
             </button>
           </div>
-          <div className="segmented" role="group" aria-label="Sheet size">
-            {SHEETS.map((s) => (
-              <button key={s} type="button" className={s === sheetSize ? "active" : ""} aria-pressed={s === sheetSize} onClick={() => (extraSheet ? void setSheetSpec({ size: s }) : setSheet(s))} title={extraSheet ? `This sheet on ${s}` : `Sheet 1 (and sheets without their own size) on ${s}`}>
-                {s}
+          <div className="segmented" role="group" aria-label="Automatic dimensions">
+            <button type="button" className={!auto.off ? "active" : ""} aria-pressed={!auto.off} onClick={() => void save({ auto: { ...auto, off: !auto.off || undefined } })} title="Every feature dimensioned once: positions, holes, diameters, radii, chamfers (click one on the sheet to tolerance or hide it)">
+              Auto dims
+            </button>
+            {(auto.hide?.length ?? 0) > 0 && (
+              <button type="button" onClick={() => void save({ auto: { ...auto, hide: [] } })} title={`Hidden: ${auto.hide!.join(", ")}`}>
+                Show {auto.hide!.length} hidden
               </button>
-            ))}
+            )}
           </div>
+          <label className="drawing-select" title={extraSheet ? "This sheet's size" : "Sheet 1 (and sheets without their own size)"}>
+            <span>Sheet</span>
+            <select value={sheetSize} onChange={(e) => (extraSheet ? void setSheetSpec({ size: e.target.value as SheetSize }) : setSheet(e.target.value as SheetSize))}>
+              {SHEETS.map((s) => (
+                <option key={s} value={s}>
+                  {s.replace("_", " ")}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="segmented" role="group" aria-label="Projection">
             <button type="button" className={projection === "first" ? "active" : ""} aria-pressed={projection === "first"} onClick={() => setProjection("first")} title="First angle (ISO, Europe): top view below, right view on the left">
               First angle
@@ -869,6 +897,9 @@ export function DrawingView(props: {
           </a>
           <a className={`download ${d ? "" : "disabled"}`} href={projectUrl(pages > 1 ? `/drawing/${props.id}.zip?${base}` : `/drawing/${props.id}.dxf?${base}`)} download aria-disabled={!d} title={`${pages > 1 ? `A DXF per sheet, in a zip. ` : ""}Lines on layers VISIBLE, HIDDEN, CENTER, DIMENSIONS, FRAME and TEXT`}>
             <Icon name="download" /> DXF{pages > 1 ? " · zip" : ""}
+          </a>
+          <a className={`download ${d ? "" : "disabled"}`} href={projectUrl(`/drawing/${props.id}.svg?${query}`)} download aria-disabled={!d} title="This sheet as SVG">
+            <Icon name="download" /> SVG
           </a>
           <button type="button" className="drawing-close" onClick={props.onClose} aria-label="Close the drawing">
             <Icon name="close" />
@@ -1005,10 +1036,32 @@ export function DrawingView(props: {
               <HoleFitForm
                 diameter={popover.diameter}
                 fit={holeFits.find((h) => Math.abs(h.diameter - popover.diameter) < 1e-3)?.fit ?? ""}
-                onApply={(fit) => {
+                thread={threads.find((t) => Math.abs(t.diameter - popover.diameter) < 0.011) ?? null}
+                onApply={(fit, thread) => {
                   setPopover(null);
                   const rest = holeFits.filter((h) => Math.abs(h.diameter - popover.diameter) >= 1e-3);
-                  void save({ hole_fits: fit ? [...rest, { diameter: popover.diameter, fit }] : rest });
+                  const others = threads.filter((t) => Math.abs(t.diameter - popover.diameter) >= 0.011);
+                  void save({ hole_fits: fit ? [...rest, { diameter: popover.diameter, fit }] : rest, threads: thread ? [...others, thread] : others });
+                }}
+                onHide={() => {
+                  setPopover(null);
+                  const key = (d?.autos ?? []).find((a) => a.key.startsWith("hole:") && Math.abs(a.value - popover.diameter) < 1e-3)?.key;
+                  if (key) void save({ auto: { ...auto, hide: [...(auto.hide ?? []), key] } });
+                }}
+              />
+            )}
+            {popover.kind === "auto" && (
+              <AutoForm
+                mark={popover.mark}
+                tolerance={(auto.tolerances ?? []).find((t) => t.key === popover.mark.key)?.tolerance ?? null}
+                onApply={(tolerance) => {
+                  setPopover(null);
+                  const rest = (auto.tolerances ?? []).filter((t) => t.key !== popover.mark.key);
+                  void save({ auto: { ...auto, tolerances: tolerance ? [...rest, { key: popover.mark.key, tolerance }] : rest } });
+                }}
+                onHide={() => {
+                  setPopover(null);
+                  void save({ auto: { ...auto, hide: [...(auto.hide ?? []), popover.mark.key] } });
                 }}
               />
             )}
@@ -1237,26 +1290,109 @@ function ToleranceForm(props: { dim: DimSpec; onApply: (d: DimSpec) => void; onR
   );
 }
 
-function HoleFitForm(props: { diameter: number; fit: string; onApply: (fit: string) => void }) {
-  const [fit, setFit] = useState(props.fit || "H7");
+function HoleFitForm(props: { diameter: number; fit: string; thread: ThreadSpec | null; onApply: (fit: string, thread: ThreadSpec | null) => void; onHide: () => void }) {
+  const [fit, setFit] = useState(props.fit || (props.thread ? "" : "H7"));
+  const [size, setSize] = useState(props.thread?.size ?? "");
+  const [cls, setCls] = useState(props.thread?.class ?? "6H");
+  const [depth, setDepth] = useState<number>(props.thread?.depth ?? 0);
+  const thread: ThreadSpec | null = size.trim() ? { diameter: props.diameter, size: size.trim(), class: cls.trim() || null, depth: depth > 0 ? depth : null } : null;
   return (
     <form
       className="pop-body"
       onSubmit={(e) => {
         e.preventDefault();
-        props.onApply(fit);
+        props.onApply(thread ? "" : fit, thread);
       }}
     >
       <div className="pop-head">
         <strong>⌀{lengthText(props.diameter)}</strong>
-        <span>Hole fit (ISO 286)</span>
+        <span>Hole fit (ISO 286) or thread</span>
       </div>
-      <FitSelect value={fit} onChange={setFit} none="No fit" only="hole" />
+      {!thread && <FitSelect value={fit} onChange={setFit} none="No fit" only="hole" />}
+      <div className="pop-row">
+        <label className="pop-field">
+          <span>Thread</span>
+          <input value={size} placeholder="M6, M16×1.5" onChange={(e) => setSize(e.target.value)} />
+        </label>
+        <label className="pop-field">
+          <span>Class</span>
+          <input value={cls} onChange={(e) => setCls(e.target.value)} />
+        </label>
+      </div>
+      {thread && <NumberField label="Thread depth (0: the hole's)" value={depth} onChange={setDepth} />}
       <div className="pop-actions">
-        <span />
+        <button type="button" className="pop-danger" onClick={props.onHide}>
+          Hide callout
+        </button>
         <button type="submit" className="pop-primary">
           Apply
         </button>
+      </div>
+    </form>
+  );
+}
+
+/** One of the drawing's own dimensions: its tolerance, or hide it. */
+function AutoForm(props: { mark: AutoMark; tolerance: Tolerance | null; onApply: (t: Tolerance | null) => void; onHide: () => void }) {
+  const t = props.tolerance;
+  const [kind, setKind] = useState<"none" | Tolerance["type"]>(t?.type ?? "none");
+  const [pm, setPm] = useState(t?.type === "symmetric" ? t.value : 0.05);
+  const [upper, setUpper] = useState(t?.type === "limits" ? t.upper : 0.05);
+  const [lower, setLower] = useState(t?.type === "limits" ? t.lower : -0.05);
+  const [fit, setFit] = useState(t?.type === "fit" ? t.fit : props.mark.key.startsWith("d:") ? "g6" : "H7");
+  const sized = /^[xyzd]:/.test(props.mark.key);
+  const bad = (kind === "symmetric" && !(pm > 0)) || (kind === "limits" && !(upper > lower));
+  return (
+    <form
+      className="pop-body"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (bad) return;
+        props.onApply(kind === "symmetric" ? { type: "symmetric", value: pm } : kind === "limits" ? { type: "limits", upper, lower } : kind === "fit" ? { type: "fit", fit } : null);
+      }}
+    >
+      <div className="pop-head">
+        <strong>{props.mark.text}</strong>
+        <span>{props.mark.key}</span>
+      </div>
+      {sized && (
+        <div className="segmented small" role="group" aria-label="Tolerance">
+          {(
+            [
+              ["none", "None"],
+              ["symmetric", "±"],
+              ["limits", "Limits"],
+              ["fit", "Fit"],
+            ] as const
+          ).map(([k, label]) => (
+            <button key={k} type="button" className={kind === k ? "active" : ""} aria-pressed={kind === k} onClick={() => setKind(k)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {kind === "symmetric" && <NumberField label="±" value={pm} onChange={setPm} autoFocus />}
+      {kind === "limits" && (
+        <div className="pop-row">
+          <NumberField label="Upper" value={upper} onChange={setUpper} autoFocus />
+          <NumberField label="Lower" value={lower} onChange={setLower} />
+        </div>
+      )}
+      {kind === "fit" && (
+        <label className="pop-field">
+          <span>ISO 286 class</span>
+          <FitSelect value={fit} onChange={setFit} />
+        </label>
+      )}
+      <div className="pop-actions">
+        <button type="button" className="pop-danger" onClick={props.onHide}>
+          Hide it
+        </button>
+        {sized && (
+          <button type="submit" className="pop-primary" disabled={bad}>
+            Apply
+          </button>
+        )}
       </div>
     </form>
   );

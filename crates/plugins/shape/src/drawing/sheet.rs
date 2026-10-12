@@ -111,7 +111,7 @@ pub(super) fn general_line(d: &mut Drawing, at: [f64; 2], width: f64, options: &
         d.texts.push(Text { at: [open, at[1]], size: h, text: "(".into(), anchor: Anchor::End, angle: 0.0, bold: false });
         let sym_x = open - 3.0 - (h2 / t60 + lw + 1.5);
         symbol_shape(d, [sym_x, at[1]], h, !r.no_removal, Some(lw + 1.5));
-        d.texts.push(Text { at: [sym_x + h1 / t60 + 0.8, at[1] + h2 - h - 1.0], size: h, text: label, anchor: Anchor::Start, angle: 0.0, bold: false });
+        d.texts.push(Text { at: [sym_x + h2 / t60 + 0.3, at[1] + h2 - h - 1.0], size: h, text: label, anchor: Anchor::Start, angle: 0.0, bold: false });
         room = sym_x - h1 / t60 - at[0] - 3.0;
     }
     let size = fitted(text, 2.5, room, false);

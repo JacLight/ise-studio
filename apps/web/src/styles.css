@@ -13792,3 +13792,20 @@ a.button .icon {
 .fit-checks li { display: grid; grid-template-columns: 10px 1fr; gap: 6px; font-size: 10.5px; line-height: 1.45; align-items: baseline; }
 .fit-checks b { font-weight: 650; }
 .fit-checks small { color: var(--muted); }
+
+/* The drawing's sheet size picker. */
+.drawing-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted, #6b6b76);
+}
+.drawing-select select {
+  font: inherit;
+  color: var(--text, #1d1d22);
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--line, #d9d9e0);
+  background: var(--surface, #fff);
+}

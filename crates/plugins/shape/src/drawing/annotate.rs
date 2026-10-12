@@ -1253,7 +1253,7 @@ fn place_finish(d: &mut Drawing, grid: &mut Grid, words: &mut Grid, g: &Geometry
         // No material removed: a circle in the V.
         d.strokes.push(Stroke { pen: Pen::Thin, points: circle([apex[0], apex[1] + h1 * 0.55], h1 * 0.33) });
     }
-    let x = apex[0] + h1 / t60 + 0.8;
+    let x = apex[0] + h2 / t60 + 0.3;
     d.texts.push(Text { at: [x, top[1] - 4.6], size: 3.5, text, anchor: Anchor::Start, angle: 0.0, bold: false });
     if let Some(proc) = &f.roughness.process {
         d.texts.push(Text { at: [x, top[1] + 0.8], size: 2.5, text: proc.clone(), anchor: Anchor::Start, angle: 0.0, bold: false });
