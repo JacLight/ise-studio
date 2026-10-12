@@ -308,7 +308,23 @@ fn local(name: &str, aliases: &HashMap<String, String>) -> bool {
 pub(crate) fn canonical_formula(world: &World, src: &str, sheet: &Sheet) -> Result<String, String> {
     let aliases = sheet.alias_map();
     let body = src.trim().trim_start_matches('=');
-    let expanded = expand_ranges(body, sheet).or_else(|e| if body.contains(':') { Err(e) } else { Ok(body.to_string()) })?;
+    // A range with nothing in it yet is fine to write (the cell shows an error until it fills).
+    let expanded = expand_ranges(body, sheet).unwrap_or_else(|_| {
+        let mut out = String::new();
+        let mut skip = false;
+        for c in body.chars() {
+            if c == ':' {
+                skip = true;
+                continue;
+            }
+            if skip && (c.is_ascii_alphanumeric() || c == '$') {
+                continue;
+            }
+            skip = false;
+            out.push(c);
+        }
+        out
+    });
     let found: RefCell<Vec<(String, String)>> = RefCell::new(Vec::new());
     params::parse(&expanded, &|name: &str| {
         if local(name, &aliases) {
