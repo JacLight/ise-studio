@@ -435,7 +435,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
               {detail!.errors ? `${detail!.errors} DRC ${detail!.errors === 1 ? "error" : "errors"}` : "DRC passes"}
             </button>
           )}
-          {b && <KicadImport run={commit} canEdit={props.canEdit} onMade={(id) => setBoardId(id)} label="KiCad" />}
+          {b && <KicadImport run={commit} canEdit={props.canEdit} onMade={(id) => setBoardId(id)} label="Import" />}
           {b?.model && (
             <button type="button" className="secondary pcb-3d" onClick={() => props.onShow3D(b.model!)}>
               <Icon name="cube" /> Show in 3D
