@@ -169,8 +169,8 @@ export function buildRenderScene(source: RenderSource, environment: THREE.Textur
   scene.background = environment;
   scene.backgroundBlurriness = 0.4;
   // The studio is made Y up; the model is Z up.
-  scene.environmentRotation.set(Math.PI / 2, 0, 0);
-  scene.backgroundRotation.set(Math.PI / 2, 0, 0);
+  scene.environmentRotation.set(-Math.PI / 2, 0, 0);
+  scene.backgroundRotation.set(-Math.PI / 2, 0, 0);
   return { scene, bounds };
 }
 
@@ -219,9 +219,8 @@ export class LiveRender {
     this.tracer.renderDelay = 0;
     this.tracer.fadeDuration = 200;
     this.tracer.dynamicLowRes = true;
-    this.tracer.setSceneAsync(this.scene, this.camera).then(() => {
-      this.ready = true;
-    });
+    this.tracer.setScene(this.scene, this.camera);
+    this.ready = true;
     const loop = () => {
       if (this.stopped) return;
       this.frame = requestAnimationFrame(loop);
@@ -294,7 +293,7 @@ export async function renderImage(source: RenderSource, options: RenderOptions, 
   tracer.rasterizeScene = false;
   tracer.synchronizeRenderSize = true;
   try {
-    await tracer.setSceneAsync(scene, camera);
+    tracer.setScene(scene, camera);
     let last = -1;
     while (tracer.samples < samples) {
       tracer.renderSample();

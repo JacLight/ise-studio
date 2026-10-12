@@ -26,7 +26,7 @@ export function RenderView(props: { source: () => RenderSource | null; name: str
     try {
       live = new LiveRender(source, setSamples);
       live.canvas.className = "render-canvas";
-      host.current.appendChild(live.canvas);
+      host.current.prepend(live.canvas);
     } catch (e) {
       setError(String(e));
     }

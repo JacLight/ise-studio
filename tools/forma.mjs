@@ -212,7 +212,21 @@ if (command === "run") {
   const samples = Number(opt("samples", 256));
   const out = opt("out", `render-${width}x${height}.png`);
   const q = new URLSearchParams({ ...(project ? { project } : {}), width, height, samples });
-  const ask = () => fetch(`${http}/render?${q}`, { method: "POST" });
+  // A render can take minutes: no header timeout (fetch gives up after five).
+  const { request } = await import("node:http");
+  const ask = () =>
+    new Promise((done, fail) => {
+      const r = request(`${http}/render?${q}`, { method: "POST" }, (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const body = Buffer.concat(chunks);
+          done({ status: res.statusCode, ok: res.statusCode === 200, text: async () => body.toString(), arrayBuffer: async () => body });
+        });
+      });
+      r.on("error", fail);
+      r.end();
+    });
   let res = await ask();
   let chrome = null;
   if (res.status === 409) {
