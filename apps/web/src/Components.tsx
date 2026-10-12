@@ -26,6 +26,7 @@ import { statusColor } from "./Viewport";
 import { AssemblyJoints, type JointView, jointName, jointOf } from "./Joints";
 import { IDENTITY, worldOf } from "./model";
 import { FitCheck } from "./FitCheck";
+import { AssemblyStudio, PatternSection, isMate } from "./AssemblyTools";
 
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
 
@@ -242,7 +243,9 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
   };
   // A joint places it: where it is comes from the joint, and it says which.
   const placed = entity.placed;
-  const holder = placed?.by ? entities.get(placed.by) : undefined;
+  // What a mate holds moves by hand along what it leaves free: only joints (and locks) hold outright.
+  const byJoint = placed?.by ? entities.get(placed.by) : undefined;
+  const holder = byJoint && !isMate(jointOf(byJoint)?.kind ?? "") ? byJoint : undefined;
   const holderJoint = jointOf(holder);
   const holderOther = holderJoint ? [holderJoint.a, holderJoint.b].map((end) => (typeof end === "object" && "instance" in end ? end.instance : null)).find((x) => x !== entity.id) : undefined;
   const owner = inst.parent ? [...entities.values()].find((e) => instance(e)?.of === inst.parent) : undefined;
@@ -364,6 +367,8 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
         <AssemblyJoints scope={inst.of} frame={worldOf(entity.id, entities)} title={`Joints inside ${definitionName(inst.of, entities)}`} entities={entities} run={run} view={props.joints} />
       )}
       {assemblyDef(def) && <FitCheck instance={entity.id} onSelect={props.onSelect} />}
+      {assemblyDef(def) && <AssemblyStudio scope={inst.of} frame={worldOf(entity.id, entities)} entities={entities} run={run} view={props.joints} onSelect={props.onSelect} />}
+      <PatternSection entity={entity} entities={entities} run={run} onSelect={props.onSelect} />
 
       {prog && def && <InstanceConfig entity={entity} def={def} config={inst.config} run={run} />}
 

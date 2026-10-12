@@ -8,6 +8,7 @@
 //! Clients pick a project with `?project=<name>` on `/ws` and `/export`.
 
 mod ai;
+mod assembly_api;
 mod history;
 mod machines;
 mod pcb;
@@ -2314,6 +2315,15 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/assembly-motion/{id}", get(assembly_motion))
         .route("/connectors/{id}", get(connectors))
         .route("/fit/{id}", get(fit_report))
+        .route("/assembly-dof/{id}", get(assembly_api::dof))
+        .route("/interference/{id}", get(assembly_api::interference))
+        .route("/explode/{id}", get(assembly_api::explode))
+        .route("/motion-study/{id}", get(assembly_api::motion_study))
+        .route("/robot/{tip}", get(assembly_api::chain))
+        .route("/robot/{tip}/fk", get(assembly_api::fk))
+        .route("/robot/{tip}/ik", get(assembly_api::ik))
+        .route("/robot/{tip}/reach", get(assembly_api::reach))
+        .route("/robot/{tip}/trajectory", get(assembly_api::trajectory))
         .route("/stress/{id}", axum::routing::post(stress))
         .route("/modes/{id}", axum::routing::post(modes))
         .route("/study/{id}", get(study))
