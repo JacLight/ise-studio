@@ -2276,6 +2276,10 @@ async fn main() -> std::io::Result<()> {
     de_shape::assets::set_dir(dir.join("assets"));
     // Slow results (motion sweeps) kept between runs, by what they came from.
     de_shape::cache::set_dir(dir.join(".cache"));
+    // The stock library's sizes, worked out while nobody waits (the I key's browser reads them).
+    std::thread::spawn(|| {
+        let _ = de_shape::library::summary();
+    });
     let engine = engine_id(&dir)?;
     println!("engine {engine}");
     let machines = machines::MachineQueries::new(&root);

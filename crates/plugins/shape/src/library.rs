@@ -377,7 +377,24 @@ fn ensure_materials(tx: &mut Tx, fam: &Family) -> Result<crate::PartMaterials, C
 /// engine, in parallel; sizes that fail to evaluate say why.
 pub fn summary() -> Result<&'static Value, String> {
     static SUMMARY: OnceLock<Result<Value, String>> = OnceLock::new();
-    SUMMARY.get_or_init(|| catalogue().map(summarize)).as_ref().map_err(|e| e.clone())
+    SUMMARY
+        .get_or_init(|| {
+            // A thousand-odd sizes take a while to evaluate: kept on disk by
+            // the library's content (see `cache`), so only a changed library
+            // or engine evaluates them again.
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            files().hash(&mut h);
+            let key = h.finish();
+            if let Some(v) = crate::cache::load::<Value>("stock-summary", key) {
+                return Ok(v);
+            }
+            let v = catalogue().map(summarize)?;
+            crate::cache::store("stock-summary", key, &v);
+            Ok(v)
+        })
+        .as_ref()
+        .map_err(|e| e.clone())
 }
 
 fn summarize(cat: &Catalogue) -> Value {
