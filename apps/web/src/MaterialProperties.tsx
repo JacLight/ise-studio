@@ -100,7 +100,7 @@ export function MaterialProperties(props: { material: string | null; version: un
                   <span>{f.label}</span>
                   <input
                     key={`${f.key}:${value}:${tick}`}
-                    defaultValue={value == null ? "" : show(value * f.scale, f.digits)}
+                    defaultValue={value == null ? "" : f.key === "fatigue_cycles" ? value.toExponential(0).replace("+", "") : show(value * f.scale, f.digits)}
                     inputMode="decimal"
                     disabled={!own}
                     aria-label={`${f.title}${f.unit ? ` (${f.unit})` : ""}`}

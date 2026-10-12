@@ -18,6 +18,7 @@ pub mod frame;
 mod inp;
 pub mod materials;
 mod multigrid;
+pub mod plate;
 mod post;
 mod refine;
 
@@ -2366,23 +2367,35 @@ fn plastic_modulus(m: &Elastic) -> f64 {
     if m.tangent <= 0.0 { 0.0 } else { m.e * m.tangent / (m.e - m.tangent).max(1e-9 * m.e) }
 }
 
-/// The elastoplastic tangent of von Mises with linear hardening at a
-/// stress on the yield surface: D − (D·n)(n·D)/(n:D:n + H), with
-/// n = 3s/2q, which is D − 4G²·n nᵀ/(3G + H) (engineering shears).
-fn tangent_d(m: &Elastic, stress: &[f64; 6]) -> [[f64; 6]; 6] {
+/// The algorithmic (consistent) tangent of the radial return for von Mises
+/// with linear hardening, from the trial stress and the plastic strain
+/// increment Δγ it returned with: its deviatoric stiffness scaled by θ and
+/// less 2G·θ̄ along the flow, so Newton converges quadratically (engineering shears).
+fn tangent_d(m: &Elastic, trial: &[f64; 6], dgamma: f64) -> [[f64; 6]; 6] {
     let mut d = d_matrix(m);
-    let p = (stress[0] + stress[1] + stress[2]) / 3.0;
-    let s = [stress[0] - p, stress[1] - p, stress[2] - p, stress[3], stress[4], stress[5]];
-    let q = (1.5 * (s[0] * s[0] + s[1] * s[1] + s[2] * s[2] + 2.0 * (s[3] * s[3] + s[4] * s[4] + s[5] * s[5]))).sqrt();
-    if q <= 0.0 {
+    let p = (trial[0] + trial[1] + trial[2]) / 3.0;
+    let s = [trial[0] - p, trial[1] - p, trial[2] - p, trial[3], trial[4], trial[5]];
+    let norm = (s[0] * s[0] + s[1] * s[1] + s[2] * s[2] + 2.0 * (s[3] * s[3] + s[4] * s[4] + s[5] * s[5])).sqrt();
+    if norm <= 0.0 {
         return d;
     }
+    let q = (1.5f64).sqrt() * norm;
     let g = m.e / (2.0 * (1.0 + m.nu));
-    let a: [f64; 6] = std::array::from_fn(|r| 2.0 * g * 1.5 * s[r] / q);
-    let c = 1.0 / (3.0 * g + plastic_modulus(m));
+    // θ = 1 − 3G·Δγ/q_trial, θ̄ = 1/(1 + H/3G) − (1 − θ) (Simo & Hughes, Computational Inelasticity, box 3.2).
+    let theta = 1.0 - 3.0 * g * dgamma / q;
+    let theta_bar = 1.0 / (1.0 + plastic_modulus(m) / (3.0 * g)) - (1.0 - theta);
+    let n: [f64; 6] = std::array::from_fn(|r| s[r] / norm);
+    // The deviatoric part of D (2G·I_dev for engineering strains) scaled by θ, less 2G·θ̄·n nᵀ.
     for i in 0..6 {
         for j in 0..6 {
-            d[i][j] -= c * a[i] * a[j];
+            let dev = if i < 3 && j < 3 {
+                2.0 * g * (if i == j { 1.0 } else { 0.0 } - 1.0 / 3.0)
+            } else if i == j {
+                g
+            } else {
+                0.0
+            };
+            d[i][j] += (theta - 1.0) * dev - 2.0 * g * theta_bar * n[i] * n[j];
         }
     }
     d
@@ -2435,6 +2448,7 @@ fn plastic_solve(s: &mut Setup, ds: &[[[f64; 6]; 6]], base: &[[f64; 6]], u: &mut
         let mut trial_ep = ep.clone();
         let mut new_hard = hardened.clone();
         let mut yielding = vec![false; cells];
+        let mut dgam = vec![0.0; cells];
         let mut done = false;
         for _ in 0..ROUNDS {
             // Each cube's stress from the movement, returned to the yield surface.
@@ -2444,11 +2458,13 @@ fn plastic_solve(s: &mut Setup, ds: &[[[f64; 6]; 6]], base: &[[f64; 6]], u: &mut
                 let m = &s.materials[s.model.part[e]];
                 match return_map(&trial[e], m, hardened[e]) {
                     Some((dep, dh)) => {
+                        dgam[e] = dh;
                         trial_ep[e] = std::array::from_fn(|r| ep[e][r] + dep[r]);
                         new_hard[e] = hardened[e] + dh;
                         yielding[e] = true;
                     }
                     None => {
+                        dgam[e] = 0.0;
                         trial_ep[e] = ep[e];
                         new_hard[e] = hardened[e];
                         yielding[e] = false;
@@ -2469,7 +2485,7 @@ fn plastic_solve(s: &mut Setup, ds: &[[[f64; 6]; 6]], base: &[[f64; 6]], u: &mut
             }
             // The correction on the tangent stiffness (rebuilt when what yields changed).
             let own: Vec<Option<Box<[f64]>>> = (0..cells)
-                .map(|e| yielding[e].then(|| plastic_stiffness(&s.model.kes[s.model.part[e]], &ds[s.model.part[e]], &tangent_d(&s.materials[s.model.part[e]], &tensors[e]), h)))
+                .map(|e| yielding[e].then(|| plastic_stiffness(&s.model.kes[s.model.part[e]], &ds[s.model.part[e]], &tangent_d(&s.materials[s.model.part[e]], &trial[e], dgam[e]), h)))
                 .collect();
             s.model.set_own(own);
             let mut du = vec![0.0; u.len()];

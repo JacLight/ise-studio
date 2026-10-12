@@ -435,3 +435,32 @@ fn a_study_writes_a_calculix_deck() {
     let elements = deck.lines().filter(|l| l.split(", ").count() == 9).count();
     assert_eq!(elements, 20 * 2 * 2);
 }
+
+#[test]
+fn a_square_plate_sags_as_timoshenkos_plate_tables_say() {
+    // Steel 100 × 100 × 1 under 0.01 MPa: w = α·q·a⁴/D (Timoshenko & Woinowsky-Krieger, tables 8 and 35).
+    use fea::plate::*;
+    let e = runtime::evaluate("return box(100, 100, 1);", &[], 0.01).unwrap();
+    let edges = |hold: EdgeHold| -> Vec<PlateSupport> {
+        vec![
+            PlateSupport { face: rect(0, 0.0, -1.0, [0.0, 0.0], [100.0, 1.0]), hold },
+            PlateSupport { face: rect(0, 100.0, 1.0, [0.0, 0.0], [100.0, 1.0]), hold },
+            PlateSupport { face: rect(1, 0.0, -1.0, [0.0, 0.0], [1.0, 100.0]), hold },
+            PlateSupport { face: rect(1, 100.0, 1.0, [0.0, 0.0], [1.0, 100.0]), hold },
+        ]
+    };
+    let m = steel();
+    let d = m.e * 1.0 / (12.0 * (1.0 - m.nu * m.nu));
+    let q = 0.01;
+    let simple = plate(&e.positions, &e.indices, &m, &PlateStudy { supports: edges(EdgeHold::Simple), pressure: q, loads: vec![], resolution: 40 }).unwrap();
+    let e1 = report("Square plate, simply supported, centre sag (mm), 0.00406·qa⁴/D", 0.00406 * q * 1e8 / d, simple.max_sag);
+    // Largest bending moment 0.0479·q·a² at the centre: σ = 6M/t².
+    // (The largest von Mises is at the corners, where the twisting moment is.)
+    let centre: Vec<f64> = simple.cells.iter().filter(|(c, _)| (19..=20).contains(&c[0]) && (19..=20).contains(&c[1])).map(|(_, s)| *s as f64).collect();
+    let e2 = report("Square plate, simply supported, centre stress (MPa), 6·0.0479·qa²/t²", 6.0 * 0.0479 * q * 1e4, centre.iter().sum::<f64>() / centre.len() as f64);
+    let clamped = plate(&e.positions, &e.indices, &m, &PlateStudy { supports: edges(EdgeHold::Clamped), pressure: q, loads: vec![], resolution: 40 }).unwrap();
+    let e3 = report("Square plate, clamped, centre sag (mm), 0.00126·qa⁴/D", 0.00126 * q * 1e8 / d, clamped.max_sag);
+    assert!(e1.abs() < 0.02 && e3.abs() < 0.03, "{:?}", simple.notes);
+    // At the centre (its moment is 0.0479·qa²); the clamped edge's −0.0513·qa² is larger, read at element middles.
+    assert!(e2.abs() < 0.05);
+}

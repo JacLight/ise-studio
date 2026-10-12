@@ -1566,7 +1566,13 @@ async fn study(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(
             .collect();
         let holds: Vec<Value> = spec.holds.iter().map(|h| json!({ "face": de_shape::resolve_face(&program, spec.part.as_deref(), &h.face) })).collect();
         let heats: Vec<Value> = spec.heats.iter().map(|h| json!({ "face": de_shape::resolve_face(&program, spec.part.as_deref(), &h.face) })).collect();
-        json!({ "spec": spec, "supports": supports, "loads": loads, "holds": holds, "heats": heats })
+        let face = |p: &de_shape::fea::FacePick| de_shape::resolve_face(&program, spec.part.as_deref(), p);
+        let sliding: Vec<Option<de_shape::fea::Face>> = spec.sliding.iter().map(face).collect();
+        let elastic: Vec<Value> = spec.elastic_supports.iter().map(|x| json!({ "face": face(&x.face) })).collect();
+        let displacements: Vec<Value> = spec.displacements.iter().map(|x| json!({ "face": face(&x.face) })).collect();
+        let bearings: Vec<Value> = spec.bearing_loads.iter().map(|x| json!({ "face": face(&x.face) })).collect();
+        let remotes: Vec<Value> = spec.remote_loads.iter().map(|x| json!({ "face": face(&x.face) })).collect();
+        json!({ "spec": spec, "supports": supports, "loads": loads, "holds": holds, "heats": heats, "sliding": sliding, "elastic_supports": elastic, "displacements": displacements, "bearing_loads": bearings, "remote_loads": remotes })
     })
     .await;
     match out {
@@ -2162,6 +2168,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/results/{key}/fatigue", axum::routing::post(simulate::results_fatigue))
         .route("/results/{key}/{what}", get(simulate::results))
         .route("/frame", axum::routing::post(simulate::frame))
+        .route("/plate/{id}", axum::routing::post(simulate::plate))
         .route("/materials", get(simulate::materials))
         .route("/study/{id}", get(study))
         .route("/touching/{id}", get(touching))

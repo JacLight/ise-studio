@@ -330,6 +330,11 @@ pub fn buckling_of(program: &ShapeProgram, part: &(Option<String>, MaterialProps
     with_bodies(program, std::slice::from_ref(part), |b| fea::buckling(&b[0], study, count))
 }
 
+/// A flat sheet part as a plate.
+pub fn plate_of(program: &ShapeProgram, part: &(Option<String>, MaterialProps), study: &fea::plate::PlateStudy) -> Result<fea::plate::PlateResult, String> {
+    with_bodies(program, std::slice::from_ref(part), |b| fea::plate::plate(b[0].positions, b[0].triangles, &b[0].material, study))
+}
+
 /// Steady temperatures in the studied part.
 pub fn thermal_of(program: &ShapeProgram, part: &(Option<String>, MaterialProps), study: &fea::ThermalStudy) -> Result<fea::Temperatures, String> {
     let k = part.1.conductivity;

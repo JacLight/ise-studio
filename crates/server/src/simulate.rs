@@ -264,6 +264,51 @@ pub async fn results_fatigue(Path(key): Path<String>, axum::Json(spec): axum::Js
     }
 }
 
+#[derive(serde::Deserialize)]
+pub struct PlateEdge {
+    face: fea::FacePick,
+    hold: fea::plate::EdgeHold,
+}
+
+/// A plate study with faces picked as a saved study picks them (`{ normal, near }` works).
+#[derive(serde::Deserialize)]
+pub struct PlateRequest {
+    supports: Vec<PlateEdge>,
+    #[serde(default)]
+    pressure: f64,
+    #[serde(default)]
+    loads: Vec<fea::LoadPick>,
+    #[serde(default)]
+    resolution: Option<usize>,
+    #[serde(default)]
+    part: Option<String>,
+}
+
+/// POST /plate/{id}: a flat sheet part as a plate (edges held clamped or simply, a pressure, forces on faces).
+pub async fn plate(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>, axum::Json(req): axum::Json<PlateRequest>) -> Response {
+    let (_, t) = match target(&server, &q, &id, req.part.clone(), &[]) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let material = t.parts[0].1.name.clone();
+    match blocking(move || {
+        let part = req.part.as_deref();
+        let face = |what: &str, i: usize, p: &fea::FacePick| de_shape::resolve_face(&t.program, part, p).ok_or_else(|| format!("{what} {}: no such face on the part", i + 1));
+        let study = fea::plate::PlateStudy {
+            supports: req.supports.iter().enumerate().map(|(i, s)| Ok(fea::plate::PlateSupport { face: face("support", i, &s.face)?, hold: s.hold })).collect::<Result<_, String>>()?,
+            pressure: req.pressure,
+            loads: req.loads.iter().enumerate().map(|(i, l)| Ok(l.on(face("load", i, &l.face)?))).collect::<Result<_, String>>()?,
+            resolution: req.resolution.unwrap_or(48),
+        };
+        studies::plate_of(&t.program, &t.parts[0], &study)
+    })
+    .await
+    {
+        Ok(r) => axum::Json(json!({ "result": r, "material": material })).into_response(),
+        Err(r) => r,
+    }
+}
+
 /// POST /frame: a frame of beams (joints, members with sections, supports, loads).
 pub async fn frame(axum::Json(frame): axum::Json<fea::frame::Frame>) -> Response {
     match blocking(move || fea::frame::solve(&frame)).await {

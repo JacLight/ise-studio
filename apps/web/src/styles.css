@@ -13832,17 +13832,15 @@ a.button .icon {
 
 .material-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 6px;
+  font-size: 10.5px;
+  color: #8a8398;
 }
 
 .material-grid label {
-  display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) 40px;
-  align-items: center;
-  gap: 4px;
-  font-size: 10.5px;
-  color: #8a8398;
+  display: contents;
 }
 
 .material-grid label.edited span {
@@ -13852,6 +13850,7 @@ a.button .icon {
 
 .material-grid input {
   width: 100%;
+  min-width: 0;
   height: 22px;
   margin: 0;
   padding: 0 5px;
@@ -13862,6 +13861,11 @@ a.button .icon {
 
 .material-grid small {
   font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.material-grid label:nth-of-type(even) span {
+  padding-left: 6px;
 }
 
 .material-source {

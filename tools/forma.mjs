@@ -14,6 +14,7 @@
 //   node tools/forma.mjs probe <key> x,y,z · section <key> x,y,z nx,ny,nz · path <key> x,y,z x,y,z [n] · csv <key>
 //                                             read a stress result back (the key a stress run prints)
 //   node tools/forma.mjs frame frame.json     a frame of beams (joints, members with sections, supports, loads)
+//   node tools/forma.mjs plate <shape id> plate.json [--part X]   a flat sheet part as a plate (edges clamped or simply held, pressure)
 //   node tools/forma.mjs materials [search]   the material library with sources, and the project's materials
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs list                 every entity, one line each
@@ -205,7 +206,7 @@ if (command === "run") {
     for (const n of r.notes) console.log(`  ! ${n}`);
     failed = !r.ok;
   }
-} else if (["stress", "fatigue", "modes", "buckle", "heat", "converge", "inp", "probe", "section", "path", "csv", "frame", "materials", "study"].includes(command)) {
+} else if (["stress", "fatigue", "modes", "buckle", "heat", "converge", "inp", "probe", "section", "path", "csv", "frame", "materials", "study", "plate"].includes(command)) {
   // Simulation: a part's saved study run as kept, results read back, frames, materials.
   const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
   const flag = (name) => {
@@ -238,6 +239,13 @@ if (command === "run") {
         console.log(`${x.name} (${x.family}): E ${n(x.e / 1000, 1)} GPa, ν ${x.nu}, ρ ${x.density} kg/m³, yield ${x.yield_strength} MPa, UTS ${x.uts} MPa, Et ${x.tangent_modulus} MPa, fatigue ${x.fatigue_strength ?? "—"} MPa @ ${x.fatigue_cycles.toExponential(0)}${x.endurance_limit ? " (limit)" : ""}, k ${x.conductivity} W/m·K, c ${x.specific_heat} J/kg·K, α ${n(x.expansion * 1e6, 1)} µm/m·K\n    source: ${x.source}`);
       }
       for (const x of m.project) console.log(`project material ${x.id} “${x.name}”${x.set ? ` — set here: ${JSON.stringify(x.set)}` : ""}${x.properties ? "" : " — no figures (unknown name: set its properties)"}`);
+    } else if (command === "plate") {
+      // forma plate <shape id> plate.json [--part X]: a flat sheet as a plate ({ supports: [{ face: { normal, near }, hold: "clamped" | "simple" }], pressure, loads, resolution }).
+      const body = { ...JSON.parse(readFileSync(rest[0], "utf8")), ...(part ? { part } : {}) };
+      const r = await (await get(`/plate/${id}?${q}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+      const x = r.result;
+      console.log(`${x.safety >= 1 ? "✓" : "✗"} ${r.material} sheet ${n(x.thickness, 2)} mm: sags ${n(x.max_sag, 4)} mm at most (at ${v3(x.max_sag_at)}), bending stress ${n(x.max_stress, 1)} MPa at most (at ${v3(x.max_stress_at)}), safety ×${n(x.safety)}`);
+      for (const t of x.notes) console.log(`  ! ${t}`);
     } else if (command === "frame") {
       const f = JSON.parse(readFileSync(id, "utf8"));
       const r = await (await get(`/frame`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(f) })).json();
