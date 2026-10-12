@@ -8,6 +8,7 @@
 //! Clients pick a project with `?project=<name>` on `/ws` and `/export`.
 
 mod ai;
+mod formats;
 mod history;
 mod machines;
 mod pcb;
@@ -1070,8 +1071,8 @@ impl Source {
         }
     }
 
-    /// The exact named shapes of this source, placed: for a whole-design STEP.
-    fn exact(&self, maker: &mut fabricate::StepMaker, out: &mut Vec<(String, de_occt::Shape)>, faceted: &mut Vec<String>) -> Result<(), String> {
+    /// The exact named shapes of this source, placed, each with its material's colour: for a whole-design STEP or IGES.
+    fn exact(&self, maker: &mut fabricate::StepMaker, out: &mut Vec<(String, de_occt::Shape, Option<[f64; 3]>)>, faceted: &mut Vec<String>) -> Result<(), String> {
         for m in &self.members {
             m.exact(maker, out, faceted)?;
         }
@@ -1095,13 +1096,14 @@ impl Source {
                 faceted.extend(f.into_iter().map(|f| format!("{}: {f}", self.name)));
                 for (name, s) in parts {
                     let placed = place(maker, s)?;
-                    out.push((label(&name), placed));
+                    let color = self.look(maker.material(p, &name).as_deref()).map(|l| l.color);
+                    out.push((label(&name), placed, color));
                 }
             }
             (None, Some([w, d, h])) => {
                 let b = maker.arena().cube(w, d, h, false)?;
                 let placed = place(maker, b)?;
-                out.push((label(&self.name), placed));
+                out.push((label(&self.name), placed, self.look(None).map(|l| l.color)));
             }
             _ => {}
         }
@@ -1142,8 +1144,10 @@ fn assembly_package(folder: &str, members: &[Source], tolerance: f64, step_of: &
 /// - `/export/<id>.stl`: the whole part or assembly, where it sits in the project.
 /// - `/export/<id>.stl?part=<name>` and `.dxf?part=<name>`: one part of an
 ///   assembly, at the origin; the DXF is laid flat with one layer per cut depth.
-/// - `/export/<id>.step`: exact B-rep (OpenCascade), every part named; with
-///   `?part=<name>` one part at the origin.
+/// - `/export/<id>.step` and `.igs`: exact B-rep (OpenCascade), every part
+///   named and coloured by its material; with `?part=<name>` one part at the origin.
+/// - `/export/<id>.obj`, `.ply`, `.glb`: every part as a mesh, placed, coloured
+///   by its material (glTF: one node per part); `?part=<name>` one part at the origin.
 /// - `/export/<id>.zip`: the fabrication package (every distinct part's STL,
 ///   STEP and, for sheet parts, DXF, plus a cut list); `/export/project.zip`
 ///   does the same for every part.
@@ -1155,7 +1159,7 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
     };
     let project_name = query.get("project").cloned().unwrap_or_else(|| server.default.clone());
     let Some((stem, ext)) = file.rsplit_once('.') else {
-        return fail(StatusCode::BAD_REQUEST, "expected /export/<part id>.<stl|dxf|zip>".into());
+        return fail(StatusCode::BAD_REQUEST, "expected /export/<part id>.<step|igs|stl|obj|ply|glb|3mf|dxf|zip>".into());
     };
     let ext = ext.to_string();
     let tolerance = query.get("tolerance").and_then(|t| t.parse::<f64>().ok()).unwrap_or(0.005);
@@ -1211,26 +1215,9 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
                 let name = if sources.len() == 1 { sources[0].name.clone() } else { project_name.clone() };
                 Ok((format!("{} fabrication.zip", fabricate::file_name(&name)), "application/zip", fabricate::zip(&files)))
             }
-            "step" | "stp" => {
-                // Exact B-rep, every part named. One part (at the origin) or the whole design, placed.
-                let s = &sources[0];
-                let mut maker = fabricate::StepMaker::new(tolerance);
-                if let Some(name) = &part {
-                    let program = s.program.as_ref().ok_or("pick a part of a shape")?;
-                    let bytes = maker.part_step(program, name)?;
-                    return Ok((format!("{}.step", fabricate::file_name(name)), "model/step", bytes));
-                }
-                let mut shapes = Vec::new();
-                let mut faceted = Vec::new();
-                s.exact(&mut maker, &mut shapes, &mut faceted)?;
-                if shapes.is_empty() {
-                    return Err("nothing to export".into());
-                }
-                if !faceted.is_empty() {
-                    eprintln!("step export of {}: faceted where the program built geometry itself: {}", s.name, faceted.join("; "));
-                }
-                Ok((format!("{}.step", fabricate::file_name(&s.name)), "model/step", maker.step(&shapes)?))
-            }
+            "step" | "stp" => formats::cad_file(&sources[0], part.as_deref(), tolerance, de_occt::CadFormat::Step),
+            "iges" | "igs" => formats::cad_file(&sources[0], part.as_deref(), tolerance, de_occt::CadFormat::Iges),
+            "obj" | "ply" | "glb" => formats::mesh_file(&sources[0], &ext, part.as_deref(), tolerance),
             "stl" | "dxf" => {
                 let s = &sources[0];
                 if !s.members.is_empty() {
@@ -2114,85 +2101,6 @@ async fn team_join(State(server): State<Arc<Server>>, axum::Json(body): axum::Js
     }
 }
 
-/// `POST /import/<file name>?project=…&user=…` with a STEP file as the body:
-/// stores it by content, checks it reads, and adds it to the project as a
-/// shape whose parts are the file's bodies (named as in the file).
-async fn import(
-    State(server): State<Arc<Server>>,
-    Path(file): Path<String>,
-    Query(query): Query<HashMap<String, String>>,
-    body: axum::body::Bytes,
-) -> axum::response::Response {
-    let fail = |code: StatusCode, message: String| (code, message).into_response();
-    let lower = file.to_lowercase();
-    if !(lower.ends_with(".step") || lower.ends_with(".stp")) {
-        return fail(StatusCode::BAD_REQUEST, "Forma imports STEP files (.step, .stp)".into());
-    }
-    let app = match server.project(query.get("project")) {
-        Ok(app) => app,
-        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
-    };
-    use sha2::Digest;
-    let sha: String = sha2::Sha256::digest(&body).iter().map(|b| format!("{b:02x}")).collect();
-    let dir = server.dir.join("assets");
-    let stored = dir.join(format!("{sha}.step"));
-    if !stored.exists() {
-        if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&stored, &body)) {
-            return fail(StatusCode::INTERNAL_SERVER_ERROR, format!("could not store the file: {e}"));
-        }
-    }
-    // Read it once now: a file that does not read is refused, not stored as a broken part.
-    let check = {
-        let stored = stored.clone();
-        tokio::task::spawn_blocking(move || -> Result<(usize, [f64; 6]), String> {
-            let mut a = de_occt::Arena::new();
-            let bodies = a.read_step(&stored)?;
-            if bodies.is_empty() {
-                return Err("the file has no solid bodies".into());
-            }
-            let mut b = [f64::INFINITY, f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
-            for (_, s) in &bodies {
-                let x = a.bounds(*s)?;
-                for k in 0..3 {
-                    b[k] = b[k].min(x[k]);
-                    b[k + 3] = b[k + 3].max(x[k + 3]);
-                }
-            }
-            Ok((bodies.len(), b))
-        })
-        .await
-        .unwrap_or_else(|e| Err(e.to_string()))
-    };
-    let (count, bounds) = match check {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = std::fs::remove_file(&stored);
-            return fail(StatusCode::UNPROCESSABLE_ENTITY, format!("{file} could not be read: {e}"));
-        }
-    };
-    // Show it about as finely as its size calls for (a bolt to ±0.01 mm, a building to ±5).
-    let size = (0..3).map(|k| bounds[k + 3] - bounds[k]).fold(0.0, f64::max);
-    let shown = (size / 4000.0).clamp(0.005, 5.0);
-    let name = file.rsplit_once('.').map(|(n, _)| n).unwrap_or(&file).replace(['_', '-'], " ");
-    let source = format!(
-        "// Imported from “{file}” ({count} {}). The geometry is the file's own exact B-rep:\n// the view meshes it, STEP exports pass it through untouched.\nreturn importStep(\"{sha}\");",
-        if count == 1 { "body" } else { "bodies" }
-    );
-    let user = query.get("user").filter(|u| !u.is_empty()).cloned().unwrap_or_else(|| "local".into());
-    let actor = Actor { user_id: user, session_id: StableId::new().to_string() };
-    let revision = app.project.lock().unwrap().revision();
-    let message = json!({
-        "type": "commit", "request_id": 1, "operation": "shape.create", "expected_revision": revision,
-        "parameters": { "name": name, "description": format!("Imported from {file}."), "source": source, "params": [], "display_tolerance": shown }
-    });
-    let reply: Value = serde_json::from_str(&app.handle(&actor, &message.to_string())).unwrap_or_default();
-    if reply["ok"] == true {
-        (StatusCode::OK, axum::Json(json!({ "id": reply["value"]["output"]["id"], "bodies": count, "sha": sha }))).into_response()
-    } else {
-        fail(StatusCode::UNPROCESSABLE_ENTITY, reply["error"]["message"].as_str().unwrap_or("the import failed").to_string())
-    }
-}
-
 /// Rebuilds a project from its log: changes made here, and peers' changes
 /// re-merged exactly as they were (so every copy rebuilds what it held).
 fn load(name: &str, path: &PathBuf, registry: Arc<Registry>, engine: &str) -> std::io::Result<Project> {
@@ -2356,7 +2264,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/{id}/bom.json", get(pcb::bom_json))
         .route("/pcb/{id}/fab.zip", get(pcb::zip))
         .route("/pcb/{id}/file/{name}", get(pcb::file))
-        .route("/import/{file}", axum::routing::post(import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
+        .route("/import/{file}", axum::routing::post(formats::import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
         .fallback_service(ui)
         // Everything above answers to this computer only.
         .layer(axum::middleware::from_fn(local_only))
@@ -2382,7 +2290,7 @@ mod tests {
         dir
     }
 
-    fn server_in(dir: &std::path::Path) -> Arc<Server> {
+    pub(crate) fn server_in(dir: &std::path::Path) -> Arc<Server> {
         let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let ai = Arc::new(ai::AiConfig { repo: root.clone(), port: 0, claude: None, model: None });
@@ -2405,7 +2313,7 @@ mod tests {
         })
     }
 
-    async fn serve(server: Arc<Server>) -> SocketAddr {
+    pub(crate) async fn serve(server: Arc<Server>) -> SocketAddr {
         let web = server.web.clone();
         let app = router(server, &web);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

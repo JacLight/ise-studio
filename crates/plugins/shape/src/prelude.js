@@ -797,14 +797,14 @@ function importMesh(sha, { material, process } = {}) {
   return __importedParts(JSON.parse(__n.importMesh(sha)), material, process);
 }
 
-/** Imported bodies as parts; a body the file colours gets that colour as its material name until a material is given. */
+/** Imported bodies as parts (the file's colours are listed where it was imported: materials are given, not guessed). */
 function __importedParts(bodies, material, process) {
   const seen = new Map();
-  return bodies.map(([name, h, color]) => {
+  return bodies.map(([name, h]) => {
     // Bodies with the same name get numbered, as part names must be unique.
     const n = (seen.get(name) ?? 0) + 1;
     seen.set(name, n);
-    return part(n === 1 ? name : `${name} ${n}`, new Solid(h), { material: material ?? (color ? `Imported ${color}` : undefined), process });
+    return part(n === 1 ? name : `${name} ${n}`, new Solid(h), { material, process });
   });
 }
 

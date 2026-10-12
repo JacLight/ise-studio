@@ -280,7 +280,8 @@ fn programs_read_imported_mesh_and_iges_files() {
     let e = crate::runtime::evaluate(&source, &[], 0.01).unwrap();
     let names: Vec<&str> = e.parts.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(names, ["Base plate", "Pin"]);
-    assert_eq!(e.parts[0].material.as_deref(), Some("Imported #cc3366"), "the file's colour, as a material name the view reads");
+    let colors: Vec<Option<String>> = crate::assets::mesh_bodies(&obj).unwrap().into_iter().map(|(_, _, c)| c.map(crate::assets::hex)).collect();
+    assert_eq!(colors, [Some("#cc3366".to_string()), None], "the file's colours, for the import to report");
     assert!(close(e.parts[1].volume, vc, 1e-9));
     // Exactly: the same parts, faceted, and said to be.
     let x = crate::exact::evaluate_exact("Imported", &source, &[], 0.01).unwrap();
@@ -301,6 +302,6 @@ fn programs_read_imported_mesh_and_iges_files() {
     assert!((x.arena.volume(x.parts[0].shape) - std::f64::consts::PI * 16.0 * 15.0).abs() < 1e-3, "exact: a true cylinder");
     let e = crate::runtime::evaluate(&source, &[], 0.01).unwrap();
     assert_eq!(e.parts[0].name, "Pin");
-    assert_eq!(e.parts[0].material.as_deref(), Some("Imported #3366cc"));
+    assert_eq!(crate::assets::meshes(&iges, 0.01).unwrap()[0].2.map(crate::assets::hex).as_deref(), Some("#3366cc"));
     assert!(close(e.parts[0].volume, std::f64::consts::PI * 16.0 * 15.0, 1e-2));
 }

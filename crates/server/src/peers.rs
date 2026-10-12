@@ -889,10 +889,10 @@ async fn run(
                 if let Some(bytes) = done {
                     // Content-addressed: only the right bytes are kept.
                     if hash_bytes(&bytes) == sha
-                        && let Some(dir) = de_shape::assets::dir()
+                        && de_shape::assets::dir().is_some()
                     {
-                        let _ = std::fs::create_dir_all(&dir);
-                        if std::fs::write(dir.join(format!("{sha}.step")), &bytes).is_ok() {
+                        // Kept under its format (read from its bytes), as an import keeps it.
+                        if de_shape::assets::store(&sha, &bytes, None).is_ok() {
                             app.asset_arrived(&sha);
                         }
                     } else {
