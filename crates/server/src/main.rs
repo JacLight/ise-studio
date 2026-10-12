@@ -14,6 +14,7 @@ mod machines;
 mod meshes;
 mod pcb;
 mod pcb_library;
+mod pcb_libs;
 mod pcb_schematic;
 mod peers;
 mod pictures;
@@ -672,6 +673,7 @@ impl App {
                 let mut report = serde_json::to_value(de_intent::check(&project)).unwrap();
                 let mut boards = pcb::findings(&project);
                 boards.extend(pcb_schematic::findings(&project));
+                boards.extend(pcb_libs::findings(&project));
                 if !boards.is_empty() {
                     report["ok"] = json!(false);
                     if let Some(f) = report["findings"].as_array_mut() {
@@ -2537,6 +2539,23 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/kicad/footprint/{id}", get(pcb_library::footprint))
         .route("/pcb/kicad/symbol/{id}", get(pcb_library::symbol))
         .route("/pcb/verify-footprints", get(pcb_library::verify))
+        .route("/pcb/libs", get(pcb_libs::index))
+        .route("/pcb/libs/symbol/preview", axum::routing::post(pcb_libs::symbol_preview))
+        .route("/pcb/libs/symbol/{id}", get(pcb_libs::symbol))
+        .route("/pcb/libs/symbol/{id}/svg", get(pcb_libs::symbol_svg))
+        .route("/pcb/libs/footprint/preview", axum::routing::post(pcb_libs::footprint_preview))
+        .route("/pcb/libs/footprint/{id}", get(pcb_libs::footprint))
+        .route("/pcb/libs/footprint/{id}/svg", get(pcb_libs::footprint_svg))
+        .route("/pcb/libs/wizards", get(pcb_libs::wizard_presets))
+        .route("/pcb/libs/wizard", axum::routing::post(pcb_libs::wizard))
+        .route("/pcb/libs/bitmap", axum::routing::post(pcb_libs::bitmap))
+        .route("/pcb/libs/global", get(pcb_libs::global_index))
+        .route("/pcb/libs/global/{name}", get(pcb_libs::global_get).post(pcb_libs::global_post).delete(pcb_libs::global_delete))
+        .route("/pcb/libs/global/{name}/from-project", axum::routing::post(pcb_libs::global_from_project))
+        .route("/pcb/libs/assign/{id}", get(pcb_libs::assign))
+        .route("/pcb/variants/{id}", get(pcb_libs::variant_list))
+        .route("/pcb/{id}/variant/{name}/{file}", get(pcb_libs::variant_file))
+        .route("/pcb/blocks", get(pcb_libs::blocks_list))
         .route("/pcb/boards", get(pcb::boards))
         .route("/pcb/buy", get(pcb::buy))
         .route("/pcb/settings", get(pcb::settings_get).post(pcb::settings_post))

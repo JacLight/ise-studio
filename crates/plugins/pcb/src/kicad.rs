@@ -502,14 +502,19 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
             }
         }
         let mut drill = None;
+        let mut drill_offset: Option<[f64; 2]> = None;
+        let mut center_shift = [0.0, 0.0];
         if let Some(d) = pe.find("drill") {
             let oval = d.has_atom("oval");
             let v: Vec<f64> = d.args().iter().filter_map(|a| a.num()).collect();
             if let Some(&w) = v.first() {
                 drill = Some(if oval { [w, *v.get(1).unwrap_or(&w)] } else { [w, w] });
             }
-            if d.find("offset").is_some_and(|o| o.args().iter().filter_map(|a| a.num()).any(|x| x.abs() > 1e-9)) {
-                notes.push(format!("{reference}.{number}: the drill's offset from the pad centre was dropped (Forma centres holes on pads)"));
+            if let Some(o) = d.find("offset").map(|o| o.args().iter().filter_map(|a| a.num()).collect::<Vec<f64>>()).filter(|o| o.iter().any(|x| x.abs() > 1e-9)) {
+                // KiCad moves the copper by the offset; Forma keeps the copper and moves the hole the other way.
+                let (ox, oy) = (o.first().copied().unwrap_or(0.0), o.get(1).copied().unwrap_or(0.0));
+                drill_offset = Some(if bottom { [r6(ox), r6(oy)] } else { [r6(-ox), r6(oy)] });
+                center_shift = [ox, oy];
             }
         }
         let mut size = size;
@@ -538,15 +543,54 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
             "custom" => (PadShape::Custom, None),
             _ => (PadShape::Rect, None),
         };
+        let mut extra = crate::footprints::PadExtra { drill_offset, ..Default::default() };
+        // Trapezoids and chamfered rectangles become their exact outline (KiCad pad frame, y down).
+        let (hx, hy) = (size[0] / 2.0, size[1] / 2.0);
+        let mut outline_kicad: Option<Vec<P>> = None;
         if pshape == "trapezoid" {
-            notes.push(format!("{reference}.{number}: a trapezoid pad came in as its rectangle"));
+            let d = pe.find("rect_delta").map(|d| d.args().iter().filter_map(|a| a.num()).collect::<Vec<f64>>()).unwrap_or_default();
+            let (ex, ey) = (d.first().copied().unwrap_or(0.0) / 2.0, d.get(1).copied().unwrap_or(0.0) / 2.0);
+            outline_kicad = Some(vec![[-hx - ey, hy + ex], [-hx + ey, -hy - ex], [hx - ey, -hy + ex], [hx + ey, hy - ex]]);
+            extra.trapezoid = Some([r6(2.0 * ex), r6(2.0 * ey)]);
         }
-        if pe.find("chamfer").is_some() || pe.find("chamfer_ratio").is_some_and(|c| c.arg_num(0).unwrap_or(0.0) > 0.0) {
-            notes.push(format!("{reference}.{number}: chamfered corners came in square"));
+        let ratio = pe.value_num("chamfer_ratio").unwrap_or(0.0);
+        if let Some(ch) = pe.find("chamfer").filter(|_| ratio > 0.0 && matches!(pshape, "rect" | "roundrect")) {
+            let corners: Vec<String> = ch.args().iter().filter_map(|a| a.text()).map(str::to_string).collect();
+            let k = ratio.clamp(0.0, 0.5) * size[0].min(size[1]);
+            let has = |n: &str| corners.iter().any(|c| c == n);
+            let mut q: Vec<P> = Vec::new();
+            // KiCad frame (y down): top is −y.
+            for (name, c, a, b) in [
+                ("top_left", [-hx, -hy], [-hx, -hy + k], [-hx + k, -hy]),
+                ("top_right", [hx, -hy], [hx - k, -hy], [hx, -hy + k]),
+                ("bottom_right", [hx, hy], [hx, hy - k], [hx - k, hy]),
+                ("bottom_left", [-hx, hy], [-hx + k, hy], [-hx, hy - k]),
+            ] {
+                if has(name) {
+                    q.push(a);
+                    q.push(b);
+                } else {
+                    q.push(c);
+                }
+            }
+            outline_kicad = Some(q);
+            let flip = |c: &String| if bottom { match c.as_str() { "top_left" => "top_right".into(), "top_right" => "top_left".into(), "bottom_left" => "bottom_right".into(), "bottom_right" => "bottom_left".into(), x => x.into() } } else { c.clone() };
+            extra.chamfer = Some(crate::footprints::Chamfer { ratio, corners: corners.iter().map(flip).collect() });
+            if pshape == "roundrect" {
+                notes.push(format!("{reference}.{number}: a rounded rectangle with chamfers came in with sharp corners where not chamfered"));
+            }
         }
         let mut polygon = Vec::new();
         let mut psize = size;
-        if shape == PadShape::Custom {
+        let shape = if outline_kicad.is_some() { PadShape::Custom } else { shape };
+        let corner = if outline_kicad.is_some() { None } else { corner };
+        if let Some(outline) = outline_kicad {
+            let mut q: Vec<P> = outline.into_iter().map(|p| r6p(if bottom { [-p[0], -p[1]] } else { [p[0], -p[1]] })).collect();
+            if geom::polygon_area(&q) < 0.0 {
+                q.reverse();
+            }
+            polygon = q;
+        } else if shape == PadShape::Custom {
             let outline = custom_pad_outline(pe, size);
             // Pad coordinates (y down) → Forma pad coordinates: y up, mirrored on the bottom.
             let mut q: Vec<P> = outline.into_iter().map(|p| r6p(if bottom { [-p[0], -p[1]] } else { [p[0], -p[1]] })).collect();
@@ -565,7 +609,15 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
                 pins.insert(number.clone(), net.clone());
             }
         }
-        pads.push(Pad { number, kind, shape, size: [r6(psize[0]), r6(psize[1])], at: place.forma_local(center), rotation, drill: drill.map(|d| [r6(d[0]), r6(d[1])]), corner, paste: vec![], polygon });
+        // The copper sits at the hole plus the offset turned with the pad (KiCad frame, y down).
+        let copper = if center_shift == [0.0, 0.0] {
+            center
+        } else {
+            let (s, c) = (abs_rot - place.rot).to_radians().sin_cos();
+            let (ox, oy) = (center_shift[0], center_shift[1]);
+            place.board([local[0] + ox * c + oy * s, local[1] - ox * s + oy * c])
+        };
+        pads.push(Pad { number, kind, shape, size: [r6(psize[0]), r6(psize[1])], at: place.forma_local(copper), rotation, drill: drill.map(|d| [r6(d[0]), r6(d[1])]), corner, paste: vec![], polygon, extra });
     }
     if pads.is_empty() {
         // Logos and graphics: nothing to place.
