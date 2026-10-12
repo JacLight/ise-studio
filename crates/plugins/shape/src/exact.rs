@@ -231,6 +231,38 @@ pub(crate) fn affine_parts(r: &[f64]) -> Option<(bool, [f64; 3], [f64; 3], [f64;
     let clean = |v: f64| if v.abs() < 1e-12 { 0.0 } else { v };
     let scale = s.map(|v| if (v - 1.0).abs() < 1e-12 { 1.0 } else { v });
     Some((mirror, scale, [clean(rx.to_degrees()), clean(ry.to_degrees()), clean(rz.to_degrees())], [r[3], r[7], r[11]]))
+/// The outlines of a flat face's triangles (edges only one triangle has),
+/// counter-clockwise around the area and clockwise around holes.
+fn boundary_loops(positions: &[f64], triangles: &[u32]) -> Vec<Vec<[f64; 2]>> {
+    let (pos, tri) = weld(positions, triangles, 1e-7);
+    let mut count: std::collections::HashMap<(u32, u32), i32> = std::collections::HashMap::new();
+    for t in tri.chunks_exact(3) {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            *count.entry((a.min(b), a.max(b))).or_default() += 1;
+        }
+    }
+    let mut next: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+    for t in tri.chunks_exact(3) {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            if count[&(a.min(b), a.max(b))] == 1 {
+                next.insert(a, b);
+            }
+        }
+    }
+    let mut loops = Vec::new();
+    while let Some((&start, _)) = next.iter().next() {
+        let mut l = Vec::new();
+        let mut at = start;
+        while let Some(n) = next.remove(&at) {
+            l.push([pos[at as usize * 3], pos[at as usize * 3 + 1]]);
+            at = n;
+        }
+        if l.len() >= 3 {
+            loops.push(l);
+        }
+    }
+    // Whichever way the face was meshed, normalise: outlines counter-clockwise.
+    CrossSection::from_polygons_with_fill_rule(&loops, manifold_csg::FillRule::EvenOdd).to_polygons()
 }
 
 fn from_manifold(a: &mut Arena, m: &Manifold) -> Result<Shape, String> {
@@ -598,6 +630,75 @@ fn install<'js>(ctx: &Ctx<'js>, state: &Rc<RefCell<State>>) -> rquickjs::Result<
                 let bodies = st.borrow_mut().arena.read_step(&path).map_err(|e| fail(&ctx, "importStep", e))?;
                 let list: Vec<(String, u32)> = bodies.into_iter().map(|(n, s)| (n, handle(s))).collect();
                 Ok(serde_json::to_string(&list).unwrap())
+            })?,
+        )?;
+    }
+
+    crate::runtime::install_pictures(ctx, &native)?;
+
+    {
+        let st = state.clone();
+        native.set(
+            "relief",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String, options: String, tolerance: f64| -> rquickjs::Result<u32> {
+                // Facets either way: a plain grid of well-shaped triangles the exact kernel
+                // can sew and cut (prints take the full-detail mesh, not this).
+                let m = crate::decor::relief(&sha, &options, tolerance, 0).map_err(|e| throw(&ctx, e))?;
+                let mut s = st.borrow_mut();
+                s.faceted.push("a relief from a picture".into());
+                from_manifold(&mut s.arena, &m).map(handle).map_err(|e| fail(&ctx, "relief", e))
+            })?,
+        )?;
+    }
+
+    {
+        let st = state.clone();
+        native.set(
+            "trace",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String, options: String, tolerance: f64| -> rquickjs::Result<u32> {
+                let loops = crate::decor::trace(&sha, &options, tolerance).map_err(|e| throw(&ctx, e))?;
+                let clean = crate::decor::profile(&loops).to_polygons();
+                st.borrow_mut().arena.polygons(&clean).map(handle).map_err(|e| fail(&ctx, "trace", e))
+            })?,
+        )?;
+    }
+
+    {
+        let st = state.clone();
+        native.set(
+            "text",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, options: String, tolerance: f64| -> rquickjs::Result<u32> {
+                // Overlapping glyph contours merged first: the exact kernel wants clean outlines.
+                let clean = crate::decor::text(&options, tolerance).map_err(|e| throw(&ctx, e))?.to_polygons();
+                st.borrow_mut().arena.polygons(&clean).map(handle).map_err(|e| fail(&ctx, "text", e))
+            })?,
+        )?;
+    }
+
+    {
+        let st = state.clone();
+        native.set(
+            "wrap",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, h: u32, radius: f64, tolerance: f64| -> rquickjs::Result<u32> {
+                let mut s = st.borrow_mut();
+                let tol = s.tolerance;
+                let m = to_manifold(&mut s.arena, shape(h), tol).map_err(|e| fail(&ctx, "wrap", e))?;
+                let bent = crate::relief::wrap(&m, radius, tolerance).map_err(|e| throw(&ctx, e))?;
+                s.faceted.push("a solid wrapped around a cylinder".into());
+                from_manifold(&mut s.arena, &bent).map(handle).map_err(|e| fail(&ctx, "wrap", e))
+            })?,
+        )?;
+    }
+
+    {
+        let st = state.clone();
+        native.set(
+            "ppoints",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, h: u32| -> rquickjs::Result<String> {
+                let mut s = st.borrow_mut();
+                let tol = s.tolerance;
+                let m = s.arena.mesh(shape(h), tol).map_err(|e| fail(&ctx, "points", e))?;
+                Ok(serde_json::to_string(&boundary_loops(&m.positions, &m.triangles)).unwrap())
             })?,
         )?;
     }

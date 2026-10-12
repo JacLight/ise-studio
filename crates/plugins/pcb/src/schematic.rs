@@ -208,6 +208,10 @@ pub struct SchSymbol {
     /// The board component it became (written by "Update board").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub component: Option<StableId>,
+    /// A library symbol from outside the built-in library (a KiCad library part, `Library:Name`),
+    /// carried by the instance so the schematic stands on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<Box<SymbolDef>>,
 }
 
 fn one_u() -> u32 {
@@ -221,6 +225,9 @@ impl Persist for SchSymbol {
 impl SchSymbol {
     /// Its library definition (or its own pin table).
     pub fn def(&self) -> Option<SymbolDef> {
+        if let Some(d) = &self.definition {
+            return Some((**d).clone());
+        }
         if !self.pins.is_empty() {
             return Some(symbols::custom(&self.symbol, &self.pins));
         }
@@ -745,6 +752,12 @@ pub struct PlaceSymbol {
     pub fields: BTreeMap<String, String>,
     #[serde(default)]
     pub exclude_from_board: bool,
+    /// The symbol itself when it is not in the built-in library: a KiCad library symbol as
+    /// GET /pcb/kicad/symbol/<Library:Name> returns it (`./forma pcb add` does all of this).
+    pub definition: Option<SymbolDef>,
+    /// Its footprint, defined on the schematic's board at the same time (as GET
+    /// /pcb/kicad/footprint/<Library:Name> returns it; kept if the board has it already).
+    pub footprint_definition: Option<crate::footprints::Footprint>,
 }
 
 fn clean(s: Option<String>) -> Option<String> {
@@ -774,6 +787,25 @@ impl Command for PlaceSymbol {
         let s = schematic_of(tx, self.schematic)?;
         let sheet = sheet_or_first(&s, self.sheet)?;
         check_xy(self.at, "at")?;
+        if let Some(d) = &self.definition {
+            if d.pins.is_empty() && !d.virtual_part {
+                return Err(bad(format!("the definition of {} has no pins", d.name)));
+            }
+            if d.name != self.symbol.trim() {
+                return Err(bad(format!("`symbol` is “{}” but the definition is {}", self.symbol.trim(), d.name)));
+            }
+        }
+        let fp_name = self.footprint_definition.as_ref().map(|f| f.name.clone());
+        if let Some(fp) = self.footprint_definition {
+            let board = s.board.ok_or_else(|| bad("the schematic drives no board, so there is nowhere to define the footprint (pcb.footprint.define on a board)"))?;
+            let mut b = crate::board_of(tx, board)?;
+            if !b.footprints.contains_key(&fp.name) {
+                crate::check_footprint(&fp.name, &fp)?;
+                b.footprints.insert(fp.name.clone(), fp);
+                tx.set(board, b)?;
+                crate::model3d::sync(tx, board)?;
+            }
+        }
         let mut sym = SchSymbol {
             schematic: self.schematic,
             sheet,
@@ -797,8 +829,14 @@ impl Command for PlaceSymbol {
             value_at: None,
             exclude_from_board: self.exclude_from_board,
             component: None,
+            definition: self.definition.map(Box::new),
         };
-        let def = sym.def().ok_or_else(|| bad(format!("no symbol “{}” (GET /pcb/symbols lists them; for another part give `pins`, a pin table)", sym.symbol)))?;
+        if sym.definition.is_none() && sym.pins.is_empty() && symbols::get(&sym.symbol).is_none() {
+            // Another of the same library part already on the schematic lends its definition.
+            let it = items(tx.world(), self.schematic);
+            sym.definition = it.symbols.iter().find(|(_, o)| o.symbol == sym.symbol && o.definition.is_some()).and_then(|(_, o)| o.definition.clone());
+        }
+        let def = sym.def().ok_or_else(|| bad(format!("no symbol “{}” (GET /pcb/symbols lists them; a KiCad library part needs its `definition`, which `./forma pcb add` fetches; for another part give `pins`, a pin table)", sym.symbol)))?;
         if sym.unit > def.unit_count() {
             return Err(bad(format!("{} has {} unit(s)", def.name, def.unit_count())));
         }
@@ -814,7 +852,7 @@ impl Command for PlaceSymbol {
             }
         }
         sym.value = clean(self.value).unwrap_or(def.value.clone());
-        sym.footprint = clean(self.footprint).unwrap_or(def.footprint.clone());
+        sym.footprint = clean(self.footprint).or(fp_name).unwrap_or(def.footprint.clone());
         sym.mpn = clean(self.mpn).or(def.mpn.clone());
         sym.manufacturer = clean(self.manufacturer).or(def.manufacturer.clone());
         sym.lcsc = clean(self.lcsc).or(def.lcsc.clone());

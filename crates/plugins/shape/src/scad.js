@@ -1101,7 +1101,9 @@ const __scad = (() => {
     text(a, env) {
       if (typeof globalThis.text !== "function") fail("text(): this engine has no fonts yet; turn the lettering into polygons or leave it out");
       const o = named(a, ["text", "size", "font", "halign", "valign", "spacing", "direction", "language", "script"]);
-      return [g2(globalThis.text(str(o.text ?? ""), { size: isNum(o.size) ? o.size : 10, halign: o.halign, valign: o.valign }))];
+      // OpenSCAD's size is about the cap height; Forma's text() takes the same em-ish size.
+      const valign = { top: "top", center: "middle", bottom: "bottom", baseline: "baseline" }[o.valign] ?? "baseline";
+      return [g2(globalThis.text(str(o.text ?? ""), { size: isNum(o.size) ? o.size : 10, align: ["left", "center", "right"].includes(o.halign) ? o.halign : "left", valign }))];
     },
     import() {
       fail("import(): Forma reads one .scad file; bring the STL or DXF in as its own part");
