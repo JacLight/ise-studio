@@ -9,21 +9,26 @@
 pub mod assets;
 pub mod cam;
 pub mod configs;
+pub mod decor;
 pub mod drawing;
 pub mod exact;
 pub mod fea;
 pub mod fabricate;
 pub mod fillet;
 pub mod gears;
+pub mod image;
 pub mod library;
 pub mod mechanism;
 pub mod params;
 pub mod pathfinder;
 pub mod pattern;
 pub mod project;
+pub mod relief;
 pub mod runtime;
 pub mod sketch;
 pub mod stock;
+pub mod text;
+pub mod trace;
 pub mod trim;
 
 pub use configs::{ConfigRow, ShapeConfigurations};
