@@ -570,8 +570,9 @@ fn install<'js>(ctx: &Ctx<'js>, state: &Rc<RefCell<State>>) -> rquickjs::Result<
         native.set(
             "relief",
             Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String, options: String, tolerance: f64| -> rquickjs::Result<u32> {
-                // Facets either way: kept to a size a STEP file carries.
-                let m = crate::decor::relief(&sha, &options, tolerance, 150_000).map_err(|e| throw(&ctx, e))?;
+                // Facets either way: a plain grid of well-shaped triangles the exact kernel
+                // can sew and cut (prints take the full-detail mesh, not this).
+                let m = crate::decor::relief(&sha, &options, tolerance, 0).map_err(|e| throw(&ctx, e))?;
                 let mut s = st.borrow_mut();
                 s.faceted.push("a relief from a picture".into());
                 from_manifold(&mut s.arena, &m).map(handle).map_err(|e| fail(&ctx, "relief", e))

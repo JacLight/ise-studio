@@ -121,6 +121,66 @@ pub fn build(picture: &Picture, spec: &Spec) -> Result<Built, String> {
     Ok(Built { solid, grid: n, triangles, error })
 }
 
+/// The relief on a plain `cells × cells` grid, every triangle well shaped
+/// (surface, flat side and walls all on the same grid): for the exact
+/// kernel, which sews triangles into faces and cannot take the long thin
+/// ones an adaptive mesh has along its walls. Faceted either way.
+pub fn build_regular(picture: &Picture, spec: &Spec, cells: usize) -> Result<Manifold, String> {
+    // The same checks as the adaptive mesh (on its smallest grid).
+    build(picture, &Spec { detail: 16, budget: usize::MAX, ..spec.clone() })?;
+    let n = cells + 1;
+    let v = values(picture, spec, n);
+    let (mut heights, flat): (Vec<f64>, f64) = match spec.mode {
+        Mode::Emboss => (v.v.iter().map(|x| spec.base + spec.depth * *x as f64).collect(), 0.0),
+        Mode::Lithophane => (v.v.iter().map(|x| spec.base + spec.depth * (1.0 - *x as f64)).collect(), 0.0),
+        Mode::Engrave => (v.v.iter().map(|x| spec.base + spec.depth * (1.0 - *x as f64)).collect(), -spec.clear.max(0.01)),
+    };
+    let s = cells as f64;
+    let at = |i: usize, j: usize| [(i as f64 / s - 0.5) * spec.width, (0.5 - j as f64 / s) * spec.height];
+    let mut pos = Vec::with_capacity(n * n * 6);
+    for z in [None, Some(flat)] {
+        for j in 0..n {
+            for i in 0..n {
+                let [x, y] = at(i, j);
+                pos.extend_from_slice(&[x, y, z.unwrap_or(heights[j * n + i])]);
+            }
+        }
+    }
+    heights.clear();
+    let top = |i: usize, j: usize| (j * n + i) as u64;
+    let bot = |i: usize, j: usize| (n * n + j * n + i) as u64;
+    let mut tris: Vec<u64> = Vec::with_capacity(cells * cells * 12 + cells * 24);
+    for j in 0..cells {
+        for i in 0..cells {
+            // Rows run down the picture (−y): (i, j) → (i + 1, j) → (i, j + 1) is clockwise from above.
+            tris.extend([top(i, j), top(i, j + 1), top(i + 1, j), top(i + 1, j), top(i, j + 1), top(i + 1, j + 1)]);
+            tris.extend([bot(i, j), bot(i + 1, j), bot(i, j + 1), bot(i + 1, j), bot(i + 1, j + 1), bot(i, j + 1)]);
+        }
+    }
+    for k in 0..cells {
+        // Bottom edge (j = cells), right (i = cells), top (j = 0), left (i = 0): outward, quads split in two.
+        let quads = [
+            (top(k, cells), top(k + 1, cells), bot(k + 1, cells), bot(k, cells)),
+            (top(cells, k + 1), top(cells, k), bot(cells, k), bot(cells, k + 1)),
+            (top(k + 1, 0), top(k, 0), bot(k, 0), bot(k + 1, 0)),
+            (top(0, k), top(0, k + 1), bot(0, k + 1), bot(0, k)),
+        ];
+        for (a, b, c, d) in quads {
+            tris.extend([a, d, b, b, d, c]);
+        }
+    }
+    if spec.mode == Mode::Engrave {
+        for z in pos.iter_mut().skip(2).step_by(3) {
+            *z = -*z;
+        }
+        for t in tris.chunks_exact_mut(3) {
+            t.swap(1, 2);
+        }
+    }
+    let m = Manifold::from_mesh_f64(&pos, 3, &tris).map_err(|e| format!("relief: the mesh did not close ({e})"))?;
+    if m.volume() < 0.0 { Err("relief: the mesh came out inside out".into()) } else { Ok(m) }
+}
+
 /// Grid coordinates of every triangle's corners: (ax, ay, bx, by, cx, cy), the
 /// hypotenuse a–b and the right angle at c. Triangle i is the (i + 2)th node
 /// of the binary split tree, read bit by bit from the root.
