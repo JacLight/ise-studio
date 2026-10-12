@@ -205,7 +205,7 @@ export class LiveRender {
     this.canvas = document.createElement("canvas");
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: false, preserveDrawingBuffer: true });
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
+    this.renderer.toneMappingExposure = 0.85;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.scene = buildRenderScene(source, environment()).scene;
@@ -273,7 +273,7 @@ export async function renderImage(source: RenderSource, options: RenderOptions, 
   const canvas = document.createElement("canvas");
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true });
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0;
+  renderer.toneMappingExposure = 0.85;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setPixelRatio(1);
   renderer.setSize(width, height, false);
@@ -298,12 +298,9 @@ export async function renderImage(source: RenderSource, options: RenderOptions, 
     while (tracer.samples < samples) {
       tracer.renderSample();
       const now = Math.floor(tracer.samples);
-      if (now !== last) {
-        last = now;
-        onProgress?.(now);
-        // Let the page breathe between samples.
-        await new Promise((r) => setTimeout(r, 0));
-      }
+      if (now !== last) onProgress?.((last = now));
+      // Let the page (and the GPU) breathe between draws.
+      await new Promise((r) => setTimeout(r, 0));
     }
     const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/png"));
     if (!blob) throw new Error("the image could not be encoded");
