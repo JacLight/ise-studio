@@ -28,6 +28,7 @@
 //        section x 25 [flip] · section box x0 y0 z0 x1 y1 z1 · section off
 //        measure Bracket [Plate]   (part, or part to part, measured in their view)
 //   node tools/forma.mjs measure <part> [other part] [--part name]   volume, area, mass, centre of mass,
+//   node tools/forma.mjs drawing <id> [--sheet A3] [--part Name] [--page N] [--pdf f] [--svg f] [--dxf f] [--zip f]   the engineering drawing: sheets, dimensions, the checker's findings; saves files
 //        moments of inertia (kg·mm² about the centre of mass); with two: centre to centre and the gap per axis
 //
 // steps.json is an array of { "operation": "...", "parameters": { ... } }.
@@ -399,6 +400,71 @@ if (command === "run") {
       console.log(`✓ saved as “${save}”: ./forma check runs it from now on`);
     }
     failed = !r.ok;
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
+} else if (command === "drawing") {
+  // A shape's engineering drawing: what each sheet shows and what the checker
+  // measured on it; --pdf/--svg/--dxf/--zip save the files.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const files = { pdf: flag("--pdf"), svg: flag("--svg"), dxf: flag("--dxf"), zip: flag("--zip") };
+  const q = new URLSearchParams(project ? { project } : {});
+  for (const [k, f] of [["sheet", "--sheet"], ["part", "--part"], ["projection", "--projection"], ["config", "--config"]]) {
+    const v = flag(f);
+    if (v) q.set(k, v);
+  }
+  const only = flag("--page");
+  const id = args[1];
+  if (!id) {
+    console.error("✗ say which: forma drawing <shape or instance id> [--sheet A3] [--part Name] [--page N] [--pdf out.pdf] [--svg out.svg] [--dxf out.dxf] [--zip out.zip]");
+    process.exit(1);
+  }
+  const sheet = async (page) => {
+    const p = new URLSearchParams(q);
+    p.set("page", String(page));
+    const res = await fetch(`${http}/drawing/${id}?${p}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  };
+  try {
+    const first = await sheet(only ? +only : 1);
+    const pages = only ? [first] : [first, ...(await Promise.all(Array.from({ length: first.pages - 1 }, (_, i) => sheet(i + 2))))];
+    for (const d of pages) {
+      const views = d.views.map((v) => v.view).concat(d.iso ? ["iso"] : []).join(", ");
+      const quality = d.quality;
+      const clean = !quality.overlaps.length && !quality.on_lines.length && !quality.off_sheet.length && !quality.duplicates.length;
+      console.log(`${clean && !d.warnings.length ? "✓" : "!"} sheet ${d.page} of ${d.pages}: ${d.width}×${d.height} mm at ${d.scale_text}; views ${views || "none"}${d.balloons.length ? `; ${d.balloons.length} balloons` : ""}`);
+      const by = {};
+      for (const a of d.autos) (by[a.key.split(":")[0]] ??= []).push(a);
+      const kinds = { x: "x positions", y: "y positions", z: "z positions", d: "diameters", hole: "hole callouts", r: "radii", c: "chamfers" };
+      for (const [k, list] of Object.entries(by)) console.log(`  ${(kinds[k] ?? k).padEnd(14)} ${list.map((a) => `${a.key.slice(k.length + 1)}${a.text && !a.text.match(/^[\d.]+$/) ? ` (${a.text})` : ""}`).join(" · ")}`);
+      if (d.marks.length) console.log(`  your dimensions: ${d.marks.length}`);
+      const kinds2 = {};
+      for (const a of d.annotations) kinds2[a.kind] = (kinds2[a.kind] ?? 0) + 1;
+      const ann = Object.entries(kinds2).filter(([k]) => k !== "hole").map(([k, n]) => `${n} ${k}${n > 1 ? (k.endsWith("sh") ? "es" : "s") : ""}`);
+      if (ann.length) console.log(`  annotations: ${ann.join(", ")}`);
+      for (const w of d.warnings) console.log(`  ! ${w}`);
+      for (const [a, b] of quality.overlaps) console.log(`  ✗ overlapping text: “${a}” and “${b}”`);
+      for (const t of quality.on_lines) console.log(`  ✗ text over the part's lines: “${t}”`);
+      for (const t of quality.off_sheet) console.log(`  ✗ off the sheet: “${t}”`);
+      for (const t of quality.duplicates) console.log(`  ✗ dimensioned twice: ${t}`);
+      if (clean) console.log(`  checker: no overlaps, nothing over the part's lines, nothing said twice; smallest lettering ${quality.smallest_text} mm`);
+    }
+    const { writeFileSync } = await import("node:fs");
+    for (const [ext, out] of Object.entries(files)) {
+      if (!out) continue;
+      const p = new URLSearchParams(q);
+      if (only) p.set("page", only);
+      const res = await fetch(`${http}/drawing/${id}.${ext}?${p}`);
+      if (!res.ok) throw new Error(await res.text());
+      writeFileSync(out, Buffer.from(await res.arrayBuffer()));
+      console.log(`  saved ${out}`);
+    }
   } catch (e) {
     console.error(`✗ ${e.message}`);
     failed = true;
