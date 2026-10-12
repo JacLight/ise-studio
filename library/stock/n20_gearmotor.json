@@ -1,0 +1,97 @@
+{
+ "id": "n20_gearmotor",
+ "name": "N20 gear motor",
+ "category": "Motors",
+ "summary": "N20 micro metal gear motor, 6 V, 12 × 10 mm gearbox, Ø3 D-shaft, M1.6 holes 9 mm apart; ratios 30:1 to 298:1. Shaft up +Z, gearbox face on z = 0.",
+ "keywords": [
+  "N20",
+  "gear motor",
+  "gearmotor",
+  "micro metal gearmotor",
+  "Pololu",
+  "DC motor",
+  "GA12-N20",
+  "robot motor"
+ ],
+ "source": [
+  "common.js",
+  "n20_gearmotor.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "N20 gearbox (steel plates, brass gears — lumped)": 4500.0,
+  "N20 motor (can, magnets, armature — lumped)": 3000.0,
+  "PBT (black)": 1310,
+  "Brass": 8500,
+  "Steel": 7850
+ },
+ "params": [
+  {
+   "key": "ratio",
+   "label": "Gear ratio",
+   "value": 100,
+   "unit": ":1",
+   "min": 30,
+   "max": 298
+  }
+ ],
+ "columns": [
+  "ratio"
+ ],
+ "rows": [
+  {
+   "name": "6V 30:1",
+   "values": {
+    "ratio": 30
+   }
+  },
+  {
+   "name": "6V 50:1",
+   "values": {
+    "ratio": 50
+   }
+  },
+  {
+   "name": "6V 100:1",
+   "values": {
+    "ratio": 100
+   }
+  },
+  {
+   "name": "6V 150:1",
+   "values": {
+    "ratio": 150
+   }
+  },
+  {
+   "name": "6V 298:1",
+   "values": {
+    "ratio": 298
+   }
+  }
+ ],
+ "default": "6V 100:1",
+ "checks": {
+  "6V 100:1": {
+   "massG": 9.5,
+   "partNumber": "N20-6V-100:1",
+   "metrics": {
+    "No-load speed": 320,
+    "Shaft diameter": 3
+   },
+   "connectors": [
+    "Shaft",
+    "Face",
+    "Hole 1",
+    "Hole 2"
+   ],
+   "connector_at": {
+    "Hole 2": [
+     4.5,
+     0,
+     0
+    ]
+   }
+  }
+ }
+}

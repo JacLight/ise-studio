@@ -1,0 +1,193 @@
+{
+ "id": "jst_xh",
+ "name": "JST XH connector",
+ "standard": "JST XH",
+ "category": "Electronics",
+ "summary": "JST XH 2.5 mm pitch wire-to-board: top-entry through-hole headers and crimp housings with contacts, 2–8 circuits. Header on the board (z = 0), pin 1 at the origin, pins along +X; housing's mating face on z = 0.",
+ "keywords": [
+  "JST",
+  "JST XH",
+  "XH",
+  "2.5mm",
+  "XHP",
+  "B2B-XH-A",
+  "wire to board",
+  "balance lead",
+  "connector",
+  "header",
+  "housing"
+ ],
+ "source": [
+  "common.js",
+  "elec.js",
+  "jst.js",
+  "jst_xh.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Nylon 66": 1140,
+  "Brass, tin-plated": 8500,
+  "Phosphor bronze, tin-plated": 8800
+ },
+ "params": [
+  {
+   "key": "kind",
+   "label": "Kind (0 header, 1 housing)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  },
+  {
+   "key": "pins",
+   "label": "Circuits",
+   "value": 4,
+   "unit": "",
+   "min": 2,
+   "max": 8,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "kind",
+  "pins"
+ ],
+ "rows": [
+  {
+   "name": "B2B-XH-A",
+   "values": {
+    "kind": 0,
+    "pins": 2
+   }
+  },
+  {
+   "name": "B3B-XH-A",
+   "values": {
+    "kind": 0,
+    "pins": 3
+   }
+  },
+  {
+   "name": "B4B-XH-A",
+   "values": {
+    "kind": 0,
+    "pins": 4
+   }
+  },
+  {
+   "name": "B5B-XH-A",
+   "values": {
+    "kind": 0,
+    "pins": 5
+   }
+  },
+  {
+   "name": "B6B-XH-A",
+   "values": {
+    "kind": 0,
+    "pins": 6
+   }
+  },
+  {
+   "name": "B7B-XH-A",
+   "values": {
+    "kind": 0,
+    "pins": 7
+   }
+  },
+  {
+   "name": "B8B-XH-A",
+   "values": {
+    "kind": 0,
+    "pins": 8
+   }
+  },
+  {
+   "name": "XHP-2",
+   "values": {
+    "kind": 1,
+    "pins": 2
+   }
+  },
+  {
+   "name": "XHP-3",
+   "values": {
+    "kind": 1,
+    "pins": 3
+   }
+  },
+  {
+   "name": "XHP-4",
+   "values": {
+    "kind": 1,
+    "pins": 4
+   }
+  },
+  {
+   "name": "XHP-5",
+   "values": {
+    "kind": 1,
+    "pins": 5
+   }
+  },
+  {
+   "name": "XHP-6",
+   "values": {
+    "kind": 1,
+    "pins": 6
+   }
+  },
+  {
+   "name": "XHP-7",
+   "values": {
+    "kind": 1,
+    "pins": 7
+   }
+  },
+  {
+   "name": "XHP-8",
+   "values": {
+    "kind": 1,
+    "pins": 8
+   }
+  }
+ ],
+ "default": "B4B-XH-A",
+ "checks": {
+  "B4B-XH-A": {
+   "size": [
+    12.4,
+    5.75,
+    10.4
+   ],
+   "tolerance": 0.06,
+   "partNumber": "B4B-XH-A",
+   "metrics": {
+    "Pins": 4,
+    "Pitch": 2.5,
+    "Height": 7
+   },
+   "connectors": [
+    "Board",
+    "Mating face",
+    "Pin 1"
+   ],
+   "connector_at": {
+    "Mating face": [
+     0,
+     0,
+     2.4
+    ]
+   }
+  },
+  "XHP-4": {
+   "partNumber": "XHP-4",
+   "connectors": [
+    "Mating face",
+    "Wire entry",
+    "Pin 1"
+   ]
+  }
+ }
+}
