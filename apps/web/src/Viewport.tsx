@@ -15,6 +15,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { attachTumble, type Tumble } from "./tumble";
 import { pcbLooks } from "./pcb3d";
 import type { EntityView, MeshData } from "./engine";
 import {
@@ -446,6 +447,8 @@ type Scene = {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
+  /** Left-drag turns the view with no stop at the poles. */
+  tumble: Tumble;
   sun: THREE.DirectionalLight;
   parts: Map<string, Part>;
   gizmo: MoveGizmo;
@@ -960,6 +963,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     // The camera goes all the way round, underneath included: the ground is
     // one-sided, so from below it vanishes and the grid stays as a reference.
     controls.autoRotateSpeed = 1.2;
+    const tumbler = attachTumble(renderer.domElement, camera, controls);
 
     let dirty = true;
     let raf = 0;
@@ -2249,7 +2253,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     renderer.domElement.addEventListener("pointerdown", onCanvasDown);
     renderer.domElement.addEventListener("pointerup", onCanvasUp);
 
-    three.current = { renderer, scene, camera, controls, sun, parts: new Map(), gizmo, push, overlayRoot, overlayLabels: [], ground, grid, gridCell: 20, wireframe: false, invalidate, flight: null };
+    three.current = { renderer, scene, camera, controls, tumble: tumbler, sun, parts: new Map(), gizmo, push, overlayRoot, overlayLabels: [], ground, grid, gridCell: 20, wireframe: false, invalidate, flight: null };
     scene.add(sketchLayer.root, edgeLayer.root, faceLayer.root, pickedLayer.root, connectorLayer.root);
     if (sketchLabels.current) sketchLayer.setHost(sketchLabels.current);
     sketchLayer.onEditDimension = (key, x, y) => callbacks.current.onEditDimension(key, x, y);
@@ -2260,6 +2264,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       window.clearTimeout(occlusionTimer);
       observer.disconnect();
       controls.dispose();
+      tumbler.dispose();
       window.removeEventListener("keydown", onKey, true);
       for (const part of three.current?.parts.values() ?? []) disposePart(part);
       scene.traverse((o) => {
@@ -2401,7 +2406,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     sketchLayer.update(props.sketch);
     const t = three.current;
     if (t) {
-      t.controls.enableRotate = !props.sketch;
+      t.tumble.enabled = !props.sketch;
       t.invalidate();
     }
   }, [props.sketch, sketchLayer]);

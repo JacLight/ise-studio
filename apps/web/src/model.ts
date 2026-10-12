@@ -433,14 +433,49 @@ const LOOKS: Record<string, Look> = {
 
 export const UNASSIGNED_LOOK: Look = { color: "#d6d4c7", metalness: 0.1, roughness: 0.65 };
 
-/** How a material renders; unknown materials get a neutral look. */
+/** Colour words a material name may carry: "PLA (Bambu, black)", "PETG orange", "PLA charcoal". */
+const COLOUR_WORDS: Record<string, string> = {
+  black: "#232427",
+  charcoal: "#3a3c40",
+  "dark grey": "#4a4d52",
+  "dark gray": "#4a4d52",
+  grey: "#8d9196",
+  gray: "#8d9196",
+  silver: "#c3c7cb",
+  white: "#f1f0ec",
+  ivory: "#eee8d8",
+  natural: "#e8e1cf",
+  beige: "#d9c9a8",
+  red: "#c8372f",
+  orange: "#e8742c",
+  yellow: "#f0c430",
+  gold: "#c9a24a",
+  green: "#3e9a54",
+  olive: "#6f7a3a",
+  teal: "#2a8c8c",
+  cyan: "#3fb3cf",
+  blue: "#3a6fd0",
+  navy: "#243a66",
+  purple: "#7a4fc4",
+  violet: "#7a4fc4",
+  pink: "#e27aa8",
+  brown: "#7a5236",
+};
+
+/** How a material renders; unknown materials get a neutral look. A colour in the name wins over the family's own. */
 export function materialLook(name: string | undefined): Look {
   if (!name) return UNASSIGNED_LOOK;
   const key = name.toLowerCase();
   if (LOOKS[key]) return LOOKS[key];
   // "Tempered glass", "Stainless steel", "6061 aluminium": match the family.
   const family = Object.keys(LOOKS).find((k) => key.includes(k));
-  return family ? LOOKS[family] : { color: "#c4c9d4", metalness: 0.2, roughness: 0.5 };
+  const look = family ? LOOKS[family] : { color: "#c4c9d4", metalness: 0.2, roughness: 0.5 };
+  const hex = key.match(/#[0-9a-f]{6}\b/)?.[0];
+  const word = Object.keys(COLOUR_WORDS)
+    .sort((a, b) => b.length - a.length) // "dark grey" before "grey"
+    .find((w) => new RegExp(`\\b${w}\\b`).test(key));
+  const color = hex ?? (word ? COLOUR_WORDS[word] : undefined);
+  return color ? { ...look, color } : look;
 }
 
 /** A part's size and position in millimeters, as edited live in the UI. */
