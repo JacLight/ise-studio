@@ -7,7 +7,8 @@
 
 use crate::params;
 use crate::pathfinder::{curve_points, refs};
-use crate::sketch::{Constraint, Curve, Geometry, Point, Sketch, bezier_at, solve};
+use crate::curves::{Geo, Nurbs};
+use crate::sketch::{Constraint, Curve, Geometry, Point, Sketch, bezier_at, geo_of, solve};
 use de_core::schemars::{self, JsonSchema};
 use de_core::{Command, CommandError, ErrorCode, StableId, Tx, Value, json};
 use serde::Deserialize;
@@ -38,6 +39,7 @@ pub(crate) fn bad(text: impl Into<String>) -> CommandError {
 pub(crate) type P = [f64; 2];
 const EPS: f64 = 1e-7;
 const BEZIER_STEPS: usize = 96;
+const CURVE_STEPS: usize = 192;
 
 pub(crate) fn sub(a: P, b: P) -> P {
     [a[0] - b[0], a[1] - b[1]]
@@ -234,7 +236,23 @@ impl Ctx {
                 let (p0, p1, p2, p3) = (self.p(*a), self.p(*c1), self.p(*c2), self.p(*b));
                 Prim::Poly((0..=BEZIER_STEPS).map(|i| bezier_at(p0, p1, p2, p3, i as f64 / BEZIER_STEPS as f64)).collect())
             }
+            // Conics and splines, sampled at even steps of their parameter
+            // (so a crossing's place along the samples is its parameter).
+            other => Prim::Poly(self.geo(other).map(|g| g.sample(CURVE_STEPS)).unwrap_or_default()),
         }
+    }
+    /// A curve as geometry, where it now is.
+    pub(crate) fn geo(&self, c: &Curve) -> Option<Geo> {
+        geo_of(c, &|p| self.at.get(&p).copied(), self.radii.get(&c.id()).copied())
+    }
+    /// A B-spline curve on new points for `n`, from point `a` to point `b` (its ends).
+    pub(crate) fn spline(&mut self, id: u32, n: &Nurbs, a: u32, b: u32, construction: bool) -> Curve {
+        let last = n.poles.len() - 1;
+        let poles: Vec<u32> = n.poles.iter().enumerate().map(|(i, q)| if i == 0 { a } else if i == last { b } else { self.point(*q) }).collect();
+        let (knots, mults) = n.knots_mults();
+        let rational = n.weights.iter().any(|w| (w / n.weights[0] - 1.0).abs() > 1e-12);
+        let weights = if rational { n.weights.iter().map(|w| w / n.weights[0]).collect() } else { vec![] };
+        Curve::BSpline { id, poles, degree: n.degree as u32, weights, knots, mults, periodic: false, construction }
     }
     /// Crossings of curve `id` with every other curve: (param, point, the other curve).
     fn crossings(&self, id: u32) -> Vec<(f64, P, u32)> {
@@ -252,18 +270,12 @@ impl Ctx {
     /// A new end at `p` on curve `on`: an existing end of `on` if it is there, else a new point held on `on`.
     pub(crate) fn end_on(&mut self, p: P, on: u32) -> u32 {
         let c = self.sketch.geometry.curves.iter().find(|c| c.id() == on).cloned().unwrap();
-        let ends: Vec<u32> = match &c {
-            Curve::Line { a, b, .. } | Curve::Bezier { a, b, .. } => vec![*a, *b],
-            Curve::Arc { start, end, .. } => vec![*start, *end],
-            Curve::Circle { .. } => vec![],
-        };
+        let ends: Vec<u32> = c.ends().map(|(a, b)| vec![a, b]).unwrap_or_default();
         if let Some(e) = ends.into_iter().find(|e| dist(self.p(*e), p) < 1e-6) {
             return e;
         }
         let id = self.point(p);
-        if !matches!(c, Curve::Bezier { .. }) {
-            self.sketch.geometry.constraints.push(Constraint::OnCurve { point: id, curve: on });
-        }
+        self.sketch.geometry.constraints.push(Constraint::OnCurve { point: id, curve: on });
         id
     }
     fn finish(mut self, tx: &mut Tx, target: StableId, changed: u32, made: Vec<u32>) -> Result<Value, CommandError> {
@@ -338,7 +350,7 @@ impl Command for TrimSketch {
         let curve = cx.sketch.geometry.curves.iter().find(|c| c.id() == self.curve).cloned().ok_or_else(|| bad(format!("no curve {}", self.curve)))?;
         let prim = cx.prim(&curve);
         let click = prim.param(self.at).clamp(0.0, prim.end());
-        let full = matches!(curve, Curve::Circle { .. });
+        let full = matches!(curve, Curve::Circle { .. } | Curve::Ellipse { .. } | Curve::BSpline { periodic: true, .. });
         // Crossings strictly inside the curve (its own ends do not cut it).
         let mut cuts: Vec<(f64, P, u32)> = cx.crossings(self.curve).into_iter().filter(|(t, ..)| full || (*t > 1e-6 * prim.end() && *t < prim.end() * (1.0 - 1e-6))).collect();
         cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -453,6 +465,7 @@ impl Command for TrimSketch {
                     }
                 }
             }
+            other => trim_curve(&mut cx, &other, &cuts, before.clone(), after.clone(), &mut made)?,
         }
         cx.finish(tx, self.target, self.curve, made)
     }
@@ -510,11 +523,7 @@ impl Command for ExtendSketch {
         // The end moves onto the curve it meets (no longer pinned where it was).
         cx.sketch.geometry.constraints.retain(|c| !matches!(c, Constraint::Fixed { point, .. } if *point == end_id));
         let cutter = cx.sketch.geometry.curves.iter().find(|c| c.id() == on).cloned().unwrap();
-        let ends: Vec<u32> = match &cutter {
-            Curve::Line { a, b, .. } | Curve::Bezier { a, b, .. } => vec![*a, *b],
-            Curve::Arc { start, end, .. } => vec![*start, *end],
-            Curve::Circle { .. } => vec![],
-        };
+        let ends: Vec<u32> = cutter.ends().map(|(a, b)| vec![a, b]).unwrap_or_default();
         let join = ends.into_iter().find(|e| dist(cx.p(*e), p) < 1e-6);
         let g = &mut cx.sketch.geometry;
         match join {
@@ -533,11 +542,135 @@ impl Command for ExtendSketch {
                 if let Some(q) = g.points.iter_mut().find(|q| q.id == end_id) {
                     (q.x, q.y) = (p[0], p[1]);
                 }
-                if !matches!(cutter, Curve::Bezier { .. }) {
-                    g.constraints.push(Constraint::OnCurve { point: end_id, curve: on });
-                }
+                g.constraints.push(Constraint::OnCurve { point: end_id, curve: on });
             }
         }
         cx.finish(tx, self.target, self.curve, vec![self.curve])
+    }
+}
+
+/// The part of a spline between parameters `u0` and `u1` (u0 < u1).
+pub(crate) fn sub_nurbs(n: &Nurbs, u0: f64, u1: f64) -> Nurbs {
+    let (a, b) = n.domain();
+    let tiny = 1e-12 * (b - a).max(1.0);
+    let mut c = n.clone();
+    if u0 > a + tiny {
+        c = c.split(u0).1;
+    }
+    if u1 < b - tiny {
+        c = c.split(u1).0;
+    }
+    c
+}
+
+/// The piece of a closed spline from `u0` round past its seam to `u1`, or from `u0` to `u1` when u0 < u1.
+pub(crate) fn wrap_nurbs(n: &Nurbs, u0: f64, u1: f64) -> Nurbs {
+    let (a, b) = n.domain();
+    if u0 < u1 {
+        return sub_nurbs(n, u0, u1);
+    }
+    crate::curves::join(&sub_nurbs(n, u0, b), &sub_nurbs(n, a, u1))
+}
+
+/// Trims a conic or spline: the piece between the crossings either side of
+/// the click goes. `cuts` are (place along the samples 0–1, point, the curve
+/// that crosses there).
+fn trim_curve(cx: &mut Ctx, curve: &Curve, cuts: &[(f64, P, u32)], before: Option<(f64, P, u32)>, after: Option<(f64, P, u32)>, made: &mut Vec<u32>) -> Result<(), CommandError> {
+    let id = curve.id();
+    let construction = curve.construction();
+    let geo = cx.geo(curve).ok_or_else(|| bad("that curve cannot be worked out"))?;
+    let (t0, t1) = geo.range();
+    let at_t = |f: f64| t0 + f * (t1 - t0);
+    let remove = |cx: &mut Ctx| cx.sketch.geometry.curves.retain(|c| c.id() != id);
+    let replace = |cx: &mut Ctx, c: Curve| {
+        let g = &mut cx.sketch.geometry;
+        let i = g.curves.iter().position(|k| k.id() == id).unwrap();
+        g.curves[i] = c;
+    };
+    let closed = matches!(curve, Curve::Ellipse { .. } | Curve::BSpline { periodic: true, .. });
+    if closed {
+        if cuts.len() < 2 {
+            remove(cx);
+            return Ok(());
+        }
+        let lo = before.unwrap_or_else(|| cuts.last().cloned().unwrap());
+        let hi = after.unwrap_or_else(|| cuts.first().cloned().unwrap());
+        let start = cx.end_on(hi.1, hi.2);
+        let end = cx.end_on(lo.1, lo.2);
+        match curve {
+            Curve::Ellipse { center, major, .. } => {
+                let minor = cx.radii.get(&id).copied().unwrap_or(1.0);
+                replace(cx, Curve::EllipseArc { id, center: *center, major: *major, minor, start, end, construction });
+            }
+            _ => {
+                let Geo::Nurbs(n) = &geo else { unreachable!() };
+                let piece = wrap_nurbs(n, at_t(hi.0), at_t(lo.0));
+                let c = cx.spline(id, &piece, start, end, construction);
+                replace(cx, c);
+            }
+        }
+        made.push(id);
+        return Ok(());
+    }
+    if before.is_none() && after.is_none() {
+        remove(cx);
+        return Ok(());
+    }
+    let (s, e) = curve.ends().unwrap();
+    // The pieces kept: from the start to the crossing before, from the crossing after to the end.
+    let mut pieces: Vec<(u32, u32, f64, f64)> = vec![];
+    if let Some(lo) = &before {
+        let p = cx.end_on(lo.1, lo.2);
+        pieces.push((s, p, t0, at_t(lo.0)));
+    }
+    if let Some(hi) = &after {
+        let p = cx.end_on(hi.1, hi.2);
+        pieces.push((p, e, at_t(hi.0), t1));
+    }
+    for (k, (a, b, u0, u1)) in pieces.into_iter().enumerate() {
+        let cid = if k == 0 { id } else { cx.id() };
+        let c = piece_of(cx, curve, &geo, cid, a, b, u0, u1, construction);
+        if k > 0 && c.size().is_some() {
+            // The same conic: the pieces' other semi-axes stay equal.
+            cx.sketch.geometry.constraints.push(Constraint::Equal { a: id, b: cid });
+        }
+        if k == 0 {
+            replace(cx, c);
+        } else {
+            cx.sketch.geometry.curves.push(c);
+        }
+        made.push(cid);
+    }
+    Ok(())
+}
+
+/// Part of a conic arc or spline as its own curve `cid`, from point `a`
+/// (at parameter u0) to point `b` (at u1).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn piece_of(cx: &mut Ctx, curve: &Curve, geo: &Geo, cid: u32, a: u32, b: u32, u0: f64, u1: f64, construction: bool) -> Curve {
+    match curve {
+        Curve::EllipseArc { .. } | Curve::HyperbolaArc { .. } | Curve::ParabolaArc { .. } | Curve::Ellipse { .. } => {
+            let mut c = match curve {
+                Curve::Ellipse { center, major, minor, .. } => Curve::EllipseArc { id: cid, center: *center, major: *major, minor: *minor, start: a, end: b, construction },
+                _ => curve.clone(),
+            };
+            c.set_id(cid);
+            if let Some(r) = cx.radii.get(&curve.id()) {
+                c.set_size(*r);
+            }
+            match &mut c {
+                Curve::EllipseArc { start, end, .. } | Curve::HyperbolaArc { start, end, .. } | Curve::ParabolaArc { start, end, .. } => (*start, *end) = (a, b),
+                _ => {}
+            }
+            c
+        }
+        _ => {
+            let n = match geo {
+                Geo::Nurbs(n) => n.clone(),
+                other => other.to_nurbs(),
+            };
+            let piece = if matches!(curve, Curve::BSpline { periodic: true, .. }) { wrap_nurbs(&n, u0, u1) } else { sub_nurbs(&n, u0, u1) };
+            cx.spline(cid, &piece, a, b, construction)
+        }
     }
 }

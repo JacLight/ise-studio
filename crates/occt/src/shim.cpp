@@ -19,6 +19,8 @@
 #include <Geom_TrimmedCurve.hxx>
 #include <Geom_BezierCurve.hxx>
 #include <TColgp_Array1OfPnt.hxx>
+#include <TColStd_Array1OfReal.hxx>
+#include <TColStd_Array1OfInteger.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
@@ -409,6 +411,30 @@ int occ_sketch_profile(void* p, int nloops, const double* d, int len) {
           Handle(Geom_BezierCurve) bz = new Geom_BezierCurve(poles);
           for (int i = 1; i <= 16; i++) {
             gp_Pnt q = bz->Value(i / 16.0);
+            signed2 += prev.X() * q.Y() - q.X() * prev.Y();
+            prev = q;
+          }
+        } else if (kind == 4) {
+          // An exact rational B-spline (a conic, a spline): degree, poles
+          // (x, y, weight), then its distinct knots and their multiplicities.
+          int degree = (int)next(), np = (int)next();
+          TColgp_Array1OfPnt poles(1, np);
+          TColStd_Array1OfReal weights(1, np);
+          for (int i = 1; i <= np; i++) {
+            double x = next(), y = next();
+            poles.SetValue(i, gp_Pnt(x, y, 0));
+            weights.SetValue(i, next());
+          }
+          int nk = (int)next();
+          TColStd_Array1OfReal knots(1, nk);
+          TColStd_Array1OfInteger mults(1, nk);
+          for (int i = 1; i <= nk; i++) knots.SetValue(i, next());
+          for (int i = 1; i <= nk; i++) mults.SetValue(i, (int)next());
+          Handle(Geom_BSplineCurve) bs = new Geom_BSplineCurve(poles, weights, knots, mults, degree);
+          wire.Add(BRepBuilderAPI_MakeEdge(bs).Edge());
+          gp_Pnt prev = bs->Value(bs->FirstParameter());
+          for (int i = 1; i <= 64; i++) {
+            gp_Pnt q = bs->Value(bs->FirstParameter() + (bs->LastParameter() - bs->FirstParameter()) * i / 64.0);
             signed2 += prev.X() * q.Y() - q.X() * prev.Y();
             prev = q;
           }

@@ -129,8 +129,8 @@ fn corner(cx: &Ctx, point: Option<u32>, curves: Option<&[u32]>, picks: Option<&[
     let g = &cx.sketch.geometry;
     let find = |id: u32| g.curves.iter().find(|c| c.id() == id).cloned().ok_or_else(|| bad(format!("no curve {id}")));
     let check = |c: &Curve| match c {
-        Curve::Bezier { .. } => Err(bad("corners round between lines, arcs and circles, not Béziers")),
-        _ => Ok(()),
+        Curve::Line { .. } | Curve::Arc { .. } | Curve::Circle { .. } => Ok(()),
+        _ => Err(bad("corners round between lines, arcs and circles (not Béziers, conics or splines)")),
     };
     let shared_side = |c: Curve, j: u32| -> Side {
         let (a, b) = ends(&c).unwrap();

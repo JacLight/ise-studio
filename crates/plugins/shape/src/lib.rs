@@ -9,6 +9,7 @@
 pub mod assets;
 pub mod cam;
 pub mod configs;
+pub mod curves;
 pub mod drawing;
 pub mod exact;
 pub mod fea;
@@ -23,6 +24,7 @@ pub mod pattern;
 pub mod project;
 pub mod runtime;
 pub mod sketch;
+pub mod solver;
 pub mod stock;
 pub mod trim;
 

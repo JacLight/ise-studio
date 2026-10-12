@@ -97,16 +97,13 @@ fn copy_curves(cx: &mut Ctx, curves: &[Curve], map: &BTreeMap<u32, u32>, flip: b
     let mut made = vec![];
     for c in curves {
         let id = cx.id();
-        let m = |p: &u32| map[p];
-        let copy = match c {
-            Curve::Line { a, b, construction, .. } => Curve::Line { id, a: m(a), b: m(b), construction: *construction },
-            Curve::Arc { center, start, end, construction, .. } => {
-                let (s, e) = if flip { (m(end), m(start)) } else { (m(start), m(end)) };
-                Curve::Arc { id, center: m(center), start: s, end: e, construction: *construction }
-            }
-            Curve::Circle { center, construction, id: old, .. } => Curve::Circle { id, center: m(center), radius: cx.radii.get(old).copied().unwrap_or(1.0), construction: *construction },
-            Curve::Bezier { a, b, c1, c2, construction, .. } => Curve::Bezier { id, a: m(a), b: m(b), c1: m(c1), c2: m(c2), construction: *construction },
-        };
+        let mut copy = c.mapped(id, &|p| map[&p]);
+        if flip {
+            copy = copy.flipped();
+        }
+        if let Some(r) = cx.radii.get(&c.id()) {
+            copy.set_size(*r);
+        }
         cx.sketch.geometry.curves.push(copy);
         made.push((c.id(), id));
     }
@@ -187,7 +184,7 @@ impl Command for PatternSketch {
             let pairs = copy_curves(&mut cx, &curves, &map, false);
             if self.linked {
                 for (old, new) in &pairs {
-                    if matches!(curves.iter().find(|c| c.id() == *old), Some(Curve::Circle { .. })) {
+                    if curves.iter().find(|c| c.id() == *old).is_some_and(|c| c.size().is_some()) {
                         cx.sketch.geometry.constraints.push(Constraint::Equal { a: *old, b: *new });
                     }
                 }
@@ -293,7 +290,7 @@ impl Command for MirrorSketch {
         let pairs = copy_curves(&mut cx, &curves, &map, true);
         if self.linked {
             for (old, new) in &pairs {
-                if matches!(curves.iter().find(|c| c.id() == *old), Some(Curve::Circle { .. })) {
+                if curves.iter().find(|c| c.id() == *old).is_some_and(|c| c.size().is_some()) {
                     links.push(Constraint::Equal { a: *old, b: *new });
                 }
             }
