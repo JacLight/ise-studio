@@ -1009,10 +1009,12 @@ export function ViewsBody(props: {
   view: ViewName;
   wireframe: boolean;
   turntable: boolean;
+  rendering: boolean;
   onView: (v: ViewName) => void;
   onFit: () => void;
   onWireframe: () => void;
   onTurntable: () => void;
+  onRender: () => void;
 }) {
   return (
     <>
@@ -1033,6 +1035,10 @@ export function ViewsBody(props: {
       <button type="button" className={`list-row ${props.turntable ? "active" : ""}`} onClick={props.onTurntable}>
         <Icon name="rotate" />
         <span>{props.turntable ? "Stop turntable" : "Turntable"}</span>
+      </button>
+      <button type="button" className={`list-row ${props.rendering ? "active" : ""}`} onClick={props.onRender}>
+        <Icon name="spark" />
+        <span>{props.rendering ? "Stop rendering" : "Render (photoreal)"}</span>
       </button>
     </>
   );

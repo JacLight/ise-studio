@@ -9,6 +9,7 @@
 //   node tools/forma.mjs fit <assembly or instance id | project> [--motion]   do screws, inserts, nuts, bearings and joined parts fit (and, with --motion, every joint's sweep)
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
+//   node tools/forma.mjs render [--width 1920] [--height 1080] [--samples 256] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open)
 //   node tools/forma.mjs sheet [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
 //   node tools/forma.mjs list                 every entity, one line each
 //   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
@@ -199,6 +200,48 @@ if (command === "run") {
     for (const n of r.notes) console.log(`  ! ${n}`);
     failed = !r.ok;
   }
+} else if (command === "render") {
+  // A photoreal PNG of the model as the person's view shows it; with no view open, a headless browser renders it.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const opt = (name, fallback) => {
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 ? args.splice(i, 2)[1] : fallback;
+  };
+  const width = Number(opt("width", 1920));
+  const height = Number(opt("height", Math.round((width * 9) / 16)));
+  const samples = Number(opt("samples", 256));
+  const out = opt("out", `render-${width}x${height}.png`);
+  const q = new URLSearchParams({ ...(project ? { project } : {}), width, height, samples });
+  const ask = () => fetch(`${http}/render?${q}`, { method: "POST" });
+  let res = await ask();
+  let chrome = null;
+  if (res.status === 409) {
+    // No view open: start a headless browser on the project and ask again once it has loaded.
+    const { spawn } = await import("node:child_process");
+    const { existsSync, mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const paths = [process.env.CHROME, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium", "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"].filter(Boolean);
+    const exe = paths.find((p) => existsSync(p));
+    if (!exe) {
+      console.error("✗ no view is open and no Chrome or Chromium to render in headless (set CHROME to its path)");
+      process.exit(1);
+    }
+    const page = `${http}/${project ? `?project=${encodeURIComponent(project)}` : ""}`;
+    chrome = spawn(exe, ["--headless=new", `--user-data-dir=${mkdtempSync(`${tmpdir()}/forma-render-`)}`, "--enable-unsafe-swiftshader", `--window-size=${Math.min(width, 1920)},${Math.min(height, 1080)}`, "--hide-scrollbars", page], { stdio: "ignore" });
+    for (let i = 0; i < 30 && res.status === 409; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      res = await ask();
+    }
+  }
+  if (!res.ok) {
+    console.error(`✗ ${await res.text()}`);
+    failed = true;
+  } else {
+    const png = Buffer.from(await res.arrayBuffer());
+    writeFileSync(out, png);
+    console.log(`✓ ${out}: ${width} × ${height} px, ${samples} samples, ${(png.length / 1024).toFixed(0)} KB${chrome ? " (rendered headless)" : ""}`);
+  }
+  chrome?.kill();
 } else if (command === "sheet") {
   // Sheet-metal flat patterns: every sheet part, or one with its bend table and checks; files on request.
   const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
@@ -379,7 +422,7 @@ if (command === "run") {
     }
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | sheet [id] [part] | get <id> | tree | list | check | ops | view <action> [what]  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | sheet [id] [part] | render [--width] | get <id> | tree | list | check | ops | view <action> [what]  [--project name] [--url ws://…]");
   failed = true;
 }
 

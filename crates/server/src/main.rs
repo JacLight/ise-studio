@@ -14,6 +14,7 @@ mod pcb;
 mod pcb_schematic;
 mod peers;
 mod share;
+mod render;
 mod sheet;
 mod sourcing;
 mod stock;
@@ -893,7 +894,7 @@ async fn session(app: Arc<App>, socket: WebSocket, user_id: String) {
                         reply(request_id, Ok(json!({ "stopped": true })))
                     }
                     AiMessage::View { request_id, action, target, value, to } => {
-                        const ACTIONS: &[&str] = &["select", "frame", "isolate", "show_all", "hide", "show", "color", "camera", "explode"];
+                        const ACTIONS: &[&str] = &["select", "frame", "isolate", "show_all", "hide", "show", "color", "camera", "explode", "render"];
                         let known = target.is_none_or(|id| app.project.lock().unwrap().entity(id).is_some());
                         if !ACTIONS.contains(&action.as_str()) {
                             reply(request_id, Err(CommandError::new(ErrorCode::InvalidParameters, format!("unknown view action {action} (use {})", ACTIONS.join(", ")))))
@@ -2322,6 +2323,8 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/motion-stress/{id}", get(motion_stress))
         .route("/thermal/{id}", axum::routing::post(thermal))
         .route("/sheet/{id}", get(sheet::pattern))
+        .route("/render", axum::routing::post(render::request))
+        .route("/render/{job}", axum::routing::post(render::deliver).layer(axum::extract::DefaultBodyLimit::max(256 * 1024 * 1024)))
         .route("/bom/{id}", get(sourcing::bom))
         .route("/bom/{id}/file", get(sourcing::line_file))
         .route("/rfq/{file}", get(sourcing::rfq))

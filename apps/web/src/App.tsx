@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AiPanel } from "./AiPanel";
+import { RenderView } from "./RenderView";
+import { renderImage } from "./render";
 import { type Proposal, interpret } from "./assistant";
 import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
@@ -89,6 +91,9 @@ export function App({ engine }: { engine: Engine }) {
   const [view, setView] = useState<ViewName>("perspective");
   const [wireframe, setWireframe] = useState(false);
   const [turntable, setTurntable] = useState(false);
+  // Render mode: the view path-traced over the model.
+  const [rendering, setRendering] = useState(false);
+  const renderSource = useCallback(() => viewport.current?.renderSource() ?? null, []);
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -201,6 +206,25 @@ export function App({ engine }: { engine: Engine }) {
               setExplode({ id: target, spread: Math.min(2.5, Math.max(0.25, Number(value) || 1)), open: true });
             }
             break;
+          case "render": {
+            // A render asked for from ./forma render: made here, sent back to the engine.
+            const job = value ? (JSON.parse(value) as { job?: string; width?: number; height?: number; samples?: number; open?: boolean }) : {};
+            if (!job.job) {
+              setRendering(true);
+              break;
+            }
+            const source = viewport.current?.renderSource();
+            const back = (body: BodyInit, error?: string) =>
+              fetch(projectUrl(`/render/${job.job}${error ? `?error=${encodeURIComponent(error)}` : ""}`), { method: "POST", body }).catch(() => undefined);
+            if (!source) {
+              back("", "the view is not ready");
+              break;
+            }
+            renderImage(source, { width: job.width ?? 1920, height: job.height ?? 1080, samples: job.samples ?? 256 })
+              .then((png) => back(png))
+              .catch((e) => back("", String(e)));
+            break;
+          }
           case "camera":
             if (value === "top" || value === "front" || value === "bottom" || value === "perspective") {
               setView(value);
@@ -1297,6 +1321,7 @@ export function App({ engine }: { engine: Engine }) {
           poses={posePreview}
           onTurnInstance={async (id, at, rotation) => (await run("assembly.instance.update", { target: id, at, rotation })) !== null}
         />
+        {rendering && <RenderView source={renderSource} name={projectTitle()} onClose={() => setRendering(false)} />}
         <div className="view-caption">
           <span>{projectTitle().toUpperCase()}</span>
           <span>
@@ -1690,6 +1715,8 @@ export function App({ engine }: { engine: Engine }) {
               view={view}
               wireframe={wireframe}
               turntable={turntable}
+              rendering={rendering}
+              onRender={() => setRendering(!rendering)}
               onView={(v) => {
                 setView(v);
                 viewport.current?.view(v);

@@ -246,7 +246,10 @@ You can drive their view, not just the design. When they ask to see something, s
 ./forma view color status        paint the building by sale status (color material to undo)
 ./forma view camera top          top, front, bottom or perspective
 ./forma view explode Bracket 1.5 pull an assembly's parts apart (spread 0.25–2.5, default 1); `off` puts them back
+./forma view render              photoreal render mode: the view path-traced live (studio light, physical metals, plastics, glass)
 ```
+
+`./forma render [--width 1920] [--height 1080] [--samples 256] [--out shot.png]` writes a photoreal PNG of the model as their view shows it (set the camera, isolation and explode first); with no view open it renders in a headless browser. Materials render from their names: metals by family (aluminium, steel, stainless, brass, copper), a colour word in the name colours it ("Aluminium 5052 anodised black" renders anodised), glass, acrylic and LED epoxy transmit light.
 
 Names work (instances like L26, shapes, assemblies) or ids. These change only that person's view; nothing is saved and other people's views stay as they are. The context tells you what their view shows (selection, isolation, hidden items, paint).
 
