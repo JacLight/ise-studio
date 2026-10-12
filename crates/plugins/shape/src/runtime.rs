@@ -736,7 +736,19 @@ fn install_native<'js>(ctx: &Ctx<'js>, arena: &Rc<RefCell<Arena>>) -> rquickjs::
             "importStep",
             Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String, tolerance: f64| -> rquickjs::Result<String> {
                 let bodies = crate::assets::meshes(&sha, tolerance).map_err(|e| throw(&ctx, format!("importStep: {e}")))?;
-                let list: Vec<(String, u32)> = bodies.into_iter().map(|(n, m)| (n, push_solid(&arena, m))).collect();
+                let list: Vec<(String, u32, Option<String>)> = bodies.into_iter().map(|(n, m, c)| (n, push_solid(&arena, m), c.map(crate::assets::hex))).collect();
+                Ok(serde_json::to_string(&list).unwrap())
+            })?,
+        )?;
+    }
+
+    {
+        let arena = arena.clone();
+        native.set(
+            "importMesh",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String| -> rquickjs::Result<String> {
+                let bodies = crate::assets::mesh_bodies(&sha).map_err(|e| throw(&ctx, format!("importMesh: {e}")))?;
+                let list: Vec<(String, u32, Option<String>)> = bodies.into_iter().map(|(n, m, c)| (n, push_solid(&arena, m), c.map(crate::assets::hex))).collect();
                 Ok(serde_json::to_string(&list).unwrap())
             })?,
         )?;

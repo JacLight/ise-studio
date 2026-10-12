@@ -780,13 +780,31 @@ function __result(out, p) {
  * view meshes it to `tolerance`, exact exports pass its own B-rep through.
  */
 function importStep(sha, { material, process } = {}) {
-  const bodies = JSON.parse(__n.importStep(sha, tolerance));
+  return __importedParts(JSON.parse(__n.importStep(sha, tolerance)), material, process);
+}
+
+/** The bodies of an imported IGES file (surfaces that close are sewn into solids), as importStep. */
+function importIges(sha, opts = {}) {
+  return importStep(sha, opts);
+}
+
+/**
+ * The bodies of an imported mesh file (STL, OBJ, PLY, glTF, 3MF), as parts
+ * named as in the file. Triangles stay triangles: exact exports carry them
+ * as flat faces, and say so.
+ */
+function importMesh(sha, { material, process } = {}) {
+  return __importedParts(JSON.parse(__n.importMesh(sha)), material, process);
+}
+
+/** Imported bodies as parts; a body the file colours gets that colour as its material name until a material is given. */
+function __importedParts(bodies, material, process) {
   const seen = new Map();
-  return bodies.map(([name, h]) => {
+  return bodies.map(([name, h, color]) => {
     // Bodies with the same name get numbered, as part names must be unique.
     const n = (seen.get(name) ?? 0) + 1;
     seen.set(name, n);
-    return part(n === 1 ? name : `${name} ${n}`, new Solid(h), { material, process });
+    return part(n === 1 ? name : `${name} ${n}`, new Solid(h), { material: material ?? (color ? `Imported ${color}` : undefined), process });
   });
 }
 

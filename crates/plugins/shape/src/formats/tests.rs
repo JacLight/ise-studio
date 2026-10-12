@@ -255,3 +255,52 @@ fn dwg_and_unknown_files_say_why() {
     assert_eq!(Kind::from_name("plan.dwg"), None);
     assert!(DWG.contains("DXF"));
 }
+
+/// A file stored as an import would store it (the asset folder is set once per process).
+fn stored(bytes: &[u8], hint: Kind) -> String {
+    if crate::assets::dir().is_none() {
+        crate::assets::set_dir(std::env::temp_dir().join(format!("forma-format-assets-{}", std::process::id())));
+    }
+    // Not a real SHA-256: tests only need a stable 64-hex name per content.
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    let sha = format!("{:016x}", h.finish()).repeat(4);
+    crate::assets::store(&sha, bytes, Some(hint)).unwrap();
+    sha
+}
+
+#[test]
+fn programs_read_imported_mesh_and_iges_files() {
+    let (p, vb, vc) = parts();
+    let obj = stored(&mesh::write_obj(&p), Kind::Obj);
+    assert_eq!(crate::assets::kind(&obj), Ok(Kind::Obj));
+    let source = format!("return importMesh(\"{obj}\");");
+    assert_eq!(crate::assets::referenced(&source), vec![obj.clone()]);
+    let e = crate::runtime::evaluate(&source, &[], 0.01).unwrap();
+    let names: Vec<&str> = e.parts.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["Base plate", "Pin"]);
+    assert_eq!(e.parts[0].material.as_deref(), Some("Imported #cc3366"), "the file's colour, as a material name the view reads");
+    assert!(close(e.parts[1].volume, vc, 1e-9));
+    // Exactly: the same parts, faceted, and said to be.
+    let x = crate::exact::evaluate_exact("Imported", &source, &[], 0.01).unwrap();
+    assert_eq!(x.parts.len(), 2);
+    assert!(close(x.arena.volume(x.parts[0].shape), vb, 1e-6));
+    assert!(x.faceted.iter().any(|f| f.contains("importMesh")));
+    // An IGES file through the same exact path as STEP, and meshed for the view.
+    let mut a = de_occt::Arena::new();
+    let cyl = a.cylinder(15.0, 4.0, 4.0, false).unwrap();
+    let path = std::env::temp_dir().join(format!("forma-format-iges-{}.igs", std::process::id()));
+    a.write_cad(&[("Pin".into(), cyl, Some([0.2, 0.4, 0.8]))], &path, de_occt::CadFormat::Iges).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(Kind::sniff(&bytes), Some(Kind::Iges));
+    let iges = stored(&bytes, Kind::Iges);
+    let source = format!("return importIges(\"{iges}\");");
+    let x = crate::exact::evaluate_exact("Pin", &source, &[], 0.01).unwrap();
+    assert!((x.arena.volume(x.parts[0].shape) - std::f64::consts::PI * 16.0 * 15.0).abs() < 1e-3, "exact: a true cylinder");
+    let e = crate::runtime::evaluate(&source, &[], 0.01).unwrap();
+    assert_eq!(e.parts[0].name, "Pin");
+    assert_eq!(e.parts[0].material.as_deref(), Some("Imported #3366cc"));
+    assert!(close(e.parts[0].volume, std::f64::consts::PI * 16.0 * 15.0, 1e-2));
+}
