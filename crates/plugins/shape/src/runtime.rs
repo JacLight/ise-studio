@@ -23,7 +23,7 @@ pub(crate) const DEADLINE_EXACT: Duration = Duration::from_secs(120);
 pub(crate) const DEADLINE_MESHED: Duration = Duration::from_secs(30);
 /// Thrown by operations only the exact kernel has; the view then evaluates
 /// the program exactly and meshes the true surfaces.
-const NEEDS_EXACT: &str = "\u{1}needs the exact kernel";
+pub(crate) const NEEDS_EXACT: &str = "\u{1}needs the exact kernel";
 /// Feature angle (degrees) above which normals stay sharp (crisp edges).
 const SHARP_ANGLE: f64 = 40.0;
 
@@ -126,9 +126,9 @@ impl std::fmt::Debug for Evaluated {
 }
 
 #[derive(Default)]
-struct Arena {
-    solids: Vec<Manifold>,
-    profiles: Vec<CrossSection>,
+pub(crate) struct Arena {
+    pub(crate) solids: Vec<Manifold>,
+    pub(crate) profiles: Vec<CrossSection>,
 }
 
 pub(crate) fn throw(ctx: &Ctx<'_>, message: impl AsRef<str>) -> rquickjs::Error {
@@ -201,7 +201,7 @@ pub fn evaluate(source: &str, params: &[(String, f64)], tolerance: f64) -> Resul
 /// As [`evaluate`], with the program's inputs (its sketches, as JSON).
 pub fn evaluate_in(source: &str, params: &[(String, f64)], tolerance: f64, inputs: &str) -> Result<Evaluated, String> {
     let arena = Rc::new(RefCell::new(Arena::default()));
-    let output = match run_program(source, params, tolerance, inputs, DEADLINE, |ctx| install_native(ctx, &arena)) {
+    let output = match run_program(source, params, tolerance, inputs, DEADLINE, |ctx| install_native(ctx, &arena, tolerance)) {
         Err(e) if e.contains(NEEDS_EXACT) => return crate::exact::evaluate_meshed(source, params, tolerance, inputs),
         r => r?,
     };
@@ -389,7 +389,7 @@ fn centroid(positions: &[f32], indices: &[u32]) -> [f64; 3] {
     if volume.abs() < 1e-12 { [0.0; 3] } else { c.map(|x| x / volume) }
 }
 
-fn install_native<'js>(ctx: &Ctx<'js>, arena: &Rc<RefCell<Arena>>) -> rquickjs::Result<()> {
+fn install_native<'js>(ctx: &Ctx<'js>, arena: &Rc<RefCell<Arena>>, tolerance: f64) -> rquickjs::Result<()> {
     let native = Object::new(ctx.clone())?;
 
     let push_solid = |arena: &Rc<RefCell<Arena>>, m: Manifold| -> u32 {
@@ -777,6 +777,8 @@ fn install_native<'js>(ctx: &Ctx<'js>, arena: &Rc<RefCell<Arena>>) -> rquickjs::
             Err(throw(&ctx, NEEDS_EXACT))
         })?,
     )?;
+    // Sweeps, lofts, offsets and the rest (see `sweep`).
+    crate::sweep::install_mesh(ctx, &native, arena, tolerance)?;
 
     ctx.globals().set("__native", native)?;
     Ok(())

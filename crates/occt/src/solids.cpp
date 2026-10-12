@@ -310,19 +310,22 @@ std::vector<Sample> sample_path(const PathData& path, const FrameLaw& law, doubl
         const Sample& pr = out[i - 1];
         gp_Vec v1(pr.p, sm.p);
         double c1 = v1.SquareMagnitude();
-        gp_Vec rl = n, tl = pr.t;
-        if (c1 > 1e-18) {
-          rl = n - v1 * (2 / c1) * v1.Dot(n);
-          tl = pr.t - v1 * (2 / c1) * v1.Dot(pr.t);
+        if (c1 < 1e-18) {
+          // A corner: turn the frame about the bend the least that takes the old tangent to the new.
+          gp_Vec ax = pr.t.Crossed(sm.t);
+          if (ax.Magnitude() > 1e-12) n = n.Rotated(gp_Ax1(gp_Pnt(0, 0, 0), gp_Dir(ax)), pr.t.Angle(sm.t));
+        } else {
+          gp_Vec rl = n - v1 * (2 / c1) * v1.Dot(n);
+          gp_Vec tl = pr.t - v1 * (2 / c1) * v1.Dot(pr.t);
+          gp_Vec v2 = sm.t - tl;
+          double c2 = v2.SquareMagnitude();
+          n = c2 > 1e-18 ? rl - v2 * (2 / c2) * v2.Dot(rl) : rl;
         }
-        gp_Vec v2 = sm.t - tl;
-        double c2 = v2.SquareMagnitude();
-        n = c2 > 1e-18 ? rl - v2 * (2 / c2) * v2.Dot(rl) : rl;
         n = unit(n - sm.t * n.Dot(sm.t));
       }
       b = sm.t.Crossed(n);
     } else if (law.mode == 1) {
-      // Frenet: n toward the centre of curvature; kept from flipping.
+      // Frenet: n toward the centre of curvature.
       n = curv;
       b = sm.t.Crossed(n);
     } else if (law.mode == 2) {
@@ -804,7 +807,9 @@ int occ_paint(void* p, int h, const int* idx, int n, double r, double g, double 
     std::array<double, 3> c = {r, g, b};
     std::string nm = name ? name : "";
     if (n < 0) {
-      a->painted.push_back({*s, c, nm});
+      // n = -2: a default (a part's material colour) that later paint overrides.
+      if (n == -2) a->painted.insert(a->painted.begin(), {*s, c, nm});
+      else a->painted.push_back({*s, c, nm});
       return h;
     }
     TopTools_IndexedMapOfShape faces;

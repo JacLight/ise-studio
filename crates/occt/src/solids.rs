@@ -234,6 +234,12 @@ impl Arena {
         self.check(unsafe { occ_paint(self.0, s.0, i.as_ptr(), if faces.is_some() { i.len() as c_int } else { -1 }, c[0], c[1], c[2], n.as_ptr()) })
     }
 
+    /// A colour for the whole shape that anything painted on it overrides (a part's material).
+    pub fn paint_default(&mut self, s: Shape, colour: [f64; 3]) -> Result<Shape, String> {
+        let n = CString::new("").unwrap();
+        self.check(unsafe { occ_paint(self.0, s.0, std::ptr::null(), -2, colour[0], colour[1], colour[2], n.as_ptr()) })
+    }
+
     /// A geometry check report (validity, self-intersection, tolerances), as JSON.
     pub fn check_geometry(&mut self, s: Shape) -> Result<serde_json::Value, String> {
         let p = unsafe { occ_check(self.0, s.0) };

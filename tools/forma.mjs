@@ -7,6 +7,7 @@
 //   node tools/forma.mjs gears <id> [torque N·m] [rpm]   turn a gear train through a full turn; tooth strength with a load
 //   node tools/forma.mjs motion <joint id> [steps] [--set '{"Elbow":40}']   sweep a joint through its limits: what moves, closest approaches, clashes, where it binds
 //   node tools/forma.mjs fit <assembly or instance id | project> [--motion]   do screws, inserts, nuts, bearings and joined parts fit (and, with --motion, every joint's sweep)
+//   node tools/forma.mjs check-geometry <id> [part]   the exact kernel's check of each part: valid, self-intersections, tolerances
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs list                 every entity, one line each
@@ -198,6 +199,31 @@ if (command === "run") {
     for (const n of r.notes) console.log(`  ! ${n}`);
     failed = !r.ok;
   }
+} else if (command === "check-geometry") {
+  // The exact kernel's check of every part (as FreeCAD's Check geometry).
+  const [, id, part] = args;
+  if (!id) {
+    console.error("✗ say which: forma check-geometry <id> [part]");
+    process.exit(1);
+  }
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const q = new URLSearchParams({ ...(project ? { project } : {}), ...(part ? { part } : {}) });
+  const res = await fetch(`${http}/check-geometry/${id}?${q}`);
+  if (!res.ok) {
+    console.error(`✗ ${await res.text()}`);
+    failed = true;
+  } else {
+    const r = await res.json();
+    console.log(`${r.ok ? "✓" : "✗"} ${r.name}: ${r.parts.length} part${r.parts.length === 1 ? "" : "s"} checked`);
+    for (const p of r.parts) {
+      const c = p.report;
+      const t = c.max_tolerance;
+      console.log(`  ${c.valid && c.boolean_ready ? "ok  " : "FAIL"} ${p.name}: ${c.valid ? "valid" : "INVALID"}, ${c.boolean_ready ? "ready for booleans" : "booleans may fail"}; ${c.solids} solid${c.solids === 1 ? "" : "s"}, ${c.faces} faces, ${c.edges} edges${c.free_edges ? `, ${c.free_edges} FREE EDGES (not closed)` : ""}; volume ${+c.volume.toFixed(3)} mm³; largest tolerance ${t.vertex.toExponential(1)} mm (vertex), ${t.edge.toExponential(1)} (edge), ${t.face.toExponential(1)} (face)`);
+      for (const x of c.problems) console.log(`       ${x.shape}: ${x.status}`);
+      for (const x of c.faults) console.log(`       ${x.check}${x.shapes ? ` (${x.shapes})` : ""}${x.distance ? `, off by ${x.distance} mm` : ""}`);
+    }
+    failed = !r.ok;
+  }
 } else if (command === "stock") {
   // The stock library: families, or the sizes matching a search ("M3×12", "608", "servo").
   const query = args.slice(1).join(" ");
@@ -336,7 +362,7 @@ if (command === "run") {
     }
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | view <action> [what]  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | check-geometry <id> [part] | stock [search] | get <id> | tree | list | check | ops | view <action> [what]  [--project name] [--url ws://…]");
   failed = true;
 }
 

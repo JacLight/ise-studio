@@ -24,6 +24,7 @@ pub mod project;
 pub mod runtime;
 pub mod sketch;
 pub mod stock;
+pub mod sweep;
 pub mod trim;
 
 pub use configs::{ConfigRow, ShapeConfigurations};

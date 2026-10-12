@@ -339,6 +339,7 @@ function __resolvePick(solid, edges, pick) {
 }
 
 function __blend(solid, op, size, which) {
+  if (Array.isArray(size)) return __blendVar(solid, op, size, which);
   if (typeof size !== "number" || !Number.isFinite(size) || size <= 0) throw new Error(`${op}: the ${op === "fillet" ? "radius" : "distance"} must be a positive number of mm`);
   const chosen = selectEdges(solid, which);
   if (!chosen.length) throw new Error(`${op}: no edge matches`);
@@ -896,4 +897,403 @@ function rng(seed) {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+// ---- Paths, sweeps and lofts ---------------------------------------------------
+//
+// A path is a chain of lines, arcs, helices, spirals and splines in space. A
+// profile swept along one makes springs, threads, pipes, handrails and
+// gaskets; a loft runs a skin through placed profiles (bottles, ducts, hulls).
+// All exact in STEP (true helices, B-spline sweeps); the view meshes a sweep
+// in the same frames, so the two agree to `tolerance`.
+
+const __rot3 = (x, y, z) => {
+  // Degrees about X, then Y, then Z (as Solid.rotate): R = Rz·Ry·Rx, as rows.
+  const [a, b, c] = [x, y, z].map((d) => (d * Math.PI) / 180);
+  const [ca, sa, cb, sb, cc, sc] = [Math.cos(a), Math.sin(a), Math.cos(b), Math.sin(b), Math.cos(c), Math.sin(c)];
+  return [
+    [cc * cb, cc * sb * sa - sc * ca, cc * sb * ca + sc * sa],
+    [sc * cb, sc * sb * sa + cc * ca, sc * sb * ca - cc * sa],
+    [-sb, cb * sa, cb * ca],
+  ];
+};
+const __apply3 = (m, v) => [__dot(m[0], v), __dot(m[1], v), __dot(m[2], v)];
+const __cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+/** A direction square to `axis` (+X for a vertical axis), for frames that need one. */
+const __across = (axis) => {
+  const a = __unit(axis);
+  const r = Math.abs(a[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  const d = __dot(r, a);
+  return __unit([r[0] - d * a[0], r[1] - d * a[1], r[2] - d * a[2]]);
+};
+
+/** Segment data, mapped point by point (fp) and direction by direction (fd). */
+function __mapSegs(segs, fp, fd) {
+  const out = [];
+  let i = 0;
+  const pt = () => out.push(...fp(segs.slice(i, (i += 3))));
+  const dir = () => out.push(...fd(segs.slice(i, (i += 3))));
+  const num = (n) => out.push(...segs.slice(i, (i += n)));
+  while (i < segs.length) {
+    const kind = segs[i++];
+    out.push(kind);
+    if (kind === 0) (pt(), pt());
+    else if (kind === 1) (pt(), pt(), pt());
+    else if (kind === 2) (pt(), dir(), dir(), num(5));
+    else if (kind === 3) {
+      const n = segs[i];
+      num(2);
+      for (let k = 0; k < n; k++) pt();
+    } else if (kind === 4) (pt(), dir(), dir(), num(4));
+    else throw new Error("unknown path segment");
+  }
+  return out;
+}
+
+class Path {
+  constructor(segs) {
+    this.segs = segs;
+    Object.freeze(this);
+  }
+  /** This path, then the others (each must start where the one before ends). */
+  then(...others) {
+    return new Path(others.flat().reduce((acc, p) => acc.concat(__asPath(p).segs), this.segs));
+  }
+  translate(x, y, z) {
+    const v = vec3(x, y, z);
+    return new Path(__mapSegs(this.segs, (p) => [p[0] + v[0], p[1] + v[1], p[2] + v[2]], (d) => d));
+  }
+  /** Degrees about X, then Y, then Z, around the origin. */
+  rotate(x, y, z) {
+    const m = __rot3(...vec3(x, y, z));
+    return new Path(__mapSegs(this.segs, (p) => __apply3(m, p), (d) => __apply3(m, d)));
+  }
+  /** Mirror across the plane through the origin with this normal (a helix changes hand). */
+  mirror(nx, ny, nz) {
+    const n = __unit(vec3(nx, ny, nz));
+    const f = (p) => {
+      const d = 2 * __dot(p, n);
+      return [p[0] - d * n[0], p[1] - d * n[1], p[2] - d * n[2]];
+    };
+    const segs = __mapSegs(this.segs, f, f);
+    // A mirrored helix or spiral turns the other way round its (mirrored) axis.
+    for (let i = 0; i < segs.length; ) {
+      const k = segs[i];
+      if (k === 2) (segs[i + 14] = segs[i + 14] ? 0 : 1), (i += 15);
+      else if (k === 4) (segs[i + 13] = segs[i + 13] ? 0 : 1), (i += 14);
+      else i += k === 0 ? 7 : k === 1 ? 10 : 3 + 3 * segs[i + 1];
+    }
+    return new Path(segs);
+  }
+  /** Length (mm), measured on the exact curve. */
+  get length() {
+    return __n.pathInfo(this.segs)[0];
+  }
+  get start() {
+    return __n.pathInfo(this.segs).slice(1, 4);
+  }
+  get end() {
+    return __n.pathInfo(this.segs).slice(4, 7);
+  }
+  /** Unit tangents at the two ends: { start, end }. */
+  get tangents() {
+    const i = __n.pathInfo(this.segs);
+    return { start: i.slice(7, 10), end: i.slice(10, 13) };
+  }
+}
+const __asPath = (p) => {
+  if (!(p instanceof Path)) throw new TypeError("expected a Path (helix, spiral, polyline, spline, arcPath)");
+  return p;
+};
+
+/** The frame a helix or spiral starts in: its axis, and x toward the start. */
+function __coilFrame(axis, start) {
+  const a = __unit(vec3(axis));
+  const x0 = __across(a);
+  const y0 = __cross(a, x0);
+  const s = (start * Math.PI) / 180;
+  return [a, x0.map((v, k) => v * Math.cos(s) + y0[k] * Math.sin(s))];
+}
+
+/**
+ * A helix about `axis` (default Z) through `at`: `radius`, `pitch` (rise per
+ * turn) and `height` or `turns`. `taper` degrees leans it out going up (a
+ * conical helix; negative leans in); `leftHand` winds it the other way;
+ * `start` (degrees) is where round the axis it starts (0: along +X, or the
+ * axis's first square direction). Exact: a line on a cylinder or cone.
+ *   helix({ radius: 10, pitch: 4, turns: 5 })
+ */
+function helix({ radius, pitch, height, turns, taper = 0, leftHand = false, at = [0, 0, 0], axis = [0, 0, 1], start = 0 } = {}) {
+  if (!(radius > 0) || !(pitch > 0)) throw new Error("helix: radius and pitch must be positive numbers of mm");
+  const h = height ?? (turns ?? 0) * pitch;
+  if (!(h > 0)) throw new Error("helix: give a height or a number of turns");
+  const [a, x] = __coilFrame(axis, start);
+  return new Path([2, ...vec3(at), ...a, ...x, radius, pitch, h, taper, leftHand ? 1 : 0]);
+}
+
+/**
+ * A flat spiral (Archimedean) in the plane square to `axis` through `at`:
+ * starting `radius` from the centre, growing `pitch` per turn, for `turns`.
+ * (A B-spline through 64 points a turn: within microns of the true spiral.)
+ */
+function spiral({ radius = 0, pitch, turns, leftHand = false, at = [0, 0, 0], axis = [0, 0, 1], start = 0 } = {}) {
+  if (!(pitch > 0) || !(turns > 0)) throw new Error("spiral: pitch and turns must be positive");
+  const [a, x] = __coilFrame(axis, start);
+  return new Path([4, ...vec3(at), ...a, ...x, radius, pitch, turns, leftHand ? 1 : 0]);
+}
+
+/** A circular arc from `from` through `through` to `to` ([x, y, z] each). */
+function arcPath(from, through, to) {
+  return new Path([1, ...vec3(from), ...vec3(through), ...vec3(to)]);
+}
+
+/**
+ * Straight lines through points [[x, y, z], …]. `radius` rounds every corner
+ * with a true arc (a bent tube, a handrail); without it the corners stay
+ * sharp and a swept profile is mitred there.
+ *   polyline([[0, 0, 0], [0, 0, 900], [1200, 0, 900]], { radius: 60 })
+ */
+function polyline(points, { radius = 0 } = {}) {
+  const pts = points.map((q) => vec3(q));
+  if (pts.length < 2) throw new Error("polyline: needs at least two points");
+  const segs = [];
+  let from = pts[0];
+  for (let i = 1; i < pts.length; i++) {
+    const c = pts[i];
+    const next = pts[i + 1];
+    const u = __unit(from.map((v, k) => v - c[k]));
+    const w = next ? __unit(next.map((v, k) => v - c[k])) : null;
+    const ang = w ? Math.acos(Math.max(-1, Math.min(1, __dot(u, w)))) : 0;
+    if (!radius || !next || ang > Math.PI - 1e-9 || ang < 1e-9) {
+      segs.push(0, ...from, ...c);
+      from = c;
+      continue;
+    }
+    // Round the corner at c: the arc meets each leg `back` from the corner.
+    const back = radius / Math.tan(ang / 2);
+    const room = Math.min(__dist(from, c), __dist(c, next) / (i + 2 < pts.length ? 2 : 1));
+    if (back > room + 1e-9) throw new Error(`polyline: a ${radius} mm bend does not fit the corner at [${c.join(", ")}]`);
+    const t1 = c.map((v, k) => v + u[k] * back);
+    const t2 = c.map((v, k) => v + w[k] * back);
+    const bis = __unit(u.map((v, k) => v + w[k]));
+    const mid = c.map((v, k) => v + bis[k] * (radius / Math.sin(ang / 2) - radius));
+    if (__dist(from, t1) > 1e-9) segs.push(0, ...from, ...t1);
+    segs.push(1, ...t1, ...mid, ...t2);
+    from = t2;
+  }
+  return new Path(segs);
+}
+
+/** A smooth curve through points [[x, y, z], …] (C2 interpolating spline); `closed` loops it. */
+function spline(points, { closed = false } = {}) {
+  if (points.length < 2) throw new Error("spline: needs at least two points");
+  return new Path([3, points.length, closed ? 1 : 0, ...points.flatMap((q) => vec3(q))]);
+}
+
+/**
+ * Sweeps a profile along a path. Options:
+ *   orientation: how the section turns as it goes: "corrected" (default; no
+ *     twist the path does not force), "frenet" (square to the curvature: a
+ *     helix's sections stay radial), "fixed" (never turns), "binormal" (its
+ *     binormal held along `binormal`, default [0, 0, 1]), "auxiliary" (its
+ *     normal toward the path `auxiliary`, the same fraction along).
+ *   place: where the profile starts: "normal" (default: square to the path
+ *     at its start, its origin on the path, its y toward `up`), "axial" (for a
+ *     path starting with a helix: drawn as for revolve, x the radius and y
+ *     along the axis, in the plane through the axis and the start: how a
+ *     thread profile is drawn; orientation then defaults to "frenet", a true
+ *     screw motion), or { origin, x, y } (any plane in space).
+ *   twist: degrees about the path over its length; scale: the section's size
+ *     at the end relative to the start (linear between).
+ * Exact (OpenCascade pipe shell). Examples:
+ *   sweep(circle(1), helix({ radius: 10, pitch: 4, turns: 6 }))       // a spring
+ *   sweep(tooth, helix({ radius: 4, pitch: 1.25, height: 20 }), { place: "axial" })   // a thread
+ */
+function sweep(profile, path, { orientation, binormal, auxiliary, place = "normal", up, twist = 0, scale = 1 } = {}) {
+  asProfile(profile);
+  __asPath(path);
+  const mode = orientation ?? (place === "axial" ? "frenet" : "corrected");
+  const spec = { segs: path.segs, mode, twist, scale };
+  if (mode === "binormal") spec.binormal = vec3(binormal ?? [0, 0, 1]);
+  if (mode === "auxiliary") spec.aux = __asPath(auxiliary).segs;
+  if (place && typeof place === "object") {
+    const x = vec3(place.x ?? [1, 0, 0]);
+    spec.place = "frame";
+    spec.frame = [...vec3(place.origin ?? [0, 0, 0]), ...x, ...vec3(place.y ?? __cross(vec3(place.normal ?? [0, 0, 1]), x))];
+  } else spec.place = place;
+  if (up) spec.up = vec3(up);
+  return new Solid(__n.sweep(profile.h, JSON.stringify(spec)));
+}
+
+/**
+ * A round tube along a path: `radius` outside, hollow to `inner` (0: a solid
+ * rod); other options as sweep. Its volume is the ring's area times the
+ * path's length (Pappus).
+ *   pipe(polyline([[0, 0, 0], [0, 0, 900], [1500, 0, 900]], { radius: 80 }), 21.3, { inner: 18.3 })
+ */
+function pipe(path, radius, { inner = 0, ...opts } = {}) {
+  let ring = circle(radius);
+  if (inner > 0) ring = ring.subtract(circle(inner));
+  return sweep(ring, path, opts);
+}
+
+/** A profile placed in space for a loft (see Profile.place). */
+class Section {
+  constructor(profile, m) {
+    this.profile = profile;
+    this.m = m;
+    Object.freeze(this);
+  }
+}
+
+/**
+ * The profile placed in space, for loft(): at `origin`, square to `normal`
+ * (its x along `x` when given), or with `x` and `y` given outright. `rotate`
+ * turns it about its normal (degrees).
+ *   rect(40, 20, { center: true }).place({ origin: [0, 0, 30], normal: [0, 1, 1] })
+ */
+function __placeProfile(profile, { origin = [0, 0, 0], normal, x, y, rotate = 0 } = {}) {
+  const nz = normal ? __unit(vec3(normal)) : x && y ? __unit(__cross(vec3(x), vec3(y))) : [0, 0, 1];
+  let nx = x ? vec3(x) : Math.abs(nz[2]) > 0.999 ? [1, 0, 0] : __cross([0, 0, 1], nz);
+  const d = __dot(nx, nz);
+  nx = __unit([nx[0] - d * nz[0], nx[1] - d * nz[1], nx[2] - d * nz[2]]);
+  let ny = __cross(nz, nx);
+  if (rotate) {
+    const r = (rotate * Math.PI) / 180;
+    [nx, ny] = [nx.map((v, k) => v * Math.cos(r) + ny[k] * Math.sin(r)), ny.map((v, k) => v * Math.cos(r) - nx[k] * Math.sin(r))];
+  }
+  return new Section(profile, [...vec3(origin), ...nx, ...ny, ...nz]);
+}
+Profile.prototype.place = function (opts) {
+  return __placeProfile(this, opts);
+};
+/** The profile lifted to height z, flat as drawn: a loft section. */
+Profile.prototype.at = function (z) {
+  return __placeProfile(this, { origin: [0, 0, z] });
+};
+
+/**
+ * A solid skinned through sections in order: placed profiles (profile.at(z),
+ * profile.place({ origin, normal })) or { point: [x, y, z] } to close to a
+ * tip. Sections may differ in shape and number of sides (a square to a
+ * circle). Options: ruled (flat between sections; else smooth), closed (back
+ * round to the first: a ring), continuity 0–2 (how smooth across sections).
+ * Every section has the same number of holes (each lofted into a hollow).
+ * Exact; the view meshes the exact skin.
+ *   loft([rect(60, 40, { center: true }).at(0), circle(25).at(80), circle(12).at(120)])
+ */
+function loft(sections, { ruled = false, closed = false, continuity = 2 } = {}) {
+  if (!Array.isArray(sections) || sections.length < 2) throw new Error("loft: needs at least two sections");
+  const list = sections.map((s, i) => {
+    if (s instanceof Section) return [asProfile(s.profile).h, s.m];
+    if (s instanceof Profile) throw new Error(`loft: section ${i} is a profile on z = 0: place it (profile.at(z) or profile.place({ origin, normal }))`);
+    if (s && s.point) return [-1, [...vec3(s.point), 1, 0, 0, 0, 1, 0, 0, 0, 1]];
+    throw new Error(`loft: section ${i} is not a placed profile or { point }`);
+  });
+  return new Solid(__n.loft(JSON.stringify({ sections: list, ruled, closed, continuity })));
+}
+
+// ---- Offsets, thickening, defeaturing, paint, checks ----------------------------
+
+/**
+ * Grows the whole solid by `distance` mm (negative shrinks it). join "round"
+ * (default: the true offset, grown edges become rounds) or "sharp" (faces
+ * extended to meet: a box stays a box). Exact.
+ */
+Solid.prototype.offset = function (distance, { join = "round" } = {}) {
+  if (typeof distance !== "number" || !Number.isFinite(distance)) throw new Error("offset: the distance must be a number of mm");
+  if (join !== "round" && join !== "sharp") throw new Error('offset: join is "round" or "sharp"');
+  return new Solid(__n.offsetSolid(this.h, distance, join === "sharp"));
+};
+
+/**
+ * Thickens: a sheet body (an imported surface) gains `thickness` mm along its
+ * normal (negative: the other side); a solid is hollowed to walls that thick
+ * (inward), open at `faces` (picked as push picks them), its corners joined
+ * "sharp" (default, as shell) or "round". Exact.
+ */
+Solid.prototype.thicken = function (thickness, { faces, which, join = "sharp" } = {}) {
+  if (typeof thickness !== "number" || !Number.isFinite(thickness) || thickness === 0) throw new Error("thicken: the thickness must be a non-zero number of mm");
+  const pick = faces ?? which;
+  const open = pick == null ? [] : (Array.isArray(pick) ? pick : [pick]).map((w) => selectFace(this, w).index);
+  return new Solid(__n.thicken(this.h, thickness, [...new Set(open)], join !== "round"));
+};
+
+/**
+ * What each face is: { index, kind: "plane" | "cylinder" | "cone" | "sphere" |
+ * "torus" | "other", radius, axis, origin, bulge (1 outward like a boss, -1
+ * inward like a hole, 0 flat), span (radians round its axis) }.
+ */
+Object.defineProperty(Solid.prototype, "surfaces", {
+  get() {
+    return JSON.parse(__n.faceInfo(this.h)).map((f, index) => Object.freeze({ index, ...f }));
+  },
+});
+
+/**
+ * Removes features and heals the solid over them, as if never modelled (an
+ * imported part simplified for analysis, or cleared for remodelling). Any of:
+ *   holes: true or a largest diameter (mm): round holes up to that size
+ *   fillets: true or a largest radius: rounds (inside and outside) up to that
+ *   faces: faces picked as push picks them, or from solid.faces / surfaces
+ * Exact.
+ *   importStep(sha)[0].solid.defeature({ holes: 6, fillets: 2 })
+ */
+Solid.prototype.defeature = function ({ holes, fillets, faces } = {}) {
+  const info = this.surfaces;
+  const pick = new Set();
+  const lim = (v) => (v === true ? Infinity : v);
+  if (holes) {
+    const max = lim(holes) / 2 + 1e-9;
+    for (const f of info) if (f.kind === "cylinder" && f.bulge < 0 && f.radius <= max && f.span > Math.PI / 2 + 1e-6) pick.add(f.index);
+  }
+  if (fillets) {
+    const max = lim(fillets) + 1e-9;
+    for (const f of info) if ((f.kind === "cylinder" || f.kind === "torus" || f.kind === "sphere") && f.radius <= max && f.span <= Math.PI / 2 + 1e-6) pick.add(f.index);
+  }
+  if (faces != null) for (const w of Array.isArray(faces) ? faces : [faces]) pick.add(selectFace(this, w).index);
+  if (!pick.size) throw new Error("defeature: nothing matches (holes: largest diameter, fillets: largest radius, faces)");
+  return new Solid(__n.defeature(this.h, [...pick]));
+};
+
+const __COLOURS = { black: "#232427", white: "#f1f0ec", grey: "#8d9196", gray: "#8d9196", silver: "#c3c7cb", red: "#c8372f", orange: "#e8742c", yellow: "#f0c430", green: "#3e9a54", blue: "#3a6fd0", navy: "#243a66", purple: "#7a4fc4", pink: "#e27aa8", brown: "#7a5236", gold: "#c9a24a", teal: "#2a8c8c" };
+function __rgb(c) {
+  if (Array.isArray(c) && c.length === 3) return c.some((v) => v > 1) ? c.map((v) => v / 255) : c;
+  const hex = typeof c === "string" ? (c.startsWith("#") ? c : __COLOURS[c.toLowerCase()]) : null;
+  if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) throw new Error(`paint: a colour is "#rrggbb", a colour word or [r, g, b], not ${JSON.stringify(c)}`);
+  const v = parseInt(hex.slice(1), 16);
+  return [(v >> 16) & 255, (v >> 8) & 255, v & 255].map((x) => x / 255);
+}
+
+/**
+ * Colours the solid, or the faces `which` picks (one or a list, as push picks
+ * them), and can name them, for STEP: the file carries the colours and face
+ * names (a part is otherwise its material's colour). colour: "#rrggbb", a
+ * word or [r, g, b]; null to only name. Paint last: a later boolean keeps
+ * paint only on faces it leaves whole (moving or placing the part keeps all).
+ *   lid.paint("#c8372f", { normal: [0, 0, 1] }, { name: "Sealing face" })
+ */
+Solid.prototype.paint = function (colour, which, { name = "" } = {}) {
+  const c = colour == null ? [] : __rgb(colour);
+  if (which == null) return new Solid(__n.paint(this.h, true, [], c, String(name)));
+  const faces = (Array.isArray(which) ? which : [which]).map((w) => selectFace(this, w).index);
+  return new Solid(__n.paint(this.h, false, [...new Set(faces)], c, String(name)));
+};
+
+/**
+ * The exact kernel's check of this solid (as FreeCAD's Check geometry):
+ * { valid, boolean_ready, solids, faces, edges, free_edges, volume,
+ *   max_tolerance: { vertex, edge, face }, problems: [{ shape, status }],
+ *   faults: [{ check, shapes }] }.
+ */
+Solid.prototype.checkGeometry = function () {
+  return JSON.parse(__n.checkGeometry(this.h));
+};
+
+/** A fillet whose radius runs from size[0] to size[1] along each edge; a chamfer size[0] back on one face, size[1] on the other. */
+function __blendVar(solid, op, size, which) {
+  if (size.length !== 2 || !size.every((v) => typeof v === "number" && v > 0)) throw new Error(`${op}: give [start, end] as two positive numbers of mm`);
+  const chosen = selectEdges(solid, which);
+  if (!chosen.length) throw new Error(`${op}: no edge matches`);
+  return new Solid(__n.blendVar(op, solid.h, size[0], size[1], chosen.map((e) => e.index)));
 }

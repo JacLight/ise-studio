@@ -979,7 +979,7 @@ export function App({ engine }: { engine: Engine }) {
   /** A STEP file in: stored by the engine, added as a part named after the file, then selected. */
   const importStep = useCallback(
     async (file: File) => {
-      if (!/\.(step|stp)$/i.test(file.name)) return notify("Forma imports STEP files (.step, .stp)");
+      if (!/\.(step|stp|stpz|stepz|step\.gz|stp\.gz|brep|brp)$/i.test(file.name)) return notify("Forma imports STEP files (.step, .stp, compressed .stpz) and BREP (.brep)");
       notify(`Importing ${file.name}…`);
       try {
         const res = await fetch(projectUrl(`/import/${encodeURIComponent(file.name)}?user=${encodeURIComponent(state.userId)}`), { method: "POST", body: file });
@@ -1314,7 +1314,7 @@ export function App({ engine }: { engine: Engine }) {
                 Import STEP
                 <input
                   type="file"
-                  accept=".step,.stp,.STEP,.STP"
+                  accept=".step,.stp,.STEP,.STP,.stpz,.stepz,.gz,.brep,.brp"
                   aria-label="Import STEP file"
                   onChange={(e) => {
                     const f = e.target.files?.[0];

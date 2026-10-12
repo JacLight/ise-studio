@@ -37,10 +37,10 @@ pub struct ExactPart {
     pub shape: Shape,
 }
 
-struct State {
-    arena: Arena,
-    faceted: Vec<String>,
-    tolerance: f64,
+pub(crate) struct State {
+    pub(crate) arena: Arena,
+    pub(crate) faceted: Vec<String>,
+    pub(crate) tolerance: f64,
 }
 
 /// Runs `source` exactly. `name` names a program that returns a single solid.
@@ -77,6 +77,13 @@ fn exact_within(arena: Arena, name: &str, source: &str, params: &[(String, f64)]
         (None, Some(specs)) => specs.into_iter().map(|s| ExactPart { name: s.name, material: s.material, process: s.process, shape: shape(s.h) }).collect(),
         (None, None) => return Err((state.arena, "the program must return a Solid or a list of parts".into())),
     };
+    let mut state = state;
+    // Parts show in STEP in their material's colour (unless painted otherwise).
+    for p in &parts {
+        if let Some(c) = p.material.as_deref().and_then(crate::sweep::colour_of) {
+            let _ = state.arena.paint_default(p.shape, c);
+        }
+    }
     let mut faceted = state.faceted;
     faceted.sort();
     faceted.dedup();
@@ -644,6 +651,9 @@ fn install<'js>(ctx: &Ctx<'js>, state: &Rc<RefCell<State>>) -> rquickjs::Result<
             })?,
         )?;
     }
+
+    // Sweeps, lofts, offsets and the rest (see `sweep`).
+    crate::sweep::install_exact(ctx, &native, state)?;
 
     ctx.globals().set("__native", native)?;
     Ok(())
