@@ -2,7 +2,7 @@
  "id": "servo_hobby",
  "name": "Hobby servo",
  "category": "Motors",
- "summary": "TowerPro SG90, MG90S and MG996R RC servos: true case, tabs and holes, output spline, cable stub. Shaft axis on Z, case bottom on z = 0.",
+ "summary": "RC servos: TowerPro SG90, MG90S, MG996R, MG995 and DSSERVO DS3218 / DS3225 (20 / 25 kg·cm): true case, tabs and holes, output spline, cable stub. Shaft axis on Z, case bottom on z = 0.",
  "keywords": [
   "servo",
   "RC servo",
@@ -11,7 +11,14 @@
   "MG996R",
   "TowerPro",
   "micro servo",
-  "9g"
+  "9g",
+  "MG995",
+  "DS3218",
+  "DS3225",
+  "DSSERVO",
+  "20kg servo",
+  "digital servo",
+  "standard servo"
  ],
  "source": [
   "common.js",
@@ -24,16 +31,19 @@
   "MG996R body (case, motor, gears, PCB — lumped)": 1805,
   "Brass": 8500,
   "POM (acetal)": 1410,
-  "Servo lead (PVC, copper)": 2600
+  "Servo lead (PVC, copper)": 2600,
+  "MG995 body (case, motor, gears, PCB — lumped)": 1805,
+  "DS3218 body (case, motor, gears, PCB — lumped)": 2100.0,
+  "DS3225 body (case, motor, gears, PCB — lumped)": 2100.0
  },
  "params": [
   {
    "key": "model",
-   "label": "Model (0 SG90, 1 MG90S, 2 MG996R)",
+   "label": "Model (0 SG90, 1 MG90S, 2 MG996R, 3 MG995, 4 DS3218, 5 DS3225)",
    "value": 2,
    "unit": "",
    "min": 0,
-   "max": 2,
+   "max": 5,
    "step": 1
   }
  ],
@@ -57,6 +67,24 @@
    "name": "MG996R",
    "values": {
     "model": 2
+   }
+  },
+  {
+   "name": "MG995",
+   "values": {
+    "model": 3
+   }
+  },
+  {
+   "name": "DS3218",
+   "values": {
+    "model": 4
+   }
+  },
+  {
+   "name": "DS3225",
+   "values": {
+    "model": 5
    }
   }
  ],
@@ -128,6 +156,20 @@
   },
   "MG90S": {
    "massG": 13.4
+  },
+  "DS3218": {
+   "massG": 60,
+   "partNumber": "DS3218",
+   "connector_at": {
+    "Output shaft": [
+     0,
+     0,
+     40.5
+    ]
+   }
+  },
+  "MG995": {
+   "massG": 55
   }
  }
 }

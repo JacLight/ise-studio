@@ -3,7 +3,7 @@
  "name": "Deep groove ball bearing",
  "standard": "ISO 15",
  "category": "Bearings & motion",
- "summary": "Single-row deep groove ball bearing, rubber sealed both sides (-2RS): inner and outer rings with true raceways, balls and seals. Axis +Z, face A on z = 0",
+ "summary": "Single-row deep groove ball bearing, rubber sealed both sides (-2RS): MR miniature, 60x, 62x, 62xx, 60xx, 67xx, 68xx, 69xx. Inner and outer rings with true raceways, balls, cage and seals. Axis +Z, face A on z = 0",
  "keywords": [
   "ball bearing",
   "608",
@@ -13,10 +13,27 @@
   "6900",
   "thin section",
   "2RS",
-  "radial bearing"
+  "radial bearing",
+  "6200",
+  "6201",
+  "6202",
+  "6203",
+  "6204",
+  "6205",
+  "62xx",
+  "MR105",
+  "MR85",
+  "MR63",
+  "MR115",
+  "MR128",
+  "605",
+  "607",
+  "609",
+  "miniature bearing"
  ],
  "source": [
   "common.js",
+  "bearing.js",
   "bearing_deep_groove.js"
  ],
  "display_tolerance": 0.01,
@@ -344,6 +361,141 @@
     "B": 9
    },
    "description": "25×42×9 mm"
+  },
+  {
+   "name": "603-2RS",
+   "values": {
+    "d": 3,
+    "D": 9,
+    "B": 5
+   },
+   "description": "3×9×5 mm"
+  },
+  {
+   "name": "605-2RS",
+   "values": {
+    "d": 5,
+    "D": 14,
+    "B": 5
+   },
+   "description": "5×14×5 mm"
+  },
+  {
+   "name": "607-2RS",
+   "values": {
+    "d": 7,
+    "D": 19,
+    "B": 6
+   },
+   "description": "7×19×6 mm"
+  },
+  {
+   "name": "609-2RS",
+   "values": {
+    "d": 9,
+    "D": 24,
+    "B": 7
+   },
+   "description": "9×24×7 mm"
+  },
+  {
+   "name": "6200-2RS",
+   "values": {
+    "d": 10,
+    "D": 30,
+    "B": 9
+   },
+   "description": "10×30×9 mm"
+  },
+  {
+   "name": "6201-2RS",
+   "values": {
+    "d": 12,
+    "D": 32,
+    "B": 10
+   },
+   "description": "12×32×10 mm"
+  },
+  {
+   "name": "6202-2RS",
+   "values": {
+    "d": 15,
+    "D": 35,
+    "B": 11
+   },
+   "description": "15×35×11 mm"
+  },
+  {
+   "name": "6203-2RS",
+   "values": {
+    "d": 17,
+    "D": 40,
+    "B": 12
+   },
+   "description": "17×40×12 mm"
+  },
+  {
+   "name": "6204-2RS",
+   "values": {
+    "d": 20,
+    "D": 47,
+    "B": 14
+   },
+   "description": "20×47×14 mm"
+  },
+  {
+   "name": "6205-2RS",
+   "values": {
+    "d": 25,
+    "D": 52,
+    "B": 15
+   },
+   "description": "25×52×15 mm"
+  },
+  {
+   "name": "MR63-2RS",
+   "values": {
+    "d": 3,
+    "D": 6,
+    "B": 2.5
+   },
+   "description": "3×6×2.5 mm"
+  },
+  {
+   "name": "MR85-2RS",
+   "values": {
+    "d": 5,
+    "D": 8,
+    "B": 2.5
+   },
+   "description": "5×8×2.5 mm"
+  },
+  {
+   "name": "MR105-2RS",
+   "values": {
+    "d": 5,
+    "D": 10,
+    "B": 4
+   },
+   "description": "5×10×4 mm"
+  },
+  {
+   "name": "MR115-2RS",
+   "values": {
+    "d": 5,
+    "D": 11,
+    "B": 4
+   },
+   "description": "5×11×4 mm"
+  },
+  {
+   "name": "MR128-2RS",
+   "values": {
+    "d": 8,
+    "D": 12,
+    "B": 3.5
+   },
+   "description": "8×12×3.5 mm"
   }
  ],
  "default": "608-2RS",
@@ -425,6 +577,24 @@
    "metrics": {
     "Bore": 35,
     "Outside diameter": 47
+   }
+  },
+  "6205-2RS": {
+   "size": [
+    52,
+    52,
+    15
+   ],
+   "massG": 128
+  },
+  "MR105-2RS": {
+   "size": [
+    10,
+    10,
+    4
+   ],
+   "metrics": {
+    "Bore": 5
    }
   }
  }

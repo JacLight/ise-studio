@@ -39,6 +39,16 @@ fn programs() -> Vec<(String, String, String, Vec<(String, f64)>, f64)> {
 fn every_example_evaluates_exactly_and_matches_the_mesh() {
     let mut report = Vec::new();
     let mut failures = Vec::new();
+    // Examples read their pictures by content hash: store each example's pictures.
+    de_shape::assets::set_dir(std::env::temp_dir().join(format!("forma-example-assets-{}", std::process::id())));
+    for dir in std::fs::read_dir(examples()).unwrap().flatten() {
+        for f in std::fs::read_dir(dir.path()).into_iter().flatten().flatten() {
+            let path = f.path();
+            if matches!(path.extension().and_then(|e| e.to_str()), Some("png" | "jpg")) {
+                de_shape::assets::store(&std::fs::read(&path).unwrap()).unwrap();
+            }
+        }
+    }
     for (example, name, source, params, tol) in programs() {
         let t0 = std::time::Instant::now();
         let mesh = runtime::evaluate(&source, &params, tol).unwrap();

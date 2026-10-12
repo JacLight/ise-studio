@@ -69,3 +69,26 @@ function setScrew(M, l) {
   const s = { 3: 1.5, 4: 2, 5: 2.5, 6: 3 }[M];
   return externalThread({ d: M, pitch: coarsePitch(M), z0: 0, z1: l, tip: "bottom" }).subtract(hexSocket(s, 0.6 * l, l));
 }
+
+// ---- Belts ------------------------------------------------------------------------
+
+// GT2 belt section (Gates PowerGrip 2MGT): backing 0.63 mm, teeth 0.75 mm
+// deep (1.38 overall), the pitch line (in the glass-fibre cords) 0.254 mm
+// outside the land the teeth stand on. The tooth is drawn as the usual
+// rounded 2GT shape: 1.2 mm wide at the land, a 0.5 mm tip radius.
+const GT2_BACK = 0.63;
+const GT2_TOOTH = 0.75;
+
+/** One belt tooth as points (u along the belt, w towards the pulley), from u = +0.6 round to −0.6. */
+function gt2ToothPoints() {
+  const r = 0.5;
+  const wc = GT2_TOOTH - r;
+  const n = Math.max(4, Math.ceil(segmentsFor(r) / 2));
+  const pts = [[0.6, 0], [0.5, wc]];
+  for (let i = 1; i < n; i++) {
+    const t = (Math.PI * i) / n;
+    pts.push([r * Math.cos(t), wc + r * Math.sin(t)]);
+  }
+  pts.push([-0.5, wc], [-0.6, 0]);
+  return pts;
+}

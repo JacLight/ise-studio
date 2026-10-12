@@ -1,0 +1,190 @@
+{
+ "id": "shaft_dcut",
+ "name": "D-cut shaft",
+ "standard": null,
+ "category": "Bearings & motion",
+ "summary": "Precision stainless shaft (h7) with one flat full length (D-shaft) for set screws and D-bore hubs, chamfered ends. Axis +Z from z = 0, the flat facing +X",
+ "keywords": [
+  "D shaft",
+  "D-cut shaft",
+  "D-shaft",
+  "flatted shaft",
+  "shaft with flat",
+  "5mm D shaft",
+  "SFJD",
+  "robot shaft",
+  "axle"
+ ],
+ "source": [
+  "common.js",
+  "shaft_dcut.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Stainless steel 303",
+ "materials": {
+  "Stainless steel 303": 8000
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Diameter",
+   "value": 5,
+   "unit": "mm",
+   "min": 3,
+   "max": 12
+  },
+  {
+   "key": "length",
+   "label": "Length",
+   "value": 100,
+   "unit": "mm",
+   "min": 10,
+   "max": 1000
+  }
+ ],
+ "columns": [
+  "d",
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "Ø5×50",
+   "values": {
+    "d": 5,
+    "length": 50
+   }
+  },
+  {
+   "name": "Ø5×75",
+   "values": {
+    "d": 5,
+    "length": 75
+   }
+  },
+  {
+   "name": "Ø5×100",
+   "values": {
+    "d": 5,
+    "length": 100
+   }
+  },
+  {
+   "name": "Ø5×150",
+   "values": {
+    "d": 5,
+    "length": 150
+   }
+  },
+  {
+   "name": "Ø5×200",
+   "values": {
+    "d": 5,
+    "length": 200
+   }
+  },
+  {
+   "name": "Ø5×300",
+   "values": {
+    "d": 5,
+    "length": 300
+   }
+  },
+  {
+   "name": "Ø6×50",
+   "values": {
+    "d": 6,
+    "length": 50
+   }
+  },
+  {
+   "name": "Ø6×100",
+   "values": {
+    "d": 6,
+    "length": 100
+   }
+  },
+  {
+   "name": "Ø6×150",
+   "values": {
+    "d": 6,
+    "length": 150
+   }
+  },
+  {
+   "name": "Ø6×200",
+   "values": {
+    "d": 6,
+    "length": 200
+   }
+  },
+  {
+   "name": "Ø6×300",
+   "values": {
+    "d": 6,
+    "length": 300
+   }
+  },
+  {
+   "name": "Ø8×100",
+   "values": {
+    "d": 8,
+    "length": 100
+   }
+  },
+  {
+   "name": "Ø8×150",
+   "values": {
+    "d": 8,
+    "length": 150
+   }
+  },
+  {
+   "name": "Ø8×200",
+   "values": {
+    "d": 8,
+    "length": 200
+   }
+  },
+  {
+   "name": "Ø8×300",
+   "values": {
+    "d": 8,
+    "length": 300
+   }
+  }
+ ],
+ "default": "Ø5×100",
+ "checks": {
+  "Ø5×100": {
+   "size": [
+    4.5,
+    5,
+    100
+   ],
+   "connectors": [
+    "Axis",
+    "End A",
+    "End B",
+    "Flat"
+   ],
+   "connector_at": {
+    "Flat": [
+     2,
+     0,
+     50
+    ]
+   },
+   "metrics": {
+    "Across flat": 4.5
+   },
+   "partNumber": "D-shaft Ø5×100 flat 4.5"
+  },
+  "Ø8×300": {
+   "size": [
+    7.25,
+    8,
+    300
+   ]
+  }
+ }
+}

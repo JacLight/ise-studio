@@ -737,7 +737,7 @@ int occ_blend_var(void* p, int h, int kind, double r1, double r2, const int* idx
 /// 5 other), radius (cylinder, sphere; a cone's at its reference; a torus's
 /// minor), axis x y z, axis point x y z, outward bulge (1 convex, -1 concave
 /// such as a hole, 0 flat or neither), and the angle it spans round its axis.
-int occ_face_info(void* p, int h, const double** data, int* len) {
+int occ_surface_info(void* p, int h, const double** data, int* len) {
   Arena* a = static_cast<Arena*>(p);
   return guard(a, [&] {
     const TopoDS_Shape* s = get(a, h);

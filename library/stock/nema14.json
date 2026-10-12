@@ -1,0 +1,84 @@
+{
+ "id": "nema14",
+ "name": "Stepper motor",
+ "standard": "NEMA 14",
+ "category": "Motors",
+ "summary": "NEMA 14 hybrid stepper, 1.8°, 35.2 mm square, Ø22 pilot, M3 holes on 26 mm, Ø5 D-shaft, JST-PH socket. Shaft up +Z, mounting face on z = 0.",
+ "keywords": [
+  "stepper",
+  "NEMA14",
+  "NEMA 14",
+  "35mm",
+  "14HS13-0804S",
+  "motor",
+  "1.8 degree",
+  "small stepper"
+ ],
+ "source": [
+  "common.js",
+  "stepper.js",
+  "nema14.js"
+ ],
+ "display_tolerance": 0.02,
+ "materials": {
+  "Aluminium": 2700,
+  "Steel": 7850,
+  "Nylon 66": 1140,
+  "NEMA 14 stator, rotor and windings (lumped)": 5100.0
+ },
+ "params": [
+  {
+   "key": "length",
+   "label": "Body length",
+   "value": 34,
+   "unit": "mm",
+   "min": 20,
+   "max": 60
+  }
+ ],
+ "columns": [
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "35×28",
+   "values": {
+    "length": 28
+   }
+  },
+  {
+   "name": "35×34",
+   "values": {
+    "length": 34
+   }
+  }
+ ],
+ "default": "35×34",
+ "checks": {
+  "35×34": {
+   "massG": 180,
+   "partNumber": "NEMA14-35x34-1.8",
+   "connectors": [
+    "Shaft",
+    "Pilot",
+    "Face",
+    "Hole 1",
+    "Hole 2",
+    "Hole 3",
+    "Hole 4"
+   ],
+   "connector_at": {
+    "Hole 1": [
+     13,
+     13,
+     0
+    ],
+    "Pilot": [
+     0,
+     0,
+     2
+    ]
+   }
+  }
+ }
+}

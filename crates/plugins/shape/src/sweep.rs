@@ -453,7 +453,7 @@ pub(crate) fn install_exact<'js>(ctx: &Ctx<'js>, native: &Object<'js>, state: &R
         native.set(
             "faceInfo",
             Function::new(ctx.clone(), move |ctx: Ctx<'js>, h: u32| -> rquickjs::Result<String> {
-                let info = st.borrow_mut().arena.face_info(sh(h)).map_err(|e| fail(&ctx, "faces", e))?;
+                let info = st.borrow_mut().arena.surface_info(sh(h)).map_err(|e| fail(&ctx, "faces", e))?;
                 let list: Vec<serde_json::Value> = info
                     .iter()
                     .map(|f| serde_json::json!({ "kind": f.kind, "radius": f.radius, "axis": f.axis, "origin": f.origin, "bulge": f.bulge, "span": f.span }))

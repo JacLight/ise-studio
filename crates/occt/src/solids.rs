@@ -39,7 +39,7 @@ unsafe extern "C" {
     fn occ_offset_solid(a: *mut c_void, h: c_int, d: f64, join: c_int) -> c_int;
     fn occ_thicken(a: *mut c_void, h: c_int, t: f64, idx: *const c_int, n: c_int, join: c_int) -> c_int;
     fn occ_blend_var(a: *mut c_void, h: c_int, kind: c_int, r1: f64, r2: f64, idx: *const c_int, n: c_int) -> c_int;
-    fn occ_face_info(a: *mut c_void, h: c_int, data: *mut *const f64, len: *mut c_int) -> c_int;
+    fn occ_surface_info(a: *mut c_void, h: c_int, data: *mut *const f64, len: *mut c_int) -> c_int;
     fn occ_defeature(a: *mut c_void, h: c_int, idx: *const c_int, n: c_int) -> c_int;
     fn occ_paint(a: *mut c_void, h: c_int, idx: *const c_int, n: c_int, r: f64, g: f64, b: f64, name: *const c_char) -> c_int;
     fn occ_check(a: *mut c_void, h: c_int) -> *const c_char;
@@ -118,9 +118,9 @@ pub struct FrameSample {
     pub b: [f64; 3],
 }
 
-/// What a face is (see [`Arena::face_info`]).
+/// What a face is (see [`Arena::surface_info`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FaceInfo {
+pub struct SurfaceInfo {
     /// "plane", "cylinder", "cone", "sphere", "torus" or "other".
     pub kind: &'static str,
     pub radius: f64,
@@ -200,16 +200,16 @@ impl Arena {
     }
 
     /// What every face is, numbered as [`Arena::faces`] numbers them.
-    pub fn face_info(&mut self, s: Shape) -> Result<Vec<FaceInfo>, String> {
+    pub fn surface_info(&mut self, s: Shape) -> Result<Vec<SurfaceInfo>, String> {
         let (mut data, mut len) = (std::ptr::null(), 0);
-        let n = unsafe { occ_face_info(self.0, s.0, &mut data, &mut len) };
+        let n = unsafe { occ_surface_info(self.0, s.0, &mut data, &mut len) };
         if n < 0 {
             return Err(self.error());
         }
         let d = unsafe { std::slice::from_raw_parts(data, len as usize) };
         Ok(d
             .chunks_exact(10)
-            .map(|f| FaceInfo {
+            .map(|f| SurfaceInfo {
                 kind: ["plane", "cylinder", "cone", "sphere", "torus", "other"][(f[0] as usize).min(5)],
                 radius: f[1],
                 axis: [f[2], f[3], f[4]],
@@ -384,7 +384,7 @@ mod tests {
         let hole = a.cylinder(30.0, 4.0, 4.0, false).unwrap();
         let hole = a.translate(hole, [20.0, 15.0, -5.0]).unwrap();
         let drilled = a.boolean(crate::Bool::Difference, b, hole).unwrap();
-        let info = a.face_info(drilled).unwrap();
+        let info = a.surface_info(drilled).unwrap();
         let bore: Vec<usize> = info.iter().enumerate().filter(|(_, f)| f.kind == "cylinder" && f.bulge < 0).map(|(i, _)| i).collect();
         assert!(!bore.is_empty());
         let healed = a.defeature(drilled, &bore).unwrap();

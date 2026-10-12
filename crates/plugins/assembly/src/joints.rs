@@ -26,6 +26,8 @@
 //! for poses where every joint holds, the loop's `free` joints taking
 //! whatever value the others leave them.
 
+use crate::geometry::{Elem, Geometry};
+use crate::mates::Mate;
 use crate::transform::{self as tf, I3, M3, Transform, V3};
 use crate::{AssemblyDef, Instance, bad};
 use de_core::{
@@ -55,6 +57,24 @@ pub enum JointKind {
     /// Turns any way about the connector point (`rx`, `ry`, `rz`: degrees
     /// about X, then Y, then Z of the first connector's frame).
     Ball,
+    // Mates: constraints between geometry (faces, edges, axes, points or
+    // connectors), each taking away only the freedoms it names.
+    /// Points, lines and planes made to coincide (two faces meeting, a point on a face, an axis on a line).
+    Coincident,
+    /// Two axes made one (a shaft in a bore), or two centres.
+    Concentric,
+    /// Two directions (axes, face normals) parallel.
+    Parallel,
+    /// Two directions square.
+    Perpendicular,
+    /// Two directions at an angle (value `angle`, degrees).
+    Angle,
+    /// Points, lines, planes a distance apart (value `distance`, mm).
+    Distance,
+    /// A round face touching a flat or round one (a roller on a rail, a shaft in a V).
+    Tangent,
+    /// Held exactly where it was against the other end when locked.
+    Lock,
 }
 
 impl JointKind {
@@ -66,7 +86,35 @@ impl JointKind {
             JointKind::Slider => &[("distance", "Distance", "mm")],
             JointKind::Cylinder => &[("angle", "Angle", "deg"), ("distance", "Distance", "mm")],
             JointKind::Ball => &[("rx", "Turn about X", "deg"), ("ry", "Turn about Y", "deg"), ("rz", "Turn about Z", "deg")],
+            JointKind::Angle => &[("angle", "Angle", "deg")],
+            JointKind::Distance => &[("distance", "Distance", "mm")],
+            _ => &[],
         }
+    }
+
+    /// The mate it is, for a joint that constrains geometry.
+    pub fn mate(self) -> Option<Mate> {
+        Some(match self {
+            JointKind::Coincident => Mate::Coincident,
+            JointKind::Concentric => Mate::Concentric,
+            JointKind::Parallel => Mate::Parallel,
+            JointKind::Perpendicular => Mate::Perpendicular,
+            JointKind::Angle => Mate::Angle,
+            JointKind::Distance => Mate::Distance,
+            JointKind::Tangent => Mate::Tangent,
+            _ => return None,
+        })
+    }
+
+    /// A joint that places its second end from its first (fixed, hinge,
+    /// slider, cylinder, ball); mates and locks only constrain.
+    pub fn places(self) -> bool {
+        matches!(self, JointKind::Fixed | JointKind::Hinge | JointKind::Slider | JointKind::Cylinder | JointKind::Ball)
+    }
+
+    /// No motion left between the two ends (fixed and lock).
+    pub fn rigid(self) -> bool {
+        matches!(self, JointKind::Fixed | JointKind::Lock)
     }
 
     pub fn word(self) -> &'static str {
@@ -76,16 +124,32 @@ impl JointKind {
             JointKind::Slider => "slider",
             JointKind::Cylinder => "cylinder",
             JointKind::Ball => "ball",
+            JointKind::Coincident => "coincident",
+            JointKind::Concentric => "concentric",
+            JointKind::Parallel => "parallel",
+            JointKind::Perpendicular => "perpendicular",
+            JointKind::Angle => "angle",
+            JointKind::Distance => "distance",
+            JointKind::Tangent => "tangent",
+            JointKind::Lock => "lock",
         }
     }
 
-    fn title(self) -> &'static str {
+    pub fn title(self) -> &'static str {
         match self {
             JointKind::Fixed => "Fixed",
             JointKind::Hinge => "Hinge",
             JointKind::Slider => "Slider",
             JointKind::Cylinder => "Cylinder",
             JointKind::Ball => "Ball",
+            JointKind::Coincident => "Coincident",
+            JointKind::Concentric => "Concentric",
+            JointKind::Parallel => "Parallel",
+            JointKind::Perpendicular => "Perpendicular",
+            JointKind::Angle => "Angle",
+            JointKind::Distance => "Distance",
+            JointKind::Tangent => "Tangent",
+            JointKind::Lock => "Lock",
         }
     }
 }
@@ -106,6 +170,9 @@ fn up() -> V3 {
 pub enum End {
     /// A connector of an instance in the joint's assembly.
     Connector { instance: StableId, connector: String },
+    /// Geometry picked on an instance: a face, an edge, a point, a line, a
+    /// plane… (see [`Geometry`]), in the instance's own coordinates.
+    Geometry { instance: StableId, geometry: Geometry },
     /// "ground": the assembly's own frame (origin, Z up).
     Ground(GroundWord),
     /// A fixed frame in the assembly: `at`, its axis and x (default Z and the
@@ -122,7 +189,7 @@ pub enum End {
 impl End {
     pub fn instance(&self) -> Option<StableId> {
         match self {
-            End::Connector { instance, .. } => Some(*instance),
+            End::Connector { instance, .. } | End::Geometry { instance, .. } => Some(*instance),
             _ => None,
         }
     }
@@ -146,6 +213,22 @@ pub struct Joint {
     /// In a closed loop: its value follows from the others instead of being held.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub free: bool,
+    /// A lock: where the second end was against the first when locked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<Hold>,
+}
+
+/// A placement kept by a lock: position (mm) and rotation (degrees about X, then Y, then Z).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Hold {
+    pub at: V3,
+    pub rotation: V3,
+}
+
+impl Hold {
+    pub fn transform(&self) -> Transform {
+        Transform::from_euler(self.at, self.rotation)
+    }
 }
 
 fn is_zero(v: &f64) -> bool {
@@ -199,12 +282,14 @@ pub enum Side {
     Ground(Transform),
     /// An instance and its connector's frame in the instance's own coordinates.
     Inst(StableId, Transform),
+    /// An instance and geometry on it, in its own coordinates (for a mate).
+    Elem(StableId, Elem),
 }
 
 impl Side {
-    fn id(&self) -> Option<StableId> {
+    pub fn id(&self) -> Option<StableId> {
         match self {
-            Side::Inst(id, _) => Some(*id),
+            Side::Inst(id, _) | Side::Elem(id, _) => Some(*id),
             Side::Ground(_) => None,
         }
     }
@@ -223,6 +308,8 @@ pub struct Link {
     pub free: bool,
     /// Degrees or mm, in the order of `JointKind::values`.
     pub values: Vec<f64>,
+    /// A lock's kept placement of `b`'s frame in `a`'s.
+    pub hold: Option<Transform>,
 }
 
 /// The joint's motion for these values.
@@ -234,6 +321,7 @@ pub fn motion(kind: JointKind, v: &[f64]) -> Transform {
         JointKind::Slider => Transform::translation([0.0, 0.0, g(0)]),
         JointKind::Cylinder => Transform { at: [0.0, 0.0, g(1)], rot: tf::axis_rotation(2, g(0)) },
         JointKind::Ball => Transform::from_euler([0.0; 3], [g(0), g(1), g(2)]),
+        _ => Transform::IDENTITY,
     }
 }
 
@@ -250,7 +338,33 @@ impl Link {
         match side {
             Side::Ground(g) => Some(*g),
             Side::Inst(id, f) => poses.get(id).map(|p| p.then(f)),
+            Side::Elem(id, _) => poses.get(id).copied(),
         }
+    }
+
+    /// A mate's two ends as geometry where they are now.
+    fn elems(&self, poses: &HashMap<StableId, Transform>) -> Option<(Elem, Elem)> {
+        let mate = self.kind.mate()?;
+        let concrete = |s: &Side| match s {
+            Side::Elem(id, e) => poses.get(id).map(|p| e.placed(p)),
+            _ => None,
+        };
+        let (ca, cb) = (concrete(&self.a), concrete(&self.b));
+        let adapt = |s: &Side, c: Option<Elem>, other: Option<Elem>| -> Option<Elem> {
+            match s {
+                Side::Elem(..) => c,
+                _ => Some(crate::mates::adapt(mate, &Self::world(s, poses)?, other.as_ref())),
+            }
+        };
+        let a = adapt(&self.a, ca, cb)?;
+        let b = adapt(&self.b, cb, Some(a))?;
+        Some((a, b))
+    }
+
+    /// Whether the mate can join its two ends' kinds of geometry.
+    pub fn check_mate(&self, poses: &HashMap<StableId, Transform>) -> Result<(), String> {
+        let (Some(mate), Some((a, b))) = (self.kind.mate(), self.elems(poses)) else { return Ok(()) };
+        crate::mates::check(mate, &a, &b).map_err(|m| format!("{}: {m}", self.name))
     }
 
     /// The second connector's frame relative to the first's, with the offset
@@ -267,21 +381,44 @@ impl Link {
         let e = self.error_frame(poses)?;
         let angle = e.rot[1][0].atan2(e.rot[0][0]).to_degrees();
         let near = |a: f64, v: f64| v + wrap_deg(a - v);
+        if let Some(mate) = self.kind.mate() {
+            let (a, b) = self.elems(poses)?;
+            return Some(crate::mates::measure(mate, &a, &b).into_iter().collect());
+        }
         Some(match self.kind {
-            JointKind::Fixed => vec![],
+            JointKind::Fixed | JointKind::Lock => vec![],
             JointKind::Hinge => vec![near(angle, self.values[0])],
             JointKind::Slider => vec![e.at[2]],
             JointKind::Cylinder => vec![near(angle, self.values[0]), e.at[2]],
             JointKind::Ball => e.euler().to_vec(),
+            _ => vec![],
         })
     }
 
-    /// How far the joint is from holding (lengths in mm, turns scaled by `size`).
     fn residuals(&self, poses: &HashMap<StableId, Transform>, size: f64, out: &mut Vec<f64>) {
+        self.residuals_with(poses, size, false, out)
+    }
+
+    /// How far the joint is from holding (lengths in mm, turns scaled by
+    /// `size`). `release` leaves its values out (what the joint lets move).
+    pub(crate) fn residuals_with(&self, poses: &HashMap<StableId, Transform>, size: f64, release: bool, out: &mut Vec<f64>) {
+        if let Some(mate) = self.kind.mate() {
+            let Some((a, b)) = self.elems(poses) else { return };
+            let value = (!self.free && !release).then(|| self.values.first().copied().unwrap_or(0.0));
+            let _ = crate::mates::residuals(mate, &a, &b, value, self.aligned, self.offset, size, out);
+            return;
+        }
+        if self.kind == JointKind::Lock {
+            let (Some(wa), Some(wb)) = (Self::world(&self.a, poses), Self::world(&self.b, poses)) else { return };
+            let e = wa.then(&self.hold.unwrap_or(Transform::IDENTITY)).inverse().then(&wb);
+            out.extend(e.at);
+            out.extend(tf::scale(tf::log(&e.rot), size));
+            return;
+        }
         let Some(e) = self.error_frame(poses) else { return };
         let (p, r) = (e.at, e.rot);
         let z = [r[0][2], r[1][2], r[2][2]];
-        let held = !self.free;
+        let held = !self.free && !release;
         let angle = || wrap_deg(r[1][0].atan2(r[0][0]).to_degrees() - self.values[0]).to_radians() * size;
         match self.kind {
             JointKind::Fixed => {
@@ -317,12 +454,31 @@ impl Link {
                     out.extend(tf::scale(tf::log(&tf::matmul(&r, &tf::transpose(&m.rot))), size));
                 }
             }
+            _ => {}
         }
     }
 }
 
 fn wrap_deg(a: f64) -> f64 {
     a - 360.0 * ((a + 180.0) / 360.0).floor()
+}
+
+/// The reach turns are weighed at (mm): how far the joints' frames are from
+/// their instances' origins.
+pub(crate) fn size_of(links: &[Link]) -> f64 {
+    links
+        .iter()
+        .flat_map(|l| [&l.a, &l.b])
+        .map(|s| match s {
+            Side::Inst(_, f) => tf::norm(f.at),
+            Side::Ground(g) => tf::norm(g.at),
+            Side::Elem(_, e) => match e {
+                Elem::Point { p, .. } | Elem::Line { p, .. } | Elem::Plane { p, .. } => tf::norm(*p),
+                Elem::Frame => 0.0,
+            },
+        })
+        .fold(10.0, f64::max)
+        .min(1e5)
 }
 
 /// Every instance's placement, and every joint's values, once the joints hold.
@@ -345,7 +501,7 @@ pub fn solve(links: &[Link], fixed: &HashMap<StableId, Transform>, guess: &HashM
     loop {
         let mut progress = false;
         for (i, l) in links.iter().enumerate() {
-            if tree[i] {
+            if tree[i] || !l.kind.places() {
                 continue;
             }
             let (wa, wb) = (Link::world(&l.a, &poses), Link::world(&l.b, &poses));
@@ -361,8 +517,19 @@ pub fn solve(links: &[Link], fixed: &HashMap<StableId, Transform>, guess: &HashM
                 progress = true;
             }
         }
-        if !progress {
-            break;
+        if progress {
+            continue;
+        }
+        // What only mates (or a lock) hold starts where it was, and the
+        // solve moves it as little as the mates need.
+        let constrained = links.iter().filter(|l| !l.kind.places()).flat_map(|l| [(&l.a, l.id), (&l.b, l.id)]);
+        let Some((id, by_link)) = constrained.filter_map(|(s, j)| s.id().map(|i| (i, j))).find(|(i, _)| !poses.contains_key(i)) else { break };
+        match guess.get(&id) {
+            Some(t) => {
+                poses.insert(id, *t);
+                by.insert(id, by_link);
+            }
+            None => break,
         }
     }
     for l in links {
@@ -374,15 +541,7 @@ pub fn solve(links: &[Link], fixed: &HashMap<StableId, Transform>, guess: &HashM
             }
         }
     }
-    let size = links
-        .iter()
-        .flat_map(|l| [&l.a, &l.b])
-        .map(|s| match s {
-            Side::Inst(_, f) => tf::norm(f.at),
-            Side::Ground(g) => tf::norm(g.at),
-        })
-        .fold(10.0, f64::max)
-        .min(1e5);
+    let size = size_of(links);
     // Joints left over close loops: fine if they already hold.
     let closing: Vec<&Link> = links.iter().zip(&tree).filter(|(_, t)| !**t).map(|(l, _)| l).collect();
     let worst = |p: &HashMap<StableId, Transform>, ls: &[&Link]| {
@@ -438,6 +597,37 @@ pub fn solve(links: &[Link], fixed: &HashMap<StableId, Transform>, guess: &HashM
 /// holds; Err with the remaining miss.
 fn settle(links: &[&Link], moving: &[StableId], start: HashMap<StableId, Transform>, size: f64) -> Result<HashMap<StableId, Transform>, f64> {
     let n = 6 * moving.len();
+    let min_norm = links.iter().any(|l| !l.kind.places());
+    // How freely each instance moves in those steps: the farther it is (by
+    // joints) from what is fixed, the more it yields — the part mated last
+    // moves to its mate, not the part it is mated to.
+    let mobility: Vec<f64> = {
+        let mut depth: HashMap<StableId, usize> = start.keys().filter(|id| !moving.contains(id)).map(|id| (*id, 0)).collect();
+        for l in links {
+            if let (None, Some(b)) | (Some(b), None) = (l.a.id(), l.b.id()) {
+                depth.entry(b).or_insert(1);
+            }
+        }
+        for _ in 0..links.len() {
+            let mut changed = false;
+            for l in links {
+                if let (Some(a), Some(b)) = (l.a.id(), l.b.id()) {
+                    for (x, y) in [(a, b), (b, a)] {
+                        if let Some(dx) = depth.get(&x).copied()
+                            && depth.get(&y).is_none_or(|dy| *dy > dx + 1)
+                        {
+                            depth.insert(y, dx + 1);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        moving.iter().map(|id| 8f64.powi(depth.get(id).copied().unwrap_or(1).saturating_sub(1).min(6) as i32)).collect()
+    };
     let res = |p: &HashMap<StableId, Transform>| {
         let mut r = vec![];
         for l in links {
@@ -487,12 +677,46 @@ fn settle(links: &[&Link], moving: &[StableId], start: HashMap<StableId, Transfo
             }
         }
         let mut improved = false;
-        for _ in 0..14 {
-            let mut m = a.clone();
-            for (i, row) in m.iter_mut().enumerate() {
-                row[i] += lambda * (a[i][i] + 1e-12);
+        // What mates hold is under-determined: each step is then the least
+        // motion that closes the miss (turns weighed by the reach), d = −W⁻¹Jᵀ(JW⁻¹Jᵀ + λI)⁻¹r,
+        // so free directions stay where they were instead of drifting.
+        let dual = |r: &[f64], lambda: f64| -> Option<Vec<f64>> {
+            let m = r.len();
+            let w = |k: usize| mobility[k / 6] * if k % 6 < 3 { 1.0 } else { 1.0 / (size * size) };
+            let mut jj = vec![vec![0.0; m]; m];
+            for k in 0..n {
+                let c = &cols[k];
+                let wk = w(k);
+                for i in 0..m {
+                    if c[i] == 0.0 {
+                        continue;
+                    }
+                    for j in i..m {
+                        jj[i][j] += c[i] * c[j] * wk;
+                    }
+                }
             }
-            let Some(d) = de_shape::mechanism::solve_dense(m, g.clone()) else {
+            let mean = (0..m).map(|i| jj[i][i]).sum::<f64>() / m.max(1) as f64;
+            for i in 0..m {
+                for j in 0..i {
+                    jj[i][j] = jj[j][i];
+                }
+                jj[i][i] += lambda * mean.max(1e-300) + 1e-14 * mean;
+            }
+            let y = de_shape::mechanism::solve_dense(jj, r.to_vec())?;
+            Some((0..n).map(|k| -w(k) * cols[k].iter().zip(&y).map(|(a, b)| a * b).sum::<f64>()).collect())
+        };
+        for _ in 0..14 {
+            let d = if min_norm {
+                dual(&r, lambda)
+            } else {
+                let mut m = a.clone();
+                for (i, row) in m.iter_mut().enumerate() {
+                    row[i] += lambda * (a[i][i] + 1e-12);
+                }
+                de_shape::mechanism::solve_dense(m, g.clone())
+            };
+            let Some(d) = d else {
                 lambda *= 10.0;
                 continue;
             };
@@ -535,12 +759,19 @@ fn cached_solve(links: &[Link], fixed: &HashMap<StableId, Transform>, guess: &Ha
                     id.hash(&mut h);
                     t(&mut h, f);
                 }
+                Side::Elem(id, e) => {
+                    id.hash(&mut h);
+                    format!("{e:?}").hash(&mut h);
+                }
             }
         }
         for v in l.values.iter().chain([&l.offset]) {
             v.to_bits().hash(&mut h);
         }
         (l.aligned, l.free).hash(&mut h);
+        if let Some(hold) = &l.hold {
+            t(&mut h, hold);
+        }
     }
     let sorted = |m: &HashMap<StableId, Transform>, h: &mut std::collections::hash_map::DefaultHasher| {
         let mut keys: Vec<&StableId> = m.keys().collect();
@@ -629,9 +860,14 @@ fn connector(world: &World, instance: StableId, name: &str) -> Result<Transform,
     Err(format!("{who} has no connector “{name}” (it has {})", all.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")))
 }
 
-fn side(world: &World, end: &End) -> Result<Side, String> {
+fn side(world: &World, end: &End, kind: JointKind) -> Result<Side, String> {
     Ok(match end {
         End::Connector { instance, connector: c } => Side::Inst(*instance, connector(world, *instance, c)?),
+        End::Geometry { instance, geometry } => {
+            let e = crate::geometry::resolve(world, *instance, geometry).map_err(|m| format!("{} › {m}", instance_name(world, *instance)))?;
+            // A hinge, slider… on picked geometry turns about its axis (or normal).
+            if kind.places() { Side::Inst(*instance, e.frame()) } else { Side::Elem(*instance, e) }
+        }
         End::Ground(_) => Side::Ground(Transform::IDENTITY),
         End::Frame { at, axis, x } => {
             let z = tf::scale(*axis, 1.0 / tf::norm(*axis).max(1e-300));
@@ -658,11 +894,12 @@ pub fn link(world: &World, id: StableId, values: Option<&[f64]>) -> Result<Link,
         id,
         name: set.name.clone(),
         kind: joint.kind,
-        a: named(side(world, &joint.a))?,
-        b: named(side(world, &joint.b))?,
+        a: named(side(world, &joint.a, joint.kind))?,
+        b: named(side(world, &joint.b, joint.kind))?,
         offset: joint.offset,
         aligned: joint.aligned,
         free: joint.free,
+        hold: joint.hold.map(|h| h.transform()),
         values: match values {
             Some(v) => v.to_vec(),
             None => values_of(world, joint, set).map_err(|m| format!("{}: {m}", set.name))?,
@@ -748,14 +985,20 @@ pub fn holding(world: &World, instance: StableId) -> Vec<StableId> {
 pub(crate) fn placed(world: &World, e: Entity) -> Option<Result<Placed, String>> {
     let inst = world.get::<Instance>(e)?;
     let id = *world.get::<StableId>(e)?;
+    // A pattern's copy goes where its pattern puts it.
+    if let Some(r) = crate::patterns::member_placement(world, e) {
+        return Some(r.map(|t| Placed::new(t, None, None, BTreeMap::new())));
+    }
     let Some(g) = group_holding(world, id) else {
         return Some(Ok(Placed::new(inst.transform(), None, None, BTreeMap::new())));
     };
-    Some(place_in_group(world, id, &g.joints, g.anchor))
+    Some(place_in_group(world, inst.parent, id, &g.joints, g.anchor))
 }
 
-fn place_in_group(world: &World, id: StableId, joint_ids: &[StableId], anchor: Option<StableId>) -> Result<Placed, String> {
-    let links = joint_ids.iter().map(|j| link(world, *j, None)).collect::<Result<Vec<_>, _>>()?;
+fn place_in_group(world: &World, scope: Option<StableId>, id: StableId, joint_ids: &[StableId], anchor: Option<StableId>) -> Result<Placed, String> {
+    // Couplings set followers' values from their drivers' first.
+    let coupled = crate::couplings::coupled_values(world, scope, &HashMap::new())?;
+    let links = joint_ids.iter().map(|j| link(world, *j, coupled.as_ref().and_then(|c| c.get(j)).map(|v| v.as_slice()))).collect::<Result<Vec<_>, _>>()?;
     let stored = |m: StableId| entity(world, m).and_then(|x| world.get::<Instance>(x)).map(Instance::transform);
     let mut fixed = HashMap::new();
     if let Some(a) = anchor {
@@ -783,6 +1026,8 @@ fn place_in_group(world: &World, id: StableId, joint_ids: &[StableId], anchor: O
 pub fn solve_scope(world: &World, scope: Option<StableId>, values: &HashMap<StableId, Vec<f64>>, guess: &HashMap<StableId, Transform>) -> Result<Solution, String> {
     let joints = joints_in(world, scope);
     let mut out = Solution::default();
+    // Couplings: every joint's value worked out together (a driven follower turns its driver back).
+    let coupled = crate::couplings::coupled_values(world, scope, values)?;
     for g in groups(&joints) {
         // Joints linked by formula to a joint given a value here follow it (an idler finger geared to the driven one).
         let given = |id: StableId, key: &str| -> Option<f64> {
@@ -793,7 +1038,7 @@ pub fn solve_scope(world: &World, scope: Option<StableId>, values: &HashMap<Stab
         let links = g
             .joints
             .iter()
-            .map(|j| match values.get(j) {
+            .map(|j| match coupled.as_ref().and_then(|c| c.get(j)).or(values.get(j)) {
                 Some(v) => link(world, *j, Some(v.as_slice())),
                 None if values.is_empty() => link(world, *j, None),
                 None => {
@@ -870,6 +1115,7 @@ pub(crate) fn rewire(tx: &mut Tx, scope: Option<StableId>) -> Result<(), Command
     };
     if let Some(h) = hub {
         let mut want: Vec<StableId> = joints.iter().map(|(j, _)| *j).collect();
+        want.extend(crate::couplings::couplings_in(tx.world(), scope).into_iter().map(|(c, _)| c));
         for g in &gs {
             want.extend(g.anchor);
             for m in &g.members {
@@ -952,6 +1198,18 @@ pub(crate) fn touch(tx: &mut Tx, instance: StableId, scope: Option<StableId>) ->
     Ok(())
 }
 
+/// The scope's held instances solve again (one moved by hand along what its
+/// mates leave free: the others start from where they are too).
+pub(crate) fn remark(tx: &mut Tx, scope: Option<StableId>) -> Result<(), CommandError> {
+    if let Some(h) = hub_of(tx.world(), scope)
+        && let Some(d) = tx.get::<DependsOn>(h).and_then(|x| x.0.first().copied())
+    {
+        tx.remove_dependency(h, d)?;
+        tx.add_dependency(h, d)?;
+    }
+    Ok(())
+}
+
 /// Why an instance cannot be moved by hand, if a joint holds it.
 pub fn held_reason(world: &World, instance: StableId) -> Option<String> {
     let joints = holding(world, instance);
@@ -959,9 +1217,15 @@ pub fn held_reason(world: &World, instance: StableId) -> Option<String> {
     let e = entity(world, instance)?;
     let by = world.get::<Placed>(e).and_then(|p| p.by).unwrap_or(first);
     let j = world.get::<Joint>(entity(world, by)?)?;
+    // What mates hold is moved by hand along what they leave free (the solve
+    // starts from where it is put); only a lock holds it outright.
+    if j.kind.mate().is_some() {
+        return None;
+    }
     let other = [j.a.instance(), j.b.instance()].into_iter().flatten().find(|o| *o != instance).map(|o| instance_name(world, o)).unwrap_or_else(|| "the ground".into());
     let how = match j.kind {
         JointKind::Fixed => "change the joint's offset or connectors".to_string(),
+        JointKind::Lock => "delete the lock".to_string(),
         k => format!("change its {}", k.values().iter().map(|(_, l, _)| l.to_lowercase()).collect::<Vec<_>>().join(" or ")),
     };
     Some(format!(
@@ -984,6 +1248,8 @@ pub(crate) fn delete_joints_of(tx: &mut Tx, instance: StableId, scope: Option<St
 }
 
 fn drop_joint(tx: &mut Tx, id: StableId) -> Result<(), CommandError> {
+    // Its couplings go with it.
+    crate::couplings::delete_couplings_of(tx, id)?;
     // Nothing else may keep depending on it.
     let users: Vec<StableId> = tx.world().resource::<IdIndex>().iter().filter(|(_, e)| tx.world().get::<DependsOn>(*e).is_some_and(|d| d.0.contains(&id))).map(|(u, _)| u).collect();
     for u in users {
@@ -1051,9 +1317,52 @@ fn check_end(tx: &Tx, end: &End, scope: Option<StableId>, which: &str) -> Result
                 }
             }
         }
+        End::Geometry { instance, geometry } => {
+            let inst = tx.get::<Instance>(*instance).ok_or_else(|| bad(ErrorCode::UnresolvedReference, format!("{which}: {instance} is not an instance")))?;
+            if inst.parent != scope {
+                return Err(bad(ErrorCode::InvalidParameters, format!("{which}: {} is in another assembly than the joint: join instances of the same assembly", inst.name)));
+            }
+            crate::geometry::resolve(tx.world(), *instance, geometry).map_err(|m| bad(ErrorCode::InvalidParameters, format!("{which}: {} › {m}", inst.name)))?;
+        }
         End::Ground(_) => {}
     }
     Ok(())
+}
+
+/// Where each end's instance is now (for checks made before the joint exists).
+fn poses_now(world: &World, j: &Joint) -> HashMap<StableId, Transform> {
+    [j.a.instance(), j.b.instance()].into_iter().flatten().filter_map(|id| Some((id, crate::placement(world, entity(world, id)?)?))).collect()
+}
+
+/// A joint as the solver would see it, from its stored form (values zero).
+fn trial_link(world: &World, j: &Joint) -> Result<Link, String> {
+    Ok(Link {
+        id: StableId::new(),
+        name: format!("the {} joint", j.kind.word()),
+        kind: j.kind,
+        a: side(world, &j.a, j.kind)?,
+        b: side(world, &j.b, j.kind)?,
+        offset: j.offset,
+        aligned: j.aligned,
+        free: j.free,
+        values: vec![0.0; j.kind.values().len()],
+        hold: None,
+    })
+}
+
+/// A lock keeps where its second end is now against its first.
+fn lock_hold(world: &World, j: &Joint) -> Result<Option<Hold>, CommandError> {
+    if j.kind != JointKind::Lock {
+        return Ok(None);
+    }
+    let l = trial_link(world, j).map_err(|m| bad(ErrorCode::InvalidParameters, m))?;
+    let poses = poses_now(world, j);
+    let (Some(wa), Some(wb)) = (Link::world(&l.a, &poses), Link::world(&l.b, &poses)) else {
+        return Err(bad(ErrorCode::InvalidGeometry, "a lock needs both ends placed"));
+    };
+    let h = wa.inverse().then(&wb);
+    let r9 = |v: f64| (v * 1e9).round() / 1e9;
+    Ok(Some(Hold { at: h.at.map(r9), rotation: h.euler() }))
 }
 
 fn check_joint(tx: &Tx, j: &Joint) -> Result<(), CommandError> {
@@ -1072,7 +1381,23 @@ fn check_joint(tx: &Tx, j: &Joint) -> Result<(), CommandError> {
     if !j.offset.is_finite() {
         return Err(bad(ErrorCode::InvalidParameters, "offset must be a finite number"));
     }
+    if j.kind.mate().is_some() {
+        let l = trial_link(tx.world(), j).map_err(|m| bad(ErrorCode::InvalidParameters, m))?;
+        l.check_mate(&poses_now(tx.world(), j)).map_err(|m| bad(ErrorCode::InvalidParameters, m))?;
+    }
+    // Pattern copies are placed by their pattern.
+    for id in [j.a.instance(), j.b.instance()].into_iter().flatten() {
+        if let Some(why) = crate::patterns::placed_by_pattern(tx.world(), id) {
+            return Err(bad(ErrorCode::InvalidParameters, why));
+        }
+    }
     Ok(())
+}
+
+/// A mate's value where its ends are now (an angle or distance not given takes it).
+fn measured_now(world: &World, j: &Joint) -> Option<f64> {
+    let l = trial_link(world, j).ok()?;
+    l.measure(&poses_now(world, j))?.first().copied()
 }
 
 /// The parameters a joint of `kind` holds, keeping what `old` had for the same keys.
@@ -1099,12 +1424,12 @@ fn apply_values(params: &mut [Param], kind: JointKind, value: Option<ValueIn>, v
     let primary = kind.values().first().map(|(k, _, _)| k.to_string());
     let mut given: Vec<(String, ValueIn)> = values.into_iter().collect();
     if let Some(v) = value {
-        let k = primary.clone().ok_or_else(|| bad(ErrorCode::InvalidParameters, "a fixed joint has no value"))?;
+        let k = primary.clone().ok_or_else(|| bad(ErrorCode::InvalidParameters, format!("a {} joint has no value", kind.word())))?;
         given.push((k, v));
     }
     let mut range: Vec<(String, Option<[f64; 2]>)> = ranges.into_iter().collect();
     if let Some(l) = limits {
-        let k = primary.ok_or_else(|| bad(ErrorCode::InvalidParameters, "a fixed joint has no value to limit"))?;
+        let k = primary.ok_or_else(|| bad(ErrorCode::InvalidParameters, format!("a {} joint has no value to limit", kind.word())))?;
         range.push((k, l));
     }
     let keys = || kind.values().iter().map(|(k, _, _)| *k).collect::<Vec<_>>().join(", ");
@@ -1243,11 +1568,17 @@ impl Command for CreateJoint {
     const NAME: &'static str = "assembly.joint.create";
 
     fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
-        let joint = Joint { kind: self.kind, assembly: self.assembly, a: self.a, b: self.b, offset: self.offset, aligned: self.aligned, free: self.free };
+        let mut joint = Joint { kind: self.kind, assembly: self.assembly, a: self.a, b: self.b, offset: self.offset, aligned: self.aligned, free: self.free, hold: None };
         check_joint(tx, &joint)?;
+        joint.hold = lock_hold(tx.world(), &joint)?;
         let name = unique_name(tx, self.kind, self.name, None)?;
         let mut params = params_for(self.kind, &[]);
-        apply_values(&mut params, self.kind, self.value, self.values, self.limits.map(Some), self.ranges.into_iter().map(|(k, v)| (k, Some(v))).collect())?;
+        // An angle or distance mate given no value keeps the one it has now.
+        let mut value = self.value;
+        if value.is_none() && self.values.is_empty() && self.kind.mate().is_some() && !self.kind.values().is_empty() {
+            value = measured_now(tx.world(), &joint).map(|v| ValueIn::Number((v * 1e6).round() / 1e6));
+        }
+        apply_values(&mut params, self.kind, value, self.values, self.limits.map(Some), self.ranges.into_iter().map(|(k, v)| (k, Some(v))).collect())?;
         freeze(tx, joint.assembly)?;
         let out = tx.run("parameters.create", json!({ "name": name, "description": format!("{} joint", self.kind.title()), "params": params }))?;
         let id: StableId = serde_json::from_value(out["id"].clone()).map_err(|e| bad(ErrorCode::InvalidParameters, e.to_string()))?;
@@ -1311,6 +1642,9 @@ impl Command for UpdateJoint {
             joint.free = f;
         }
         check_joint(tx, &joint)?;
+        if joint.kind != before.kind || joint.a != before.a || joint.b != before.b {
+            joint.hold = lock_hold(tx.world(), &joint)?;
+        }
         if let Some(n) = self.name {
             let n = unique_name(tx, joint.kind, Some(n), Some(self.target))?;
             if n != set.name {

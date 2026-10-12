@@ -1,0 +1,36 @@
+[
+  { "operation": "solid.material.create", "parameters": { "name": "Aluminium 6061-T6", "density": { "value": 2700, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Steel C45", "density": { "value": 7850, "unit": "kg/m3" } } },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Bearing bracket",
+      "description": "Machined from 6061-T6 plate: a pocketed base with four M6 tapped holes, two ⌀8 H7 dowel holes and a counterbored M6 hold-down hole, and an upright flange with a ⌀22 H7 bearing seat.",
+      "source": { "$file": "bracket.js" },
+      "materials": { "Aluminium 6061-T6": "$0.id" },
+      "material": "$0.id",
+      "params": [
+        { "key": "length", "label": "Length", "value": 120, "unit": "mm", "min": 60 },
+        { "key": "width", "label": "Width", "value": 80, "unit": "mm", "min": 40 },
+        { "key": "base", "label": "Base thickness", "value": 15, "unit": "mm", "min": 8 },
+        { "key": "flange", "label": "Flange thickness", "value": 15, "unit": "mm", "min": 8 },
+        { "key": "height", "label": "Height", "value": 75, "unit": "mm", "min": 40 },
+        { "key": "pocketDepth", "label": "Pocket depth", "value": 6, "unit": "mm", "min": 1 },
+        { "key": "pocketRadius", "label": "Pocket corner radius", "value": 8, "unit": "mm", "min": 1 },
+        { "key": "bore", "label": "Bearing seat", "value": 22, "unit": "mm", "min": 5 },
+        { "key": "boreHeight", "label": "Seat height", "value": 50, "unit": "mm", "min": 20 }
+      ]
+    }
+  },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Output shaft",
+      "description": "Turned from C45 bar: M16×1.5 thread with undercut, ⌀20 g6 bearing seat with a DIN 471 ring groove, ⌀26 shoulder, ⌀22 k6 gear seat, ⌀18 end.",
+      "source": { "$file": "shaft.js" },
+      "materials": { "Steel C45": "$1.id" },
+      "material": "$1.id",
+      "params": [{ "key": "chamfer", "label": "Chamfer", "value": 1, "unit": "mm", "min": 0.2 }]
+    }
+  }
+]

@@ -1,0 +1,219 @@
+{
+ "id": "alu_flat",
+ "name": "Aluminium flat bar",
+ "standard": "EN 755-9",
+ "category": "Structural sections",
+ "summary": "Extruded aluminium flat bar 10×2 to 100×10 (EN AW-6060 T6, EN 755-9), cut to length. Width along X, thickness along Y, centred; length along +Z.",
+ "keywords": [
+  "aluminium flat",
+  "aluminum flat bar",
+  "flat bar",
+  "strip",
+  "6060",
+  "6063",
+  "EN 755"
+ ],
+ "source": [
+  "common.js",
+  "sections.js",
+  "alu_flat.js"
+ ],
+ "display_tolerance": 0.02,
+ "material": "Aluminium EN AW-6060 T6",
+ "materials": {
+  "Aluminium EN AW-6060 T6": 2700
+ },
+ "params": [
+  {
+   "key": "b",
+   "label": "Width",
+   "value": 20,
+   "unit": "mm",
+   "min": 5,
+   "max": 300
+  },
+  {
+   "key": "t",
+   "label": "Thickness",
+   "value": 3,
+   "unit": "mm",
+   "min": 1,
+   "max": 50
+  },
+  {
+   "key": "length",
+   "label": "Length (cut)",
+   "value": 1000,
+   "unit": "mm",
+   "min": 10,
+   "max": 6000
+  }
+ ],
+ "columns": [
+  "b",
+  "t"
+ ],
+ "rows": [
+  {
+   "name": "10×2",
+   "values": {
+    "b": 10,
+    "t": 2
+   }
+  },
+  {
+   "name": "15×2",
+   "values": {
+    "b": 15,
+    "t": 2
+   }
+  },
+  {
+   "name": "20×2",
+   "values": {
+    "b": 20,
+    "t": 2
+   }
+  },
+  {
+   "name": "20×3",
+   "values": {
+    "b": 20,
+    "t": 3
+   }
+  },
+  {
+   "name": "20×5",
+   "values": {
+    "b": 20,
+    "t": 5
+   }
+  },
+  {
+   "name": "25×3",
+   "values": {
+    "b": 25,
+    "t": 3
+   }
+  },
+  {
+   "name": "25×5",
+   "values": {
+    "b": 25,
+    "t": 5
+   }
+  },
+  {
+   "name": "30×3",
+   "values": {
+    "b": 30,
+    "t": 3
+   }
+  },
+  {
+   "name": "30×5",
+   "values": {
+    "b": 30,
+    "t": 5
+   }
+  },
+  {
+   "name": "40×3",
+   "values": {
+    "b": 40,
+    "t": 3
+   }
+  },
+  {
+   "name": "40×5",
+   "values": {
+    "b": 40,
+    "t": 5
+   }
+  },
+  {
+   "name": "40×10",
+   "values": {
+    "b": 40,
+    "t": 10
+   }
+  },
+  {
+   "name": "50×5",
+   "values": {
+    "b": 50,
+    "t": 5
+   }
+  },
+  {
+   "name": "50×10",
+   "values": {
+    "b": 50,
+    "t": 10
+   }
+  },
+  {
+   "name": "60×5",
+   "values": {
+    "b": 60,
+    "t": 5
+   }
+  },
+  {
+   "name": "60×10",
+   "values": {
+    "b": 60,
+    "t": 10
+   }
+  },
+  {
+   "name": "80×5",
+   "values": {
+    "b": 80,
+    "t": 5
+   }
+  },
+  {
+   "name": "80×10",
+   "values": {
+    "b": 80,
+    "t": 10
+   }
+  },
+  {
+   "name": "100×5",
+   "values": {
+    "b": 100,
+    "t": 5
+   }
+  },
+  {
+   "name": "100×10",
+   "values": {
+    "b": 100,
+    "t": 10
+   }
+  }
+ ],
+ "default": "20×3",
+ "checks": {
+  "20×3": {
+   "size": [
+    20,
+    3,
+    1000
+   ],
+   "partNumber": "Al flat 20×3 × 1000 EN AW-6060 T6",
+   "massG": 162.0,
+   "connectors": [
+    "End A",
+    "End B",
+    "Axis",
+    "Face +Y",
+    "Face -Y",
+    "Edge +X",
+    "Edge -X"
+   ]
+  }
+ }
+}

@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+  <!-- A mountain valley at dusk, drawn for this example (no outside image).
+       Lighter is nearer: as a relief, the foreground stands highest. -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c2340"/>
+      <stop offset="1" stop-color="#5a5f86"/>
+    </linearGradient>
+    <radialGradient id="moon" cx="0.42" cy="0.4" r="0.6">
+      <stop offset="0" stop-color="#f4efdc"/>
+      <stop offset="1" stop-color="#b9b39c"/>
+    </radialGradient>
+    <linearGradient id="far" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8d8fae"/>
+      <stop offset="1" stop-color="#5d6283"/>
+    </linearGradient>
+    <linearGradient id="mid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a9b6a6"/>
+      <stop offset="1" stop-color="#6f7f6c"/>
+    </linearGradient>
+    <linearGradient id="near" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#cfd6bf"/>
+      <stop offset="1" stop-color="#93a07f"/>
+    </linearGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7d86a8"/>
+      <stop offset="1" stop-color="#aab3cc"/>
+    </linearGradient>
+    <linearGradient id="bank" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e6e2cf"/>
+      <stop offset="1" stop-color="#b8b39a"/>
+    </linearGradient>
+    <linearGradient id="pine" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#d8dcc8"/>
+      <stop offset="0.5" stop-color="#f3f2e6"/>
+      <stop offset="1" stop-color="#c9cdb6"/>
+    </linearGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="2.2"/></filter>
+    <filter id="softer"><feGaussianBlur stdDeviation="5"/></filter>
+  </defs>
+  <rect width="1200" height="800" fill="url(#sky)"/>
+  <circle cx="860" cy="170" r="70" fill="url(#moon)" filter="url(#soft)"/>
+  <!-- Far range, with snow shoulders. -->
+  <path filter="url(#soft)" fill="url(#far)" d="M0 420 L90 360 L170 300 L240 330 L330 230 L420 300 L470 280 L560 190 L650 290 L720 260 L800 330 L880 280 L960 340 L1050 270 L1130 320 L1200 300 L1200 560 L0 560 Z"/>
+  <path filter="url(#soft)" fill="#c7c8da" opacity="0.8" d="M330 230 L360 262 L340 258 L318 270 Z M560 190 L598 232 L572 228 L548 246 L530 222 Z M1050 270 L1080 296 L1058 294 L1036 302 Z"/>
+  <!-- Middle hills. -->
+  <path filter="url(#soft)" fill="url(#mid)" d="M0 500 C120 430 220 410 330 450 C430 488 520 420 640 410 C760 400 860 470 980 440 C1080 415 1150 430 1200 450 L1200 620 L0 620 Z"/>
+  <!-- The lake, catching the moon. -->
+  <path filter="url(#soft)" fill="url(#water)" d="M0 600 C300 575 900 575 1200 600 L1200 690 L0 690 Z"/>
+  <ellipse cx="860" cy="625" rx="70" ry="9" fill="#dcdbe8" filter="url(#softer)"/>
+  <!-- Near bank. -->
+  <path filter="url(#soft)" fill="url(#near)" d="M0 640 C160 600 300 640 460 650 C620 660 760 610 900 630 C1040 650 1120 620 1200 630 L1200 800 L0 800 Z"/>
+  <path filter="url(#soft)" fill="url(#bank)" d="M0 720 C200 690 420 720 640 730 C860 740 1020 700 1200 720 L1200 800 L0 800 Z"/>
+  <!-- Pines on the left bank, brightest (nearest). -->
+  <g filter="url(#soft)" fill="url(#pine)">
+    <path d="M150 700 L182 600 L170 604 L196 530 L184 534 L208 450 L232 534 L220 530 L246 604 L234 600 L266 700 Z"/>
+    <path d="M250 715 L276 640 L266 644 L288 585 L278 588 L298 525 L318 588 L308 585 L330 644 L320 640 L346 715 Z"/>
+    <path d="M70 712 L92 650 L84 652 L102 600 L94 602 L110 550 L126 602 L118 600 L136 652 L128 650 L150 712 Z"/>
+  </g>
+  <rect x="202" y="700" width="12" height="30" fill="#c9c4ad" filter="url(#soft)"/>
+  <rect x="292" y="712" width="10" height="24" fill="#c9c4ad" filter="url(#soft)"/>
+  <!-- A boulder on the right shore. -->
+  <ellipse cx="1010" cy="730" rx="90" ry="38" fill="url(#bank)" filter="url(#soft)"/>
+</svg>
