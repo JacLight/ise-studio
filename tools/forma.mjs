@@ -7,8 +7,9 @@
 //   node tools/forma.mjs gears <id> [torque N·m] [rpm]   turn a gear train through a full turn; tooth strength with a load
 //   node tools/forma.mjs motion <joint id> [steps] [--set '{"Elbow":40}']   sweep a joint through its limits: what moves, closest approaches, clashes, where it binds
 //   node tools/forma.mjs fit <assembly or instance id | project> [--motion]   do screws, inserts, nuts, bearings and joined parts fit (and, with --motion, every joint's sweep)
+//   node tools/forma.mjs check-geometry <id> [part]   the exact kernel's check of each part: valid, self-intersections, tolerances
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
-//   node tools/forma.mjs study <shape id> study.json [--part X]   save a part's study (faces as { normal, near: [x, y, z] })
+//   node tools/forma.mjs set-study <shape id> study.json [--part X]   save a part's stress/heat study (faces as { normal, near: [x, y, z] })
 //   node tools/forma.mjs stress|fatigue|modes|buckle|heat|converge|inp <shape id> [--part X] [--count N] [--resolutions 32,48,64]
 //                                             run the part's saved study (inp: a CalculiX deck on stdout)
 //   node tools/forma.mjs probe <key> x,y,z · section <key> x,y,z nx,ny,nz · path <key> x,y,z x,y,z [n] · csv <key>
@@ -16,8 +17,16 @@
 //   node tools/forma.mjs frame frame.json     a frame of beams (joints, members with sections, supports, loads)
 //   node tools/forma.mjs plate <shape id> plate.json [--part X]   a flat sheet part as a plate (edges clamped or simply held, pressure)
 //   node tools/forma.mjs materials [search]   the material library with sources, and the project's materials
+//   node tools/forma.mjs dof <assembly | top>   what can still move (and how), mobility, redundant and conflicting joints
+//   node tools/forma.mjs interference <assembly | instance | top> [clearance mm]   parts that overlap (volume, where), touch, or come close
+//   node tools/forma.mjs exploded <view>      a saved exploded view's steps and trails
+//   node tools/forma.mjs study <study> [fps] [--out frames.json]   play a motion study: what moves, clashes, binding; frames to a file
+//   node tools/forma.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]'] [--tool connector]
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
+//   node tools/forma.mjs pcb import <file> [--format f] [--name n] [--board id] [companions…]   a board/schematic from KiCad, Eagle, EasyEDA, Altium, CADSTAR, Fabmaster, PADS, gEDA
+//   node tools/forma.mjs pcb exports <id> | export <id> <file name | kicad_sch | ipc2581 | odb | d356 | …> [--out path]   files for other EDA tools
+//   node tools/forma.mjs pcb lib|logo|assign|variant|block …   project/global libraries, wizards, logos, footprint assignment, variants, design blocks
 //   node tools/forma.mjs simulate <schematic> [--tran 30ms] [--expect "min(V(3V3), burst) > 3.0"] [--save name]   ngspice on a schematic
 //   node tools/forma.mjs list                 every entity, one line each
 //   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
@@ -38,6 +47,13 @@
 //   node tools/forma.mjs measure <part> [other part] [--part name]   volume, area, mass, centre of mass,
 //   node tools/forma.mjs drawing <id> [--sheet A3] [--part Name] [--page N] [--pdf f] [--svg f] [--dxf f] [--zip f]   the engineering drawing: sheets, dimensions, the checker's findings; saves files
 //        moments of inertia (kg·mm² about the centre of mass); with two: centre to centre and the gap per axis
+//   node tools/forma.mjs sheet <sheet>        a spreadsheet as a grid: what each cell shows, aliases, errors
+//   node tools/forma.mjs draft                draft objects, dimensions with their values, layers, working planes, arrays
+//   node tools/forma.mjs import <file> [--as sheet|parameters|configurations] [--target id] [--sheet name]
+//        .step/.stp, .scad (a live parametric shape), .csv/.xlsx (a sheet, a parameter set or a shape's
+//        configurations), .forma (a whole project bundle, as a new project)
+//   node tools/forma.mjs export <id|name> <file.step|stl|3mf|dxf|scad|zip|csv|xlsx>   write a file
+//   node tools/forma.mjs bundle [file.forma]   the whole project (history, assets) as one file
 //
 // steps.json is an array of { "operation": "...", "parameters": { ... } }.
 // Any string "$N.path" in parameters is replaced by step N's output at that
@@ -47,6 +63,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { request as httpRequest } from "node:http";
+import { pcbLib } from "./forma-pcblib.mjs";
 
 const args = process.argv.slice(2);
 const urlFlag = args.indexOf("--url");
@@ -219,7 +236,7 @@ if (command === "run") {
     for (const n of r.notes) console.log(`  ! ${n}`);
     failed = !r.ok;
   }
-} else if (["stress", "fatigue", "modes", "buckle", "heat", "converge", "inp", "probe", "section", "path", "csv", "frame", "materials", "study", "plate"].includes(command)) {
+} else if (["stress", "fatigue", "modes", "buckle", "heat", "converge", "inp", "probe", "section", "path", "csv", "frame", "materials", "set-study", "plate"].includes(command)) {
   // Simulation: a part's saved study run as kept, results read back, frames, materials.
   const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
   const flag = (name) => {
@@ -251,8 +268,8 @@ if (command === "run") {
       req.end();
     });
   try {
-    if (command === "study") {
-      // forma study <shape id> study.json [--part X]: save a study (faces as { normal, near: [x, y, z] }).
+    if (command === "set-study") {
+      // forma set-study <shape id> study.json [--part X]: save a study (faces as { normal, near: [x, y, z] }).
       const study = JSON.parse(readFileSync(rest[0], "utf8"));
       const r = await engine.commit("shape.set_study", { target: id, study: { ...study, part: part ?? study.part ?? null } });
       if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
@@ -337,6 +354,31 @@ if (command === "run") {
   } catch (e) {
     console.error(`✗ ${e.message}`);
     failed = true;
+  }
+} else if (command === "check-geometry") {
+  // The exact kernel's check of every part (as FreeCAD's Check geometry).
+  const [, id, part] = args;
+  if (!id) {
+    console.error("✗ say which: forma check-geometry <id> [part]");
+    process.exit(1);
+  }
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const q = new URLSearchParams({ ...(project ? { project } : {}), ...(part ? { part } : {}) });
+  const res = await fetch(`${http}/check-geometry/${id}?${q}`);
+  if (!res.ok) {
+    console.error(`✗ ${await res.text()}`);
+    failed = true;
+  } else {
+    const r = await res.json();
+    console.log(`${r.ok ? "✓" : "✗"} ${r.name}: ${r.parts.length} part${r.parts.length === 1 ? "" : "s"} checked`);
+    for (const p of r.parts) {
+      const c = p.report;
+      const t = c.max_tolerance;
+      console.log(`  ${c.valid && c.boolean_ready ? "ok  " : "FAIL"} ${p.name}: ${c.valid ? "valid" : "INVALID"}, ${c.boolean_ready ? "ready for booleans" : "booleans may fail"}; ${c.solids} solid${c.solids === 1 ? "" : "s"}, ${c.faces} faces, ${c.edges} edges${c.free_edges ? `, ${c.free_edges} FREE EDGES (not closed)` : ""}; volume ${+c.volume.toFixed(3)} mm³; largest tolerance ${t.vertex.toExponential(1)} mm (vertex), ${t.edge.toExponential(1)} (edge), ${t.face.toExponential(1)} (face)${c.complete === false ? '; the self-intersection check stopped after 20 s (unfinished)' : ''}`);
+      for (const x of c.problems) console.log(`       ${x.shape}: ${x.status}`);
+      for (const x of c.faults) console.log(`       ${x.check}${x.shapes ? ` (${x.shapes})` : ""}${x.distance ? `, off by ${x.distance} mm` : ""}`);
+    }
+    failed = !r.ok;
   }
 } else if (command === "pcb") {
   // Electronics: KiCad library parts, footprint verification, the Gerber read-back check.
@@ -427,6 +469,46 @@ if (command === "run") {
       }
       for (const u of c.unreadable) console.log(`  ✗ ${u}`);
       failed = !c.ok;
+    } else if (sub === "import") {
+      // A board and/or schematic from another EDA tool, told apart by content.
+      const format = flag("--format");
+      const name = flag("--name");
+      const board = flag("--board");
+      const path = args[2];
+      if (!path) throw new Error("usage: forma pcb import <file> [--format eagle_brd|altium_pcb|…] [--name …] [--board <id>] [companion files…]");
+      const { basename } = await import("node:path");
+      const binary = /\.(pcbdoc|schdoc|epro|zip)$/i.test(path);
+      const bytes = readFileSync(path);
+      const files = {};
+      for (const extra of args.slice(3)) files[basename(extra)] = readFileSync(extra, "utf8");
+      const params = { file: basename(path), ...(binary ? { data: bytes.toString("base64") } : { text: bytes.toString("utf8") }), ...(format ? { format } : {}), ...(name ? { name } : {}), ...(board ? { board } : {}), ...(Object.keys(files).length ? { files } : {}) };
+      const r = await engine.commit("pcb.import", params);
+      if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
+      const o = r.value.output;
+      console.log(`✓ ${o.format}: ${o.board ? `board ${o.board.id} "${o.board.name}" (${o.board.components} parts, ${o.board.tracks} tracks, ${o.board.vias} vias, ${o.board.zones} pours)` : ""}${o.board && o.schematic ? "; " : ""}${o.schematic ? `schematic ${o.schematic.id} (${o.schematic.symbols} symbols, ${o.schematic.wires} wires)` : ""} (rev ${r.value.revision})`);
+      for (const n of [...(o.notes ?? []), ...(o.board?.notes ?? []), ...(o.schematic?.notes ?? [])]) console.log(`  note: ${n}`);
+    } else if (sub === "exports") {
+      // What a board or schematic can be written as.
+      const id = args[2];
+      if (!id) throw new Error("usage: forma pcb exports <board or schematic id>");
+      const r = await get(`/pcb/${id}/exports?${q()}`);
+      for (const f of r.files) console.log(`  ${f.name.padEnd(36)} ${f.what}`);
+    } else if (sub === "export") {
+      // Write one of those files here: by its name, or by what it is (kicad_sch, ipc2581, odb, d356, …).
+      const out = flag("--out");
+      const [, , id, what] = args;
+      if (!id || !what) throw new Error("usage: forma pcb export <board or schematic id> <file name | kicad_pcb | kicad_sch | kicad_pro | kicad_zip | net | xml_net | orcad | pads_net | allegro | cadstar_net | d356 | ipc2581 | odb | gbrjob | drill_map | drill_map_pdf | drill_report | svg | pdf | wrl | glb | pos | pos_csv | x3_top | x3_bottom | step | idf> [--out path]");
+      const list = (await get(`/pcb/${id}/exports?${q()}`)).files.map((f) => f.name);
+      const suffix = { kicad_pcb: ".kicad_pcb", kicad_sch: ".kicad_sch", kicad_pro: ".kicad_pro", kicad_zip: "-kicad.zip", net: ".net", xml_net: "-netlist.xml", orcad: "-orcad.net", pads_net: "-pads.net", allegro: "-allegro.net", cadstar_net: "-cadstar.frp", d356: ".d356", ipc2581: "-ipc2581.xml", odb: "-odb.zip", gbrjob: "-job.gbrjob", drill_map: "-drill-map.gbr", drill_map_svg: "-drill-map.svg", drill_map_pdf: "-drill-map.pdf", drill_report: "-drill-report.txt", svg: "-board.svg", pdf: "-board.pdf", wrl: ".wrl", glb: ".glb", pos: "-both.pos", pos_csv: "-pos.csv", x3_top: "-top-pnp.gbr", x3_bottom: "-bottom-pnp.gbr", step: ".step", idf: ".emn" }[what];
+      const name = list.includes(what) ? what : list.find((n) => suffix && n.endsWith(suffix));
+      if (!name) throw new Error(`no export “${what}”; this one has: ${list.join(", ")}`);
+      const isSchematic = !(await fetch(`${http}/pcb/${id}?${q()}`)).ok;
+      const res = await fetch(`${http}/pcb/${isSchematic ? "schematic/" : ""}${id}/file/${encodeURIComponent(name)}?${q({ download: "1" })}`);
+      if (!res.ok) throw new Error(await res.text());
+      const { writeFileSync } = await import("node:fs");
+      const path = out ?? name;
+      writeFileSync(path, Buffer.from(await res.arrayBuffer()));
+      console.log(`✓ ${path}`);
     } else if (sub === "library") {
       if (args[2] === "update") {
         const res = await fetch(`${http}/pcb/kicad/fetch?repo=all`, { method: "POST" });
@@ -434,8 +516,10 @@ if (command === "run") {
       }
       const s = await get("/pcb/kicad");
       console.log(`KiCad libraries in ${s.root}\n  footprints: ${s.footprints ?? "not downloaded yet"}\n  symbols:    ${s.symbols ?? "not downloaded yet"}\n  ${s.licence}`);
+    } else if (["lib", "logo", "assign", "variant", "block"].includes(sub)) {
+      failed = await pcbLib(sub, args, { engine, get, http, q });
     } else {
-      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | library [update]");
+      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | import <file> [--format f] | exports <id> | export <id> <name|kind> [--out path] | library [update] | lib … | logo <image> | assign <schematic> | variant <schematic> … | block …");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
@@ -719,8 +803,42 @@ if (command === "run") {
   const s = await engine.snapshot;
   for (const e of s.entities) {
     const c = e.components;
-    const kind = c["shape.program"] ? `shape “${c["shape.program"].name}”` : c["solid.box"] ? "box" : c["solid.material"] ? `material ${c["solid.material"].name}` : c["intent.requirement"] ? `requirement “${c["intent.requirement"].name}”` : "entity";
-    const extra = e.result ? ` — ${e.result.passed ? "met" : "FAILING"}: ${e.result.summary}` : e.mass ? ` — ${(e.mass.volume_m3 * 1e9).toFixed(1)} mm³` : "";
+    const kind = c["shape.program"]
+      ? `shape “${c["shape.program"].name}”`
+      : c["solid.box"]
+        ? "box"
+        : c["solid.material"]
+          ? `material ${c["solid.material"].name}`
+          : c["intent.requirement"]
+            ? `requirement “${c["intent.requirement"].name}”`
+            : c["shape.sheet"]
+              ? `sheet “${c["shape.sheet"].name}”`
+              : c["draft.array"]
+                ? `array “${c["shape.parameter_set"]?.name}” (${c["draft.array"].kind}, ${c["draft.array"].members.length + 1} copies)`
+                : c["shape.parameter_set"]
+                  ? `parameters “${c["shape.parameter_set"].name}”`
+                  : c["draft.object"]
+                    ? `draft ${c["draft.object"].kind} “${c["draft.object"].name}”`
+                    : c["draft.layer"]
+                      ? `layer “${c["draft.layer"].name}”`
+                      : c["draft.plane"]
+                        ? `working plane “${c["draft.plane"].name}”`
+                        : c["shape.sketch"]
+                          ? `sketch “${c["shape.sketch"].name}”`
+                          : c["assembly.instance"]
+                            ? `instance ${c["assembly.instance"].name}`
+                            : c["assembly.definition"]
+                              ? `assembly “${c["assembly.definition"].name}”`
+                              : "entity";
+    const extra = e.result
+      ? ` — ${e.result.passed ? "met" : "FAILING"}: ${e.result.summary}`
+      : e.draft?.value != null
+        ? ` — ${e.draft.label?.[1] ?? e.draft.value}`
+        : e.sheet
+          ? ` — ${Object.keys(e.sheet.cells).length} cells${e.sheet.errors ? `, ${e.sheet.errors} errors` : ""}`
+          : e.mass
+            ? ` — ${(e.mass.volume_m3 * 1e9).toFixed(1)} mm³`
+            : "";
     console.log(`${e.id}  ${kind}${extra}`);
   }
 } else if (command === "get") {
@@ -828,6 +946,135 @@ if (command === "run") {
     console.error(`✗ ${e.message}`);
     failed = true;
   }
+} else if (command === "sheet") {
+  // A spreadsheet as a grid, as each cell shows.
+  const s = await engine.snapshot;
+  const want = args.slice(1).join(" ");
+  const sheets = s.entities.filter((e) => e.components["shape.sheet"]);
+  const e = sheets.find((x) => x.id === want) ?? sheets.find((x) => x.components["shape.sheet"].name.toLowerCase() === want.toLowerCase()) ?? (!want && sheets.length === 1 ? sheets[0] : null);
+  if (!e) {
+    console.error(want ? `no sheet “${want}” (sheets: ${sheets.map((x) => x.components["shape.sheet"].name).join(", ") || "none"})` : `say which sheet: ${sheets.map((x) => x.components["shape.sheet"].name).join(", ") || "there are none"}`);
+    failed = true;
+  } else {
+    const sheet = e.components["shape.sheet"];
+    const cells = e.sheet?.cells ?? {};
+    const addr = (a) => {
+      const m = /^([A-Z]+)(\d+)$/.exec(a);
+      let c = 0;
+      for (const ch of m[1]) c = c * 26 + ch.charCodeAt(0) - 64;
+      return [c - 1, Number(m[2]) - 1];
+    };
+    const keys = Object.keys(sheet.cells);
+    const cols = Math.max(0, ...keys.map((a) => addr(a)[0] + 1));
+    const rows = Math.max(0, ...keys.map((a) => addr(a)[1] + 1));
+    const colName = (c) => {
+      let s = "";
+      c += 1;
+      while (c > 0) {
+        const r = (c - 1) % 26;
+        s = String.fromCharCode(65 + r) + s;
+        c = Math.floor((c - 1) / 26);
+      }
+      return s;
+    };
+    const width = Array.from({ length: cols }, (_, c) => Math.min(28, Math.max(4, ...Array.from({ length: rows }, (_, r) => (cells[colName(c) + (r + 1)]?.shown ?? "").length))));
+    console.log(`${sheet.name}  (${e.id})${sheet.description ? `  ${sheet.description}` : ""}`);
+    console.log("     " + width.map((w, c) => colName(c).padEnd(w)).join(" │ "));
+    for (let r = 0; r < rows; r++) {
+      const line = width.map((w, c) => {
+        const v = cells[colName(c) + (r + 1)];
+        const t = (v?.shown ?? "").slice(0, w);
+        return v?.value != null ? t.padStart(w) : t.padEnd(w);
+      });
+      console.log(String(r + 1).padStart(4) + " " + line.join(" │ "));
+    }
+    const aliases = Object.entries(e.sheet?.aliases ?? {});
+    if (aliases.length) console.log(`aliases: ${aliases.map(([a, at]) => `${a}=${at}`).join(", ")}  (read elsewhere as ${sheet.name}.<alias> or ${sheet.name}.<cell>)`);
+    const formulas = Object.entries(cells).filter(([, v]) => v.formula);
+    if (formulas.length) console.log(`formulas: ${formulas.map(([a, v]) => `${a} ${v.formula}`).join("; ")}`);
+    for (const [a, v] of Object.entries(cells)) if (v.error) console.log(`  ✗ ${a}: ${v.error}`);
+  }
+} else if (command === "draft") {
+  // Draft objects (with what dimensions measure), layers, working planes and arrays.
+  const s = await engine.snapshot;
+  const fmt = (p) => `[${p.map((v) => +v.toFixed(3)).join(", ")}]`;
+  for (const e of s.entities) {
+    const c = e.components;
+    if (c["draft.object"]) {
+      const o = c["draft.object"];
+      const d = e.draft;
+      const what = d?.value != null ? ` = ${d.label?.[1]}` : d?.area != null ? ` length ${+d.length.toFixed(3)} mm, area ${+d.area.toFixed(3)} mm²` : d ? ` length ${+d.length.toFixed(3)} mm` : "";
+      console.log(`${e.id}  ${o.kind} “${o.name}”${what}${o.text && o.kind !== "dimension" ? ` “${o.text}”` : ""}${d?.points?.length ? `  points ${d.points.slice(0, 4).map(fmt).join(" ")}${d.points.length > 4 ? " …" : ""}` : ""}${e.status?.state === "failed" ? `  ✗ ${e.status.reason}` : ""}`);
+    } else if (c["draft.layer"]) {
+      const l = c["draft.layer"];
+      console.log(`${e.id}  layer “${l.name}”${l.visible ? "" : " (hidden)"}${l.locked ? " (locked)" : ""}${l.color ? ` ${l.color}` : ""}: ${l.members.length} members`);
+    } else if (c["draft.plane"]) {
+      const p = c["draft.plane"];
+      console.log(`${e.id}  working plane “${p.name}” origin ${fmt(p.origin)} x ${fmt(p.x)} y ${fmt(p.y)}`);
+    } else if (c["draft.array"]) {
+      const a = c["draft.array"];
+      const v = e.params ?? {};
+      console.log(`${e.id}  array “${c["shape.parameter_set"]?.name}”: ${a.kind} ×${a.count}${a.count2 > 1 ? `×${a.count2}` : ""}, spacing ${v.spacing}${a.kind === "polar" ? `, angle ${v.angle}°` : ""}${e.formulas && Object.keys(e.formulas).length ? ` (${Object.entries(e.formulas).map(([k, f]) => `${k} ${f}`).join(", ")})` : ""}`);
+    }
+  }
+} else if (command === "import" || command === "export" || command === "bundle") {
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const { readFileSync: read, writeFileSync: write } = await import("node:fs");
+  const { basename } = await import("node:path");
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const snap = await engine.snapshot;
+  const projectName = project ?? snap.project_id;
+  try {
+    if (command === "import") {
+      const as = flag("--as");
+      const target = flag("--target");
+      const sheet = flag("--sheet");
+      const path = args[1];
+      if (!path) throw new Error("say which file: forma import <file>");
+      const bytes = read(path);
+      const name = basename(path);
+      if (name.toLowerCase().endsWith(".forma")) {
+        const res = await fetch(`${http}/projects/import`, { method: "POST", body: bytes });
+        if (!res.ok) throw new Error(await res.text());
+        const r = await res.json();
+        console.log(`✓ imported as project “${r.name}”${r.assets ? ` (${r.assets} asset files)` : ""}: open it with --project ${r.name}`);
+      } else {
+        const q = new URLSearchParams({ project: projectName, user: "forma-ai", ...(as ? { as } : {}), ...(target ? { target } : {}), ...(sheet ? { sheet } : {}) });
+        const res = await fetch(`${http}/import/${encodeURIComponent(name)}?${q}`, { method: "POST", body: bytes });
+        if (!res.ok) throw new Error(await res.text());
+        const r = await res.json();
+        console.log(`✓ ${r.operation ?? "import"} → ${JSON.stringify(r.output ?? r)}`);
+      }
+    } else if (command === "export") {
+      const [, what, out] = args;
+      if (!what || !out) throw new Error("forma export <id|name> <file.step|stl|3mf|dxf|scad|zip|csv|xlsx>");
+      const name = (e) => {
+        const c = e.components;
+        return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["shape.sheet"]?.name ?? c["shape.parameter_set"]?.name ?? c["assembly.definition"]?.name;
+      };
+      const found = snap.entities.filter((e) => e.id === what || name(e)?.toLowerCase() === what.toLowerCase());
+      if (found.length !== 1) throw new Error(found.length ? `“${what}” matches ${found.length} things: use an id` : `nothing called “${what}”`);
+      const ext = out.split(".").pop().toLowerCase();
+      const route = ext === "csv" || ext === "xlsx" ? "table" : "export";
+      const res = await fetch(`${http}/${route}/${found[0].id}.${ext}?project=${encodeURIComponent(projectName)}`);
+      if (!res.ok) throw new Error(await res.text());
+      write(out, Buffer.from(await res.arrayBuffer()));
+      console.log(`✓ wrote ${out}`);
+    } else {
+      const out = args[1] ?? `${projectName}.forma`;
+      const res = await fetch(`${http}/projects/${encodeURIComponent(projectName)}/bundle`);
+      if (!res.ok) throw new Error(await res.text());
+      const bytes = Buffer.from(await res.arrayBuffer());
+      write(out, bytes);
+      console.log(`✓ wrote ${out} (${(bytes.length / 1024).toFixed(0)} KB): the whole project with its history and assets; import it elsewhere with forma import ${out}`);
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
 } else if (command === "view") {
   const action = file;
   let arg = args.slice(2).join(" ").trim();
@@ -883,8 +1130,97 @@ if (command === "run") {
       failed = true;
     }
   }
+} else if (["dof", "interference", "exploded", "study", "robot"].includes(command)) {
+  // Assembly analyses (GET, nothing changes).
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const tool = flag("--tool");
+  const axis = flag("--axis");
+  const fps = flag("--fps");
+  const out = flag("--out");
+  const [, id, sub, extra] = args;
+  const q = new URLSearchParams(project ? { project } : {});
+  const get = async (path) => {
+    const res = await fetch(`${http}/${path}${path.includes("?") ? "&" : "?"}${q}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  };
+  const vec = (s) => `[${String(s).split(/[,\s]+/).filter(Boolean).map(Number).join(",")}]`;
+  const r1 = (v) => Math.round(v * 10) / 10;
+  try {
+    if (!id) throw new Error(`say which: forma ${command} <${command === "robot" ? "tip instance" : command === "study" || command === "exploded" ? "id or name" : "assembly | top"}>`);
+    if (command === "dof") {
+      const r = await get(`assembly-dof/${encodeURIComponent(id)}`);
+      console.log(`${r.groups.some((g) => !g.solved) ? "✗" : "✓"} ${r.summary}`);
+      for (const g of r.groups) {
+        console.log(`  ${g.solved ? "·" : "✗"} ${g.joints.map((j) => `${j.name} (${j.kind})`).join(", ")}\n      ${g.summary}`);
+        for (const i of g.instances) if (i.free) console.log(`      ${i.name}: ${i.free} free — ${i.motions.join("; ")}`);
+        if (g.error) console.log(`      ! ${g.error}`);
+      }
+      if (r.unjoined.length) console.log(`  joined to nothing: ${r.unjoined.map((u) => u.name).join(", ")}`);
+      failed = r.groups.some((g) => !g.solved);
+    } else if (command === "interference") {
+      const r = await get(`interference/${encodeURIComponent(id)}${sub ? `?clearance=${sub}` : ""}`);
+      const bad = r.overlaps.filter((o) => !o.joined && !o.fastener);
+      console.log(`${bad.length ? "✗" : "✓"} ${r.name}: ${r.parts} parts, ${r.checked} close pairs checked; ${r.overlaps.length} overlap, ${r.touching.length} touch${r.clearance ? `, ${r.near.length} within ${r.clearance} mm` : ""}`);
+      for (const o of [...bad, ...r.overlaps.filter((x) => !bad.includes(x))]) console.log(`  overlap ${o.a} ↔ ${o.b}: ${o.volume} mm³ (${o.size?.join(" × ")} mm at ${o.at?.join(", ")})${o.fastener ? " [fastener]" : o.joined ? " [joined]" : ""}`);
+      for (const o of r.near) console.log(`  near    ${o.a} ↔ ${o.b}: ${o.gap} mm`);
+      if (sub === "all" || r.touching.length <= 12) for (const o of r.touching) console.log(`  touch   ${o.a} ↔ ${o.b}${o.joined ? " [joined]" : ""}`);
+      failed = bad.length > 0;
+    } else if (command === "exploded") {
+      const r = await get(`explode/${encodeURIComponent(id)}`);
+      console.log(`✓ ${r.name}: ${r.steps.length - 1} steps, ${r.trails.length} parts move`);
+      for (const t of r.trails) {
+        const name = r.instances.find((i) => i.id === t.instance)?.name;
+        console.log(`  ${name}: ${t.points.map((p) => `(${p.map(r1).join(", ")})`).join(" → ")}`);
+      }
+    } else if (command === "study") {
+      const r = await get(`motion-study/${encodeURIComponent(id)}?fps=${fps ?? sub ?? 24}`);
+      const moving = r.instances.filter((i) => i.moves).length;
+      console.log(`${r.clashes.length || r.binds_at != null ? "✗" : "✓"} ${r.frames.length} frames over ${r.frames.at(-1).value} s; ${moving} of ${r.instances.length} instances move`);
+      for (const c of r.clashes) console.log(`  clash  ${c.a} ↔ ${c.b} from ${c.range?.[0] ?? c.at} s to ${c.range?.[1] ?? c.at} s`);
+      for (const n of r.notes) console.log(`  ! ${n}`);
+      if (out) {
+        (await import("node:fs")).writeFileSync(out, JSON.stringify(r));
+        console.log(`  frames written to ${out} (every instance's position and quaternion per frame)`);
+      }
+      failed = r.clashes.length > 0 || r.binds_at != null;
+    } else if (command === "robot") {
+      const t = encodeURIComponent(id);
+      const toolQ = `${tool ? `tool=${encodeURIComponent(tool)}&` : ""}`;
+      if (!sub) {
+        const r = await get(`robot/${t}?${toolQ}`);
+        console.log(`✓ ${r.tip_name}: ${r.axes.length} moving joints from the ground; tool at (${r.tool.at.map(r1).join(", ")}) pointing (${r.tool.axis.map((v) => Math.round(v * 1000) / 1000).join(", ")})`);
+        for (const a of r.axes) console.log(`  ${a.name.padEnd(16)} ${String(r.values[a.name]).padStart(8)} ${a.unit}   limits ${a.min}…${a.max}`);
+      } else if (sub === "fk") {
+        const r = await get(`robot/${t}/fk?${toolQ}values=${encodeURIComponent(extra ?? "{}")}`);
+        console.log(`✓ tool at (${r.at.map(r1).join(", ")}) pointing (${r.axis.map((v) => Math.round(v * 1000) / 1000).join(", ")})`);
+      } else if (sub === "ik") {
+        const r = await get(`robot/${t}/ik?${toolQ}to=${vec(extra)}${axis ? `&axis=${vec(axis)}` : ""}`);
+        console.log(`${r.reached ? "✓ reaches" : `✗ out of reach: ${r.error_mm} mm short`}${r.error_deg ? `, axis ${r.error_deg}° off` : ""}: ${Object.entries(r.values).map(([k, v]) => `${k} ${v}`).join(", ")}`);
+        if (r.reached) console.log(`  set them: forma commit assembly.robot.move_to '{"tip":"${id}","to":${vec(extra)}${axis ? `,"axis":${vec(axis)}` : ""}${tool ? `,"tool":"${tool}"` : ""}}'`);
+        failed = !r.reached;
+      } else if (sub === "reach") {
+        const r = await get(`robot/${t}/reach?${toolQ}samples=${extra ?? 2000}`);
+        console.log(`✓ ${r.samples} poses: the tool reaches ${r.min_reach}–${r.max_reach} mm from (${r.base.map(r1).join(", ")}); box (${r.bounds_min.map(r1).join(", ")}) to (${r.bounds_max.map(r1).join(", ")})`);
+      } else if (sub === "path") {
+        const r = await get(`robot/${t}/trajectory?${toolQ}fps=${fps ?? 12}&through=${encodeURIComponent(extra ?? "[]")}`);
+        console.log(`${r.clashes.length || r.binds_at != null || r.waypoints.some((w) => !w.reached) ? "✗" : "✓"} ${r.waypoints.length} waypoints in ${r.frames.at(-1).value} s (${r.frames.length} frames)`);
+        r.waypoints.forEach((w, i) => console.log(`  ${i + 1}. ${w.reached ? "reached" : `missed by ${w.error_mm} mm`}: ${Object.entries(w.values).map(([k, v]) => `${k} ${v}`).join(", ")}`));
+        for (const c of r.clashes) console.log(`  clash  ${c.a} ↔ ${c.b} from ${c.range?.[0] ?? c.at} s to ${c.range?.[1] ?? c.at} s`);
+        if (out) (await import("node:fs")).writeFileSync(out, JSON.stringify(r));
+        failed = r.clashes.length > 0 || r.binds_at != null || r.waypoints.some((w) => !w.reached);
+      } else throw new Error("forma robot <tip> [fk '{json}' | ik x,y,z [--axis x,y,z] | reach [samples] | path '<waypoints json>'] [--tool connector]");
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | measure <part> [other] | view <action> [what] | image add <file> | image list | look [what] [--view v]  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | check-geometry <id> [part] | measure <part> [other] | sheet <name> | draft | import <file> | export <id> <file> | bundle [file] | view <action> [what] | image add <file> | image list | look [what] [--view v] | drawing <id> | dof | interference | exploded | study | robot | pcb … | simulate <schematic>  [--project name] [--url ws://…]");
   failed = true;
 }
 

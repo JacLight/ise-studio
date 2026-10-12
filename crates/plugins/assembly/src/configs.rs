@@ -75,3 +75,42 @@ impl Command for SetConfigTable {
         Ok(json!({ "id": self.target, "shape": name }))
     }
 }
+
+/// `shape.config.import`: a shape's configuration table from a CSV or XLSX
+/// table. The first column names the configurations; the others are
+/// parameters (by key or label; values may carry units), and optionally
+/// description, suppress and parts_off (lists separated by “;”). Replaces
+/// the table, as `shape.config.set_table` does (instances keep showing a
+/// configuration that is still there).
+#[derive(Deserialize, JsonSchema)]
+pub struct ImportConfigTable {
+    pub target: StableId,
+    /// "csv" or "xlsx".
+    pub format: String,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub base64: Option<String>,
+    #[serde(default)]
+    pub sheet: Option<String>,
+    /// The configuration to show ("" for none); left out, the active one stays if it is still there.
+    #[serde(default)]
+    pub active: Option<String>,
+}
+
+impl Command for ImportConfigTable {
+    const NAME: &'static str = "shape.config.import";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        let program = tx.get::<ShapeProgram>(self.target).ok_or_else(|| bad(ErrorCode::UnresolvedReference, format!("{} is not a shape", self.target)))?;
+        let params = program.params.clone();
+        let invalid = |e: String| bad(ErrorCode::InvalidParameters, e);
+        let bytes = de_shape::table::payload(self.text.as_deref(), self.base64.as_deref()).map_err(invalid)?;
+        let t = de_shape::table::read_table(&self.format, &bytes, self.sheet.as_deref()).map_err(invalid)?;
+        let (cols, rows) = de_shape::paramtable::config_from_rows(&t.rows(), &params).map_err(invalid)?;
+        let n = rows.len();
+        let names: Vec<String> = rows.iter().map(|r| r.name.clone()).collect();
+        tx.run("shape.config.set_table", json!({ "target": self.target, "params": cols, "rows": rows, "active": self.active }))?;
+        Ok(json!({ "id": self.target, "configurations": n, "names": names }))
+    }
+}

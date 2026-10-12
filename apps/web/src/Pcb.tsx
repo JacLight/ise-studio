@@ -9,6 +9,7 @@ import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo
 import { projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
 import { FabCheck, SimulateTab } from "./PcbSim";
+import { LibraryPane } from "./PcbLibrary";
 import { SchematicPane } from "./Schematic";
 
 type P = [number, number];
@@ -182,23 +183,23 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
   const [hiddenNets, setHiddenNets] = useState<string[]>([]);
   const toggle = (list: string[], x: string) => (list.includes(x) ? list.filter((y) => y !== x) : [...list, x]);
   // Schematic, board, or both side by side; keys go to the pane last clicked.
-  const [pane, setPane] = useState<"schematic" | "split" | "board">(() => {
+  const [pane, setPane] = useState<"schematic" | "split" | "board" | "library">(() => {
     try {
       const v = localStorage.getItem("forma.pcb.pane");
-      return v === "schematic" || v === "split" ? v : "board";
+      return v === "schematic" || v === "split" || v === "library" ? v : "board";
     } catch {
       return "board";
     }
   });
   const schKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
-  const keyPane = useRef<"schematic" | "board">("board");
+  const keyPane = useRef<"schematic" | "board" | "library">("board");
   useEffect(() => {
     try {
       localStorage.setItem("forma.pcb.pane", pane);
     } catch {
       /* private window */
     }
-    keyPane.current = pane === "board" ? "board" : "schematic";
+    keyPane.current = pane === "board" ? "board" : pane === "library" ? "library" : "schematic";
   }, [pane]);
 
   // Boards in the project, then the chosen board in full, again after every change.
@@ -278,6 +279,15 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
         e.preventDefault();
         e.stopImmediatePropagation();
       };
+      if (keyPane.current === "library") {
+        // The library editors take their own input; only Esc closes the workspace.
+        if (e.key === "Escape") {
+          handled();
+          return props.onClose();
+        }
+        if (k.length === 1 || e.key === "Delete" || e.key === "Backspace") e.stopImmediatePropagation();
+        return;
+      }
       if (keyPane.current === "schematic" && schKeys.current) {
         if (schKeys.current(e)) return handled();
         if (e.key === "Escape") {
@@ -421,6 +431,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
                   ["schematic", "Schematic"],
                   ["split", "Both"],
                   ["board", "Board"],
+                  ["library", "Library"],
                 ] as const
               ).map(([k, label]) => (
                 <button key={k} type="button" role="tab" aria-selected={pane === k} className={pane === k ? "active" : ""} onClick={() => setPane(k)}>
@@ -435,7 +446,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
               {detail!.errors ? `${detail!.errors} DRC ${detail!.errors === 1 ? "error" : "errors"}` : "DRC passes"}
             </button>
           )}
-          {b && <KicadImport run={commit} canEdit={props.canEdit} onMade={(id) => setBoardId(id)} label="KiCad" />}
+          {b && <KicadImport run={commit} canEdit={props.canEdit} onMade={(id) => setBoardId(id)} label="Import" />}
           {b?.model && (
             <button type="button" className="secondary pcb-3d" onClick={() => props.onShow3D(b.model!)}>
               <Icon name="cube" /> Show in 3D
@@ -448,6 +459,10 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
         <NewBoard run={commit} canEdit={props.canEdit} onMade={(id) => setBoardId(id)} />
       ) : !b ? (
         <div className="pcb-empty">{error ? <p className="pcb-error">{error}</p> : <div className="pcb-spinner" />}</div>
+      ) : pane === "library" ? (
+        <div className="pcb-body">
+          <LibraryPane boardId={b.id} revision={props.revision} commit={commit} notify={notify} canEdit={props.canEdit} />
+        </div>
       ) : pane !== "board" ? (
         <div className={`pcb-body ${pane === "split" ? "split" : ""}`}>
           {side}
@@ -519,35 +534,87 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
   );
 }
 
-/** A KiCad board (.kicad_pcb) read in the browser and made into a Forma board by the engine. */
-export async function importKicadFile(file: File, run: (op: string, p: Record<string, unknown>, done?: string) => Promise<unknown>) {
-  const text = await file.text();
-  const name = file.name.replace(/\.kicad_pcb$/i, "").replace(/[_-]+/g, " ");
-  const out = (await run("pcb.board.import_kicad", { text, name }, `Imported ${file.name}`)) as { output?: { id: string; notes?: string[] } } | null;
-  return out?.output ?? null;
+/** Files other EDA tools write that the engine reads (`pcb.import` tells them apart by content). */
+export const EDA_FILES = ".kicad_pcb,.kicad_sch,.kicad_pro,.zip,.brd,.sch,.json,.epro,.epcb,.PcbDoc,.SchDoc,.pcbdoc,.schdoc,.cpa,.fab,.txt,.asc,.pcb";
+/** Extensions that are surely an EDA file (dropped on the view, they import as one). */
+export const EDA_DROP = /\.(kicad_pcb|kicad_sch|brd|sch|pcbdoc|schdoc|epro|epcb|cpa|asc|pcb)$/i;
+const BINARY = /\.(pcbdoc|schdoc|epro|zip)$/i;
+
+/** A board and/or schematic from another EDA tool (KiCad, Eagle, EasyEDA, Altium, CADSTAR, Fabmaster,
+ * PADS, gEDA), read in the browser and made into Forma's by the engine. */
+export async function importEdaFile(file: File, run: (op: string, p: Record<string, unknown>, done?: string) => Promise<unknown>) {
+  const name = file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ");
+  const params: Record<string, unknown> = { file: file.name, name };
+  if (BINARY.test(file.name)) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    params.data = btoa(bin);
+  } else {
+    params.text = await file.text();
+  }
+  const out = (await run("pcb.import", params, `Imported ${file.name}`)) as { output?: { id: string; board?: { id: string } | null; schematic?: { id: string } | null; notes?: string[]; format?: string } } | null;
+  const o = out?.output;
+  if (!o) return null;
+  return { ...o, id: o.board?.id ?? o.id };
 }
+
+/** Kept for callers of the KiCad-only import. */
+export const importKicadFile = importEdaFile;
 
 function KicadImport(props: { run: (op: string, p: Record<string, unknown>, done?: string) => Promise<unknown>; canEdit: boolean; onMade: (id: string) => void; label?: string }) {
   const input = useRef<HTMLInputElement>(null);
   return (
     <>
-      <button type="button" className="secondary" disabled={!props.canEdit} onClick={() => input.current?.click()} title="Open a KiCad board (.kicad_pcb) as a Forma board">
-        <Icon name="download" /> {props.label ?? "Import KiCad board"}
+      <button type="button" className="secondary" disabled={!props.canEdit} onClick={() => input.current?.click()} title="Open a board or schematic from KiCad, Eagle, EasyEDA (Standard or Pro), Altium (PcbDoc/SchDoc), CADSTAR, Allegro Fabmaster, PADS or gEDA">
+        <Icon name="download" /> {props.label ?? "Import board or schematic"}
       </button>
       <input
         ref={input}
         type="file"
-        accept=".kicad_pcb"
+        accept={EDA_FILES}
         style={{ display: "none" }}
         onChange={async (e) => {
           const f = e.target.files?.[0];
           e.target.value = "";
           if (!f) return;
-          const made = await importKicadFile(f, props.run);
-          if (made?.id) props.onMade(made.id);
+          const made = await importEdaFile(f, props.run);
+          if (made?.board?.id) props.onMade(made.board.id);
         }}
       />
     </>
+  );
+}
+
+/** Files for other EDA tools, from the engine's list of what it writes. */
+function InterchangeFiles(props: { boardId: string; revision: number }) {
+  const [list, setList] = useState<{ name: string; what: string }[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch(projectUrl(`/pcb/${props.boardId}/exports`))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { files: { name: string; what: string }[] } | null) => live && setList(j?.files ?? []))
+      .catch(() => live && setList([]));
+    return () => {
+      live = false;
+    };
+  }, [props.boardId, props.revision]);
+  if (!list) return <p className="pcb-note">Listing files for other tools…</p>;
+  const url = (name: string, extra = "") => projectUrl(`/pcb/${props.boardId}/file/${encodeURIComponent(name)}${extra}`);
+  return (
+    <div className="pcb-files pcb-interchange">
+      {list.map((f) => (
+        <span key={f.name} className="pcb-file" title={f.what}>
+          <a href={url(f.name)} target="_blank" rel="noreferrer">
+            {f.name}
+          </a>
+          <small>{f.what}</small>
+          <a href={url(f.name, "?download=1")} aria-label={`Download ${f.name}`}>
+            <Icon name="download" />
+          </a>
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -1415,6 +1482,9 @@ function FabTab(props: { d: Detail; commit: (op: string, p: Record<string, unkno
       <a className="button secondary pcb-all" href={projectUrl(`/pcb/${b.id}/fab.zip`)} download>
         <Icon name="download" /> Everything (generic package)
       </a>
+      <h4 className="pcb-h">For other EDA tools</h4>
+      <p className="pcb-note">KiCad project and schematic, netlists, IPC-2581, ODB++, IPC-D-356, Gerber job, drill map and report, plots, 3D models and position files.</p>
+      <InterchangeFiles boardId={b.id} revision={props.revision} />
       <FabCheck boardId={props.boardId} revision={props.revision} />
     </>
   );

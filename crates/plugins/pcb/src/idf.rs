@@ -86,7 +86,7 @@ pub fn files(view: &BoardView, board: &Board) -> Vec<(String, String)> {
         let _ = writeln!(emn, "{} {} {} {plated} {} {kind} ECAD", f(d), f(h.at[0]), f(h.at[1]), q(&owner));
     }
     let _ = writeln!(emn, ".END_DRILLED_HOLES\n.PLACEMENT");
-    let placed: Vec<&crate::board::ComponentView> = view.components.iter().filter(|c| !c.dnp && c.kind != "hole" && c.known).collect();
+    let placed: Vec<&crate::board::ComponentView> = view.components.iter().filter(|c| !c.dnp && c.kind != "hole" && c.kind != "logo" && c.known).collect();
     for c in &placed {
         let (pkg, part) = package(c);
         let _ = writeln!(emn, "{} {} {}", q(&pkg), q(&part), c.reference);

@@ -8,11 +8,15 @@
 //! Clients pick a project with `?project=<name>` on `/ws` and `/export`.
 
 mod ai;
+mod data;
+mod assembly_api;
+mod exact_files;
 mod history;
 mod machines;
 mod meshes;
 mod pcb;
 mod pcb_library;
+mod pcb_libs;
 mod pcb_schematic;
 mod peers;
 mod pictures;
@@ -507,6 +511,12 @@ struct EntityView<'a> {
     /// Mass (kg) of each part of an assembly, in the order of `shape.parts`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     part_masses: Vec<Option<f64>>,
+    /// A sheet: what every cell shows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sheet: Option<&'a de_shape::sheet::SheetValues>,
+    /// A draft object where it is now: lines, label, measured value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    draft: Option<&'a de_draft::DraftShape>,
 }
 
 /// A configuration as an instance shows it, its mesh named by content.
@@ -547,6 +557,8 @@ fn view(project: &Project, id: StableId) -> Option<EntityView<'_>> {
             .and_then(|e| de_shape::params::params_of(project.world(), e))
             .map(|(_, ps)| ps.iter().filter_map(|p| p.expr.as_ref().map(|f| (p.key.clone(), de_shape::params::display(project.world(), f)))).collect())
             .unwrap_or_default(),
+        sheet: project.get::<de_shape::sheet::SheetValues>(id),
+        draft: project.get::<de_draft::DraftShape>(id),
         part_masses: match (project.entity(id), project.get::<ShapeSolid>(id)) {
             (Some(e), Some(s)) if !s.stats.parts.is_empty() => de_shape::part_masses(project.world(), e).unwrap_or_default(),
             _ => Vec::new(),
@@ -672,6 +684,7 @@ impl App {
                 let mut report = serde_json::to_value(de_intent::check(&project)).unwrap();
                 let mut boards = pcb::findings(&project);
                 boards.extend(pcb_schematic::findings(&project));
+                boards.extend(pcb_libs::findings(&project));
                 if !boards.is_empty() {
                     report["ok"] = json!(false);
                     if let Some(f) = report["findings"].as_array_mut() {
@@ -1201,7 +1214,10 @@ fn assembly_package(folder: &str, members: &[Source], tolerance: f64, step_of: &
 /// - `/export/<id>.stl?part=<name>` and `.dxf?part=<name>`: one part of an
 ///   assembly, at the origin; the DXF is laid flat with one layer per cut depth.
 /// - `/export/<id>.step`: exact B-rep (OpenCascade), every part named; with
-///   `?part=<name>` one part at the origin.
+///   `?part=<name>` one part at the origin; parts carry their colours (their
+///   material's, or what the program painted) and painted faces their names.
+/// - `/export/<id>.stpz` (compressed STEP) and `.brep` (OpenCascade BREP, one
+///   compound, no names): the same exact shapes.
 /// - `/export/<id>.zip`: the fabrication package (every distinct part's STL,
 ///   STEP and, for sheet parts, DXF, plus a cut list); `/export/project.zip`
 ///   does the same for every part.
@@ -1221,6 +1237,14 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
         return fail(StatusCode::BAD_REQUEST, "tolerance must be between 0.0001 and 10 mm".into());
     }
     let part = query.get("part").cloned();
+    if ext == "scad" {
+        let project = app.project.lock().unwrap();
+        let made = serde_json::from_value::<StableId>(json!(stem)).map_err(|_| format!("{stem} is not a part")).and_then(|id| data::scad_file(&project, id, tolerance));
+        return match made {
+            Ok((name, bytes)) => (StatusCode::OK, [(header::CONTENT_TYPE, "text/plain; charset=utf-8".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}\""))], bytes).into_response(),
+            Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        };
+    }
     let sources: Vec<Source> = {
         let project = app.project.lock().unwrap();
         if stem == "project" && ext == "zip" {
@@ -1318,6 +1342,7 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
                     }
                 }
             }
+            "stpz" | "stepz" | "brep" | "brp" => exact_files::export(&sources[0], part.as_deref(), &ext, tolerance),
             "3mf" => {
                 let s = &sources[0];
                 let (name, solid) = whole_solid(s, part.as_deref(), tolerance)?;
@@ -2132,9 +2157,20 @@ async fn import(
 ) -> axum::response::Response {
     let fail = |code: StatusCode, message: String| (code, message).into_response();
     let lower = file.to_lowercase();
-    if !(lower.ends_with(".step") || lower.ends_with(".stp")) {
-        return fail(StatusCode::BAD_REQUEST, "Forma imports STEP files (.step, .stp)".into());
+    if [".scad", ".csv", ".tsv", ".xlsx", ".xlsm"].iter().any(|x| lower.ends_with(x)) {
+        return match server.project(query.get("project")) {
+            Ok(app) => data::import_data(app, &file, &query, &body).await,
+            Err(e) => fail(StatusCode::BAD_REQUEST, e),
+        };
     }
+    if !exact_files::importable(&lower) {
+        return fail(StatusCode::BAD_REQUEST, "Forma imports STEP (.step, .stp, compressed .stpz), OpenCascade BREP (.brep), OpenSCAD (.scad) and tables (.csv, .xlsx)".into());
+    }
+    // Stored as STEP whatever it came as (compressed STEP unpacked, BREP translated).
+    let body = match exact_files::to_step(&lower, &body) {
+        Ok(b) => axum::body::Bytes::from(b),
+        Err(e) => return fail(StatusCode::UNPROCESSABLE_ENTITY, format!("{file} could not be read: {e}")),
+    };
     let app = match server.project(query.get("project")) {
         Ok(app) => app,
         Err(e) => return fail(StatusCode::BAD_REQUEST, e),
@@ -2180,7 +2216,7 @@ async fn import(
     // Show it about as finely as its size calls for (a bolt to ±0.01 mm, a building to ±5).
     let size = (0..3).map(|k| bounds[k + 3] - bounds[k]).fold(0.0, f64::max);
     let shown = (size / 4000.0).clamp(0.005, 5.0);
-    let name = file.rsplit_once('.').map(|(n, _)| n).unwrap_or(&file).replace(['_', '-'], " ");
+    let name = exact_files::stem(&file).replace(['_', '-'], " ");
     let source = format!(
         "// Imported from “{file}” ({count} {}). The geometry is the file's own exact B-rep:\n// the view meshes it, STEP exports pass it through untouched.\nreturn importStep(\"{sha}\");",
         if count == 1 { "body" } else { "bodies" }
@@ -2251,7 +2287,7 @@ async fn main() -> std::io::Result<()> {
     let dir = project_path.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
     std::fs::create_dir_all(&dir)?;
     let default = project_path.file_stem().and_then(|s| s.to_str()).unwrap_or("default").to_string();
-    let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
+    let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &de_draft::DraftPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
     let claude = ai::AiConfig::find_claude();
     match &claude {
         Some(p) => println!("Forma AI: Claude Code at {}", p.display()),
@@ -2318,6 +2354,9 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/projects/{name}/duplicate", axum::routing::post(project_duplicate))
         .route("/projects/{name}/delete", axum::routing::post(project_delete))
         .route("/projects/trash", get(trash_list))
+        .route("/projects/{name}/bundle", get(data::bundle))
+        .route("/projects/import", axum::routing::post(data::import_bundle).layer(axum::extract::DefaultBodyLimit::max(1024 * 1024 * 1024)))
+        .route("/table/{file}", get(data::table_file))
         .route("/projects/trash/{entry}/restore", axum::routing::post(trash_restore))
         .route("/projects/{name}/thumbnail", get(thumbnail_get).post(thumbnail_put).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024)))
         .route("/slicer/{file}", axum::routing::post(send_to_slicer))
@@ -2339,6 +2378,16 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/frame", axum::routing::post(simulate::frame))
         .route("/plate/{id}", axum::routing::post(simulate::plate))
         .route("/materials", get(simulate::materials))
+        .route("/check-geometry/{id}", get(exact_files::check))
+        .route("/assembly-dof/{id}", get(assembly_api::dof))
+        .route("/interference/{id}", get(assembly_api::interference))
+        .route("/explode/{id}", get(assembly_api::explode))
+        .route("/motion-study/{id}", get(assembly_api::motion_study))
+        .route("/robot/{tip}", get(assembly_api::chain))
+        .route("/robot/{tip}/fk", get(assembly_api::fk))
+        .route("/robot/{tip}/ik", get(assembly_api::ik))
+        .route("/robot/{tip}/reach", get(assembly_api::reach))
+        .route("/robot/{tip}/trajectory", get(assembly_api::trajectory))
         .route("/measure/{id}", get(measure_report))
         .route("/study/{id}", get(study))
         .route("/touching/{id}", get(touching))
@@ -2380,6 +2429,23 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/kicad/footprint/{id}", get(pcb_library::footprint))
         .route("/pcb/kicad/symbol/{id}", get(pcb_library::symbol))
         .route("/pcb/verify-footprints", get(pcb_library::verify))
+        .route("/pcb/libs", get(pcb_libs::index))
+        .route("/pcb/libs/symbol/preview", axum::routing::post(pcb_libs::symbol_preview))
+        .route("/pcb/libs/symbol/{id}", get(pcb_libs::symbol))
+        .route("/pcb/libs/symbol/{id}/svg", get(pcb_libs::symbol_svg))
+        .route("/pcb/libs/footprint/preview", axum::routing::post(pcb_libs::footprint_preview))
+        .route("/pcb/libs/footprint/{id}", get(pcb_libs::footprint))
+        .route("/pcb/libs/footprint/{id}/svg", get(pcb_libs::footprint_svg))
+        .route("/pcb/libs/wizards", get(pcb_libs::wizard_presets))
+        .route("/pcb/libs/wizard", axum::routing::post(pcb_libs::wizard))
+        .route("/pcb/libs/bitmap", axum::routing::post(pcb_libs::bitmap))
+        .route("/pcb/libs/global", get(pcb_libs::global_index))
+        .route("/pcb/libs/global/{name}", get(pcb_libs::global_get).post(pcb_libs::global_post).delete(pcb_libs::global_delete))
+        .route("/pcb/libs/global/{name}/from-project", axum::routing::post(pcb_libs::global_from_project))
+        .route("/pcb/libs/assign/{id}", get(pcb_libs::assign))
+        .route("/pcb/variants/{id}", get(pcb_libs::variant_list))
+        .route("/pcb/{id}/variant/{name}/{file}", get(pcb_libs::variant_file))
+        .route("/pcb/blocks", get(pcb_libs::blocks_list))
         .route("/pcb/boards", get(pcb::boards))
         .route("/pcb/buy", get(pcb::buy))
         .route("/pcb/settings", get(pcb::settings_get).post(pcb::settings_post))
@@ -2390,6 +2456,8 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/{id}/gerber-check", get(pcb::gerber_check))
         .route("/pcb/{id}/layers", get(pcb::layers))
         .route("/pcb/{id}/file/{name}", get(pcb::file))
+        .route("/pcb/{id}/exports", get(pcb::exports))
+        .route("/pcb/schematic/{id}/file/{name}", get(pcb::schematic_file))
         .route("/import/{file}", axum::routing::post(import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
         .route("/images", get(pictures::list))
         .route("/images/{file}", get(pictures::get).post(pictures::add).layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)))
@@ -2422,7 +2490,7 @@ mod tests {
     }
 
     fn server_in(dir: &std::path::Path) -> Arc<Server> {
-        let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
+        let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &de_draft::DraftPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let ai = Arc::new(ai::AiConfig { repo: root.clone(), port: 0, claude: None, model: None });
         let web = dir.join("web");

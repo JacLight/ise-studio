@@ -58,6 +58,12 @@ pub struct PatternSketch {
     /// Keep the copies following the original (default true).
     #[serde(default = "yes")]
     pub linked: bool,
+    /// Linear: rows of the row (a rectangular array), the first included.
+    pub rows: Option<u32>,
+    /// mm from one row to the next.
+    pub row_spacing: Option<f64>,
+    /// Which way the rows step (default square to `direction`, anticlockwise).
+    pub row_direction: Option<[f64; 2]>,
 }
 
 /// Copies curves reflected about a line of the sketch.
@@ -97,16 +103,13 @@ fn copy_curves(cx: &mut Ctx, curves: &[Curve], map: &BTreeMap<u32, u32>, flip: b
     let mut made = vec![];
     for c in curves {
         let id = cx.id();
-        let m = |p: &u32| map[p];
-        let copy = match c {
-            Curve::Line { a, b, construction, .. } => Curve::Line { id, a: m(a), b: m(b), construction: *construction },
-            Curve::Arc { center, start, end, construction, .. } => {
-                let (s, e) = if flip { (m(end), m(start)) } else { (m(start), m(end)) };
-                Curve::Arc { id, center: m(center), start: s, end: e, construction: *construction }
-            }
-            Curve::Circle { center, construction, id: old, .. } => Curve::Circle { id, center: m(center), radius: cx.radii.get(old).copied().unwrap_or(1.0), construction: *construction },
-            Curve::Bezier { a, b, c1, c2, construction, .. } => Curve::Bezier { id, a: m(a), b: m(b), c1: m(c1), c2: m(c2), construction: *construction },
-        };
+        let mut copy = c.mapped(id, &|p| map[&p]);
+        if flip {
+            copy = copy.flipped();
+        }
+        if let Some(r) = cx.radii.get(&c.id()) {
+            copy.set_size(*r);
+        }
         cx.sketch.geometry.curves.push(copy);
         made.push((c.id(), id));
     }
@@ -117,6 +120,25 @@ impl Command for PatternSketch {
     const NAME: &'static str = "sketch.pattern";
 
     fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        if let Some(rows) = self.rows.filter(|r| *r > 1) {
+            // A rectangular array: the row, then rows of it.
+            if self.kind != PatternKind::Linear {
+                return Err(bad("rows are for a linear pattern"));
+            }
+            let d = self.direction.unwrap_or([1.0, 0.0]);
+            let across = self.row_direction.unwrap_or([-d[1], d[0]]);
+            let spacing = self.row_spacing.ok_or_else(|| bad("rows need a row spacing"))?;
+            let mut all = self.curves.clone();
+            let row = PatternSketch { rows: None, row_spacing: None, row_direction: None, ..self };
+            let (target, linked) = (row.target, row.linked);
+            let first = if row.count > 1 { row.apply(tx)? } else { json!({ "curves": [] }) };
+            all.extend(first["curves"].as_array().into_iter().flatten().filter_map(|v| v.as_u64()).map(|v| v as u32));
+            let next = PatternSketch { target, curves: all, kind: PatternKind::Linear, count: rows, spacing: Some(spacing), direction: Some(across), angle: None, center: None, linked, rows: None, row_spacing: None, row_direction: None };
+            let second = next.apply(tx)?;
+            let mut made: Vec<Value> = first["curves"].as_array().cloned().unwrap_or_default();
+            made.extend(second["curves"].as_array().cloned().unwrap_or_default());
+            return Ok(json!({ "id": target, "curves": made, "key": first.get("key").cloned().unwrap_or(Value::Null), "row_key": second["key"] }));
+        }
         if self.count < 2 {
             return Err(bad("a pattern needs a count of 2 or more (the original included)"));
         }
@@ -187,7 +209,7 @@ impl Command for PatternSketch {
             let pairs = copy_curves(&mut cx, &curves, &map, false);
             if self.linked {
                 for (old, new) in &pairs {
-                    if matches!(curves.iter().find(|c| c.id() == *old), Some(Curve::Circle { .. })) {
+                    if curves.iter().find(|c| c.id() == *old).is_some_and(|c| c.size().is_some()) {
                         cx.sketch.geometry.constraints.push(Constraint::Equal { a: *old, b: *new });
                     }
                 }
@@ -293,7 +315,7 @@ impl Command for MirrorSketch {
         let pairs = copy_curves(&mut cx, &curves, &map, true);
         if self.linked {
             for (old, new) in &pairs {
-                if matches!(curves.iter().find(|c| c.id() == *old), Some(Curve::Circle { .. })) {
+                if curves.iter().find(|c| c.id() == *old).is_some_and(|c| c.size().is_some()) {
                     links.push(Constraint::Equal { a: *old, b: *new });
                 }
             }

@@ -335,7 +335,7 @@ pub fn silk(view: &BoardView, top: bool) -> String {
         for l in &comp.silk {
             g.polyline(w, "Other,Outline", l, &[("C", field(&comp.reference))]);
         }
-        if comp.kind != "hole" {
+        if comp.kind != "hole" && comp.kind != "logo" {
             for l in crate::font::strokes(&comp.reference, comp.label, view.rules.silk_height, !top) {
                 g.polyline(w, "Other,Reference", &l, &[]);
             }

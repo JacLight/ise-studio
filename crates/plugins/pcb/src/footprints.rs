@@ -64,6 +64,122 @@ pub struct Pad {
     /// convex hull (never closer than the copper really is); outputs draw the outline itself.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub polygon: Vec<[f64; 2]>,
+    /// Chamfered corners, trapezoids, a per-layer pad stack, the pad's own
+    /// thermal-relief settings and an offset drill (flattened into the pad's JSON).
+    #[serde(flatten)]
+    pub extra: PadExtra,
+}
+
+/// Corners cut off a rectangular pad at 45°.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Chamfer {
+    /// Chamfer size as a fraction of the shorter side (0 to 0.5).
+    pub ratio: f64,
+    /// Which corners: top_left, top_right, bottom_left, bottom_right (y up, before rotation).
+    pub corners: Vec<String>,
+}
+
+/// One copper layer group's pad in a pad stack.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct StackLayer {
+    #[serde(default)]
+    pub shape: PadShape,
+    pub size: [f64; 2],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner: Option<f64>,
+}
+
+/// A through-hole pad's copper per layer: the pad itself on the component's
+/// side, `inner` on inner layers, `opposite` on the far side. `remove_inner`
+/// leaves no copper on inner layers (only the plated barrel).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PadStack {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inner: Option<StackLayer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opposite: Option<StackLayer>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remove_inner: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PadExtra {
+    /// Chamfered rectangle: the pad becomes that outline (shape `custom`, `polygon` written from `size`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chamfer: Option<Chamfer>,
+    /// Trapezoid [dx, dy] (KiCad's rect_delta): the left edge is dx taller than the right, the
+    /// bottom edge dy wider than the top. The pad becomes that outline (shape `custom`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trapezoid: Option<[f64; 2]>,
+    /// Per-layer copper of a through-hole pad.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stack: Option<PadStack>,
+    /// How this pad joins a pour of its net, overriding the zone's setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zone_connection: Option<crate::PadConnection>,
+    /// Thermal relief gap and spoke width for this pad (mm), overriding the zone's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thermal_gap: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thermal_spoke: Option<f64>,
+    /// The hole's centre relative to the pad's centre (pad coordinates, before rotation), mm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drill_offset: Option<[f64; 2]>,
+    /// No solder paste on this pad (a copper logo, a test point, a heat-sink area soldered by hand).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_paste: bool,
+}
+
+impl Pad {
+    /// Write the outline of a chamfered or trapezoid pad (from `size`) into `polygon`, shape `custom`.
+    pub fn normalize(&mut self) {
+        let (w, h) = (self.size[0], self.size[1]);
+        let (hx, hy) = (w / 2.0, h / 2.0);
+        if let Some(c) = &self.extra.chamfer {
+            let k = c.ratio.clamp(0.0, 0.5) * w.min(h);
+            let has = |n: &str| c.corners.iter().any(|x| x == n);
+            let mut pts = Vec::new();
+            // Counter-clockwise from the bottom-left corner.
+            for (corner, p, a, b) in [
+                ("bottom_left", [-hx, -hy], [-hx, -hy + k], [-hx + k, -hy]),
+                ("bottom_right", [hx, -hy], [hx - k, -hy], [hx, -hy + k]),
+                ("top_right", [hx, hy], [hx, hy - k], [hx - k, hy]),
+                ("top_left", [-hx, hy], [-hx + k, hy], [-hx, hy - k]),
+            ] {
+                if has(corner) && k > 1e-9 {
+                    pts.push([r6(a[0]), r6(a[1])]);
+                    pts.push([r6(b[0]), r6(b[1])]);
+                } else {
+                    pts.push([r6(p[0]), r6(p[1])]);
+                }
+            }
+            self.shape = PadShape::Custom;
+            self.polygon = pts;
+        } else if let Some([dx, dy]) = self.extra.trapezoid {
+            let (ex, ey) = (dx / 2.0, dy / 2.0);
+            self.shape = PadShape::Custom;
+            self.polygon = vec![[r6(-hx - ey), r6(-hy - ex)], [r6(hx + ey), r6(-hy + ex)], [r6(hx - ey), r6(hy - ex)], [r6(-hx + ey), r6(hy + ex)]];
+        }
+    }
+}
+
+/// A pad as it is on each group of copper layers: `(pad, Some(layers))` per
+/// stack layer, or the pad itself on its usual layers (`None`). `layers` are
+/// the board's copper layers top first; `bottom`: the part is on the bottom side.
+pub fn stack_variants(p: &Pad, layers: &[String], bottom: bool) -> Vec<(Pad, Option<Vec<String>>)> {
+    let Some(stack) = p.extra.stack.as_ref().filter(|_| p.kind == PadKind::Tht && layers.len() >= 2) else { return vec![(p.clone(), None)] };
+    let n = layers.len();
+    let (near, far) = if bottom { (layers[n - 1].clone(), layers[0].clone()) } else { (layers[0].clone(), layers[n - 1].clone()) };
+    let inner: Vec<String> = layers[1..n - 1].to_vec();
+    let with = |l: &StackLayer| Pad { shape: l.shape, size: l.size, corner: l.corner, polygon: vec![], extra: PadExtra { chamfer: None, trapezoid: None, ..p.extra.clone() }, ..p.clone() };
+    let mut out = vec![(p.clone(), Some(vec![near]))];
+    let far_pad = stack.opposite.as_ref().map(with).unwrap_or_else(|| p.clone());
+    out.push((far_pad, Some(vec![far])));
+    if !inner.is_empty() && !stack.remove_inner {
+        let pad = stack.inner.as_ref().map(with).unwrap_or_else(|| p.clone());
+        out.push((pad, Some(inner)));
+    }
+    out
 }
 
 fn is_zero(v: &f64) -> bool {
@@ -183,7 +299,7 @@ impl Footprint {
 }
 
 /// The parts of segment a→b that stay `keep` mm clear of every copper pad.
-fn clip_off_pads(a: [f64; 2], b: [f64; 2], pads: &[Pad], keep: f64) -> Vec<Vec<[f64; 2]>> {
+pub(crate) fn clip_off_pads(a: [f64; 2], b: [f64; 2], pads: &[Pad], keep: f64) -> Vec<Vec<[f64; 2]>> {
     let n = 200;
     let mut out = Vec::new();
     let mut run: Option<[f64; 2]> = None;
@@ -247,7 +363,7 @@ pub fn pad_polygon(p: &Pad, at: [f64; 2], rotation: f64, bottom: bool) -> Vec<[f
     out
 }
 
-fn round_out(v: f64, up: bool) -> f64 {
+pub(crate) fn round_out(v: f64, up: bool) -> f64 {
     let g = 0.01;
     if up { (v / g - 1e-9).ceil() * g } else { (v / g + 1e-9).floor() * g }
 }
@@ -327,27 +443,27 @@ pub fn land(l: Range, t: Range, w: Range, goals: Goals) -> Land {
     Land { z, g, x, length: r6((z - g) / 2.0), width: x, center: r6((z + g) / 4.0) }
 }
 
-fn r6(v: f64) -> f64 {
+pub(crate) fn r6(v: f64) -> f64 {
     (v * 1e6).round() / 1e6
 }
 
-fn smd(number: impl Into<String>, at: [f64; 2], size: [f64; 2]) -> Pad {
-    Pad { number: number.into(), kind: PadKind::Smd, shape: PadShape::RoundRect, size, at, rotation: 0.0, drill: None, corner: Some(0.25), paste: vec![], polygon: vec![] }
+pub(crate) fn smd(number: impl Into<String>, at: [f64; 2], size: [f64; 2]) -> Pad {
+    Pad { number: number.into(), kind: PadKind::Smd, shape: PadShape::RoundRect, size, at, rotation: 0.0, drill: None, corner: Some(0.25), paste: vec![], polygon: vec![], extra: Default::default() }
 }
 
-fn tht(number: impl Into<String>, at: [f64; 2], size: [f64; 2], drill: f64, shape: PadShape) -> Pad {
-    Pad { number: number.into(), kind: PadKind::Tht, shape, size, at, rotation: 0.0, drill: Some([drill, drill]), corner: None, paste: vec![], polygon: vec![] }
+pub(crate) fn tht(number: impl Into<String>, at: [f64; 2], size: [f64; 2], drill: f64, shape: PadShape) -> Pad {
+    Pad { number: number.into(), kind: PadKind::Tht, shape, size, at, rotation: 0.0, drill: Some([drill, drill]), corner: None, paste: vec![], polygon: vec![], extra: Default::default() }
 }
 
-fn body(at: [f64; 2], size: [f64; 2], z: [f64; 2], material: &str) -> BodyPart {
+pub(crate) fn body(at: [f64; 2], size: [f64; 2], z: [f64; 2], material: &str) -> BodyPart {
     BodyPart { shape: BodyShape::Box, at, size, z, material: material.into() }
 }
 
-fn cyl(at: [f64; 2], d: f64, z: [f64; 2], material: &str) -> BodyPart {
+pub(crate) fn cyl(at: [f64; 2], d: f64, z: [f64; 2], material: &str) -> BodyPart {
     BodyPart { shape: BodyShape::Cylinder, at, size: [d, d], z, material: material.into() }
 }
 
-fn with_courtyard(mut f: Footprint, excess: f64) -> Footprint {
+pub(crate) fn with_courtyard(mut f: Footprint, excess: f64) -> Footprint {
     let mut b = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
     for p in &f.pads {
         let pb = pad_prim(p, [0.0, 0.0], 0.0, false).bbox();
@@ -553,7 +669,7 @@ fn qfn32() -> Footprint {
     // Paste on the exposed pad as a 2 × 2 windowpane, about 55 % of its area.
     let w = 1.25;
     let o = 0.8;
-    let mut epad = Pad { number: "33".into(), kind: PadKind::Smd, shape: PadShape::Rect, size: [ep, ep], at: [0.0, 0.0], rotation: 0.0, drill: None, corner: None, paste: vec![], polygon: vec![] };
+    let mut epad = Pad { number: "33".into(), kind: PadKind::Smd, shape: PadShape::Rect, size: [ep, ep], at: [0.0, 0.0], rotation: 0.0, drill: None, corner: None, paste: vec![], polygon: vec![], extra: Default::default() };
     epad.paste = vec![[-o, -o, w, w], [o, -o, w, w], [-o, o, w, w], [o, o, w, w]];
     pads.push(epad);
     let f = Footprint {
@@ -691,14 +807,14 @@ fn usb_c_16() -> Footprint {
     for (num, x) in [("B8", -1.75), ("A5", -1.25), ("B7", -0.75), ("A6", -0.25), ("A7", 0.25), ("B6", 0.75), ("A8", 1.25), ("B5", 1.75)] {
         pads.push(smd(num, [x, y], [0.3, len]));
     }
-    let slot = |at: [f64; 2], pad: [f64; 2], hole: [f64; 2]| Pad { number: "S1".into(), kind: PadKind::Tht, shape: PadShape::Oval, size: pad, at, rotation: 0.0, drill: Some(hole), corner: None, paste: vec![], polygon: vec![] };
+    let slot = |at: [f64; 2], pad: [f64; 2], hole: [f64; 2]| Pad { number: "S1".into(), kind: PadKind::Tht, shape: PadShape::Oval, size: pad, at, rotation: 0.0, drill: Some(hole), corner: None, paste: vec![], polygon: vec![], extra: Default::default() };
     for x in [-4.325, 4.325] {
         // The drawing's pads are 0.9 mm wide (a 0.15 mm ring); 1.0 mm gives 0.2 mm, above JLCPCB's 0.18 mm minimum.
         pads.push(slot([x, 3.13], [1.0, 2.1], [0.6, 1.7]));
         pads.push(slot([x, 3.13 - 4.18], [1.0, 1.8], [0.6, 1.4]));
     }
     for x in [-2.89, 2.89] {
-        pads.push(Pad { number: "".into(), kind: PadKind::Npth, shape: PadShape::Circle, size: [0.6, 0.6], at: [x, 2.6], rotation: 0.0, drill: Some([0.6, 0.6]), corner: None, paste: vec![], polygon: vec![] });
+        pads.push(Pad { number: "".into(), kind: PadKind::Npth, shape: PadShape::Circle, size: [0.6, 0.6], at: [x, 2.6], rotation: 0.0, drill: Some([0.6, 0.6]), corner: None, paste: vec![], polygon: vec![], extra: Default::default() });
     }
     let f = Footprint {
         name: "USB-C_16P".into(),
@@ -744,7 +860,7 @@ fn esp32_wroom_32() -> Footprint {
         let (i, j) = ((k % 3) as f64 - 1.0, (k / 3) as f64 - 1.0);
         [gc[0] + i * 1.4, gc[1] + j * 1.4, 0.9, 0.9]
     }).collect();
-    pads.push(Pad { number: "39".into(), kind: PadKind::Smd, shape: PadShape::Rect, size: [3.7, 3.7], at: gc, rotation: 0.0, drill: None, corner: None, paste: windows, polygon: vec![] });
+    pads.push(Pad { number: "39".into(), kind: PadKind::Smd, shape: PadShape::Rect, size: [3.7, 3.7], at: gc, rotation: 0.0, drill: None, corner: None, paste: windows, polygon: vec![], extra: Default::default() });
     let f = Footprint {
         name: "ESP32-WROOM-32".into(),
         description: "Espressif ESP32-WROOM-32E Wi-Fi/Bluetooth module (LCSC C701341), 18 × 25.5 × 3.1 mm, 38 pads at 1.27 mm + GND pad 39; antenna at +y (top 6.19 mm): keep copper away, ideally overhang the board edge".into(),
@@ -770,9 +886,9 @@ fn mounting_hole(m: u32, plated: bool) -> Footprint {
     };
     let keep = head + 0.5;
     let pad = if plated {
-        Pad { number: "1".into(), kind: PadKind::Tht, shape: PadShape::Circle, size: [keep, keep], at: [0.0, 0.0], rotation: 0.0, drill: Some([hole, hole]), corner: None, paste: vec![], polygon: vec![] }
+        Pad { number: "1".into(), kind: PadKind::Tht, shape: PadShape::Circle, size: [keep, keep], at: [0.0, 0.0], rotation: 0.0, drill: Some([hole, hole]), corner: None, paste: vec![], polygon: vec![], extra: Default::default() }
     } else {
-        Pad { number: "".into(), kind: PadKind::Npth, shape: PadShape::Circle, size: [hole, hole], at: [0.0, 0.0], rotation: 0.0, drill: Some([hole, hole]), corner: None, paste: vec![], polygon: vec![] }
+        Pad { number: "".into(), kind: PadKind::Npth, shape: PadShape::Circle, size: [hole, hole], at: [0.0, 0.0], rotation: 0.0, drill: Some([hole, hole]), corner: None, paste: vec![], polygon: vec![], extra: Default::default() }
     };
     let label = if m == 25 { "M2.5".to_string() } else { format!("M{m}") };
     let mut f = Footprint {

@@ -1,24 +1,33 @@
 //! Sketches: 2D geometry drawn by people, held exact by constraints.
 //!
-//! A sketch is points, lines, circles and arcs on a plane, plus constraints
-//! (coincident, horizontal, vertical, parallel, perpendicular, equal,
-//! tangent, point on curve, fixed, symmetric, and the steps of linear and
-//! circular patterns) and dimensions. Every dimension is a
-//! parameter of the sketch, so it can be typed, scrubbed, driven by a formula
-//! (`=Desk size.width - 40`) or read by other shapes, the same as any other
-//! parameter. Nothing follows anything implicitly.
+//! A sketch is points and curves on a plane (lines, circles and arcs,
+//! ellipses and arcs of ellipses, hyperbolas and parabolas, cubic Béziers
+//! and B-splines of any degree, rational or not, open or periodic), plus
+//! constraints (coincident, point on curve, horizontal, vertical, parallel,
+//! perpendicular, tangent, equal, symmetric about a line or a point, fixed,
+//! block, internal alignment of a conic's axes and foci, Snell's law, and the
+//! steps of linear and circular patterns) and dimensions. Every dimension is
+//! a parameter of the sketch, so it can be typed, scrubbed, driven by a
+//! formula (`=Desk size.width - 40`) or read by other shapes, the same as any
+//! other parameter. A dimension can be a reference (measured, not driving),
+//! and any constraint can be switched off without losing it. Nothing follows
+//! anything implicitly.
 //!
-//! The solver moves the points as little as possible to satisfy every
-//! constraint (damped least squares from where they are), so editing one
-//! dimension leaves the rest of the drawing where it was. It reports how many
-//! degrees of freedom remain, and which constraints conflict when they do.
+//! The solver (solver.rs) moves the points as little as possible to satisfy
+//! every constraint. It reports how many degrees of freedom remain and which
+//! points can still move, and which constraints conflict, are redundant or
+//! are malformed.
 //!
 //! Closed loops become profiles: outer outlines counter-clockwise, holes
-//! clockwise, arcs kept as arcs for the exact kernel.
+//! clockwise, arcs kept as arcs and conics and splines as exact rational
+//! B-splines for the exact kernel.
 
+use crate::curves::{Geo, Nurbs};
 use de_core::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
+
+pub use crate::solver::solve;
 
 /// Where a sketch lies: an origin and two in-plane axes (mm, unit vectors).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -39,6 +48,15 @@ impl Plane {
         let (a, b) = (self.x, self.y);
         [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
     }
+    /// A sketch point in the world (mm).
+    pub fn to_world(&self, p: [f64; 2]) -> [f64; 3] {
+        [0, 1, 2].map(|k| self.origin[k] + self.x[k] * p[0] + self.y[k] * p[1])
+    }
+    /// A world point in sketch coordinates (dropped square onto the plane).
+    pub fn to_local(&self, w: [f64; 3]) -> [f64; 2] {
+        let d = [w[0] - self.origin[0], w[1] - self.origin[1], w[2] - self.origin[2]];
+        [d[0] * self.x[0] + d[1] * self.x[1] + d[2] * self.x[2], d[0] * self.y[0] + d[1] * self.y[1] + d[2] * self.y[2]]
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -46,6 +64,10 @@ pub struct Point {
     pub id: u32,
     pub x: f64,
     pub y: f64,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -59,23 +81,183 @@ pub enum Curve {
     /// and `c2` (arriving at `b`). All four are points: the solver moves them
     /// like any other, and constraints and dimensions can hold them.
     Bezier { id: u32, a: u32, b: u32, c1: u32, c2: u32, #[serde(default)] construction: bool },
+    /// A whole ellipse: its centre, `major` the end of one semi-axis (its
+    /// length and direction), `minor` the other semi-axis (mm; the solver
+    /// moves it like a circle's radius).
+    Ellipse { id: u32, center: u32, major: u32, minor: f64, #[serde(default)] construction: bool },
+    /// Part of an ellipse, counter-clockwise from `start` to `end` (both held on it).
+    EllipseArc { id: u32, center: u32, major: u32, minor: f64, start: u32, end: u32, #[serde(default)] construction: bool },
+    /// Part of one branch of a hyperbola: `center`, `major` its vertex (the
+    /// branch opens away from the centre through it), `minor` the conjugate
+    /// semi-axis; from `start` to `end`, both held on it.
+    HyperbolaArc { id: u32, center: u32, major: u32, minor: f64, start: u32, end: u32, #[serde(default)] construction: bool },
+    /// Part of a parabola with this `vertex` and `focus`, from `start` to `end` (both held on it).
+    ParabolaArc { id: u32, vertex: u32, focus: u32, start: u32, end: u32, #[serde(default)] construction: bool },
+    /// A B-spline on its control points (`poles`, points the solver moves).
+    /// `degree` 1 or more; `weights` (one per pole, default all 1) make it
+    /// rational (NURBS); `knots` and `mults` are the distinct knots and how
+    /// often each repeats (default uniform, the ends repeated degree + 1
+    /// times so the curve starts at the first pole and ends at the last).
+    /// `periodic`: closed and smooth all round (uniform knots).
+    #[serde(rename = "bspline")]
+    BSpline {
+        id: u32,
+        poles: Vec<u32>,
+        degree: u32,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        weights: Vec<f64>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        knots: Vec<f64>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        mults: Vec<u32>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        periodic: bool,
+        #[serde(default)]
+        construction: bool,
+    },
 }
 
 impl Curve {
     pub fn id(&self) -> u32 {
         match self {
-            Curve::Line { id, .. } | Curve::Arc { id, .. } | Curve::Circle { id, .. } | Curve::Bezier { id, .. } => *id,
+            Curve::Line { id, .. }
+            | Curve::Arc { id, .. }
+            | Curve::Circle { id, .. }
+            | Curve::Bezier { id, .. }
+            | Curve::Ellipse { id, .. }
+            | Curve::EllipseArc { id, .. }
+            | Curve::HyperbolaArc { id, .. }
+            | Curve::ParabolaArc { id, .. }
+            | Curve::BSpline { id, .. } => *id,
         }
     }
     pub fn construction(&self) -> bool {
         match self {
-            Curve::Line { construction, .. } | Curve::Arc { construction, .. } | Curve::Circle { construction, .. } | Curve::Bezier { construction, .. } => *construction,
+            Curve::Line { construction, .. }
+            | Curve::Arc { construction, .. }
+            | Curve::Circle { construction, .. }
+            | Curve::Bezier { construction, .. }
+            | Curve::Ellipse { construction, .. }
+            | Curve::EllipseArc { construction, .. }
+            | Curve::HyperbolaArc { construction, .. }
+            | Curve::ParabolaArc { construction, .. }
+            | Curve::BSpline { construction, .. } => *construction,
         }
+    }
+    pub fn set_construction(&mut self, on: bool) {
+        match self {
+            Curve::Line { construction, .. }
+            | Curve::Arc { construction, .. }
+            | Curve::Circle { construction, .. }
+            | Curve::Bezier { construction, .. }
+            | Curve::Ellipse { construction, .. }
+            | Curve::EllipseArc { construction, .. }
+            | Curve::HyperbolaArc { construction, .. }
+            | Curve::ParabolaArc { construction, .. }
+            | Curve::BSpline { construction, .. } => *construction = on,
+        }
+    }
+    pub fn set_id(&mut self, new: u32) {
+        match self {
+            Curve::Line { id, .. }
+            | Curve::Arc { id, .. }
+            | Curve::Circle { id, .. }
+            | Curve::Bezier { id, .. }
+            | Curve::Ellipse { id, .. }
+            | Curve::EllipseArc { id, .. }
+            | Curve::HyperbolaArc { id, .. }
+            | Curve::ParabolaArc { id, .. }
+            | Curve::BSpline { id, .. } => *id = new,
+        }
+    }
+    /// Every point the curve is built on: its ends first, then centres, handles, poles.
+    pub fn points(&self) -> Vec<u32> {
+        match self {
+            Curve::Line { a, b, .. } => vec![*a, *b],
+            Curve::Arc { center, start, end, .. } => vec![*center, *start, *end],
+            Curve::Circle { center, .. } => vec![*center],
+            Curve::Bezier { a, b, c1, c2, .. } => vec![*a, *b, *c1, *c2],
+            Curve::Ellipse { center, major, .. } => vec![*center, *major],
+            Curve::EllipseArc { center, major, start, end, .. } | Curve::HyperbolaArc { center, major, start, end, .. } => vec![*center, *major, *start, *end],
+            Curve::ParabolaArc { vertex, focus, start, end, .. } => vec![*vertex, *focus, *start, *end],
+            Curve::BSpline { poles, .. } => poles.clone(),
+        }
+    }
+    /// Where it starts and ends (none for a closed curve).
+    pub fn ends(&self) -> Option<(u32, u32)> {
+        match self {
+            Curve::Line { a, b, .. } | Curve::Bezier { a, b, .. } => Some((*a, *b)),
+            Curve::Arc { start, end, .. } | Curve::EllipseArc { start, end, .. } | Curve::HyperbolaArc { start, end, .. } | Curve::ParabolaArc { start, end, .. } => Some((*start, *end)),
+            Curve::BSpline { poles, periodic: false, .. } => Some((poles[0], *poles.last()?)),
+            _ => None,
+        }
+    }
+    /// Its own size, held by the solver like a point (a circle's radius, a conic's minor semi-axis).
+    pub fn size(&self) -> Option<f64> {
+        match self {
+            Curve::Circle { radius, .. } => Some(*radius),
+            Curve::Ellipse { minor, .. } | Curve::EllipseArc { minor, .. } | Curve::HyperbolaArc { minor, .. } => Some(*minor),
+            _ => None,
+        }
+    }
+    pub fn set_size(&mut self, v: f64) {
+        match self {
+            Curve::Circle { radius, .. } => *radius = v,
+            Curve::Ellipse { minor, .. } | Curve::EllipseArc { minor, .. } | Curve::HyperbolaArc { minor, .. } => *minor = v,
+            _ => {}
+        }
+    }
+    /// The same curve on other points (`map` from old point ids to new).
+    pub fn mapped(&self, id: u32, map: &dyn Fn(u32) -> u32) -> Curve {
+        let mut c = self.clone();
+        c.set_id(id);
+        match &mut c {
+            Curve::Line { a, b, .. } => (*a, *b) = (map(*a), map(*b)),
+            Curve::Arc { center, start, end, .. } => (*center, *start, *end) = (map(*center), map(*start), map(*end)),
+            Curve::Circle { center, .. } => *center = map(*center),
+            Curve::Bezier { a, b, c1, c2, .. } => (*a, *b, *c1, *c2) = (map(*a), map(*b), map(*c1), map(*c2)),
+            Curve::Ellipse { center, major, .. } => (*center, *major) = (map(*center), map(*major)),
+            Curve::EllipseArc { center, major, start, end, .. } | Curve::HyperbolaArc { center, major, start, end, .. } => {
+                (*center, *major, *start, *end) = (map(*center), map(*major), map(*start), map(*end))
+            }
+            Curve::ParabolaArc { vertex, focus, start, end, .. } => (*vertex, *focus, *start, *end) = (map(*vertex), map(*focus), map(*start), map(*end)),
+            Curve::BSpline { poles, .. } => {
+                for p in poles.iter_mut() {
+                    *p = map(*p);
+                }
+            }
+        }
+        c
+    }
+    /// The same curve reflected (it runs the other way round: arcs swap their ends).
+    pub fn flipped(&self) -> Curve {
+        let mut c = self.clone();
+        match &mut c {
+            Curve::Arc { start, end, .. } | Curve::EllipseArc { start, end, .. } => std::mem::swap(start, end),
+            _ => {}
+        }
+        c
     }
 }
 
 /// A dimension's value: a sketch parameter (by key), so it can be linked.
 pub type DimKey = String;
+
+/// What an internal-alignment constraint ties to a conic or spline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    /// A line from end to end of the major axis (through the centre).
+    MajorAxis,
+    /// A line from end to end of the minor axis.
+    MinorAxis,
+    /// A point at the focus on the `major` side.
+    Focus1,
+    /// A point at the other focus.
+    Focus2,
+    /// A point at knot `index` of a B-spline.
+    Knot,
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -84,14 +266,23 @@ pub enum Constraint {
     Horizontal { line: u32 },
     Vertical { line: u32 },
     Parallel { a: u32, b: u32 },
-    Perpendicular { a: u32, b: u32 },
-    /// Same length (lines) or radius (circles, arcs).
+    /// Two lines square; a line through a circle's or arc's centre; or, at
+    /// point `at` (a shared end, or a point held on both), two curves square.
+    Perpendicular {
+        a: u32,
+        b: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at: Option<u32>,
+    },
+    /// Same length (lines), radius (circles, arcs) or both semi-axes (ellipses).
     Equal { a: u32, b: u32 },
-    /// A point on a line (extended) or a circle or arc.
+    /// A point on a curve: a line (extended), a circle, an arc's or a conic's
+    /// whole curve, a Bézier or a B-spline.
     OnCurve { point: u32, curve: u32 },
-    /// A line tangent to a circle or arc, or two circles or arcs tangent; or,
-    /// where two curves share an end (Béziers included), one smooth join.
-    /// `at` names the shared point when they share both ends (a two-curve loop).
+    /// Two curves tangent. Apart: a line and a circle, arc or conic, or two
+    /// circles or arcs. At point `at` (or where they share an end): any two
+    /// curves, one smooth join; a point that is not an end of a curve is
+    /// held on it too (tangent via a point).
     Tangent {
         a: u32,
         b: u32,
@@ -101,15 +292,21 @@ pub enum Constraint {
     Midpoint { point: u32, line: u32 },
     /// Pins a point where it is.
     Fixed { point: u32, x: f64, y: f64 },
-    /// Point-to-point distance, or a line's length (a = b = the line).
+    /// Holds a whole curve as it is (its points and size), so it can be
+    /// drawn against without dimensioning it.
+    Block { curve: u32 },
+    /// Distance between any two of: points, lines (parallel: the gap; a
+    /// point and a line: square to it), circles and arcs (edge to edge), and
+    /// a point and any curve. A line's length when a = b = the line.
     Distance { a: u32, b: u32, key: DimKey },
-    /// Signed X or Y offset from point a to point b.
+    /// Signed X or Y offset from point a to point b; a point's own X or Y
+    /// (from the sketch origin) when a = b.
     HorizontalDistance { a: u32, b: u32, key: DimKey },
     VerticalDistance { a: u32, b: u32, key: DimKey },
     Length { line: u32, key: DimKey },
     Radius { curve: u32, key: DimKey },
     Diameter { curve: u32, key: DimKey },
-    /// Angle from line a to line b, degrees.
+    /// Angle from line a to line b, degrees; an arc's sweep when a = b = the arc.
     Angle { a: u32, b: u32, key: DimKey },
     /// Point b is point a moved by line `along` (its start to its end): one
     /// step of a linear pattern. Editing the original moves its copies.
@@ -117,8 +314,26 @@ pub enum Constraint {
     /// Point b is point a turned about the start of line `from` by the angle
     /// from line `from` to line `to`: one step of a circular pattern.
     Rotate { a: u32, b: u32, from: u32, to: u32 },
-    /// Points a and b mirror each other about line `line` (extended).
+    /// Points a and b mirror each other about `line` (a line, extended), or
+    /// about a point (`line` names a point: it is their midpoint).
     Symmetric { a: u32, b: u32, line: u32 },
+    /// Snell's law: ray `a` arrives at point `at` on `boundary` and ray `b`
+    /// leaves it; n₁·sin θ₁ = n₂·sin θ₂, `key` holding n₂ / n₁.
+    Snell { a: u32, b: u32, boundary: u32, at: u32, key: DimKey },
+    /// Construction geometry tied to a conic's axes or foci, or a point to a
+    /// B-spline's knot (`index`, counting distinct knots from 0).
+    InternalAlignment {
+        curve: u32,
+        element: u32,
+        role: Role,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        index: Option<u32>,
+    },
+    /// A dimension that measures and does not drive (its key's value is
+    /// what the drawing measures).
+    Reference { of: Box<Constraint> },
+    /// A constraint switched off: kept, shown, and not solved.
+    Inactive { of: Box<Constraint> },
 }
 
 impl Constraint {
@@ -130,9 +345,65 @@ impl Constraint {
             | Constraint::Length { key, .. }
             | Constraint::Radius { key, .. }
             | Constraint::Diameter { key, .. }
-            | Constraint::Angle { key, .. } => Some(key),
+            | Constraint::Angle { key, .. }
+            | Constraint::Snell { key, .. } => Some(key),
+            Constraint::Reference { of } | Constraint::Inactive { of } => of.key(),
             _ => None,
         }
+    }
+    /// The constraint itself, out of a reference or off switch.
+    pub fn inner(&self) -> &Constraint {
+        match self {
+            Constraint::Reference { of } | Constraint::Inactive { of } => of.inner(),
+            c => c,
+        }
+    }
+    /// The points and curves it refers to.
+    pub fn ids(&self) -> Vec<u32> {
+        match self {
+            Constraint::Coincident { a, b }
+            | Constraint::Parallel { a, b }
+            | Constraint::Equal { a, b }
+            | Constraint::Distance { a, b, .. }
+            | Constraint::HorizontalDistance { a, b, .. }
+            | Constraint::VerticalDistance { a, b, .. }
+            | Constraint::Angle { a, b, .. } => vec![*a, *b],
+            Constraint::Perpendicular { a, b, at } | Constraint::Tangent { a, b, at } => [*a, *b].into_iter().chain(*at).collect(),
+            Constraint::Horizontal { line } | Constraint::Vertical { line } => vec![*line],
+            Constraint::OnCurve { point, curve } => vec![*point, *curve],
+            Constraint::Midpoint { point, line } => vec![*point, *line],
+            Constraint::Fixed { point, .. } => vec![*point],
+            Constraint::Block { curve } => vec![*curve],
+            Constraint::Length { line, .. } => vec![*line],
+            Constraint::Radius { curve, .. } | Constraint::Diameter { curve, .. } => vec![*curve],
+            Constraint::Translate { a, b, along } => vec![*a, *b, *along],
+            Constraint::Rotate { a, b, from, to } => vec![*a, *b, *from, *to],
+            Constraint::Symmetric { a, b, line } => vec![*a, *b, *line],
+            Constraint::Snell { a, b, boundary, at, .. } => vec![*a, *b, *boundary, *at],
+            Constraint::InternalAlignment { curve, element, .. } => vec![*curve, *element],
+            Constraint::Reference { of } | Constraint::Inactive { of } => of.ids(),
+        }
+    }
+    /// The same constraint on other points and curves.
+    pub fn mapped(&self, map: &dyn Fn(u32) -> u32) -> Constraint {
+        let mut v = serde_json::to_value(self).unwrap();
+        fn walk(v: &mut serde_json::Value, map: &dyn Fn(u32) -> u32) {
+            if let serde_json::Value::Object(m) = v {
+                for (k, x) in m.iter_mut() {
+                    match k.as_str() {
+                        "kind" | "key" | "x" | "y" | "role" | "index" => {}
+                        "of" => walk(x, map),
+                        _ => {
+                            if let Some(n) = x.as_u64() {
+                                *x = serde_json::Value::from(map(n as u32));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        walk(&mut v, map);
+        serde_json::from_value(v).unwrap()
     }
 }
 
@@ -144,443 +415,176 @@ pub struct Geometry {
     pub constraints: Vec<Constraint>,
 }
 
+impl Geometry {
+    /// The next free id for a point or curve.
+    pub fn next_id(&self) -> u32 {
+        self.points.iter().map(|p| p.id).chain(self.curves.iter().map(Curve::id)).max().unwrap_or(0) + 1
+    }
+}
+
 // ---- Solving -------------------------------------------------------------------
 
 /// What solving found.
-#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, JsonSchema)]
 pub struct Solved {
     /// Points where the constraints put them.
     pub points: BTreeMap<u32, [f64; 2]>,
-    /// Circle radii.
+    /// Circle radii, and the minor semi-axes of ellipses and hyperbolas.
     pub radii: BTreeMap<u32, f64>,
     /// Degrees of freedom left (0 = fully constrained).
     pub free: usize,
     /// Indices of constraints that cannot all hold together (empty when solved).
     pub conflicts: Vec<usize>,
+    /// Indices of constraints that hold but add nothing (others already
+    /// fix what they would): removing them changes nothing.
+    #[serde(default)]
+    pub redundant: Vec<usize>,
+    /// Constraints part of which is already fixed by others (e.g. a
+    /// coincidence where one coordinate is already held).
+    #[serde(default)]
+    pub partially_redundant: Vec<usize>,
+    /// Constraints that make no sense for what they refer to (e.g. two
+    /// lines tangent); they are left out of the solve.
+    #[serde(default)]
+    pub malformed: Vec<usize>,
+    /// Points that can still move (some freedom left in them).
+    #[serde(default)]
+    pub free_points: Vec<u32>,
+    /// Curves that can still move or change size.
+    #[serde(default)]
+    pub free_curves: Vec<u32>,
+    /// Every dimension's value as the drawing measures it, by key (a
+    /// reference dimension's only value).
+    #[serde(default)]
+    pub measured: BTreeMap<String, f64>,
     /// Largest remaining error (mm).
     pub residual: f64,
 }
 
-/// Unknowns: every point's x and y, every circle's radius.
-struct Vars {
-    point: HashMap<u32, usize>,
-    radius: HashMap<u32, usize>,
-    values: Vec<f64>,
-}
+// ---- Curve geometry ---------------------------------------------------------------
 
-fn vars(g: &Geometry) -> Vars {
-    let mut v = Vars { point: HashMap::new(), radius: HashMap::new(), values: Vec::new() };
-    for p in &g.points {
-        v.point.insert(p.id, v.values.len());
-        v.values.extend([p.x, p.y]);
-    }
-    for c in &g.curves {
-        if let Curve::Circle { id, radius, .. } = c {
-            v.radius.insert(*id, v.values.len());
-            v.values.push(*radius);
-        }
-    }
-    v
-}
-
-struct Ctx<'a> {
-    g: &'a Geometry,
-    vars: &'a Vars,
-    dims: &'a BTreeMap<String, f64>,
-    curves: HashMap<u32, &'a Curve>,
-}
-
-impl Ctx<'_> {
-    fn p(&self, x: &[f64], id: u32) -> Option<[f64; 2]> {
-        let i = *self.vars.point.get(&id)?;
-        Some([x[i], x[i + 1]])
-    }
-    fn line(&self, x: &[f64], id: u32) -> Option<([f64; 2], [f64; 2])> {
-        match self.curves.get(&id)? {
-            Curve::Line { a, b, .. } => Some((self.p(x, *a)?, self.p(x, *b)?)),
-            _ => None,
-        }
-    }
-    /// Center and radius of a circle or arc.
-    fn round(&self, x: &[f64], id: u32) -> Option<([f64; 2], f64)> {
-        match self.curves.get(&id)? {
-            Curve::Circle { id, center, .. } => Some((self.p(x, *center)?, x[*self.vars.radius.get(id)?])),
-            Curve::Arc { center, start, .. } => {
-                let c = self.p(x, *center)?;
-                let s = self.p(x, *start)?;
-                Some((c, dist(c, s)))
+/// A curve as geometry, given where its points are (`at`) and its size (`size`).
+pub fn geo_of(c: &Curve, at: &dyn Fn(u32) -> Option<[f64; 2]>, size: Option<f64>) -> Option<Geo> {
+    use std::f64::consts::TAU;
+    let ang = |c: [f64; 2], p: [f64; 2]| (p[1] - c[1]).atan2(p[0] - c[0]);
+    Some(match c {
+        Curve::Line { a, b, .. } => Geo::Line(at(*a)?, at(*b)?),
+        Curve::Circle { center, .. } => Geo::Arc(at(*center)?, size?, 0.0, TAU),
+        Curve::Arc { center, start, end, .. } => {
+            let (cc, s, e) = (at(*center)?, at(*start)?, at(*end)?);
+            let a0 = ang(cc, s);
+            let mut sweep = (ang(cc, e) - a0).rem_euclid(TAU);
+            if sweep < 1e-12 {
+                sweep = TAU;
             }
-            _ => None,
+            Geo::Arc(cc, dist(cc, s), a0, a0 + sweep)
         }
-    }
-    fn dim(&self, key: &str) -> Option<f64> {
-        self.dims.get(key).copied()
-    }
+        Curve::Bezier { a, b, c1, c2, .. } => Geo::Nurbs(Nurbs::new(3, vec![at(*a)?, at(*c1)?, at(*c2)?, at(*b)?], vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0])),
+        Curve::Ellipse { center, major, .. } | Curve::EllipseArc { center, major, .. } | Curve::HyperbolaArc { center, major, .. } => {
+            let (cc, m) = (at(*center)?, at(*major)?);
+            let a = dist(cc, m).max(1e-12);
+            let u = [(m[0] - cc[0]) / a, (m[1] - cc[1]) / a];
+            let b = size?.abs().max(1e-12);
+            let local = |p: [f64; 2]| {
+                let d = sub(p, cc);
+                (dot(d, u), cross(u, d))
+            };
+            match c {
+                Curve::Ellipse { .. } => Geo::Ellipse(cc, u, a, b, 0.0, TAU),
+                Curve::EllipseArc { start, end, .. } => {
+                    let t = |p: [f64; 2]| {
+                        let (x, y) = local(p);
+                        (y / b).atan2(x / a)
+                    };
+                    let t0 = t(at(*start)?);
+                    let mut sweep = (t(at(*end)?) - t0).rem_euclid(TAU);
+                    if sweep < 1e-12 {
+                        sweep = TAU;
+                    }
+                    Geo::Ellipse(cc, u, a, b, t0, t0 + sweep)
+                }
+                Curve::HyperbolaArc { start, end, .. } => {
+                    let t = |p: [f64; 2]| (local(p).1 / b).asinh();
+                    Geo::Hyperbola(cc, u, a, b, t(at(*start)?), t(at(*end)?))
+                }
+                _ => unreachable!(),
+            }
+        }
+        Curve::ParabolaArc { vertex, focus, start, end, .. } => {
+            let (v, f) = (at(*vertex)?, at(*focus)?);
+            let fl = dist(v, f).max(1e-12);
+            let u = [(f[0] - v[0]) / fl, (f[1] - v[1]) / fl];
+            let s = |p: [f64; 2]| cross(u, sub(p, v));
+            Geo::Parabola(v, u, fl, s(at(*start)?), s(at(*end)?))
+        }
+        Curve::BSpline { poles, degree, weights, knots, mults, periodic, .. } => {
+            let pts: Option<Vec<[f64; 2]>> = poles.iter().map(|p| at(*p)).collect();
+            Geo::Nurbs(bspline_nurbs(&pts?, *degree as usize, weights, knots, mults, *periodic).ok()?)
+        }
+    })
 }
 
-fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
+/// A B-spline's exact clamped form from its stored description.
+pub fn bspline_nurbs(poles: &[[f64; 2]], degree: usize, weights: &[f64], knots: &[f64], mults: &[u32], periodic: bool) -> Result<Nurbs, String> {
+    let n = poles.len();
+    if degree < 1 {
+        return Err("a B-spline needs a degree of 1 or more".into());
+    }
+    let w: Vec<f64> = if weights.is_empty() { vec![1.0; n] } else { weights.to_vec() };
+    if w.len() != n || w.iter().any(|w| !(*w > 0.0) || !w.is_finite()) {
+        return Err("a B-spline needs one positive weight per pole".into());
+    }
+    if periodic {
+        if n < degree + 1 || n < 3 {
+            return Err(format!("a closed B-spline of degree {degree} needs at least {} poles", (degree + 1).max(3)));
+        }
+        return Ok(Nurbs::periodic(degree, poles, &w));
+    }
+    if n < degree + 1 {
+        return Err(format!("a B-spline of degree {degree} needs at least {} poles", degree + 1));
+    }
+    let flat = if knots.is_empty() {
+        let spans = n - degree;
+        let mut k = vec![0.0; degree + 1];
+        k.extend((1..spans).map(|i| i as f64));
+        k.extend(std::iter::repeat_n(spans as f64, degree + 1));
+        k
+    } else {
+        if knots.len() != mults.len() {
+            return Err("a B-spline needs one multiplicity per knot".into());
+        }
+        if knots.windows(2).any(|w| !(w[1] > w[0])) {
+            return Err("a B-spline's knots must increase".into());
+        }
+        if mults.first() != Some(&(degree as u32 + 1)) || mults.last() != Some(&(degree as u32 + 1)) {
+            return Err(format!("a B-spline's end knots repeat degree + 1 = {} times (it starts and ends at its end poles)", degree + 1));
+        }
+        if mults[1..mults.len() - 1].iter().any(|m| *m < 1 || *m as usize > degree) {
+            return Err(format!("a B-spline's inner knots repeat 1 to {degree} times"));
+        }
+        let total: u32 = mults.iter().sum();
+        if total as usize != n + degree + 1 {
+            return Err(format!("a B-spline with {n} poles of degree {degree} needs knots repeating {} times in all (it has {total})", n + degree + 1));
+        }
+        Nurbs::flat_knots(knots, mults)
+    };
+    Ok(Nurbs { degree, poles: poles.to_vec(), weights: w, knots: flat })
+}
+
+pub(crate) fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
 }
-fn sub(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+pub(crate) fn sub(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
     [a[0] - b[0], a[1] - b[1]]
 }
-fn cross(a: [f64; 2], b: [f64; 2]) -> f64 {
+pub(crate) fn cross(a: [f64; 2], b: [f64; 2]) -> f64 {
     a[0] * b[1] - a[1] * b[0]
 }
-fn dot(a: [f64; 2], b: [f64; 2]) -> f64 {
+pub(crate) fn dot(a: [f64; 2], b: [f64; 2]) -> f64 {
     a[0] * b[0] + a[1] * b[1]
 }
-fn len(a: [f64; 2]) -> f64 {
+pub(crate) fn len(a: [f64; 2]) -> f64 {
     dot(a, a).sqrt()
-}
-
-/// Residuals of one constraint (zero when it holds), in millimetres.
-fn residual(ctx: &Ctx, x: &[f64], c: &Constraint, out: &mut Vec<f64>) -> Result<(), String> {
-    let miss = || format!("a constraint refers to something that is not in the sketch: {c:?}");
-    let unit = |v: [f64; 2]| {
-        let l = len(v).max(1e-12);
-        [v[0] / l, v[1] / l]
-    };
-    match c {
-        Constraint::Coincident { a, b } => {
-            let (p, q) = (ctx.p(x, *a).ok_or_else(miss)?, ctx.p(x, *b).ok_or_else(miss)?);
-            out.extend([p[0] - q[0], p[1] - q[1]]);
-        }
-        Constraint::Horizontal { line } => {
-            let (a, b) = ctx.line(x, *line).ok_or_else(miss)?;
-            out.push(a[1] - b[1]);
-        }
-        Constraint::Vertical { line } => {
-            let (a, b) = ctx.line(x, *line).ok_or_else(miss)?;
-            out.push(a[0] - b[0]);
-        }
-        Constraint::Parallel { a, b } | Constraint::Perpendicular { a, b } => {
-            let (p, q) = ctx.line(x, *a).ok_or_else(miss)?;
-            let (r, s) = ctx.line(x, *b).ok_or_else(miss)?;
-            let (u, v) = (unit(sub(q, p)), unit(sub(s, r)));
-            // Scaled by a length so the residual is in millimetres, like the rest.
-            let scale = len(sub(q, p)).min(len(sub(s, r))).max(1.0);
-            out.push(if matches!(c, Constraint::Parallel { .. }) { cross(u, v) } else { dot(u, v) } * scale);
-        }
-        Constraint::Equal { a, b } => {
-            let size = |id: u32| -> Option<f64> {
-                match ctx.line(x, id) {
-                    Some((p, q)) => Some(dist(p, q)),
-                    None => ctx.round(x, id).map(|(_, r)| r),
-                }
-            };
-            out.push(size(*a).ok_or_else(miss)? - size(*b).ok_or_else(miss)?);
-        }
-        Constraint::OnCurve { point, curve } => {
-            let p = ctx.p(x, *point).ok_or_else(miss)?;
-            if let Some((a, b)) = ctx.line(x, *curve) {
-                out.push(cross(unit(sub(b, a)), sub(p, a)));
-            } else {
-                let (c, r) = ctx.round(x, *curve).ok_or_else(miss)?;
-                out.push(dist(p, c) - r);
-            }
-        }
-        Constraint::Tangent { a, b, at } => {
-            // Where the two curves share an end point, tangency is a direction
-            // at that point (the radius square to the line, or the centres in
-            // line); that holds firmly. Apart, it is a distance.
-            let ends = |id: u32| -> Vec<u32> {
-                match ctx.curves.get(&id) {
-                    Some(Curve::Line { a, b, .. }) | Some(Curve::Bezier { a, b, .. }) => vec![*a, *b],
-                    Some(Curve::Arc { start, end, .. }) => vec![*start, *end],
-                    _ => vec![],
-                }
-            };
-            let shared = at.or_else(|| ends(*a).into_iter().find(|p| ends(*b).contains(p)));
-            let is_bezier = |id: u32| matches!(ctx.curves.get(&id), Some(Curve::Bezier { .. }));
-            if is_bezier(*a) || is_bezier(*b) {
-                // A smooth join: the two curves leave the shared point along one line.
-                let j = shared.ok_or("a Bézier is tangent only where it meets the other curve")?;
-                let jp = ctx.p(x, j).ok_or_else(miss)?;
-                let dir = |id: u32| -> Option<[f64; 2]> {
-                    match ctx.curves.get(&id)? {
-                        Curve::Line { a, b, .. } => Some(sub(ctx.p(x, *b)?, ctx.p(x, *a)?)),
-                        Curve::Bezier { a, c1, c2, .. } => Some(if *a == j { sub(ctx.p(x, *c1)?, jp) } else { sub(jp, ctx.p(x, *c2)?) }),
-                        Curve::Arc { center, .. } => {
-                            let r = sub(jp, ctx.p(x, *center)?);
-                            Some([-r[1], r[0]])
-                        }
-                        Curve::Circle { .. } => None,
-                    }
-                };
-                let (u, v) = (dir(*a).ok_or_else(miss)?, dir(*b).ok_or_else(miss)?);
-                let scale = len(u).min(len(v)).max(1.0);
-                out.push(cross(unit(u), unit(v)) * scale);
-                return Ok(());
-            }
-            match (ctx.line(x, *a), ctx.line(x, *b)) {
-                (Some((p, q)), None) | (None, Some((p, q))) => {
-                    let round = if ctx.line(x, *a).is_some() { *b } else { *a };
-                    let (c, r) = ctx.round(x, round).ok_or_else(miss)?;
-                    match shared.and_then(|id| ctx.p(x, id)) {
-                        Some(j) => out.push(dot(unit(sub(q, p)), sub(c, j))),
-                        None => out.push(cross(unit(sub(q, p)), sub(c, p)).abs() - r),
-                    }
-                }
-                (None, None) => {
-                    let (c1, r1) = ctx.round(x, *a).ok_or_else(miss)?;
-                    let (c2, r2) = ctx.round(x, *b).ok_or_else(miss)?;
-                    match shared.and_then(|id| ctx.p(x, id)) {
-                        Some(j) => out.push(cross(unit(sub(c1, j)), sub(c2, j))),
-                        None => {
-                            // Outside tangency when apart, inside when one holds the other.
-                            let d = dist(c1, c2);
-                            out.push(if d > r1.max(r2) { d - (r1 + r2) } else { d - (r1 - r2).abs() });
-                        }
-                    }
-                }
-                _ => return Err("two lines cannot be tangent".into()),
-            }
-        }
-        Constraint::Midpoint { point, line } => {
-            let p = ctx.p(x, *point).ok_or_else(miss)?;
-            let (a, b) = ctx.line(x, *line).ok_or_else(miss)?;
-            out.extend([p[0] - (a[0] + b[0]) / 2.0, p[1] - (a[1] + b[1]) / 2.0]);
-        }
-        Constraint::Fixed { point, x: fx, y: fy } => {
-            let p = ctx.p(x, *point).ok_or_else(miss)?;
-            out.extend([p[0] - fx, p[1] - fy]);
-        }
-        Constraint::Distance { a, b, key } => {
-            let v = ctx.dim(key).ok_or_else(|| format!("no dimension “{key}”"))?;
-            let d = if a == b {
-                let (p, q) = ctx.line(x, *a).ok_or_else(miss)?;
-                dist(p, q)
-            } else {
-                dist(ctx.p(x, *a).ok_or_else(miss)?, ctx.p(x, *b).ok_or_else(miss)?)
-            };
-            out.push(d - v);
-        }
-        Constraint::HorizontalDistance { a, b, key } | Constraint::VerticalDistance { a, b, key } => {
-            let v = ctx.dim(key).ok_or_else(|| format!("no dimension “{key}”"))?;
-            let (p, q) = (ctx.p(x, *a).ok_or_else(miss)?, ctx.p(x, *b).ok_or_else(miss)?);
-            let k = if matches!(c, Constraint::HorizontalDistance { .. }) { 0 } else { 1 };
-            out.push((q[k] - p[k]) - v);
-        }
-        Constraint::Length { line, key } => {
-            let v = ctx.dim(key).ok_or_else(|| format!("no dimension “{key}”"))?;
-            let (p, q) = ctx.line(x, *line).ok_or_else(miss)?;
-            out.push(dist(p, q) - v);
-        }
-        Constraint::Radius { curve, key } | Constraint::Diameter { curve, key } => {
-            let v = ctx.dim(key).ok_or_else(|| format!("no dimension “{key}”"))?;
-            let (_, r) = ctx.round(x, *curve).ok_or_else(miss)?;
-            out.push(if matches!(c, Constraint::Radius { .. }) { r - v } else { 2.0 * r - v });
-        }
-        Constraint::Angle { a, b, key } => {
-            let v = ctx.dim(key).ok_or_else(|| format!("no dimension “{key}”"))?.to_radians();
-            let (p, q) = ctx.line(x, *a).ok_or_else(miss)?;
-            let (r, s) = ctx.line(x, *b).ok_or_else(miss)?;
-            let (u, w) = (sub(q, p), sub(s, r));
-            let ang = cross(u, w).atan2(dot(u, w));
-            // Wrapped difference, scaled to millimetres by the shorter line.
-            let mut d = ang - v;
-            while d > std::f64::consts::PI {
-                d -= 2.0 * std::f64::consts::PI;
-            }
-            while d < -std::f64::consts::PI {
-                d += 2.0 * std::f64::consts::PI;
-            }
-            out.push(d * len(u).min(len(w)).max(1.0));
-        }
-        Constraint::Translate { a, b, along } => {
-            let (p, q) = (ctx.p(x, *a).ok_or_else(miss)?, ctx.p(x, *b).ok_or_else(miss)?);
-            let (s, e) = ctx.line(x, *along).ok_or_else(miss)?;
-            out.extend([q[0] - p[0] - (e[0] - s[0]), q[1] - p[1] - (e[1] - s[1])]);
-        }
-        Constraint::Rotate { a, b, from, to } => {
-            let (p, q) = (ctx.p(x, *a).ok_or_else(miss)?, ctx.p(x, *b).ok_or_else(miss)?);
-            let (c, r0) = ctx.line(x, *from).ok_or_else(miss)?;
-            let (s1, r1) = ctx.line(x, *to).ok_or_else(miss)?;
-            let (u, w) = (sub(r0, c), sub(r1, s1));
-            let ang = cross(u, w).atan2(dot(u, w));
-            let (sn, cs) = ang.sin_cos();
-            let d = sub(p, c);
-            out.extend([q[0] - (c[0] + d[0] * cs - d[1] * sn), q[1] - (c[1] + d[0] * sn + d[1] * cs)]);
-        }
-        Constraint::Symmetric { a, b, line } => {
-            let (p, q) = (ctx.p(x, *a).ok_or_else(miss)?, ctx.p(x, *b).ok_or_else(miss)?);
-            let (s, e) = ctx.line(x, *line).ok_or_else(miss)?;
-            let d = unit(sub(e, s));
-            let m = [(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0];
-            out.extend([cross(d, sub(m, s)), dot(d, sub(q, p))]);
-        }
-    }
-    Ok(())
-}
-
-/// Every residual, including the implicit one each arc carries (its end on its circle).
-fn residuals(ctx: &Ctx, x: &[f64], owners: &mut Vec<Option<usize>>) -> Result<Vec<f64>, String> {
-    let mut r = Vec::new();
-    owners.clear();
-    for (i, c) in ctx.g.constraints.iter().enumerate() {
-        let before = r.len();
-        residual(ctx, x, c, &mut r)?;
-        owners.extend(std::iter::repeat_n(Some(i), r.len() - before));
-    }
-    for c in &ctx.g.curves {
-        if let Curve::Arc { center, start, end, .. } = c {
-            let (cc, s, e) = (ctx.p(x, *center).ok_or("arc without center")?, ctx.p(x, *start).ok_or("arc without start")?, ctx.p(x, *end).ok_or("arc without end")?);
-            r.push(dist(cc, e) - dist(cc, s));
-            owners.push(None);
-        }
-    }
-    Ok(r)
-}
-
-/// Solves `a x = b` (square, dense) by Gaussian elimination with partial pivoting.
-fn solve_linear(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
-    let n = b.len();
-    for col in 0..n {
-        let pivot = (col..n).max_by(|&i, &j| a[i][col].abs().total_cmp(&a[j][col].abs()))?;
-        if a[pivot][col].abs() < 1e-300 {
-            return None;
-        }
-        a.swap(col, pivot);
-        b.swap(col, pivot);
-        for row in col + 1..n {
-            let f = a[row][col] / a[col][col];
-            if f == 0.0 {
-                continue;
-            }
-            for k in col..n {
-                a[row][k] -= f * a[col][k];
-            }
-            b[row] -= f * b[col];
-        }
-    }
-    let mut x = vec![0.0; n];
-    for row in (0..n).rev() {
-        let s: f64 = (row + 1..n).map(|k| a[row][k] * x[k]).sum();
-        x[row] = (b[row] - s) / a[row][row];
-    }
-    Some(x)
-}
-
-/// Numerical rank of a matrix (rows of equal length), by elimination with tolerance.
-fn rank(mut m: Vec<Vec<f64>>, tol: f64) -> usize {
-    if m.is_empty() {
-        return 0;
-    }
-    let cols = m[0].len();
-    let mut r = 0;
-    for col in 0..cols {
-        let Some(pivot) = (r..m.len()).max_by(|&i, &j| m[i][col].abs().total_cmp(&m[j][col].abs())) else { break };
-        if m[pivot][col].abs() <= tol {
-            continue;
-        }
-        m.swap(r, pivot);
-        for row in 0..m.len() {
-            if row != r {
-                let f = m[row][col] / m[r][col];
-                if f != 0.0 {
-                    for k in col..cols {
-                        m[row][k] -= f * m[r][k];
-                    }
-                }
-            }
-        }
-        r += 1;
-        if r == m.len() {
-            break;
-        }
-    }
-    r
-}
-
-/// Solves a sketch: the smallest move of its points that satisfies every
-/// constraint, given the dimensions' values (mm, degrees).
-pub fn solve(g: &Geometry, dims: &BTreeMap<String, f64>) -> Result<Solved, String> {
-    let v = vars(g);
-    let ctx = Ctx { g, vars: &v, dims, curves: g.curves.iter().map(|c| (c.id(), c)).collect() };
-    let n = v.values.len();
-    let mut x = v.values.clone();
-    let mut owners = Vec::new();
-    let jacobian = |x: &[f64], r0: &[f64], owners: &mut Vec<Option<usize>>| -> Result<Vec<Vec<f64>>, String> {
-        let mut j = vec![vec![0.0; n]; r0.len()];
-        let mut xp = x.to_vec();
-        for k in 0..n {
-            let h = 1e-7 * x[k].abs().max(1.0);
-            xp[k] = x[k] + h;
-            let r1 = residuals(&ctx, &xp, owners)?;
-            xp[k] = x[k];
-            for (row, (a, b)) in r1.iter().zip(r0).enumerate() {
-                j[row][k] = (a - b) / h;
-            }
-        }
-        Ok(j)
-    };
-
-    let mut r = residuals(&ctx, &x, &mut owners)?;
-    let norm = |r: &[f64]| r.iter().map(|v| v * v).sum::<f64>();
-    let mut lambda = 1e-3;
-    for _ in 0..200 {
-        if norm(&r).sqrt() < 1e-10 || r.is_empty() {
-            break;
-        }
-        let j = jacobian(&x, &r, &mut owners)?;
-        // Damped least squares, minimum-norm step: (JᵀJ + λI) dx = −Jᵀr.
-        let mut a = vec![vec![0.0; n]; n];
-        let mut b = vec![0.0; n];
-        for (row, ri) in j.iter().zip(&r) {
-            for p in 0..n {
-                if row[p] == 0.0 {
-                    continue;
-                }
-                b[p] -= row[p] * ri;
-                for q in 0..n {
-                    a[p][q] += row[p] * row[q];
-                }
-            }
-        }
-        let mut improved = false;
-        for _ in 0..12 {
-            let mut damped = a.clone();
-            for (i, row) in damped.iter_mut().enumerate() {
-                row[i] += lambda * (1.0 + a[i][i]);
-            }
-            let Some(dx) = solve_linear(damped, b.clone()) else {
-                lambda *= 10.0;
-                continue;
-            };
-            let trial: Vec<f64> = x.iter().zip(&dx).map(|(a, d)| a + d).collect();
-            let rt = residuals(&ctx, &trial, &mut owners)?;
-            if norm(&rt) < norm(&r) {
-                x = trial;
-                r = rt;
-                lambda = (lambda / 3.0).max(1e-12);
-                improved = true;
-                break;
-            }
-            lambda *= 4.0;
-        }
-        if !improved {
-            break;
-        }
-    }
-
-    let residual = r.iter().fold(0.0f64, |m, v| m.max(v.abs()));
-    let j = jacobian(&x, &r, &mut owners)?;
-    let free = n.saturating_sub(rank(j.clone(), 1e-6));
-    // Conflicts: the constraints still unmet.
-    let mut conflicts: Vec<usize> = if residual > 1e-6 {
-        r.iter().zip(&owners).filter(|(v, _)| v.abs() > 1e-6).filter_map(|(_, o)| *o).collect()
-    } else {
-        Vec::new()
-    };
-    conflicts.dedup();
-    let mut points = BTreeMap::new();
-    for p in &g.points {
-        let i = v.point[&p.id];
-        points.insert(p.id, [x[i], x[i + 1]]);
-    }
-    let radii = v.radius.iter().map(|(id, i)| (*id, x[*i])).collect();
-    Ok(Solved { points, radii, free, conflicts, residual })
 }
 
 // ---- Profiles ------------------------------------------------------------------
@@ -595,6 +599,8 @@ pub enum Segment {
     /// From `from` to `to` around `center`, counter-clockwise when `ccw`.
     Arc { from: [f64; 2], to: [f64; 2], center: [f64; 2], ccw: bool },
     Circle { center: [f64; 2], radius: f64 },
+    /// An exact rational B-spline (conics, splines), clamped: from its first pole to its last.
+    Nurbs(Nurbs),
 }
 
 /// A closed loop: counter-clockwise for an outline, clockwise for a hole.
@@ -633,6 +639,11 @@ fn seg_points(s: &Segment, tolerance: f64, out: &mut Vec<[f64; 2]>) {
                 out.push([center[0] + r * a.cos(), center[1] + r * a.sin()]);
             }
         }
+        Segment::Nurbs(n) => {
+            let mut pts = n.polyline(tolerance);
+            pts.pop();
+            out.extend(pts);
+        }
         Segment::Circle { center, radius } => {
             // A negative radius marks a clockwise circle (a hole).
             let (r, dir) = (radius.abs(), radius.signum());
@@ -657,6 +668,17 @@ pub fn profile_data(loops: &[Loop]) -> Vec<f64> {
                 Segment::Bezier { from, to, c1, c2 } => data.extend([3.0, from[0], from[1], c1[0], c1[1], c2[0], c2[1], to[0], to[1]]),
                 Segment::Arc { from, to, center, ccw } => data.extend([1.0, from[0], from[1], to[0], to[1], center[0], center[1], if *ccw { 1.0 } else { 0.0 }]),
                 Segment::Circle { center, radius } => data.extend([2.0, center[0], center[1], *radius]),
+                Segment::Nurbs(n) => {
+                    // 4, degree, poles, (x, y, weight) each, distinct knots, then each one's multiplicity.
+                    let (k, m) = n.knots_mults();
+                    data.extend([4.0, n.degree as f64, n.poles.len() as f64]);
+                    for (p, w) in n.poles.iter().zip(&n.weights) {
+                        data.extend([p[0], p[1], *w]);
+                    }
+                    data.push(k.len() as f64);
+                    data.extend(&k);
+                    data.extend(m.iter().map(|m| *m as f64));
+                }
             }
         }
     }
@@ -713,6 +735,7 @@ pub(crate) fn reverse(l: &Loop) -> Loop {
             Segment::Bezier { from, to, c1, c2 } => Segment::Bezier { from: *to, to: *from, c1: *c2, c2: *c1 },
             Segment::Arc { from, to, center, ccw } => Segment::Arc { from: *to, to: *from, center: *center, ccw: !ccw },
             Segment::Circle { center, radius } => Segment::Circle { center: *center, radius: -radius },
+            Segment::Nurbs(n) => Segment::Nurbs(n.reversed()),
         })
         .collect()
 }
@@ -766,6 +789,7 @@ pub fn loops_of_curves(g: &Geometry, s: &Solved) -> (Vec<(Loop, Vec<u32>)>, usiz
         match c {
             // A line of no length (a double click, a stray tap) is not an edge.
             Curve::Line { a, b, .. } if node(*a) == node(*b) => {}
+            // A stray spline of no length is no edge either.
             Curve::Line { id, a, b, .. } => edges.push(Edge { a: node(*a), b: node(*b), seg: Segment::Line { from: pt(*a), to: pt(*b) }, id: *id }),
             Curve::Bezier { id, a, b, c1, c2, .. } => edges.push(Edge { a: node(*a), b: node(*b), seg: Segment::Bezier { from: pt(*a), to: pt(*b), c1: pt(*c1), c2: pt(*c2) }, id: *id }),
             Curve::Arc { id, center, start, end, .. } => {
@@ -776,6 +800,20 @@ pub fn loops_of_curves(g: &Geometry, s: &Solved) -> (Vec<(Loop, Vec<u32>)>, usiz
                 if r > 0.0 {
                     found.push(vec![Segment::Circle { center: pt(*center), radius: r }]);
                     found_ids.push(vec![*id]);
+                }
+            }
+            // Conics and splines go to the kernel as exact rational B-splines.
+            other => {
+                let Some(geo) = geo_of(other, &|p| s.points.get(&p).copied(), s.radii.get(&other.id()).copied()) else { continue };
+                let n = geo.to_nurbs();
+                match other.ends() {
+                    Some((a, b)) if node(a) != node(b) || !geo.closed() => edges.push(Edge { a: node(a), b: node(b), seg: Segment::Nurbs(n), id: other.id() }),
+                    // Closed on itself (a whole ellipse, a periodic spline): a loop of its own.
+                    _ if geo.closed() => {
+                        found.push(vec![Segment::Nurbs(n)]);
+                        found_ids.push(vec![other.id()]);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1099,14 +1137,31 @@ pub(crate) fn solve_sketch(world: &World, e: Entity) -> Option<Result<SolvedSket
         Some(r) => r.0.clone(),
         None => return Some(Err("dimensions not worked out yet".into())),
     };
-    Some(solve(&s.geometry, &dims).and_then(|solved| {
-        if !solved.conflicts.is_empty() {
-            let names: Vec<String> = solved.conflicts.iter().filter_map(|i| s.geometry.constraints.get(*i)).map(|c| format!("{c:?}")).collect();
-            return Err(format!("these constraints cannot all hold: {}", names.join("; ")));
-        }
+    // A sketch whose constraints conflict is still solved as nearly as it
+    // can be, so the drawing can show which ones conflict; what reads it
+    // (programs, boards) refuses it until they are put right.
+    Some(solve(&s.geometry, &dims).map(|solved| {
         let (loops, open) = loops(&s.geometry, &solved);
-        Ok(SolvedSketch { solved, loops, open })
+        SolvedSketch { solved, loops, open }
     }))
+}
+
+/// Why a solved sketch cannot be used yet: its conflicting constraints, named.
+pub fn conflict_error(s: &Sketch, solved: &Solved) -> Option<String> {
+    if solved.conflicts.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = solved.conflicts.iter().filter_map(|i| s.geometry.constraints.get(*i)).map(describe).collect();
+    Some(format!("these constraints cannot all hold: {}", names.join("; ")))
+}
+
+/// A constraint in a few words, for messages.
+pub fn describe(c: &Constraint) -> String {
+    let v = serde_json::to_value(c).unwrap_or_default();
+    let kind = v.get("kind").and_then(|k| k.as_str()).unwrap_or("constraint").replace('_', " ");
+    let ids: Vec<String> = c.ids().iter().map(|i| i.to_string()).collect();
+    let key = c.key().map(|k| format!(" “{k}”")).unwrap_or_default();
+    format!("{kind}{key} on {}", ids.join(", "))
 }
 
 /// A plane from a name ("XY", "XZ", "YZ") and an offset along its normal (mm).
@@ -1123,6 +1178,34 @@ pub fn preset_plane(name: &str, offset: f64) -> Result<Plane, String> {
     Ok(p)
 }
 
+/// A plane through `origin` square to `normal`, its x along `x` (flattened
+/// into the plane) or the world axis lying flattest in it, moved `offset`
+/// along the normal.
+pub fn plane_from_normal(origin: [f64; 3], normal: [f64; 3], x: Option<[f64; 3]>, offset: f64) -> Result<Plane, String> {
+    let l = |v: [f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let nl = l(normal);
+    if !(nl > 1e-12) || origin.iter().any(|v| !v.is_finite()) {
+        return Err("a plane needs a finite origin and a normal of some length".into());
+    }
+    let n = normal.map(|v| v / nl);
+    let flat = |v: [f64; 3]| {
+        let d = v[0] * n[0] + v[1] * n[1] + v[2] * n[2];
+        [v[0] - d * n[0], v[1] - d * n[1], v[2] - d * n[2]]
+    };
+    let candidates = x.into_iter().chain([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+    let mut xd = None;
+    for c in candidates {
+        let f = flat(c);
+        if l(f) > 0.1 * l(c).max(1e-12) {
+            xd = Some(f.map(|v| v / l(f)));
+            break;
+        }
+    }
+    let xd = xd.ok_or("no direction lies in that plane")?;
+    let y = [n[1] * xd[2] - n[2] * xd[1], n[2] * xd[0] - n[0] * xd[2], n[0] * xd[1] - n[1] * xd[0]];
+    Ok(Plane { origin: [0, 1, 2].map(|k| origin[k] + n[k] * offset), x: xd, y })
+}
+
 fn check_plane(p: &Plane) -> Result<(), CommandError> {
     let bad = |m: &str| Err(CommandError::new(ErrorCode::InvalidParameters, m.to_string()));
     let l = |v: [f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
@@ -1135,7 +1218,7 @@ fn check_plane(p: &Plane) -> Result<(), CommandError> {
     Ok(())
 }
 
-fn check_geometry(g: &Geometry, params: &[Param]) -> Result<(), CommandError> {
+pub(crate) fn check_geometry(g: &Geometry, params: &[Param]) -> Result<(), CommandError> {
     let bad = |m: String| Err(CommandError::new(ErrorCode::InvalidParameters, m));
     let points: std::collections::HashSet<u32> = g.points.iter().map(|p| p.id).collect();
     if points.len() != g.points.len() {
@@ -1149,19 +1232,24 @@ fn check_geometry(g: &Geometry, params: &[Param]) -> Result<(), CommandError> {
         if !curves.insert(c.id()) || points.contains(&c.id()) {
             return bad(format!("id {} is used twice", c.id()));
         }
-        let refs = match c {
-            Curve::Line { a, b, .. } => vec![*a, *b],
-            Curve::Bezier { a, b, c1, c2, .. } => vec![*a, *b, *c1, *c2],
-            Curve::Arc { center, start, end, .. } => vec![*center, *start, *end],
-            Curve::Circle { center, radius, .. } => {
-                if !(*radius > 0.0) {
-                    return bad(format!("circle {} needs a positive radius", c.id()));
-                }
-                vec![*center]
-            }
-        };
+        if let Some(r) = c.size()
+            && !(r > 0.0 && r.is_finite())
+        {
+            return bad(format!("curve {} needs a positive {}", c.id(), if matches!(c, Curve::Circle { .. }) { "radius" } else { "minor semi-axis" }));
+        }
+        let refs = c.points();
         if let Some(p) = refs.iter().find(|p| !points.contains(p)) {
             return bad(format!("curve {} uses point {p}, which is not in the sketch", c.id()));
+        }
+        if let Curve::BSpline { poles, degree, weights, knots, mults, periodic, .. } = c {
+            let at: Vec<[f64; 2]> = poles.iter().map(|id| g.points.iter().find(|p| p.id == *id).map(|p| [p.x, p.y]).unwrap()).collect();
+            bspline_nurbs(&at, *degree as usize, weights, knots, mults, *periodic).map_err(|e| CommandError::new(ErrorCode::InvalidParameters, format!("B-spline {}: {e}", c.id())))?;
+        }
+    }
+    let known: std::collections::HashSet<u32> = points.iter().copied().chain(curves.iter().copied()).collect();
+    for c in &g.constraints {
+        if let Some(r) = c.ids().into_iter().find(|r| !known.contains(r)) {
+            return bad(format!("a constraint ({}) refers to {r}, which is not in the sketch", describe(c)));
         }
     }
     for k in g.constraints.iter().filter_map(|c| c.key()) {
@@ -1178,6 +1266,17 @@ fn check_geometry(g: &Geometry, params: &[Param]) -> Result<(), CommandError> {
 pub enum PlaneSpec {
     Named { name: String, #[serde(default)] offset: f64 },
     Full(Plane),
+    /// Through `origin`, square to `normal` (e.g. a face of a part: its
+    /// centre and outward normal). `x` suggests the sketch's x direction
+    /// (default: the world axis lying flattest in the plane).
+    Normal {
+        origin: [f64; 3],
+        normal: [f64; 3],
+        #[serde(default)]
+        x: Option<[f64; 3]>,
+        #[serde(default)]
+        offset: f64,
+    },
 }
 
 impl PlaneSpec {
@@ -1185,6 +1284,7 @@ impl PlaneSpec {
         let p = match self {
             PlaneSpec::Named { name, offset } => preset_plane(&name, offset).map_err(|e| CommandError::new(ErrorCode::InvalidParameters, e))?,
             PlaneSpec::Full(p) => p,
+            PlaneSpec::Normal { origin, normal, x, offset } => plane_from_normal(origin, normal, x, offset).map_err(|e| CommandError::new(ErrorCode::InvalidParameters, e))?,
         };
         check_plane(&p)?;
         Ok(p)
@@ -1273,6 +1373,11 @@ impl Command for UpdateSketch {
         check_geometry(&s.geometry, &s.params)?;
         let dims = params::resolve(tx.world(), &s.params).map_err(|e| CommandError::new(ErrorCode::InvalidParameters, e))?;
         if let Some(d) = self.drag {
+            // A blocked curve stays where it is.
+            let blocked = s.geometry.constraints.iter().any(|c| matches!(c, Constraint::Block { curve } if s.geometry.curves.iter().any(|k| k.id() == *curve && k.points().contains(&d.point))));
+            if blocked {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, "that point belongs to a blocked curve: unblock it to move it"));
+            }
             let p = s.geometry.points.iter_mut().find(|p| p.id == d.point).ok_or_else(|| CommandError::new(ErrorCode::InvalidParameters, format!("no point {}", d.point)))?;
             (p.x, p.y) = (d.x, d.y);
             // Solve with the dragged point held, and a handle's anchor too so
@@ -1309,9 +1414,26 @@ impl Command for UpdateSketch {
                 }
             }
         }
-        solve(&s.geometry, &dims).map_err(|e| CommandError::new(ErrorCode::InvalidGeometry, e))?;
+        let solved = solve(&s.geometry, &dims).map_err(|e| CommandError::new(ErrorCode::InvalidGeometry, e))?;
+        measure_references(&mut s, &solved);
         tx.set(self.target, s)?;
         Ok(json!({ "id": self.target }))
+    }
+}
+
+/// Reference dimensions hold what the drawing measures, so whatever reads
+/// them (a formula elsewhere) gets the measured value.
+pub fn measure_references(s: &mut Sketch, solved: &Solved) {
+    for c in &s.geometry.constraints {
+        if let Constraint::Reference { of } = c
+            && let Some(k) = of.key()
+            && let Some(v) = solved.measured.get(k)
+            && let Some(p) = s.params.iter_mut().find(|p| p.key == k)
+        {
+            p.value = (*v * 1e9).round() / 1e9;
+            // A measurement has no range to keep within.
+            (p.min, p.max) = (None, None);
+        }
     }
 }
 
@@ -1365,6 +1487,9 @@ pub fn inputs(world: &World, uses: &BTreeMap<String, StableId>) -> Result<String
         let e = world.resource::<IdIndex>().get(*id).ok_or_else(|| format!("sketch “{name}” was deleted"))?;
         let sketch = world.get::<Sketch>(e).ok_or_else(|| format!("“{name}” is not a sketch"))?;
         let solved = world.get::<SolvedSketch>(e).ok_or_else(|| format!("sketch “{name}” has no valid solution"))?;
+        if let Some(err) = conflict_error(sketch, &solved.solved) {
+            return Err(format!("sketch “{name}”: {err}"));
+        }
         m.insert(name.clone(), json!({ "plane": sketch.plane, "loops": solved.loops, "open": solved.open }));
     }
     Ok(serde_json::Value::Object(m).to_string())
