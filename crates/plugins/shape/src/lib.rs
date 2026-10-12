@@ -356,6 +356,9 @@ pub struct DrawingSpec {
     /// The exploded isometric of an assembly (first sheet).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explode: Option<drawing::Explode>,
+    /// Sections, breaks, auxiliary views, cosmetic lines, leaders, texts, tables, angle/arc/area dimensions.
+    #[serde(flatten)]
+    pub extra: drawing::Extras,
     /// Sheets after the first (which shows the standard views set up above):
     /// each its own part, views, scale and annotations.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -406,12 +409,14 @@ pub struct SheetSpec {
     /// Its isometric exploded (an assembly's).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explode: Option<drawing::Explode>,
+    #[serde(flatten)]
+    pub extra: drawing::Extras,
 }
 
 impl DrawingSpec {
     /// Nothing set: the default drawing.
     pub fn is_empty(&self) -> bool {
-        self.section.is_none() && self.dimensions.is_empty() && self.details.is_empty() && self.frames.is_empty() && self.datums.is_empty() && self.hole_fits.is_empty() && self.sheets.is_empty() && is_default(&self.auto) && self.threads.is_empty() && self.finishes.is_empty() && self.welds.is_empty() && is_default(&self.title_block) && self.notes.is_empty() && self.revisions.is_empty() && self.roughness.is_none() && self.explode.is_none()
+        self.section.is_none() && self.dimensions.is_empty() && self.details.is_empty() && self.frames.is_empty() && self.datums.is_empty() && self.hole_fits.is_empty() && self.sheets.is_empty() && is_default(&self.auto) && self.threads.is_empty() && self.finishes.is_empty() && self.welds.is_empty() && is_default(&self.title_block) && self.notes.is_empty() && self.revisions.is_empty() && self.roughness.is_none() && self.explode.is_none() && is_default(&self.extra)
     }
 
     /// Each sheet's options and the part it draws, first sheet first; `base`
@@ -434,6 +439,7 @@ impl DrawingSpec {
             revisions: self.revisions.clone(),
             roughness: self.roughness.clone(),
             explode: self.explode.clone(),
+            extra: self.extra.clone(),
             ..base.clone()
         };
         let first_part = first.part.clone();
@@ -458,6 +464,7 @@ impl DrawingSpec {
             revisions: self.revisions.clone(),
             roughness: self.roughness.clone(),
             explode: s.explode.clone(),
+            extra: s.extra.clone(),
         });
         std::iter::once(first).chain(rest).collect()
     }

@@ -84,7 +84,7 @@ pub(super) fn title_block(d: &mut Drawing, at: [f64; 2], size: [f64; 2], t: &Tit
     cell(d, col(0.70), col(0.85), 2, "Approved", &or(&f.approved_by, "—"), 2.5, false);
     cell(d, col(0.0), col(0.40), 3, "Owner", &or(&f.company, "—"), 2.5, false);
     cell(d, col(0.40), col(0.55), 3, "Date", &or(&f.date, &t.date), 2.5, false);
-    let sheet = format!("{:?} · {} of {}", sheet_name(d.width), d.page.max(1), d.pages.max(d.page).max(1));
+    let sheet = format!("{} · {} of {}", sheet_name(d.width).name(), d.page.max(1), d.pages.max(d.page).max(1));
     cell(d, col(0.55), col(0.85), 3, "Sheet", &sheet, 2.5, false);
     projection_symbol(d, [col(0.925), (rows[2] + rows[4]) / 2.0], options.projection);
 }

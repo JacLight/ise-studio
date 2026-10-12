@@ -1753,14 +1753,14 @@ fn today() -> String {
 }
 
 /// A part's engineering drawing: `{id}` gives a sheet as JSON (the app draws
-/// it), `{id}.pdf` every sheet as pages, `{id}.dxf` a sheet and `{id}.zip`
-/// every sheet's DXF. Query: sheet (A4–A0), projection (first, third), part
+/// it), `{id}.pdf` every sheet as pages, `{id}.svg` and `{id}.dxf` a sheet,
+/// and `{id}.zip` every sheet's DXF. Query: sheet (A4–A0), projection (first, third), part
 /// (one part of an assembly), page (which sheet, from 1).
 async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
     use axum::http::header;
     let fail = |code: StatusCode, message: String| (code, message).into_response();
     let (id, format) = match file.rsplit_once('.') {
-        Some((id, f)) if f == "pdf" || f == "dxf" || f == "zip" => (id.to_string(), f),
+        Some((id, f)) if f == "pdf" || f == "dxf" || f == "zip" || f == "svg" => (id.to_string(), f),
         _ => (file.clone(), "json"),
     };
     let page: Option<usize> = match query.get("page").filter(|p| !p.is_empty()) {
@@ -1775,13 +1775,7 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
         Err(e) => return fail(StatusCode::BAD_REQUEST, e),
     };
     let base = de_shape::drawing::Options {
-        sheet: match query.get("sheet").map(String::as_str) {
-            Some("A4") => de_shape::drawing::Sheet::A4,
-            Some("A2") => de_shape::drawing::Sheet::A2,
-            Some("A1") => de_shape::drawing::Sheet::A1,
-            Some("A0") => de_shape::drawing::Sheet::A0,
-            _ => de_shape::drawing::Sheet::A3,
-        },
+        sheet: query.get("sheet").and_then(|q| de_shape::drawing::Sheet::ALL.into_iter().find(|s| s.name().replace(' ', "_").eq_ignore_ascii_case(&q.replace(' ', "_")))).unwrap_or_default(),
         projection: if query.get("projection").is_some_and(|p| p == "third") { de_shape::drawing::Projection::Third } else { de_shape::drawing::Projection::First },
         part: query.get("part").filter(|p| !p.is_empty()).cloned(),
         ..Default::default()
@@ -1903,7 +1897,7 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
     }
     // One sheet for the app and a DXF; every sheet for the PDF and the zip, unless one is asked for.
     let wanted: Vec<usize> = match (format, page) {
-        ("json" | "dxf", p) => vec![p.unwrap_or(1) - 1],
+        ("json" | "dxf" | "svg", p) => vec![p.unwrap_or(1) - 1],
         (_, Some(p)) => vec![p - 1],
         _ => (0..pages).collect(),
     };
@@ -1947,6 +1941,7 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
             let file = if wanted.len() == 1 && pages > 1 { format!("{safe}{}", suffix(wanted[0])) } else { safe.clone() };
             ([(header::CONTENT_TYPE, "application/pdf".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{file}.pdf\""))], de_shape::drawing::pdf_pages(&all)).into_response()
         }
+        "svg" => ([(header::CONTENT_TYPE, "image/svg+xml".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{safe}{}.svg\"", suffix(wanted[0])))], de_shape::drawing::svg(&made[0])).into_response(),
         "dxf" => ([(header::CONTENT_TYPE, "application/dxf".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{safe}{}.dxf\"", suffix(wanted[0])))], de_shape::drawing::dxf(&made[0])).into_response(),
         "zip" => {
             let files: Vec<(String, Vec<u8>)> = wanted.iter().zip(&made).map(|(&i, d)| (format!("{safe}{}.dxf", suffix(i)), de_shape::drawing::dxf(d).into_bytes())).collect();

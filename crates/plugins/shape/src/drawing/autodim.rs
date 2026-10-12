@@ -58,6 +58,8 @@ pub(super) struct Ctx<'a> {
     pub options: &'a Options,
     /// The sheet frame's inside.
     pub frame: [f64; 4],
+    /// Stretches a broken view leaves out: values are stated true.
+    pub breaks: &'a Breaks,
 }
 
 /// Where an automatic dimension landed, for the person to pick it (hide it, tolerance it).
@@ -374,7 +376,7 @@ fn prismatic(d: &mut Drawing, ink: &mut Grid, _words: &mut Grid, cx: &Ctx, done:
             items.push(Item { axis: k, v: r.centre[k], round_in: look_view(r.axis) });
         }
     }
-    for fl in &f.flats {
+    for fl in f.flats.iter().filter(|fl| !cx.breaks.is_cut(fl.axis, fl.at)) {
         items.push(Item { axis: fl.axis, v: fl.at, round_in: None });
     }
     for k in 0..3 {
@@ -441,7 +443,7 @@ fn prismatic(d: &mut Drawing, ink: &mut Grid, _words: &mut Grid, cx: &Ctx, done:
             let values: Vec<Ord> = vals
                 .iter()
                 .filter_map(|&v| {
-                    let shown = v - lo;
+                    let shown = cx.breaks.true_at(k, v) - cx.breaks.true_at(k, lo);
                     let key = if shown.abs() < 1e-9 { String::new() } else { format!("{}:{}", AXIS[k], key_value(shown)) };
                     if !key.is_empty() && hidden(cx.options, &key) {
                         return None;
@@ -528,14 +530,14 @@ fn turned(d: &mut Drawing, ink: &mut Grid, words: &mut Grid, cx: &Ctx, t: &featu
     // Shoulders: ordinates along the axis from the left (or lower) end.
     let lo = cx.bounds[a];
     let hi = cx.bounds[a + 3];
-    let mut vals: Vec<f64> = t.shoulders.iter().copied().filter(|v| *v > lo - 1e-3 && *v < hi + 1e-3).collect();
+    let mut vals: Vec<f64> = t.shoulders.iter().copied().filter(|v| *v > lo - 1e-3 && *v < hi + 1e-3 && !cx.breaks.is_cut(a, *v)).collect();
     vals.extend([lo, hi]);
     vals.sort_by(f64::total_cmp);
     vals.dedup_by(|x, y| (*x - *y).abs() < 5e-3);
     let values: Vec<Ord> = vals
         .iter()
         .filter_map(|&v| {
-            let shown = v - lo;
+            let shown = cx.breaks.true_at(a, v) - cx.breaks.true_at(a, lo);
             let key = if shown.abs() < 1e-9 { String::new() } else { format!("{}:{}", AXIS[a], key_value(shown)) };
             if !key.is_empty() && hidden(cx.options, &key) {
                 return None;
@@ -691,7 +693,7 @@ fn holes(d: &mut Drawing, ink: &mut Grid, words: &mut Grid, cx: &Ctx) {
                         } else {
                             // Seen from the side: the thread's extent at its major diameter.
                             let across = (0..3).find(|&k| k != a && k != v.look()).unwrap();
-                            let cut = v.section.is_some_and(|y| (h.entry[1] - y).abs() < nominal / 2.0);
+                            let cut = v.section.is_some_and(|y| (h.entry[v.look()] - y).abs() < nominal / 2.0);
                             let pen = if cut { Pen::Thin } else { Pen::Hidden };
                             for side in [-1.0, 1.0] {
                                 let mut p = h.entry;

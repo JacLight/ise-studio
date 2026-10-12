@@ -118,3 +118,79 @@ fn an_assembly_drawing_explodes_and_balloons_every_part() {
     write(std::slice::from_ref(&d), "gearbox");
     eprintln!("rows {:?}\nwarnings: {:?}\nquality: {:?}", parts.iter().map(|r| (&r.name, r.quantity)).collect::<Vec<_>>(), d.warnings, d.quality);
 }
+
+#[test]
+fn threads_read_and_minor_diameters() {
+    use drawing::features::{coarse_pitch, minor_diameter, parse_thread};
+    assert_eq!(parse_thread("M6").unwrap(), (6.0, 1.0));
+    assert_eq!(parse_thread("M16×1.5").unwrap(), (16.0, 1.5));
+    assert_eq!(parse_thread("m10x1.25").unwrap(), (10.0, 1.25));
+    assert!(parse_thread("UNC 1/4").is_err() && parse_thread("M7").is_err(), "no coarse pitch for M7");
+    assert_eq!(coarse_pitch(12.0), Some(1.75));
+    assert!((minor_diameter(16.0, 2.0, false) - 13.546).abs() < 1e-3, "ISO 68-1 d3");
+}
+
+#[test]
+fn an_exploded_stack_slides_parts_clear() {
+    // A long shaft through the middle stays; a gear on it and a plate beyond slide out, clear of each other.
+    let boxes = [[-5.0, -5.0, 0.0, 5.0, 5.0, 100.0], [-20.0, -20.0, 60.0, 20.0, 20.0, 70.0], [-30.0, -30.0, 90.0, 30.0, 30.0, 95.0], [-30.0, -30.0, 5.0, 30.0, 30.0, 10.0]];
+    let s = drawing::explode_shifts(&boxes, 2, 10.0);
+    assert_eq!(s[0], 0.0, "the shaft stays");
+    assert_eq!(s[1], 0.0, "the gear nearest the middle has nothing to clear");
+    assert!(boxes[2][2] + s[2] >= boxes[1][5] + s[1] + 10.0 - 1e-9, "the plate clears the gear by the gap");
+    assert!(s[3] <= 0.0, "the near plate slides the other way");
+}
+
+#[test]
+fn a_drawing_has_every_kind_of_view_and_annotation() {
+    // A long plate with a hole and a slanted end face.
+    let program = de_shape::ShapeProgram {
+        name: "Plate".into(),
+        description: String::new(),
+        source: "const s = box(200, 40, 20).subtract(cylinder(30, 6).translate([20, 20, -5]));\nconst cut = box(40, 60, 40).rotate(0, 30, 0).translate([170, -10, 12]);\nreturn s.subtract(cut);".into(),
+        params: vec![],
+        display_tolerance: None,
+        levels: vec![],
+        uses: Default::default(),
+        finishes: vec![],
+        inputs: String::new(),
+    };
+    let options: Options = serde_json::from_value(serde_json::json!({
+        "sheet": "ANSI_B",
+        "section_view": "top", "section_at": 10, "hatch": { "angle": 30, "spacing": 3, "cross": true },
+        "breaks": [{ "axis": "x", "from": 60, "to": 140 }],
+        "aux": [{ "dir": [-0.5, 0, -0.866] }],
+        "leaders": [{ "view": "front", "at": [100, 20], "text": "Deburr" }],
+        "texts": [{ "at": [30, 262], "text": "PROTOTYPE", "size": 5, "bold": true }],
+        "tables": [{ "title": "Hole table", "rows": [["TAG", "X", "Y", "SIZE"], ["A1", "20", "20", "⌀12 THRU"]] }],
+        "lines": [{ "view": "front", "points": [[0, 10], [200, 10]], "style": "center" }],
+        "angles": [{ "view": "front", "vertex": [180, 20], "a": [160, 20], "b": [190, 2.7] }],
+        "arcs": [{ "view": "top", "centre": [20, 20], "radius": 6, "from": 0, "to": 90, "length": true }],
+        "areas": [{ "view": "top", "at": [100, 20] }],
+        "welds": [{ "view": "front", "at": [0, 10], "kind": "fillet", "size": 4, "all_around": true }],
+    }))
+    .unwrap();
+    let d = drawing::drawing(&program, &options, &title("Plate", "Steel")).unwrap();
+    write(std::slice::from_ref(&d), "plate-everything");
+    let all = texts(&d);
+    eprintln!("{all:?}\n{:?}\n{:?}\n{:?}", d.warnings, d.quality, d.autos.iter().map(|a| &a.key).collect::<Vec<_>>());
+    assert_eq!((d.width, d.height), (431.8, 279.4), "ANSI B");
+    for want in ["SECTION A–A", "PROTOTYPE", "Hole table", "Deburr", "a4", "VIEW B"] {
+        assert!(all.iter().any(|t| t.contains(want)), "{want} is on the sheet");
+    }
+    assert!(all.iter().any(|t| t.starts_with("A = ") && t.ends_with("mm²")), "the area callout");
+    assert!(all.iter().any(|t| t.ends_with('°')), "the angle");
+    // The break leaves 80 mm out but every position is stated true: the same as the whole part's.
+    let whole = drawing::drawing(&program, &Options { extra: drawing::Extras { breaks: vec![], ..options.extra.clone() }, ..options.clone() }, &title("Plate", "Steel")).unwrap();
+    let xs = |d: &Drawing| {
+        let mut v: Vec<String> = d.autos.iter().filter(|a| a.key.starts_with("x:")).map(|a| a.key.clone()).collect();
+        v.sort();
+        v
+    };
+    let (broken, full) = (xs(&d), xs(&whole));
+    assert!(!broken.is_empty() && broken.iter().all(|k| full.contains(k)), "{broken:?} vs {full:?}");
+    assert!(d.quality.is_clean(), "{:?}", d.quality);
+    assert!(d.warnings.is_empty(), "{:?}", d.warnings);
+    let svg = drawing::svg(&d);
+    assert!(svg.starts_with("<svg") && svg.contains("PROTOTYPE") && svg.trim_end().ends_with("</svg>"));
+}

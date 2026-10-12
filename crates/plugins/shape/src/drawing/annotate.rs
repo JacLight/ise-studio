@@ -134,6 +134,8 @@ pub enum MarkKind {
     Finish,
     /// A weld symbol.
     Weld,
+    /// A note on a leader.
+    Leader,
 }
 
 /// Where an annotation landed: its index in the options' list and its box on the sheet.
@@ -156,6 +158,9 @@ pub struct AnnotationMark {
 impl DimSpec {
     /// The length the dimension states (model mm).
     pub fn value(&self) -> f64 {
+        if let Some(v) = self.stated {
+            return v;
+        }
         match self.kind {
             DimKind::Horizontal => (self.a[0] - self.b[0]).abs(),
             DimKind::Vertical => (self.a[1] - self.b[1]).abs(),
@@ -291,7 +296,7 @@ pub(super) fn label(value: f64, diameter: bool, tol: Option<&Tolerance>) -> Labe
 
 /// Drawing symbols in lettering that no standard font has (ISO 129-1 hole
 /// callouts): counterbore, countersink and depth.
-pub(super) const GLYPHS: [char; 3] = ['⌴', '⌵', '↧'];
+pub(super) const GLYPHS: [char; 4] = ['⌴', '⌵', '↧', '⌒'];
 
 /// Writes text, drawing the callout symbols in it as strokes (the rest as text runs).
 pub(super) fn push_text(d: &mut Drawing, t: Text) {
@@ -329,6 +334,7 @@ pub(super) fn push_text(d: &mut Drawing, t: Text) {
         let lines: Vec<Vec<[f64; 2]>> = match ch {
             '⌴' => vec![vec![g(0.12, 0.95), g(0.12, 0.0), g(0.88, 0.0), g(0.88, 0.95)]],
             '⌵' => vec![vec![g(0.08, 0.95), g(0.5, 0.0), g(0.92, 0.95)]],
+            '⌒' => vec![(0..=12).map(|i| std::f64::consts::PI * i as f64 / 12.0).map(|t| g(0.5 - 0.42 * t.cos(), 0.55 + 0.4 * t.sin())).collect()],
             _ => vec![vec![g(0.5, 1.0), g(0.5, 0.0)], vec![g(0.26, 0.4), g(0.5, 0.0), g(0.74, 0.4)], vec![g(0.15, 0.0), g(0.85, 0.0)]],
         };
         for points in lines {
@@ -538,6 +544,10 @@ pub(super) struct Geometry {
     pub frame: [f64; 4],
     /// The title block and parts list.
     pub reserved: Vec<[f64; 4]>,
+    /// Auxiliary views to place.
+    pub aux: Vec<AuxIn>,
+    /// Notes the drawing works out for leaders (areas).
+    pub notes: Vec<LeaderSpec>,
 }
 
 fn grow(r: [f64; 4], m: f64) -> [f64; 4] {
@@ -975,7 +985,7 @@ pub(super) fn annotate(d: &mut Drawing, options: &Options, g: &Geometry) {
 
 
     // The detail circles on their views first (they belong to the view).
-    let section = options.section.is_some();
+    let section = options.section.is_some() || options.extra.section_at.is_some();
     let mut letters = view_letters(section);
     let mut sources = vec![];
     for (index, spec) in options.details.iter().enumerate() {
@@ -1060,6 +1070,7 @@ pub(super) fn annotate(d: &mut Drawing, options: &Options, g: &Geometry) {
             d.warnings.push(format!("no room on the sheet for detail {}: try a smaller circle or a larger sheet", src.letter));
         }
     }
+    extras(d, &mut grid, &mut words, g, options, &mut letters);
 }
 
 /// A detail's circle on its view, before the enlarged view is placed.
@@ -1339,4 +1350,280 @@ fn place_weld(d: &mut Drawing, grid: &mut Grid, words: &mut Grid, g: &Geometry, 
     let bounds = bounds_of(d, s0..d.strokes.len(), t0..d.texts.len(), f0..d.fills.len());
     d.annotations.push(AnnotationMark { kind: MarkKind::Weld, index: 0, diameter: None, bounds, origin: Some(knee), anchor: Some(p) });
     true
+}
+
+// ---- Leaders, free text, tables, cosmetic lines, angle/arc dimensions, auxiliary views ----
+
+/// An auxiliary view's lines, before it is placed (view mm, looking along its direction).
+pub(super) struct AuxIn {
+    pub lines: Vec<ViewLine>,
+    pub min: [f64; 2],
+    pub max: [f64; 2],
+    pub scale: (f64, &'static str),
+    /// The way it looks, shown by an arrow on the front view.
+    pub dir: [f64; 3],
+}
+
+fn view_point(d: &Drawing, view: ViewName, p: [f64; 2]) -> Option<[f64; 2]> {
+    let v = d.views.iter().find(|v| v.view == view)?;
+    Some([v.at[0] + p[0] * v.scale, v.at[1] + p[1] * v.scale])
+}
+
+/// A note on a leader: the arrow on the point, the text on the leader's shoulder.
+fn place_leader(d: &mut Drawing, grid: &mut Grid, words: &mut Grid, g: &Geometry, view: ViewName, at: [f64; 2], text: &str) -> bool {
+    let Some(v) = d.views.iter().find(|v| v.view == view).cloned() else { return false };
+    let p = [v.at[0] + at[0] * v.scale, v.at[1] + at[1] * v.scale];
+    let w = plain_width(text, 3.5) + 2.0;
+    let Some((knee, right)) = leader_spot(grid, words, g, p, v.bounds, w, 5.0) else { return false };
+    let (s0, t0, f0) = (d.strokes.len(), d.texts.len(), d.fills.len());
+    let l = (knee[0] - p[0]).hypot(knee[1] - p[1]).max(1e-9);
+    let end = [if right { knee[0] + w } else { knee[0] - w }, knee[1]];
+    d.strokes.push(Stroke { pen: Pen::Thin, points: vec![p, knee, end] });
+    super::arrow(d, p, [(p[0] - knee[0]) / l, (p[1] - knee[1]) / l]);
+    push_text(d, Text { at: [knee[0] + if right { 1.0 } else { -1.0 }, knee[1] + 1.0], size: 3.5, text: text.into(), anchor: if right { Anchor::Start } else { Anchor::End }, angle: 0.0, bold: false });
+    grid.mark_drawn(d, s0..d.strokes.len(), t0..d.texts.len());
+    words.mark_drawn(d, s0..s0, t0..d.texts.len());
+    let bounds = bounds_of(d, s0..d.strokes.len(), t0..d.texts.len(), f0..d.fills.len());
+    d.annotations.push(AnnotationMark { kind: MarkKind::Leader, index: 0, diameter: None, bounds, origin: Some(knee), anchor: Some(p) });
+    true
+}
+
+/// An angle dimension: an arc about the vertex between the two lines, arrows on them, the angle beside.
+fn draw_angle(d: &mut Drawing, a: &AngleSpec) -> bool {
+    let (Some(c), Some(pa), Some(pb)) = (view_point(d, a.view, a.vertex), view_point(d, a.view, a.a), view_point(d, a.view, a.b)) else { return false };
+    let r = a.radius.unwrap_or(12.0).max(4.0);
+    let (ta, tb) = ((pa[1] - c[1]).atan2(pa[0] - c[0]), (pb[1] - c[1]).atan2(pb[0] - c[0]));
+    // The smaller angle between them, anticlockwise from one to the other.
+    let mut sweep = (tb - ta).rem_euclid(std::f64::consts::TAU);
+    let start = if sweep > std::f64::consts::PI {
+        sweep = std::f64::consts::TAU - sweep;
+        tb
+    } else {
+        ta
+    };
+    let deg = sweep.to_degrees();
+    let n = ((sweep * r / 0.5) as usize).clamp(8, 200);
+    let arc: Vec<[f64; 2]> = (0..=n).map(|i| start + sweep * i as f64 / n as f64).map(|t| [c[0] + r * t.cos(), c[1] + r * t.sin()]).collect();
+    // The lines carried out to the arc where they stop short of it.
+    for (p, t) in [(pa, ta), (pb, tb)] {
+        let reach = (p[0] - c[0]).hypot(p[1] - c[1]);
+        if reach < r + 1.0 {
+            d.strokes.push(Stroke { pen: Pen::Thin, points: vec![p, [c[0] + (r + 1.5) * t.cos(), c[1] + (r + 1.5) * t.sin()]] });
+        }
+    }
+    let (first, last) = (arc[0], arc[arc.len() - 1]);
+    d.strokes.push(Stroke { pen: Pen::Thin, points: arc });
+    let tangent = |t: f64, s: f64| [-t.sin() * s, t.cos() * s];
+    super::arrow(d, first, tangent(start, -1.0));
+    super::arrow(d, last, tangent(start + sweep, 1.0));
+    let mid = start + sweep / 2.0;
+    let text = format!("{}°", length_text(deg));
+    let at = [c[0] + (r + 2.0) * mid.cos(), c[1] + (r + 2.0) * mid.sin()];
+    let anchor = if mid.cos() > 0.3 { Anchor::Start } else if mid.cos() < -0.3 { Anchor::End } else { Anchor::Middle };
+    let lift = if mid.sin() < -0.3 { -3.5 } else { 0.0 };
+    d.texts.push(Text { at: [at[0], at[1] + lift], size: 3.5, text, anchor, angle: 0.0, bold: false });
+    true
+}
+
+/// A radius (a line from the centre out through the arc, the arrow on it) or an arc length (a
+/// concentric arc beyond it between extension lines, the length after the arc symbol).
+fn draw_arc(d: &mut Drawing, a: &ArcSpec) -> bool {
+    let Some(v) = d.views.iter().find(|v| v.view == a.view).cloned() else { return false };
+    let c = [v.at[0] + a.centre[0] * v.scale, v.at[1] + a.centre[1] * v.scale];
+    let r = a.radius * v.scale;
+    let (t0, t1) = (a.from.to_radians(), a.to.to_radians());
+    let sweep = (t1 - t0).rem_euclid(std::f64::consts::TAU);
+    let sweep = if sweep < 1e-9 { std::f64::consts::TAU } else { sweep };
+    let mid = t0 + sweep / 2.0;
+    if !a.length {
+        let on = [c[0] + r * mid.cos(), c[1] + r * mid.sin()];
+        let text = format!("R{}", length_text(a.radius));
+        let w = plain_width(&text, 3.5);
+        let out = [c[0] + (r + 4.0) * mid.cos(), c[1] + (r + 4.0) * mid.sin()];
+        let right = mid.cos() >= 0.0;
+        let end = [out[0] + if right { w + 2.0 } else { -(w + 2.0) }, out[1]];
+        d.strokes.push(Stroke { pen: Pen::Thin, points: vec![c, out, end] });
+        super::arrow(d, on, [mid.cos(), mid.sin()]);
+        d.texts.push(Text { at: [out[0] + if right { 1.0 } else { -1.0 }, out[1] + 1.0], size: 3.5, text, anchor: if right { Anchor::Start } else { Anchor::End }, angle: 0.0, bold: false });
+        return true;
+    }
+    let len = a.radius * sweep;
+    let rr = r + 8.0;
+    for t in [t0, t0 + sweep] {
+        d.strokes.push(Stroke { pen: Pen::Thin, points: vec![[c[0] + (r + 1.0) * t.cos(), c[1] + (r + 1.0) * t.sin()], [c[0] + (rr + 2.0) * t.cos(), c[1] + (rr + 2.0) * t.sin()]] });
+    }
+    let n = ((sweep * rr / 0.5) as usize).clamp(8, 200);
+    let arc: Vec<[f64; 2]> = (0..=n).map(|i| t0 + sweep * i as f64 / n as f64).map(|t| [c[0] + rr * t.cos(), c[1] + rr * t.sin()]).collect();
+    let (first, last) = (arc[0], arc[arc.len() - 1]);
+    d.strokes.push(Stroke { pen: Pen::Thin, points: arc });
+    super::arrow(d, first, [t0.sin(), -t0.cos()]);
+    super::arrow(d, last, [-(t0 + sweep).sin(), (t0 + sweep).cos()]);
+    let at = [c[0] + (rr + 1.5) * mid.cos(), c[1] + (rr + 1.5) * mid.sin()];
+    let anchor = if mid.cos() > 0.3 { Anchor::Start } else if mid.cos() < -0.3 { Anchor::End } else { Anchor::Middle };
+    push_text(d, Text { at: [at[0], at[1] + if mid.sin() < -0.3 { -3.5 } else { 0.0 }], size: 3.5, text: format!("⌒{}", length_text((len * 100.0).round() / 100.0)), anchor, angle: 0.0, bold: false });
+    true
+}
+
+/// A table: its cells' widths from their text, the header bold; where asked or in free space.
+fn place_table(d: &mut Drawing, grid: &mut Grid, g: &Geometry, t: &TableSpec) -> bool {
+    let cols = t.rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    if cols == 0 {
+        return true;
+    }
+    let row_h = 6.0;
+    let widths: Vec<f64> = (0..cols).map(|k| t.rows.iter().filter_map(|r| r.get(k)).map(|c| plain_width(c, 2.5) + 3.0).fold(10.0, f64::max)).collect();
+    let w: f64 = widths.iter().sum();
+    let title_h = if t.title.is_some() { 6.0 } else { 0.0 };
+    let h = row_h * t.rows.len() as f64 + title_h;
+    let inner = grow(g.frame, -2.0);
+    let corner = match t.at {
+        Some(p) => Some(p),
+        None => {
+            let mut found = None;
+            let mut y = inner[3];
+            'scan: while y - h >= inner[1] {
+                let mut x = inner[0];
+                while x + w <= inner[2] {
+                    if grid.free(grow([x, y - h, x + w, y], 1.5)) {
+                        found = Some([x, y]);
+                        break 'scan;
+                    }
+                    x += 2.0;
+                }
+                y -= 2.0;
+            }
+            found
+        }
+    };
+    let Some([x, top]) = corner else { return false };
+    let (s0, t0) = (d.strokes.len(), d.texts.len());
+    if let Some(title) = &t.title {
+        d.texts.push(Text { at: [x, top - 4.5], size: 3.5, text: title.clone(), anchor: Anchor::Start, angle: 0.0, bold: true });
+    }
+    let y0 = top - title_h;
+    let bottom = top - h;
+    d.strokes.push(Stroke { pen: Pen::Frame, points: vec![[x, bottom], [x + w, bottom], [x + w, y0], [x, y0], [x, bottom]] });
+    let mut cx = x;
+    for cw in &widths[..cols - 1] {
+        cx += cw;
+        d.strokes.push(Stroke { pen: Pen::Thin, points: vec![[cx, bottom], [cx, y0]] });
+    }
+    for (i, row) in t.rows.iter().enumerate() {
+        let ry = y0 - row_h * (i + 1) as f64;
+        if i + 1 < t.rows.len() {
+            d.strokes.push(Stroke { pen: if i == 0 { Pen::Visible } else { Pen::Thin }, points: vec![[x, ry], [x + w, ry]] });
+        }
+        let mut cx = x;
+        for (k, cell) in row.iter().enumerate() {
+            d.texts.push(Text { at: [cx + 1.5, ry + 1.9], size: if i == 0 { 2.0 } else { 2.5 }, text: cell.clone(), anchor: Anchor::Start, angle: 0.0, bold: i == 0 });
+            cx += widths[k];
+        }
+    }
+    grid.mark_drawn(d, s0..d.strokes.len(), t0..d.texts.len());
+    grid.mark([x, bottom, x + w, top]);
+    true
+}
+
+/// An auxiliary view in the free space, labelled VIEW B, and its arrow on the front view.
+fn place_aux(d: &mut Drawing, grid: &mut Grid, g: &Geometry, a: &AuxIn, letter: char) -> bool {
+    let k = a.scale.0;
+    let (w, h) = ((a.max[0] - a.min[0]) * k, (a.max[1] - a.min[1]) * k);
+    let label = if (k - d.scale).abs() < 1e-12 { format!("VIEW {letter}") } else { format!("VIEW {letter} ({})", a.scale.1) };
+    let inner = grow(g.frame, -3.0);
+    let mut spot = None;
+    let mut y = inner[1] + 9.0;
+    'scan: while y + h <= inner[3] {
+        let mut x = inner[0];
+        while x + w <= inner[2] {
+            if grid.free(grow([x, y - 9.0, x + w, y + h], 4.0)) {
+                spot = Some([x, y]);
+                break 'scan;
+            }
+            x += 2.0;
+        }
+        y += 2.0;
+    }
+    let Some([x, y]) = spot else { return false };
+    let at = [x - a.min[0] * k, y - a.min[1] * k];
+    let (s0, t0) = (d.strokes.len(), d.texts.len());
+    for l in &a.lines {
+        d.strokes.push(Stroke { pen: if l.hidden { Pen::Hidden } else { Pen::Visible }, points: l.points.iter().map(|p| [at[0] + p[0] * k, at[1] + p[1] * k]).collect() });
+    }
+    d.texts.push(Text { at: [x + w / 2.0, y - 7.0], size: 3.5, text: label, anchor: Anchor::Middle, angle: 0.0, bold: true });
+    grid.mark_drawn(d, s0..d.strokes.len(), t0..d.texts.len());
+    grid.mark([x, y - 9.0, x + w, y + h]);
+    // The viewing arrow on the front view, pointing the way the view looks.
+    if let Some(f) = d.views.iter().find(|v| v.view == ViewName::Front).cloned() {
+        let dir = [a.dir[0], a.dir[2]];
+        let l = dir[0].hypot(dir[1]);
+        if l > 1e-6 {
+            let u = [dir[0] / l, dir[1] / l];
+            let c = [(f.bounds[0] + f.bounds[2]) / 2.0, (f.bounds[1] + f.bounds[3]) / 2.0];
+            let half = ((f.bounds[2] - f.bounds[0]) * u[0].abs()).max((f.bounds[3] - f.bounds[1]) * u[1].abs()) / 2.0;
+            let tip = [c[0] - u[0] * (half + 3.0), c[1] - u[1] * (half + 3.0)];
+            let tail = [tip[0] - u[0] * 12.0, tip[1] - u[1] * 12.0];
+            d.strokes.push(Stroke { pen: Pen::Thin, points: vec![tail, tip] });
+            super::arrow(d, tip, u);
+            d.texts.push(Text { at: [tail[0] - u[0] * 3.0, tail[1] - u[1] * 3.0 - 1.75], size: 3.5, text: letter.to_string(), anchor: Anchor::Middle, angle: 0.0, bold: true });
+        }
+    }
+    true
+}
+
+/// The rest of what the person put on the sheet, after the views' own annotations.
+pub(super) fn extras(d: &mut Drawing, grid: &mut Grid, words: &mut Grid, g: &Geometry, options: &Options, letters: &mut dyn Iterator<Item = char>) {
+    let x = &options.extra;
+    for l in &x.lines {
+        let Some(v) = d.views.iter().find(|v| v.view == l.view).cloned() else {
+            d.warnings.push(format!("a line is on the {:?} view, which this sheet leaves out", l.view).to_lowercase());
+            continue;
+        };
+        let pen = match l.style {
+            LineStyle::Thin => Pen::Thin,
+            LineStyle::Visible => Pen::Visible,
+            LineStyle::Hidden => Pen::Hidden,
+            LineStyle::Center => Pen::Center,
+        };
+        let s0 = d.strokes.len();
+        d.strokes.push(Stroke { pen, points: l.points.iter().map(|p| [v.at[0] + p[0] * v.scale, v.at[1] + p[1] * v.scale]).collect() });
+        grid.mark_drawn(d, s0..d.strokes.len(), 0..0);
+    }
+    for t in &x.texts {
+        let t0 = d.texts.len();
+        push_text(d, Text { at: t.at, size: t.size.unwrap_or(3.5).max(1.8), text: t.text.clone(), anchor: Anchor::Start, angle: 0.0, bold: t.bold });
+        grid.mark_drawn(d, d.strokes.len()..d.strokes.len(), t0..d.texts.len());
+        words.mark_drawn(d, d.strokes.len()..d.strokes.len(), t0..d.texts.len());
+    }
+    for a in &x.angles {
+        let (s0, t0) = (d.strokes.len(), d.texts.len());
+        if !draw_angle(d, a) {
+            d.warnings.push(format!("an angle is on the {:?} view, which this sheet leaves out", a.view).to_lowercase());
+        }
+        grid.mark_drawn(d, s0..d.strokes.len(), t0..d.texts.len());
+        words.mark_drawn(d, s0..s0, t0..d.texts.len());
+    }
+    for a in &x.arcs {
+        let (s0, t0) = (d.strokes.len(), d.texts.len());
+        if !draw_arc(d, a) {
+            d.warnings.push(format!("an arc dimension is on the {:?} view, which this sheet leaves out", a.view).to_lowercase());
+        }
+        grid.mark_drawn(d, s0..d.strokes.len(), t0..d.texts.len());
+        words.mark_drawn(d, s0..s0, t0..d.texts.len());
+    }
+    for l in x.leaders.iter().chain(&g.notes) {
+        if !place_leader(d, grid, words, g, l.view, l.at, &l.text) {
+            d.warnings.push(format!("no room for the note “{}”", l.text));
+        }
+    }
+    for t in &x.tables {
+        if !place_table(d, grid, g, t) {
+            d.warnings.push(format!("no room for the table{}", t.title.as_ref().map(|s| format!(" “{s}”")).unwrap_or_default()));
+        }
+    }
+    for a in &g.aux {
+        let Some(letter) = letters.next() else { break };
+        if !place_aux(d, grid, g, a, letter) {
+            d.warnings.push(format!("no room on the sheet for view {letter}: try a larger sheet or a smaller scale"));
+        }
+    }
 }
