@@ -5,16 +5,31 @@
     "Inserts & pins",
     "Bearings & motion",
     "Motors",
-    "Structural"
+    "Structural",
+    "Magnets",
+    "Seals & feet"
   ],
   "order": [
     "iso4762",
     "iso10642",
     "iso7380",
+    "iso4017",
+    "iso4014",
+    "iso4026",
+    "iso4027",
+    "iso4029",
     "iso4032",
+    "iso10511",
     "iso7089",
+    "iso7093",
+    "din127",
+    "standoff_hex",
+    "iso15977",
     "heatset_insert",
     "iso8734",
+    "iso8752",
+    "din471",
+    "din472",
     "bearing_deep_groove",
     "linear_bearing_lmuu",
     "linear_rod",
@@ -24,6 +39,11 @@
     "servo_hobby",
     "servo_horn",
     "nema17",
-    "tslot_20"
+    "tslot_20",
+    "magnet_neodymium",
+    "oring",
+    "cable_gland",
+    "rubber_bumper",
+    "rubber_foot"
   ]
 }
