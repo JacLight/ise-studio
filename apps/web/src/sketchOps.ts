@@ -3,6 +3,7 @@
 // drawing shows what a click will make before it is made. The engine's
 // result is the truth; these only draw it ahead of time.
 
+import { curveTrace } from "./sketchCurves";
 import { type Curve, type Geometry, type Segment, type Solved, positions, radiusOf } from "./sketchModel";
 
 type P = [number, number];
@@ -276,7 +277,8 @@ export function mappedSegments(g: Geometry, s: Solved | undefined, ids: Iterable
     if (c.kind === "line") out.push({ kind: "line", from: at(c.a), to: at(c.b) });
     else if (c.kind === "circle") out.push({ kind: "circle", center: at(c.center), radius: radiusOf(c, s) });
     else if (c.kind === "arc") out.push(flip ? { kind: "arc", center: at(c.center), from: at(c.end), to: at(c.start), ccw: true } : { kind: "arc", center: at(c.center), from: at(c.start), to: at(c.end), ccw: true });
-    else out.push({ kind: "bezier", from: at(c.a), to: at(c.b), c1: at(c.c1), c2: at(c.c2) });
+    else if (c.kind === "bezier") out.push({ kind: "bezier", from: at(c.a), to: at(c.b), c1: at(c.c1), c2: at(c.c2) });
+    else out.push({ kind: "poly", points: curveTrace(c, (id) => pos.get(id) ?? [0, 0], s).map(f) });
   }
   return out;
 }

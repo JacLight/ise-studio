@@ -112,10 +112,7 @@ fn parse(n: usize, d: &[f64]) -> Vec<Loop> {
 
 /// The numbers a constraint refers to (points and curves).
 pub(crate) fn refs(c: &Constraint) -> Vec<u32> {
-    match serde_json::to_value(c) {
-        Ok(Value::Object(m)) => m.iter().filter(|(k, _)| !matches!(k.as_str(), "kind" | "key" | "x" | "y")).filter_map(|(_, v)| v.as_u64().map(|n| n as u32)).collect(),
-        _ => vec![],
-    }
+    c.ids()
 }
 
 /// The geometry without these curves, the points only they used, and the
@@ -128,19 +125,14 @@ fn without(s: &mut Sketch, gone: &BTreeSet<u32>) -> Geometry {
     let points: Vec<Point> = g.points.iter().filter(|p| !removed_points.contains(&p.id)).cloned().collect();
     let dead = |id: &u32| gone.contains(id) || removed_points.contains(id);
     let constraints: Vec<Constraint> = g.constraints.iter().filter(|c| !refs(c).iter().any(dead)).cloned().collect();
-    let keys: BTreeSet<String> = constraints.iter().filter_map(|c| serde_json::to_value(c).ok()?.get("key")?.as_str().map(str::to_string)).collect();
+    let keys: BTreeSet<String> = constraints.iter().filter_map(|c| c.key().map(str::to_string)).collect();
     // Dimensions only removed constraints carried go with them.
     s.params.retain(|p| keys.contains(&p.key));
     Geometry { points, curves, constraints }
 }
 
 pub(crate) fn curve_points(c: &Curve) -> Vec<u32> {
-    match c {
-        Curve::Line { a, b, .. } => vec![*a, *b],
-        Curve::Arc { center, start, end, .. } => vec![*center, *start, *end],
-        Curve::Circle { center, .. } => vec![*center],
-        Curve::Bezier { a, b, c1, c2, .. } => vec![*a, *b, *c1, *c2],
-    }
+    c.points()
 }
 
 /// Adds loops as new curves (sharing points where loops meet); level and
@@ -188,6 +180,13 @@ fn add_loops(g: &mut Geometry, loops: &[Loop]) -> Vec<u32> {
                 let (a, b) = (point(g, fresh(), from, true), point(g, fresh(), to, true));
                 let (c1, c2) = (point(g, fresh(), c1, false), point(g, fresh(), c2, false));
                 Curve::Bezier { id: fresh(), a, b, c1, c2, construction: false }
+            }
+            Segment::Nurbs(ref n) => {
+                let last = n.poles.len() - 1;
+                let poles: Vec<u32> = n.poles.iter().enumerate().map(|(i, q)| point(g, fresh(), *q, i == 0 || i == last)).collect();
+                let (knots, mults) = n.knots_mults();
+                let rational = n.weights.iter().any(|w| (w - 1.0).abs() > 1e-12);
+                Curve::BSpline { id: fresh(), poles, degree: n.degree as u32, weights: if rational { n.weights.clone() } else { vec![] }, knots, mults, periodic: false, construction: false }
             }
         };
         made.push(curve.id());

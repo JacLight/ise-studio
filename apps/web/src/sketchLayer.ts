@@ -3,7 +3,8 @@
 // constraints and dimensions (HTML, laid out each frame).
 
 import * as THREE from "three";
-import { type Constraint, type Geometry, type Plane, type Segment, type SketchData, type Solved, glyph, handleIds, normalOf, positions, radiusOf, toWorld } from "./sketchModel";
+import { conicFrame, curvatureComb, curveSegment, knotPoints, sampleNurbs } from "./sketchCurves";
+import { type Constraint, type Geometry, type Plane, type Segment, type SketchData, type Solved, glyph, handleIds, innerOf, minorOf, normalOf, positions, toWorld } from "./sketchModel";
 
 export type SketchPicture = {
   data: SketchData;
@@ -18,12 +19,25 @@ export type SketchPicture = {
   cursor: [number, number] | null;
   /** Grid spacing (mm) for the faint grid. */
   grid: number;
+  /** B-spline control polygons: always, or only for selected splines. */
+  polygons?: boolean;
+  /** Curvature combs on B-splines. */
+  combs?: boolean;
+  /** Constraints picked in the list (indices), drawn lit. */
+  constraints?: number[];
+  /** What the cursor snapped to, shown beside it. */
+  snapLabel?: string | null;
+  /** The last point placed, for angle steps (Shift) from it. */
+  anchor?: [number, number] | null;
 };
 
 const INK = new THREE.Color("#5b3fc4");
 const SELECT = new THREE.Color("#e0761f");
 const CONSTRUCTION = new THREE.Color("#9a92ad");
 const HANDLE = new THREE.Color("#2f8ad0");
+/** Fully constrained: nothing left to move. */
+const DONE = new THREE.Color("#1f9d63");
+const CONFLICT = "conflict";
 
 function arcPoints(center: [number, number], r: number, a0: number, a1: number, n = 64): [number, number][] {
   const out: [number, number][] = [];
@@ -36,6 +50,8 @@ function arcPoints(center: [number, number], r: number, a0: number, a1: number, 
 
 export function segmentPoints(s: Segment): [number, number][] {
   if (s.kind === "line") return [s.from, s.to];
+  if (s.kind === "poly") return s.points;
+  if (s.kind === "nurbs") return sampleNurbs(s, Math.max(64, 16 * (s.poles.length - s.degree)));
   if (s.kind === "bezier") {
     const out: [number, number][] = [];
     for (let i = 0; i <= 64; i++) {
@@ -64,6 +80,8 @@ export class SketchLayer {
   private baseKey = "";
   private labels: { el: HTMLDivElement; at: THREE.Vector3 }[] = [];
   private host: HTMLElement | null = null;
+  private snapEl: HTMLDivElement | null = null;
+  private snapAt = new THREE.Vector3();
   /** A dimension label was clicked (to edit its value). */
   onEditDimension: ((key: string, x: number, y: number) => void) | null = null;
 
@@ -139,6 +157,8 @@ export class SketchLayer {
   /** Redraws the sketch: the drawing itself only when it changed, the highlights every time. */
   update(pic: SketchPicture | null) {
     if (!pic) {
+      this.snapEl?.remove();
+      this.snapEl = null;
       SketchLayer.empty(this.base);
       SketchLayer.empty(this.overlay);
       this.clearLabels();
@@ -150,14 +170,13 @@ export class SketchLayer {
     const at = (id: number) => pos.get(id) ?? ([0, 0] as [number, number]);
     const segOf = (id: number): Segment | null => {
       const c = g.curves.find((x) => x.id === id);
-      if (!c) return null;
-      if (c.kind === "line") return { kind: "line", from: at(c.a), to: at(c.b) };
-      if (c.kind === "circle") return { kind: "circle", center: at(c.center), radius: radiusOf(c, pic.solved) };
-      if (c.kind === "bezier") return { kind: "bezier", from: at(c.a), to: at(c.b), c1: at(c.c1), c2: at(c.c2) };
-      return { kind: "arc", from: at(c.start), to: at(c.end), center: at(c.center), ccw: true };
+      return c ? curveSegment(c, at, pic.solved) : null;
     };
+    const solvedState = pic.solved?.solved;
+    const stateOf = (i: number) =>
+      solvedState?.conflicts.includes(i) ? CONFLICT : solvedState?.malformed?.includes(i) ? "malformed" : solvedState?.redundant?.includes(i) ? "redundant" : solvedState?.partially_redundant?.includes(i) ? "partial" : "";
 
-    const key = JSON.stringify([pic.data, pic.solved?.solved.points, pic.solved?.solved.radii, pic.grid]);
+    const key = JSON.stringify([pic.data, solvedState, pic.grid, pic.polygons, pic.combs, pic.constraints, [...pic.selected].sort()]);
     if (key !== this.baseKey) {
       this.baseKey = key;
       SketchLayer.empty(this.base);
@@ -185,20 +204,62 @@ export class SketchLayer {
       if (Math.abs(gy) <= n * step) axes.push([[gx - n * step, 0], [gx + n * step, 0]]);
       this.lines(this.base, plane, axes, gridColor, { opacity: 0.6 });
 
-      // Curves: drawn and construction.
+      // Curves: drawn (fully constrained ones in green) and construction.
+      const freeCurves = solvedState?.free_curves ? new Set(solvedState.free_curves) : null;
+      const freePoints = solvedState?.free_points ? new Set(solvedState.free_points) : null;
       const drawn: [number, number][][] = [];
+      const done: [number, number][][] = [];
       const construction: [number, number][][] = [];
       for (const c of g.curves) {
         const seg = segOf(c.id);
-        if (seg) (c.construction ? construction : drawn).push(segmentPoints(seg));
+        if (!seg) continue;
+        (c.construction ? construction : freeCurves && !freeCurves.has(c.id) ? done : drawn).push(segmentPoints(seg));
       }
       this.lines(this.base, plane, drawn, INK);
+      this.lines(this.base, plane, done, DONE);
       this.lines(this.base, plane, construction, CONSTRUCTION, { dashed: true });
       // Bézier handles: a thin line from each end to its handle, the handle a smaller dot.
       const handles = handleIds(g);
       const arms: [number, number][][] = g.curves.flatMap((c) => (c.kind === "bezier" ? [[at(c.a), at(c.c1)], [at(c.b), at(c.c2)]] : []));
+      // B-spline control polygons (all, or the selected ones), knots, degree and weights.
+      const sel = new Set(pic.selected);
+      const splines = g.curves.filter((c): c is Extract<typeof c, { kind: "bspline" }> => c.kind === "bspline");
+      for (const c of splines) {
+        if (!pic.polygons && !sel.has(c.id) && !c.poles.some((p) => sel.has(p))) continue;
+        const poly = c.poles.map(at);
+        if (c.periodic && poly.length) poly.push(poly[0]);
+        arms.push(poly);
+        this.dots(this.base, plane, knotPoints(c, at), HANDLE, 5);
+        if (poly.length) this.label(plane, poly[0], `deg ${c.degree}${c.periodic ? " · closed" : ""}`, "glyph info");
+        if (c.weights?.some((w) => Math.abs(w - 1) > 1e-9)) c.poles.forEach((p, i) => this.label(plane, at(p), `w ${Number((c.weights![i] ?? 1).toFixed(3))}`, "glyph info"));
+      }
+      if (pic.combs) {
+        const comb: [number, number][][] = [];
+        for (const c of splines) {
+          const pts = c.poles.map(at);
+          const size = Math.max(1, ...pts.map((p) => Math.hypot(p[0] - pts[0][0], p[1] - pts[0][1])));
+          const teeth = curvatureComb(c, at, size * size * 0.15);
+          comb.push(...teeth.map(([p, q]) => [p, q]));
+          if (teeth.length) comb.push(teeth.map(([, q]) => q));
+        }
+        this.lines(this.base, plane, comb, HANDLE, { opacity: 0.45 });
+      }
       this.lines(this.base, plane, arms, HANDLE, { opacity: 0.7 });
-      this.dots(this.base, plane, g.points.filter((p) => !handles.has(p.id)).map((p) => at(p.id)), INK, 7);
+      // Conics: a small cross at each focus.
+      const marks: [number, number][][] = [];
+      const cross = (p: [number, number], r: number) => marks.push([[p[0] - r, p[1]], [p[0] + r, p[1]]], [[p[0], p[1] - r], [p[0], p[1] + r]]);
+      for (const c of g.curves) {
+        if (c.kind === "ellipse" || c.kind === "ellipse_arc" || c.kind === "hyperbola_arc") {
+          const f = conicFrame(at(c.center), at(c.major));
+          const b = Math.abs(minorOf(c, pic.solved));
+          const e = c.kind === "hyperbola_arc" ? Math.hypot(f.a, b) : Math.sqrt(Math.max(0, f.a * f.a - b * b));
+          for (const k of c.kind === "hyperbola_arc" ? [1] : [1, -1]) cross([f.c[0] + f.u[0] * e * k, f.c[1] + f.u[1] * e * k], step * 0.25);
+        } else if (c.kind === "parabola_arc") cross(at(c.focus), step * 0.25);
+      }
+      this.lines(this.base, plane, marks, CONSTRUCTION, { opacity: 0.8 });
+      const loose = (id: number) => !freePoints || freePoints.has(id);
+      this.dots(this.base, plane, g.points.filter((p) => !handles.has(p.id) && loose(p.id)).map((p) => at(p.id)), INK, 7);
+      this.dots(this.base, plane, g.points.filter((p) => !handles.has(p.id) && !loose(p.id)).map((p) => at(p.id)), DONE, 7);
       this.dots(this.base, plane, g.points.filter((p) => handles.has(p.id)).map((p) => at(p.id)), HANDLE, 6);
 
       // Constraint glyphs and dimension values, near what they constrain.
@@ -217,29 +278,65 @@ export class SketchLayer {
         offsets.set(k, i + 1);
         return [p[0], p[1] + i * step * 0.8];
       };
-      for (const c of g.constraints) {
-        const sym = glyph(c);
-        if (sym) {
-          const target = "line" in c ? lineMid(c.line) : "a" in c ? lineMid(c.a) : "point" in c ? at(c.point) : null;
-          if (target) this.label(plane, place(target), sym, "glyph");
-          continue;
+      const lit = new Set(pic.constraints ?? []);
+      // Where a curve or point is, for labels: a point, a line's middle, a curve's centre or middle.
+      const spot = (id: number): [number, number] | null => {
+        if (pos.has(id)) return at(id);
+        const lm = lineMid(id);
+        if (lm) return lm;
+        const cur = g.curves.find((x) => x.id === id);
+        if (!cur) return null;
+        if ("center" in cur) return at(cur.center);
+        const seg = segOf(id);
+        const pts = seg ? segmentPoints(seg) : [];
+        return pts.length ? pts[Math.floor(pts.length / 2)] : null;
+      };
+      g.constraints.forEach((raw, i) => {
+        const c = innerOf(raw);
+        const state = [stateOf(i), raw.kind === "reference" ? "reference" : "", raw.kind === "inactive" ? "inactive" : "", lit.has(i) ? "lit" : ""].filter(Boolean).join(" ");
+        const sym = glyph(raw);
+        if (sym || (!("key" in c) && state)) {
+          const target =
+            c.kind === "snell"
+              ? at(c.at)
+              : c.kind === "symmetric"
+                ? spot(c.line)
+                : c.kind === "internal_alignment"
+                  ? spot(c.element)
+                  : c.kind === "block"
+                    ? spot(c.curve)
+                    : c.kind === "equal"
+                      ? spot(c.b)
+                      : "line" in c
+                      ? lineMid(c.line)
+                      : "a" in c
+                        ? spot(c.a)
+                        : "point" in c
+                          ? at(c.point)
+                          : null;
+          if (target) this.label(plane, place(target), sym ?? "●", `glyph ${state}`);
+          return;
         }
-        if (!("key" in c)) continue;
+        if (!("key" in c)) return;
         const d = value(c.key);
-        if (!d) continue;
-        const text = `${d.expr ? "ƒ " : ""}${fmt(pic.solved ? dimValue(c, pos, pic.solved, g) : d.value)}${c.kind === "angle" ? "°" : ""}`;
+        if (!d) return;
+        const measured = solvedState?.measured?.[c.key];
+        const v = measured ?? (pic.solved ? dimValue(c, pos, pic.solved, g) : d.value);
+        const text = `${d.expr ? "ƒ " : ""}${fmt(v)}${c.kind === "angle" ? "°" : ""}`;
         let where: [number, number] | null = null;
         if (c.kind === "length") where = lineMid(c.line);
         else if (c.kind === "radius" || c.kind === "diameter") {
           const cur = g.curves.find((x) => x.id === c.curve);
           if (cur && (cur.kind === "circle" || cur.kind === "arc")) where = at(cur.center);
-        } else if ("a" in c && "b" in c) {
-          const pa = g.points.some((p) => p.id === c.a) ? at(c.a) : lineMid(c.a);
-          const pb = g.points.some((p) => p.id === c.b) ? at(c.b) : lineMid(c.b);
-          if (pa && pb) where = mid(pa, pb);
+        } else if (c.kind === "snell") where = at(c.at);
+        else if ("a" in c && "b" in c) {
+          const pa = spot(c.a);
+          const pb = spot(c.b);
+          if (pa && pb) where = c.a === c.b ? pa : mid(pa, pb);
         }
-        if (where) this.label(plane, place(where), `${c.kind === "diameter" ? "⌀" : c.kind === "radius" ? "R" : ""}${text}`, `dim ${d.expr ? "linked" : ""}`, c.key);
-      }
+        const label = `${c.kind === "diameter" ? "⌀" : c.kind === "radius" ? "R" : c.kind === "snell" ? "n " : ""}${text}`;
+        if (where) this.label(plane, place(where), raw.kind === "reference" ? `(${label})` : label, `dim ${d.expr ? "linked" : ""} ${state}`, c.key);
+      });
     }
 
     // Highlights, preview and cursor: a handful of objects, redrawn each time.
@@ -250,10 +347,25 @@ export class SketchLayer {
     const hotPoints = [pic.hoverPoint, ...pic.selected].filter((id): id is number => id !== null && pos.has(id)).map(at);
     this.dots(this.overlay, plane, hotPoints, SELECT, 9);
     if (pic.cursor) this.dots(this.overlay, plane, [pic.cursor], SELECT, 9);
+    // What the cursor snapped to, beside it.
+    this.snapEl?.remove();
+    this.snapEl = null;
+    if (pic.cursor && pic.snapLabel && this.host) {
+      const el = document.createElement("div");
+      el.className = "sketch-label snap";
+      el.textContent = pic.snapLabel;
+      this.host.appendChild(el);
+      this.snapEl = el;
+      this.snapAt = new THREE.Vector3(...toWorld(plane, pic.cursor[0], pic.cursor[1]));
+    }
   }
 
   /** Positions the labels on screen; call every frame. */
   layout(toScreen: (v: THREE.Vector3) => { x: number; y: number; behind: boolean }) {
+    if (this.snapEl) {
+      const p = toScreen(this.snapAt);
+      this.snapEl.style.transform = `translate(${p.x + 12}px, ${p.y + 10}px)`;
+    }
     for (const { el, at } of this.labels) {
       const p = toScreen(at);
       el.style.display = p.behind ? "none" : "block";

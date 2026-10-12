@@ -108,6 +108,17 @@ const PATHS = {
   cOnCurve: "M3 17c4-9 14-9 18 0 M12 8.5a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z",
   cMidpoint: "M3 12h18 M12 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z M3 9v6 M21 9v6",
   cFix: "M12 13v8 M8 3h8 M9 3v6l-3 4h12l-3-4V3",
+  cSymmetric: "M12 3v18 M4 8h.01 M20 8h.01 M4 8l4 8 M20 8l-4 8 M8 16h8",
+  cBlock: "M4 4h16v16H4z M8 8h8v8H8z",
+  cLock: "M7 11V8a5 5 0 0 1 10 0v3 M5 11h14v10H5z",
+  cDistance: "M4 7v10 M20 7v10 M4 12h16 M7 9l-3 3 3 3 M17 9l3 3-3 3",
+  cSnell: "M3 12h18 M5 4l7 8 M12 12l4 9",
+  cInternal: "M12 5c-6 0-9 3.1-9 7s3 7 9 7 9-3.1 9-7-3-7-9-7z M3 12h18 M8 12h.01 M16 12h.01",
+  unalign: "M4 12h6 M14 12h6 M4 9v6 M20 9v6 M12 4v4 M12 16v4",
+  join: "M3 17c3-8 6-10 9-5s6 3 9-5 M12 11.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z",
+  spline: "M3 19c4-14 8-14 9-7s5 7 9-7 M3 19h.01 M7 6h.01 M17 18h.01 M21 5h.01",
+  construction: "M3 21 21 3 M6 18l2-2 M10 14l2-2 M14 10l2-2",
+  split: "M3 12h7 M14 12h7 M12 6v12",
 } as const;
 
 export type IconName = keyof typeof PATHS;
