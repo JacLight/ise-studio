@@ -864,13 +864,33 @@ int occ_write_cad(void* p, const int* hs, const char* const* names, const double
       if (solids == 1) part = only;
       // A placed part's placement goes into its geometry: a located shape
       // would go in as an unnamed product ("Open CASCADE STEP translator …").
-      if (!part.Location().IsIdentity()) part = BRepBuilderAPI_Transform(part.Located(TopLoc_Location()), part.Location().Transformation(), true).Shape();
+      const size_t painted = a->painted.size();
+      if (!part.Location().IsIdentity()) {
+        const TopoDS_Shape placed = part;
+        const TopoDS_Shape unplaced = part.Located(TopLoc_Location());
+        BRepBuilderAPI_Transform xf(unplaced, placed.Location().Transformation(), true);
+        part = xf.Shape();
+        // Paint follows the geometry into its placed copy (faces by their images).
+        for (size_t k = 0; k < painted; k++) {
+          auto entry = a->painted[k];
+          const TopoDS_Shape& shape = std::get<0>(entry);
+          if (shape.ShapeType() != TopAbs_FACE) {
+            bool same = shape.IsPartner(placed);
+            for (TopExp_Explorer e(shape, TopAbs_SOLID); !same && e.More(); e.Next()) same = e.Current().IsPartner(placed);
+            if (same) a->painted.push_back({part, std::get<1>(entry), std::get<2>(entry)});
+            continue;
+          }
+          for (TopExp_Explorer e(unplaced, TopAbs_FACE); e.More(); e.Next())
+            if (shape.IsPartner(e.Current())) a->painted.push_back({xf.ModifiedShape(e.Current()), std::get<1>(entry), std::get<2>(entry)});
+        }
+      }
       TDF_Label l = tool->AddShape(part, false, false);
       TDataStd_Name::Set(l, TCollection_ExtendedString(names[i], true));
       if (colors && colors[3 * i] >= 0)
         paint->SetColor(l, Quantity_Color(colors[3 * i], colors[3 * i + 1], colors[3 * i + 2], Quantity_TOC_sRGB), XCAFDoc_ColorGen);
       // What the program painted (the part, or single faces) wins over its material's look.
       apply_paint(a, tool, paint, l, part);
+      a->painted.resize(painted);
     }
     if (iges) {
       Interface_Static::SetCVal("write.iges.unit", "MM");
