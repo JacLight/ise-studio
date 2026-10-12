@@ -578,11 +578,13 @@ function surface(look: Look, wireframe: boolean) {
 /** Scene geometry (mm) from an engine mesh (m). */
 function makeGeometry(mesh: MeshData): THREE.BufferGeometry {
   const indexed = new THREE.BufferGeometry();
-  indexed.setAttribute("position", new THREE.Float32BufferAttribute(mesh.positions.map((v) => v * MM), 3));
-  indexed.setIndex(mesh.indices);
+  const positions = Float32Array.from(mesh.positions);
+  for (let i = 0; i < positions.length; i++) positions[i] *= MM;
+  indexed.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  indexed.setIndex(new THREE.BufferAttribute(mesh.indices instanceof Uint32Array ? mesh.indices : Uint32Array.from(mesh.indices), 1));
   if (mesh.normals?.length) {
     // Smooth on curves, crisp at sharp edges: the engine already split the normals.
-    indexed.setAttribute("normal", new THREE.Float32BufferAttribute(mesh.normals, 3));
+    indexed.setAttribute("normal", new THREE.BufferAttribute(mesh.normals instanceof Float32Array ? mesh.normals : Float32Array.from(mesh.normals), 3));
     return indexed;
   }
   const geometry = indexed.toNonIndexed();
