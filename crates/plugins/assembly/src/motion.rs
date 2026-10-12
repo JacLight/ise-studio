@@ -52,7 +52,7 @@ pub struct PairGap {
     /// They touch the same way at every step: a part turning in contact about
     /// the joint's axis (a pin in its bearing, a horn screw on its spline), not
     /// a clash the motion brings. Counted as joined.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub turning: bool,
 }
 
@@ -411,4 +411,35 @@ fn gaps(world: &World, _j: &Joint, ids: &[(StableId, String)], frames: &[Vec<Tra
         out.notes.push(format!("Gaps checked at {} of the {} steps.", frames.len().div_ceil(every), frames.len()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Sweeps are kept on disk as JSON: what is written must read back.
+    #[test]
+    fn a_sweep_reads_back_as_written() {
+        let (a, b) = (StableId::new(), StableId::new());
+        let gap = PairGap { a: "Arm".into(), b: "Base".into(), a_id: a, b_id: b, gap: 0.4, at: 30.0, range: None, joined: false, turning: false };
+        let s = AssemblySweep {
+            assembly: None,
+            joint: a,
+            name: "Shoulder".into(),
+            kind: JointKind::Hinge,
+            key: "angle".into(),
+            unit: "°".into(),
+            from: 0.0,
+            to: 90.0,
+            instances: vec![SweptInstance { id: b, name: "Arm".into(), moves: true }],
+            frames: vec![SweepFrame { value: 0.0, poses: vec![([0.0, 1.0, 2.0], [0.0, 0.0, 0.0, 1.0])], joints: BTreeMap::from([(a, vec![0.0])]) }],
+            binds_at: None,
+            pairs: vec![gap.clone(), PairGap { turning: true, range: Some([0.0, 90.0]), ..gap }],
+            clashes: vec![],
+            search: 2.0,
+            notes: vec![],
+        };
+        let back: AssemblySweep = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(serde_json::to_value(&back).unwrap(), serde_json::to_value(&s).unwrap());
+    }
 }
