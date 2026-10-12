@@ -5,6 +5,7 @@ import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
 import { StockBrowser } from "./StockBrowser";
 import { PcbWorkspace, importKicadFile } from "./Pcb";
+import { Board3DBar } from "./Board3DBar";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
 import { type Bench, Workbench } from "./Bom";
 import { RequirementsPanel } from "./RequirementsPanel";
@@ -1902,6 +1903,7 @@ export function App({ engine }: { engine: Engine }) {
           }}
         />
       )}
+      <Board3DBar snapshot={() => viewport.current?.snapshot() ?? null} hidden={pcbOpen || !!focus} />
       {stockOpen && (
         <StockBrowser
           entities={state.entities}

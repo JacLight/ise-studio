@@ -99,6 +99,13 @@ fn fab_tools_on_the_example() {
     let same = gerbview::compare(&board_files.iter().map(|(n, s)| (n.clone(), s.clone().into_bytes())).collect::<Vec<_>>(), &gerbview::unpack("board.zip", &zip).unwrap(), 0.05);
     assert!(same.iter().all(|d| d.same), "{:?}", same.iter().filter(|d| !d.same).map(|d| (&d.function, d.added, d.removed)).collect::<Vec<_>>());
 
+    // ---- Back to a board: tracks and vias as on the board.
+    let (steps, notes) = gerbview::board_steps(&gerbview::unpack("board.zip", &zip).unwrap(), "From Gerbers").unwrap();
+    let ops = |op: &str| steps.iter().filter(|s| s["operation"] == op).count();
+    assert_eq!(ops("pcb.track.create"), v.tracks.len(), "{notes:?}");
+    assert_eq!(ops("pcb.via.create"), v.vias.len());
+    assert_eq!(steps[0]["parameters"]["outline"].as_array().unwrap().len(), v.outline.len());
+
     // ---- The board as glTF.
     let glb = de_pcb::glb::glb(&v, &b, &de_pcb::items(p.world(), id));
     assert_eq!(&glb[0..4], b"glTF");

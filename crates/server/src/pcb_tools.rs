@@ -7,7 +7,7 @@
 //! - `GET  /pcb/<id>/panel?rows=&cols=&…`     the panel's layout and checks (settings: `panel::Spec`)
 //! - `GET  /pcb/<id>/panel.zip?…&fab=`        its Gerbers, drill, positions, BOM and readme
 //! - `GET  /pcb/<id>/gerbview`                the board's own package as the Gerber viewer reads it
-//! - `POST /pcb/gerbview`                     `{ files: [{ name, data (base64) }], against?: [...], px? }`: layers (and a comparison)
+//! - `POST /pcb/gerbview`                     `{ files: [{ name, data (base64) }], against?: [...], px?, summary?, text_of? }`: layers (and a comparison), or one file's text
 //! - `POST /pcb/gerbview/pdf`                 `{ files, looks: [{ file, colour }], background?, mirror? }`: the layers as a PDF
 //! - `GET  /pcb/<id>/board.glb`               the populated board as binary glTF
 
@@ -144,11 +144,25 @@ pub struct ViewRequest {
     /// Only the summary (no drawings): for the CLI.
     #[serde(default)]
     summary: bool,
+    /// One file's text instead (the viewer's "show source").
+    #[serde(default)]
+    text_of: Option<String>,
+    /// Commands that rebuild a board of this name from the files (for `./forma run`).
+    #[serde(default)]
+    to_board: Option<String>,
 }
 
 pub async fn gerbview_post(axum::Json(req): axum::Json<ViewRequest>) -> axum::response::Response {
     let out = tokio::task::spawn_blocking(move || -> Result<Value, String> {
         let files = files_of(&req.files)?;
+        if let Some(name) = &req.text_of {
+            let f = files.iter().find(|f| &f.0 == name).ok_or_else(|| format!("no file {name}"))?;
+            return Ok(json!({ "file": name, "text": String::from_utf8_lossy(&f.1) }));
+        }
+        if let Some(name) = &req.to_board {
+            let (steps, notes) = gerbview::board_steps(&files, name)?;
+            return Ok(json!({ "steps": steps, "notes": notes }));
+        }
         let set = gerbview::read(&files);
         let mut v = if req.summary { gerbview::summary(&set) } else { serde_json::to_value(&set).map_err(|e| e.to_string())? };
         if let Some(against) = &req.against {

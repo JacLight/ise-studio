@@ -365,6 +365,14 @@ if (command === "run") {
         if (!res.ok) throw new Error(await res.text());
         return res;
       };
+      const toBoard = flag("--to-board");
+      if (toBoard) {
+        // Steps that rebuild a board (outline, tracks, vias) from the files: run them with ./forma run.
+        const s = await (await post("/pcb/gerbview", { files, to_board: flag("--name") ?? "From Gerbers" })).json();
+        writeFileSync(toBoard, JSON.stringify(s.steps, null, 1));
+        console.log(`wrote ${toBoard}: ${s.steps.length} steps (run them with ./forma run ${toBoard})`);
+        for (const n of s.notes) console.log(`  · ${n}`);
+      }
       const r = await (await post("/pcb/gerbview", { files, summary: true, ...(compare ? { against: upload(compare.split(",")) } : {}) })).json();
       console.log(`${r.layers.length} layers, ${r.size.join(" × ")} mm, ${r.nets} nets, ${r.parts} parts${r.job ? ", job file" : ""}`);
       for (const l of r.layers) console.log(`  ${l.function.padEnd(22)} ${l.file}${l.guessed ? " (layer guessed from its name)" : ""}: ${l.kind === "drill" ? l.tools.map(([t, d, h, s]) => `T${t} ø${d}×${h}${s ? `+${s} slots` : ""}`).join(", ") : `${l.objects} objects, ${l.apertures} apertures, ${l.nets} nets`}`);

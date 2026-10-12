@@ -736,6 +736,85 @@ fn capsule(a: P, b: P, r: f64) -> Vec<P> {
     out
 }
 
+// ---- Gerbers to a board -------------------------------------------------------------
+
+/// Commands that rebuild a board from fab files (what GerbView's "export to PCB" does): the
+/// outline and cutouts from the profile, every round-aperture draw on a copper layer that is
+/// not a pad as a track (with its X2 net), every via pad with its drill as a via. Pads, pours
+/// and silkscreen are not turned into footprints or zones (files do not say which part a land
+/// belongs to well enough); they are counted in `notes`. Steps use `$0.id` for the board.
+pub fn board_steps(files: &[(String, Vec<u8>)], name: &str) -> Result<(Vec<Value>, Vec<String>), String> {
+    let text = |f: &str| files.iter().find(|x| x.0 == f).map(|x| String::from_utf8_lossy(&x.1).to_string()).unwrap_or_default();
+    let set = read(files);
+    let profile = set.layers.iter().find(|l| l.function.starts_with("Profile")).ok_or("no board profile (Edge_Cuts) among the files")?;
+    let g = reader::gerber(&text(&profile.file))?;
+    let (mut loops, open) = crate::gerber_check::loops(&g);
+    if loops.is_empty() {
+        return Err("the profile has no closed outline".into());
+    }
+    let area = |p: &Vec<P>| crate::geom::polygon_area(p).abs();
+    loops.sort_by(|a, b| area(b).total_cmp(&area(a)));
+    let mut outline = loops.remove(0);
+    if crate::geom::polygon_area(&outline) < 0.0 {
+        outline.reverse();
+    }
+    let r4 = |v: f64| (v * 1e4).round() / 1e4;
+    let pts = |p: &[P]| Value::Array(p.iter().map(|q| json!([r4(q[0]), r4(q[1])])).collect());
+    let copper: Vec<&Layer> = set.layers.iter().filter(|l| l.function.starts_with("Copper")).collect();
+    let n_layers = if copper.len() > 2 { 4 } else { 2 };
+    let mut notes = Vec::new();
+    if open > 0 {
+        notes.push(format!("{open} open chains in the profile were left out"));
+    }
+    let mut steps = vec![json!({ "operation": "pcb.board.create", "parameters": { "name": name, "outline": pts(&outline), "cutouts": loops.iter().map(|c| pts(c)).collect::<Vec<_>>(), "layers": n_layers } })];
+    let drills: Vec<(P, f64)> = set.layers.iter().filter(|l| l.function.starts_with("Plated")).flat_map(|l| {
+        let d = reader::excellon(&text(&l.file)).ok();
+        d.map(|d| d.hits.iter().map(|(t, at)| (*at, d.tools[t])).collect::<Vec<_>>()).unwrap_or_default()
+    }).collect();
+    let (mut tracks, mut vias, mut pads, mut regions) = (0, 0, 0, 0);
+    for l in &copper {
+        let p: Vec<&str> = l.function.split(',').collect();
+        let n: usize = p.get(1).and_then(|x| x.trim_start_matches('L').parse().ok()).unwrap_or(1);
+        let layer = if p.contains(&"Top") { "top".to_string() } else if p.contains(&"Bot") { "bottom".to_string() } else { format!("in{}", n - 1) };
+        let g = reader::gerber(&text(&l.file))?;
+        for o in &g.objects {
+            let function = o.function.clone().unwrap_or_default();
+            match &o.shape {
+                Shape::Stroke { d, pts: line } if !function.contains("Pad") => {
+                    let Some(Aperture::Circle(w)) = g.apertures.get(d) else { continue };
+                    let mut s = json!({ "board": "$0.id", "layer": layer, "points": pts(line), "width": r4(*w) });
+                    if let Some(net) = o.net.as_deref().filter(|n| !n.is_empty() && *n != "N/C") {
+                        s["net"] = json!(net);
+                    }
+                    steps.push(json!({ "operation": "pcb.track.create", "parameters": s }));
+                    tracks += 1;
+                }
+                Shape::Flash { d, at } if function.starts_with("ViaPad") => {
+                    // Each via once: from the top layer.
+                    if layer != "top" {
+                        continue;
+                    }
+                    let dia = match g.apertures.get(d) {
+                        Some(Aperture::Circle(w)) => *w,
+                        _ => continue,
+                    };
+                    let drill = drills.iter().filter(|(q, _)| (q[0] - at[0]).hypot(q[1] - at[1]) < 0.01).map(|x| x.1).next().unwrap_or(dia / 2.0);
+                    let mut s = json!({ "board": "$0.id", "at": [r4(at[0]), r4(at[1])], "diameter": r4(dia), "drill": r4(drill) });
+                    if let Some(net) = o.net.as_deref().filter(|n| !n.is_empty()) {
+                        s["net"] = json!(net);
+                    }
+                    steps.push(json!({ "operation": "pcb.via.create", "parameters": s }));
+                    vias += 1;
+                }
+                Shape::Region(_) => regions += 1,
+                _ => pads += 1,
+            }
+        }
+    }
+    notes.push(format!("{tracks} tracks and {vias} vias made; {pads} pads and {regions} copper regions (pours, custom pads) are not turned into footprints or zones: place the parts and pour again"));
+    Ok((steps, notes))
+}
+
 /// A short summary of a set (for the CLI and the AI).
 pub fn summary(set: &Set) -> Value {
     json!({

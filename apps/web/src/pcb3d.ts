@@ -30,7 +30,58 @@ export type Scene3D = {
   holes: { at: P; size: P; rot: number; plated: boolean }[];
   sides: { top: Side; bottom: Side };
   bodies: { reference: string; solids: Solid[] }[];
+  /** Bodies of parts not placed (DNP), drawn on request. */
+  dnp_bodies?: { reference: string; solids: Solid[] }[];
+  /** What each part is, for showing and hiding by type. */
+  parts?: { reference: string; kind: "smd" | "tht" | "other"; dnp: boolean }[];
 };
+
+/** What the person shows of the board in the 3D view (view only, not saved). */
+export type BoardShow = { mask: boolean; silk: boolean; copper: boolean; bodies: boolean; smd: boolean; tht: boolean; other: boolean; dnp: boolean; boxes: boolean };
+export const SHOW_ALL: BoardShow = { mask: true, silk: true, copper: true, bodies: true, smd: true, tht: true, other: true, dnp: false, boxes: false };
+
+/** The scene with what is hidden taken out. */
+function shown(scene: Scene3D, o: BoardShow): Scene3D {
+  const kind = new Map((scene.parts ?? []).map((p) => [p.reference, p.kind]));
+  const keep = (r: string) => o.bodies && o[kind.get(r) ?? "other"];
+  const side = (x: Side): Side => ({ pads: o.copper ? x.pads : [], openings: x.openings, tracks: o.copper ? x.tracks : [], zones: o.copper ? x.zones : [], silk: o.silk ? x.silk : [] });
+  return {
+    ...scene,
+    mask: o.mask ? scene.mask : "none",
+    sides: { top: side(scene.sides.top), bottom: side(scene.sides.bottom) },
+    bodies: [...scene.bodies.filter((b) => keep(b.reference)), ...(o.dnp && o.bodies ? (scene.dnp_bodies ?? []).filter((b) => o[kind.get(b.reference) ?? "other"]) : [])],
+  };
+}
+
+/** Each part's bounding box as lines. */
+function boxes(scene: Scene3D) {
+  const pos: number[] = [];
+  for (const b of scene.bodies) {
+    const lo = [Infinity, Infinity, Infinity];
+    const hi = [-Infinity, -Infinity, -Infinity];
+    for (const s of b.solids) {
+      const a = (s.rot * Math.PI) / 180;
+      const [c, n] = [Math.abs(Math.cos(a)), Math.abs(Math.sin(a))];
+      const hx = (s.size[0] * c + s.size[1] * n) / 2;
+      const hy = (s.size[0] * n + s.size[1] * c) / 2;
+      lo[0] = Math.min(lo[0], s.at[0] - hx);
+      hi[0] = Math.max(hi[0], s.at[0] + hx);
+      lo[1] = Math.min(lo[1], s.at[1] - hy);
+      hi[1] = Math.max(hi[1], s.at[1] + hy);
+      lo[2] = Math.min(lo[2], s.at[2]);
+      hi[2] = Math.max(hi[2], s.at[2] + s.size[2]);
+    }
+    if (!Number.isFinite(lo[0])) continue;
+    const e = new THREE.EdgesGeometry(new THREE.BoxGeometry(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]).translate((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2));
+    pos.push(...(e.getAttribute("position").array as Float32Array));
+    e.dispose();
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  const lines = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: "#ffb020" }));
+  lines.name = "pcb-boxes";
+  return lines;
+}
 
 const MASK: Record<string, string> = { green: "#14532f", black: "#0a0b0d", blue: "#123c6e", red: "#7a1418", white: "#e9e9e4", purple: "#3b1d63", yellow: "#c9a51c", matte_black: "#17181a" };
 
@@ -202,10 +253,12 @@ function paint(scene: Scene3D, side: Side, px: number) {
     g.lineJoin = "round";
     return { c, g };
   };
-  const mask = MASK[scene.mask.toLowerCase().replace(/\s+/g, "_")] ?? MASK.green;
+  // Mask hidden: the bare laminate with its copper showing.
+  const bare = scene.mask === "none";
+  const mask = bare ? "#a39468" : (MASK[scene.mask.toLowerCase().replace(/\s+/g, "_")] ?? MASK.green);
   const fin = finishColor(scene.finish);
   const silkColor = scene.silk.toLowerCase() === "black" ? "#151515" : "#f4f3ee";
-  const underMask = mix(mix(mask, "#c27a3c", scene.mask.toLowerCase() === "black" ? 0.1 : 0.22), "#ffffff", scene.mask.toLowerCase() === "white" ? 0 : 0.06);
+  const underMask = bare ? "#c98b52" : mix(mix(mask, "#c27a3c", scene.mask.toLowerCase() === "black" ? 0.1 : 0.22), "#ffffff", scene.mask.toLowerCase() === "white" ? 0 : 0.06);
   const polyPath = (g: CanvasRenderingContext2D, pts: P[]) => {
     g.moveTo(pts[0][0], pts[0][1]);
     for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
@@ -262,7 +315,7 @@ function paint(scene: Scene3D, side: Side, px: number) {
   const rgb = (r: number, m: number) => `rgb(0,${Math.round(r * 255)},${Math.round(m * 255)})`;
   rm.g.fillStyle = rgb(0.44, 0);
   rm.g.fillRect(x0 - 1, y0 - 1, x1 - x0 + 2, y1 - y0 + 2);
-  copper(rm.g, rgb(0.34, 0));
+  copper(rm.g, bare ? rgb(0.3, 1) : rgb(0.34, 0));
   fillPolys(rm.g, side.openings, rgb(0.85, 0));
   fillPolys(rm.g, side.pads, rgb(fin.rough, 1));
   silk(rm.g, rgb(0.85, 0));
@@ -308,7 +361,8 @@ function faceMaterial(scene: Scene3D, side: Side, px: number) {
 }
 
 /** The whole board as a group in board coordinates (mm, z up from its bottom face). */
-export function buildBoard(scene: Scene3D): THREE.Group {
+export function buildBoard(full: Scene3D, show: BoardShow = SHOW_ALL): THREE.Group {
+  const scene = shown(full, show);
   const group = new THREE.Group();
   group.name = "pcb-look";
   const t = scene.thickness;
@@ -350,6 +404,7 @@ export function buildBoard(scene: Scene3D): THREE.Group {
     group.add(m);
   }
   group.add(bodiesGroup(scene));
+  if (show.boxes) group.add(boxes(scene));
   return group;
 }
 
@@ -377,6 +432,30 @@ class PcbLooks {
   private timer: number | null = null;
   private busy = false;
   private again = false;
+  private show: BoardShow = SHOW_ALL;
+  private listeners = new Set<() => void>();
+
+  /** What is shown of every board (view only). */
+  setShow(show: BoardShow) {
+    this.show = show;
+    for (const e of this.entries.values()) e.text = "";
+    void this.refresh();
+  }
+
+  getShow() {
+    return this.show;
+  }
+
+  /** Called when the boards drawn change. */
+  subscribe(fn: () => void) {
+    this.listeners.add(fn);
+    return () => void this.listeners.delete(fn);
+  }
+
+  /** The boards drawn now: model id, board id and its look. */
+  drawn() {
+    return [...this.entries.entries()].filter(([, e]) => e.look).map(([model, e]) => ({ model, board: e.board, look: e.look! }));
+  }
 
   setInvalidate(fn: () => void) {
     this.invalidate = fn;
@@ -448,7 +527,7 @@ class PcbLooks {
         if (text === entry.text && entry.look) continue;
         entry.text = text;
         const scene = JSON.parse(text) as Scene3D;
-        const look = buildBoard(scene);
+        const look = buildBoard(scene, this.show);
         if (entry.look) {
           entry.look.removeFromParent();
           dispose(entry.look);
@@ -458,6 +537,7 @@ class PcbLooks {
         this.hideEngine(entry);
         void model;
         this.invalidate();
+        for (const fn of this.listeners) fn();
       }
     } catch {
       // The engine is away: the plain mesh stays.
