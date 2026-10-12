@@ -25,6 +25,8 @@
     "lead_screw_t8",
     "lead_screw_nut_t8",
     "shaft_collar",
+    "coupling_flexible",
+    "coupling_jaw",
     "gt2_pulley",
     "gt2_idler",
     "gt2_belt_loop",

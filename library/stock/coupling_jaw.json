@@ -1,0 +1,175 @@
+{
+ "id": "coupling_jaw",
+ "name": "Jaw coupling",
+ "standard": null,
+ "category": "Bearings & motion",
+ "summary": "Jaw (spider, plum) shaft coupling D20L25 / D25L30: two aluminium hubs with three jaws each and a six-lobe polyurethane spider, one set screw per hub. Axis +Z, hub A from z = 0, hub B ending at z = L",
+ "keywords": [
+  "jaw coupling",
+  "spider coupling",
+  "plum coupling",
+  "L-type",
+  "Lovejoy",
+  "D20L25",
+  "D25L30",
+  "shaft coupling",
+  "motor coupling",
+  "CNC"
+ ],
+ "source": [
+  "common.js",
+  "coupling_jaw.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Aluminium 6061": 2700,
+  "Polyurethane 98A": 1200,
+  "Steel 45H": 7850
+ },
+ "params": [
+  {
+   "key": "D",
+   "label": "Outside diameter",
+   "value": 20,
+   "unit": "mm",
+   "min": 20,
+   "max": 25
+  },
+  {
+   "key": "d1",
+   "label": "Bore A",
+   "value": 5,
+   "unit": "mm",
+   "min": 3,
+   "max": 12
+  },
+  {
+   "key": "d2",
+   "label": "Bore B",
+   "value": 8,
+   "unit": "mm",
+   "min": 3,
+   "max": 12
+  }
+ ],
+ "columns": [
+  "D",
+  "d1",
+  "d2"
+ ],
+ "rows": [
+  {
+   "name": "D20L25 5×5",
+   "values": {
+    "D": 20,
+    "d1": 5,
+    "d2": 5
+   }
+  },
+  {
+   "name": "D20L25 5×6.35",
+   "values": {
+    "D": 20,
+    "d1": 5,
+    "d2": 6.35
+   }
+  },
+  {
+   "name": "D20L25 5×8",
+   "values": {
+    "D": 20,
+    "d1": 5,
+    "d2": 8
+   }
+  },
+  {
+   "name": "D20L25 6×8",
+   "values": {
+    "D": 20,
+    "d1": 6,
+    "d2": 8
+   }
+  },
+  {
+   "name": "D20L25 6.35×8",
+   "values": {
+    "D": 20,
+    "d1": 6.35,
+    "d2": 8
+   }
+  },
+  {
+   "name": "D20L25 8×8",
+   "values": {
+    "D": 20,
+    "d1": 8,
+    "d2": 8
+   }
+  },
+  {
+   "name": "D25L30 8×8",
+   "values": {
+    "D": 25,
+    "d1": 8,
+    "d2": 8
+   }
+  },
+  {
+   "name": "D25L30 8×10",
+   "values": {
+    "D": 25,
+    "d1": 8,
+    "d2": 10
+   }
+  },
+  {
+   "name": "D25L30 10×10",
+   "values": {
+    "D": 25,
+    "d1": 10,
+    "d2": 10
+   }
+  },
+  {
+   "name": "D25L30 8×12",
+   "values": {
+    "D": 25,
+    "d1": 8,
+    "d2": 12
+   }
+  }
+ ],
+ "default": "D20L25 5×8",
+ "checks": {
+  "D20L25 5×8": {
+   "size": [
+    20,
+    20,
+    25
+   ],
+   "connectors": [
+    "Bore A",
+    "Bore B",
+    "Axis"
+   ],
+   "connector_at": {
+    "Bore B": [
+     0,
+     0,
+     25
+    ]
+   },
+   "metrics": {
+    "Length": 25
+   },
+   "partNumber": "CPL-JAW-D20L25-5x8"
+  },
+  "D25L30 8×12": {
+   "size": [
+    25,
+    25,
+    30
+   ]
+  }
+ }
+}
