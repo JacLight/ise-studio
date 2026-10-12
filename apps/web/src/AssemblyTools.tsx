@@ -326,7 +326,7 @@ export function Couplings(props: { scope: string | null; joints: EntityView[]; e
   const [form, setForm] = useState<{ kind: CouplingKind; driver: string; follower: string; v: Record<string, string> } | null>(null);
   if (moving.length < 2 && !list.length) return null;
   const jname = (id: string) => paramsOf(entities.get(id) ?? ({ components: {} } as EntityView)).name;
-  const describe = (c: CouplingData) => (c.kind === "cam" ? "cam" : `${c.ratio > 0 ? "×" : "×"}${n1(c.ratio, 4)}${c.offset ? ` + ${n1(c.offset, 2)}` : ""}`);
+  const describe = (c: CouplingData) => (c.kind === "cam" ? "cam" : `×${n1(c.ratio, 4)}${c.offset ? ` + ${n1(c.offset, 2)}` : ""}`);
   return (
     <div className="at-couplings">
       <div className="at-sub">
@@ -791,18 +791,6 @@ const comp = <T,>(e: EntityView, k: string) => e.components[k] as T | undefined;
 
 export function AssemblyStudio(props: { scope: string; frame: Transform; entities: ReadonlyMap<string, EntityView>; run: Run; view: JointView; onSelect: (id: string) => void }) {
   const [tab, setTab] = useState<Tab | null>(null);
-  const { view } = props;
-  useEffect(() => {
-    view.poses(null);
-    view.overlay(null);
-  }, [tab, props.scope, view]);
-  useEffect(
-    () => () => {
-      view.poses(null);
-      view.overlay(null);
-    },
-    [view],
-  );
   return (
     <section className="props-section at-studio">
       <header>
@@ -816,16 +804,27 @@ export function AssemblyStudio(props: { scope: string; frame: Transform; entitie
           </button>
         ))}
       </div>
-      {tab === "poses" && <Poses {...props} />}
-      {tab === "explode" && <Exploded {...props} />}
-      {tab === "motion" && <Studies {...props} />}
-      {tab === "robot" && <Robot {...props} />}
-      {tab === "clash" && <Interference {...props} />}
+      {tab === "poses" && <Poses key={props.scope} {...props} />}
+      {tab === "explode" && <Exploded key={props.scope} {...props} />}
+      {tab === "motion" && <Studies key={props.scope} {...props} />}
+      {tab === "robot" && <Robot key={props.scope} {...props} />}
+      {tab === "clash" && <Interference key={props.scope} {...props} />}
     </section>
   );
 }
 
 type StudioProps = { scope: string; frame: Transform; entities: ReadonlyMap<string, EntityView>; run: Run; view: JointView; onSelect: (id: string) => void };
+
+/** Leaving a tool puts the view back: parts where they are, nothing drawn over them. */
+function useCleanView(view: JointView) {
+  useEffect(
+    () => () => {
+      view.poses(null);
+      view.overlay(null);
+    },
+    [view],
+  );
+}
 
 function Poses({ scope, entities, run }: StudioProps) {
   const [name, setName] = useState("");
@@ -867,6 +866,7 @@ function Poses({ scope, entities, run }: StudioProps) {
 type ExplodedResult = { name: string; instances: { id: string; name: string; moves: boolean }[]; steps: { name: string; poses: [V3, Quat][] }[]; trails: { instance: string; points: V3[] }[] };
 
 function Exploded({ scope, frame, entities, run, view }: StudioProps) {
+  useCleanView(view);
   const views = [...entities.values()].filter((e) => comp<ExplodeData>(e, "assembly.exploded_view")?.assembly === scope);
   const [open, setOpen] = useState<{ id: string; r: ExplodedResult } | null>(null);
   const [at, setAt] = useState(0);
@@ -974,6 +974,7 @@ function Exploded({ scope, frame, entities, run, view }: StudioProps) {
 }
 
 function Studies({ scope, entities, run, view }: StudioProps) {
+  useCleanView(view);
   const studies = [...entities.values()].filter((e) => comp<StudyData>(e, "assembly.motion_study")?.assembly === scope);
   const poses = [...entities.values()].filter((e) => comp<PoseData>(e, "assembly.pose")?.assembly === scope);
   const [playing, setPlaying] = useState<{ id: string; name: string; played: Played } | null>(null);
@@ -1070,6 +1071,7 @@ type Reach = { samples: number; points: V3[]; bounds_min: V3; bounds_max: V3; ba
 type Trajectory = Played & { waypoints: { reached: boolean; error_mm: number }[]; tool_path: V3[] };
 
 function Robot({ scope, frame, entities, run, view }: StudioProps) {
+  useCleanView(view);
   const members = membersOf(scope, entities);
   const held = members.filter((m) => m.placed?.by);
   const guess = held.find((m) => /grip|hand|tool|effector|finger|wrist|claw/i.test(instance(m)!.name)) ?? held[held.length - 1];
@@ -1243,6 +1245,7 @@ type Clash = { a: string; b: string; a_path: string[]; b_path: string[]; volume:
 type InterferenceReport = { name: string; parts: number; checked: number; overlaps: Clash[]; touching: Clash[]; near: Clash[]; clearance: number; notes: string[] };
 
 function Interference({ scope, frame, view, onSelect }: StudioProps) {
+  useCleanView(view);
   const [r, setR] = useState<InterferenceReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

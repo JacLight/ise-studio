@@ -245,7 +245,8 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
   const placed = entity.placed;
   // What a mate holds moves by hand along what it leaves free: only joints (and locks) hold outright.
   const byJoint = placed?.by ? entities.get(placed.by) : undefined;
-  const holder = byJoint && !isMate(jointOf(byJoint)?.kind ?? "") ? byJoint : undefined;
+  const byKind = jointOf(byJoint)?.kind ?? "";
+  const holder = byJoint && !(isMate(byKind) && byKind !== "lock") ? byJoint : undefined;
   const holderJoint = jointOf(holder);
   const holderOther = holderJoint ? [holderJoint.a, holderJoint.b].map((end) => (typeof end === "object" && "instance" in end ? end.instance : null)).find((x) => x !== entity.id) : undefined;
   const owner = inst.parent ? [...entities.values()].find((e) => instance(e)?.of === inst.parent) : undefined;
