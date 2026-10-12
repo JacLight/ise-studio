@@ -522,8 +522,28 @@ fn install<'js>(ctx: &Ctx<'js>, state: &Rc<RefCell<State>>) -> rquickjs::Result<
             Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String, _tolerance: f64| -> rquickjs::Result<String> {
                 // The file's own exact geometry, untouched.
                 let path = crate::assets::path(&sha).map_err(|e| throw(&ctx, e))?;
-                let bodies = st.borrow_mut().arena.read_step(&path).map_err(|e| fail(&ctx, "importStep", e))?;
-                let list: Vec<(String, u32)> = bodies.into_iter().map(|(n, s)| (n, handle(s))).collect();
+                let format = crate::assets::cad_format(&sha).map_err(|e| throw(&ctx, e))?;
+                let bodies = st.borrow_mut().arena.read_cad(&path, format).map_err(|e| fail(&ctx, "importStep", e))?;
+                let list: Vec<(String, u32, Option<String>)> = bodies.into_iter().map(|b| (b.name, handle(b.shape), b.color.map(crate::assets::hex))).collect();
+                Ok(serde_json::to_string(&list).unwrap())
+            })?,
+        )?;
+    }
+
+    {
+        let st = state.clone();
+        native.set(
+            "importMesh",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String| -> rquickjs::Result<String> {
+                // A mesh file has no exact surfaces: its triangles pass through as faces.
+                let bodies = crate::assets::mesh_bodies(&sha).map_err(|e| throw(&ctx, format!("importMesh: {e}")))?;
+                let mut s = st.borrow_mut();
+                s.faceted.push("an imported mesh file (importMesh)".into());
+                let mut list: Vec<(String, u32, Option<String>)> = Vec::new();
+                for (n, m, c) in bodies {
+                    let h = from_manifold(&mut s.arena, &m).map_err(|e| fail(&ctx, "importMesh", e))?;
+                    list.push((n, handle(h), c.map(crate::assets::hex)));
+                }
                 Ok(serde_json::to_string(&list).unwrap())
             })?,
         )?;

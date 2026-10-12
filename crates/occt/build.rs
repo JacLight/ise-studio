@@ -28,7 +28,7 @@ fn main() {
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib.display());
     for l in [
         "TKernel", "TKMath", "TKG2d", "TKG3d", "TKGeomBase", "TKBRep", "TKGeomAlgo", "TKTopAlgo", "TKPrim", "TKBO", "TKBool",
-        "TKShHealing", "TKMesh", "TKOffset", "TKFillet", "TKFeat", "TKXSBase", "TKDE", "TKDESTEP", "TKCDF", "TKLCAF", "TKCAF",
+        "TKShHealing", "TKMesh", "TKOffset", "TKFillet", "TKFeat", "TKXSBase", "TKDE", "TKDESTEP", "TKDEIGES", "TKCDF", "TKLCAF", "TKCAF",
         "TKXCAF", "TKVCAF", "TKService", "TKV3d", "TKHLR",
     ] {
         println!("cargo:rustc-link-lib=dylib={l}");

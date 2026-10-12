@@ -16,6 +16,8 @@
 //   node tools/forma.mjs get <id>             one entity in full (program source, params, results)
 //   node tools/forma.mjs commit <operation> '<json>'   one command (same $file inlining)
 //   node tools/forma.mjs ops [filter]         the commands the engine accepts, with schemas
+//   node tools/forma.mjs import <file> [--name N]   a file in: STEP/IGES (exact) and STL/OBJ/PLY/glTF/GLB/3MF (mesh) become a shape, DXF/SVG a sketch
+//   node tools/forma.mjs export <id|name|project> --format step|iges|stl|obj|ply|glb|3mf|dxf|zip [--part P] [--out path]   a file out (default ~/Downloads/Forma exports)
 //   node tools/forma.mjs view <action> [what] show something in the person's view (not saved):
 //        select L26 · frame L26 · isolate L26 · show_all · hide L19 · show L19
 //        color status|material · camera top|front|bottom|perspective
@@ -26,8 +28,9 @@
 // path (e.g. "$0.id"), and { "$file": "path.js" } inlines a file's text (paths
 // are relative to steps.json; several files can be joined with an array).
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, extname, join, resolve } from "node:path";
 
 const args = process.argv.slice(2);
 const urlFlag = args.indexOf("--url");
@@ -398,6 +401,75 @@ if (command === "run") {
     console.log("\nDefinitions (components and assemblies):");
     for (const d of defs) console.log(`  ${d.components["assembly.definition"]?.name ?? d.components["shape.program"].name}  (${d.id})`);
   }
+} else if (command === "import") {
+  // A file in: STEP/IGES (exact), STL/OBJ/PLY/glTF/GLB/3MF (mesh) become a shape; DXF/SVG a sketch.
+  const nameFlag = args.indexOf("--name");
+  const named = nameFlag >= 0 ? args.splice(nameFlag, 2)[1] : null;
+  const path = args[1];
+  if (!path) {
+    console.error("✗ say which file: forma import <file> [--name Name]");
+    process.exit(1);
+  }
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const ext = extname(path);
+  const sent = named ? `${named}${ext}` : basename(path);
+  const q = new URLSearchParams({ user: "forma-ai", ...(project ? { project } : {}) });
+  const res = await fetch(`${http}/import/${encodeURIComponent(sent)}?${q}`, { method: "POST", body: readFileSync(path) });
+  if (!res.ok) {
+    console.error(`✗ ${await res.text()}`);
+    failed = true;
+  } else {
+    const r = await res.json();
+    if (r.kind === "sketch") {
+      const c = r.counts;
+      console.log(`✓ ${basename(path)} → sketch “${r.name}” (${r.id}): ${c.lines} lines, ${c.arcs} arcs, ${c.circles} circles, ${c.curves} curves; ${r.size.map((v) => v.toFixed(1)).join(" × ")} mm. Use it in a program: sketch("${r.name}").extrude(3)`);
+    } else {
+      console.log(`✓ ${basename(path)} → shape ${r.id}: ${r.bodies} ${r.bodies === 1 ? "body" : "bodies"}, ${r.exact ? "exact" : "mesh (faceted)"}; program reads ${r.format === "step" ? "importStep" : r.format === "iges" ? "importIges" : "importMesh"}("${r.sha}")`);
+      if (r.colors?.length) console.log(`  colours in the file: ${r.colors.map((c) => `${c.part} ${c.color}`).join(", ")}`);
+    }
+  }
+} else if (command === "export") {
+  // A part or assembly out: GET /export/<id>.<format>, saved to a file.
+  const flag = (f) => {
+    const i = args.indexOf(f);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const format = (flag("--format") ?? "step").toLowerCase().replace(/^\./, "");
+  const part = flag("--part");
+  const out = flag("--out");
+  const what = args.slice(1).join(" ").trim();
+  if (!what) {
+    console.error("✗ say what: forma export <id or name> --format step|iges|stl|obj|ply|glb|3mf|dxf|zip [--part name] [--out path]");
+    process.exit(1);
+  }
+  // An id, or the name of an instance, shape or assembly (what is placed first).
+  const s = await engine.snapshot;
+  const nameOf = (e) => e.components["assembly.instance"]?.name ?? e.components["shape.program"]?.name ?? e.components["assembly.definition"]?.name;
+  const byId = s.entities.find((e) => e.id === what);
+  const named = byId ? [byId] : s.entities.filter((e) => nameOf(e)?.toLowerCase() === what.toLowerCase());
+  const placed = named.filter((e) => e.components["assembly.instance"] || e.components["solid.placement"]);
+  const pick = what === "project" ? [{ id: "project" }] : placed.length ? placed : named;
+  if (pick.length !== 1) {
+    console.error(pick.length ? `✗ “${what}” matches ${pick.length} things: use an id (${pick.map((e) => e.id).join(", ")})` : `✗ nothing called “${what}”`);
+    failed = true;
+  } else {
+    const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+    const q = new URLSearchParams({ ...(project ? { project } : {}), ...(part ? { part } : {}) });
+    const res = await fetch(`${http}/export/${pick[0].id}.${format === "iges" ? "igs" : format}?${q}`);
+    if (!res.ok) {
+      console.error(`✗ ${await res.text()}`);
+      failed = true;
+    } else {
+      const bytes = Buffer.from(await res.arrayBuffer());
+      const given = res.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? `${pick[0].id}.${format}`;
+      const target = out ? resolve(out) : join(homedir(), "Downloads", "Forma exports", given);
+      const path = out && existsSync(target) && statSync(target).isDirectory() ? join(target, given) : target;
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, bytes);
+      const size = bytes.length >= 1048576 ? `${(bytes.length / 1048576).toFixed(1)} MB` : `${(bytes.length / 1024).toFixed(1)} KB`;
+      console.log(`✓ ${path} (${size})`);
+    }
+  }
 } else if (command === "view") {
   const action = file;
   let arg = args.slice(2).join(" ").trim();
@@ -436,7 +508,7 @@ if (command === "run") {
     }
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | sheet [id] [part] | render [--width] | get <id> | tree | list | check | ops | view <action> [what]  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | sheet [id] [part] | render [--width] | get <id> | tree | list | check | ops | view <action> [what] | import <file> [--name N] | export <id> --format <fmt> [--part P] [--out path]  [--project name] [--url ws://…]");
   failed = true;
 }
 

@@ -16,11 +16,13 @@ pub struct StepMaker {
     tolerance: f64,
     /// program key → (its parts by name, faceted notes) or why it failed.
     done: std::collections::HashMap<String, Result<(Vec<(String, de_occt::Shape)>, Vec<String>), String>>,
+    /// program key → each part's material name (for colour in the file).
+    materials: std::collections::HashMap<String, Vec<(String, Option<String>)>>,
 }
 
 impl StepMaker {
     pub fn new(tolerance: f64) -> StepMaker {
-        StepMaker { arena: de_occt::Arena::new(), tolerance, done: Default::default() }
+        StepMaker { arena: de_occt::Arena::new(), tolerance, done: Default::default(), materials: Default::default() }
     }
 
     /// The exact parts of a program (evaluated the first time it is asked for).
@@ -33,6 +35,7 @@ impl StepMaker {
             let entry = match r {
                 Ok((arena, exact)) => {
                     self.arena = arena;
+                    self.materials.insert(key.clone(), exact.parts.iter().map(|p| (p.name.clone(), p.material.clone())).collect());
                     Ok((exact.parts.into_iter().map(|p| (p.name, p.shape)).collect(), exact.faceted))
                 }
                 Err((arena, e)) => {
@@ -49,23 +52,40 @@ impl StepMaker {
         &mut self.arena
     }
 
+    /// The material name of a program's part (once its parts are made).
+    pub fn material(&self, program: &ShapeProgram, part: &str) -> Option<String> {
+        self.materials.get(&program_key(program))?.iter().find(|(n, _)| n == part).and_then(|(_, m)| m.clone())
+    }
+
     /// STEP bytes for named shapes in this maker's arena.
     pub fn step(&mut self, parts: &[(String, de_occt::Shape)]) -> Result<Vec<u8>, String> {
+        let parts: Vec<_> = parts.iter().map(|(n, s)| (n.clone(), *s, None)).collect();
+        self.file(&parts, de_occt::CadFormat::Step)
+    }
+
+    /// STEP or IGES bytes for named, optionally coloured shapes in this maker's arena.
+    pub fn file(&mut self, parts: &[(String, de_occt::Shape, Option<[f64; 3]>)], format: de_occt::CadFormat) -> Result<Vec<u8>, String> {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!("forma-{}-{}.step", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
-        self.arena.write_step(parts, &path)?;
-        let bytes = std::fs::read(&path).map_err(|e| e.to_string());
+        let ext = if format == de_occt::CadFormat::Iges { "igs" } else { "step" };
+        let path = std::env::temp_dir().join(format!("forma-{}-{}.{ext}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        let written = self.arena.write_cad(parts, &path, format);
+        let bytes = written.and_then(|_| std::fs::read(&path).map_err(|e| e.to_string()));
         let _ = std::fs::remove_file(&path);
         bytes
     }
 
     /// One part of a program as its own STEP file (at the origin, like its STL).
     pub fn part_step(&mut self, program: &ShapeProgram, part: &str) -> Result<Vec<u8>, String> {
+        self.part_file(program, part, None, de_occt::CadFormat::Step)
+    }
+
+    /// One part of a program as its own STEP or IGES file, at the origin.
+    pub fn part_file(&mut self, program: &ShapeProgram, part: &str, color: Option<[f64; 3]>, format: de_occt::CadFormat) -> Result<Vec<u8>, String> {
         let (parts, _) = self.parts(program)?;
         let shape = parts.iter().find(|(n, _)| n == part).map(|(_, s)| *s).ok_or_else(|| format!("no part {part}"))?;
         let b = self.arena.bounds(shape)?;
         let at_origin = self.arena.translate(shape, [-b[0], -b[1], -b[2]])?;
-        self.step(&[(part.to_string(), at_origin)])
+        self.file(&[(part.to_string(), at_origin, color)], format)
     }
 }
 use manifold_csg::Manifold;
