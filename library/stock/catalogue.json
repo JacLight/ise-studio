@@ -5,7 +5,9 @@
     "Inserts & pins",
     "Bearings & motion",
     "Motors",
-    "Structural"
+    "Structural",
+    "Springs",
+    "Electronics"
   ],
   "order": [
     "iso4762",
@@ -24,6 +26,9 @@
     "servo_hobby",
     "servo_horn",
     "nema17",
-    "tslot_20"
+    "tslot_20",
+    "spring_compression",
+    "spring_extension",
+    "spring_torsion"
   ]
 }
