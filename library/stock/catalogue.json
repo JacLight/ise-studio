@@ -22,6 +22,8 @@
     "linear_rod",
     "linear_rail_mgn",
     "linear_carriage_mgn",
+    "lead_screw_t8",
+    "lead_screw_nut_t8",
     "shaft_collar",
     "gt2_pulley",
     "gt2_idler",
