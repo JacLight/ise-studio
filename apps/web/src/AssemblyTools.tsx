@@ -1089,7 +1089,8 @@ function Robot({ scope, frame, entities, run, view }: StudioProps) {
     const kind = (by?.components["assembly.joint"] as { kind?: string } | undefined)?.kind ?? "";
     return !!by && !isMate(kind);
   });
-  const guess = held.find((m) => /grip|hand|tool|effector|finger|wrist|claw/i.test(instance(m)!.name)) ?? held[held.length - 1];
+  // The likely end of the arm: a tool, a gripper body, a hand… in that order; else the last part a joint places.
+  const guess = [/tool|effector/i, /gripper body|gripper housing/i, /grip|hand|claw/i, /wrist/i, /finger/i].map((re) => held.find((m) => re.test(instance(m)!.name))).find(Boolean) ?? held[held.length - 1];
   const [tip, setTip] = useState<string | null>(guess?.id ?? null);
   const [chain, setChain] = useState<ChainInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
