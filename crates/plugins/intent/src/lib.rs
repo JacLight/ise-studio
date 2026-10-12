@@ -91,6 +91,38 @@ pub enum Rule {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         steps: Option<u32>,
     },
+    /// The shape's saved stress study (for `part`, or the whole solid) keeps
+    /// it at least `min` times from yielding (yield strength over the
+    /// largest von Mises stress), re-solved whenever the shape, its study
+    /// or its materials change.
+    MinSafetyFactor {
+        shape: StableId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        part: Option<String>,
+        min: f64,
+    },
+    /// Under its saved study the part moves at most `max` anywhere.
+    MaxDeflection {
+        shape: StableId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        part: Option<String>,
+        max: Length,
+    },
+    /// Held by its saved study's supports, the part's first natural
+    /// frequency is at least `min` Hz (prestressed when the study says so).
+    MinFirstFrequency {
+        shape: StableId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        part: Option<String>,
+        min: f64,
+    },
+    /// The saved study's loads times `min` do not buckle the part (linear buckling).
+    MinBucklingFactor {
+        shape: StableId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        part: Option<String>,
+        min: f64,
+    },
 }
 
 fn yes() -> bool {
@@ -108,6 +140,7 @@ impl Rule {
             Rule::Clearance { a, b, .. } => vec![*a, *b],
             Rule::NoClashesInMotion { joint, parts, .. } => std::iter::once(*joint).chain(parts.iter().copied()).collect(),
             Rule::AssemblyFits { assembly, .. } => vec![*assembly],
+            Rule::MinSafetyFactor { shape, .. } | Rule::MaxDeflection { shape, .. } | Rule::MinFirstFrequency { shape, .. } | Rule::MinBucklingFactor { shape, .. } => vec![*shape],
         }
     }
 
@@ -120,6 +153,10 @@ impl Rule {
             Rule::NoCollisions { .. } => "No collisions".into(),
             Rule::NoClashesInMotion { .. } => "No clashes through the motion".into(),
             Rule::AssemblyFits { .. } => "Everything fits".into(),
+            Rule::MinSafetyFactor { min, .. } => format!("Safety factor at least {}", fmt(*min)),
+            Rule::MaxDeflection { max, .. } => format!("Deflection at most {} mm", mm(max)),
+            Rule::MinFirstFrequency { min, .. } => format!("First frequency at least {} Hz", fmt(*min)),
+            Rule::MinBucklingFactor { min, .. } => format!("Buckling factor at least {}", fmt(*min)),
         }
     }
 }
@@ -206,6 +243,10 @@ fn evaluate(world: &World, entity: Entity) -> Option<Result<RequirementResult, S
         Rule::NoCollisions { parts: ids } => parts(world, ids).map(|ps| no_collisions(&geometry::expand(ps))),
         Rule::NoClashesInMotion { joint, parts: ids, steps } => clear_in_motion(world, *joint, ids, steps.unwrap_or(72) as usize),
         Rule::AssemblyFits { assembly, motion, steps } => assembly_fits(world, *assembly, *motion, steps.unwrap_or(36) as usize),
+        Rule::MinSafetyFactor { shape, part, min } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Safety, *min, false, ""),
+        Rule::MaxDeflection { shape, part, max } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Deflection, max.canonical() * 1000.0, true, "mm"),
+        Rule::MinFirstFrequency { shape, part, min } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Frequency, *min, false, "Hz"),
+        Rule::MinBucklingFactor { shape, part, min } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Buckling, *min, false, ""),
     })
 }
 
@@ -415,6 +456,33 @@ fn assembly_fits(world: &World, assembly: StableId, motion: bool, steps: usize) 
     })
 }
 
+/// A requirement on what a shape's saved study finds: its figure against the
+/// limit (`upper`: must stay at or below it). The study is solved only when
+/// something it depends on changed (see `de_shape::studies::run_check`).
+fn study_check(world: &World, shape: StableId, part: Option<&str>, check: de_shape::studies::Check, limit: f64, upper: bool, unit: &str) -> Result<RequirementResult, String> {
+    let e = world.resource::<de_core::IdIndex>().get(shape).ok_or_else(|| format!("{shape} does not exist"))?;
+    let c = de_shape::studies::run_check(world, e, part, check)?;
+    let passed = if upper { c.value <= limit * (1.0 + 1e-9) } else { c.value >= limit * (1.0 - 1e-9) };
+    let need = match (check, upper) {
+        (de_shape::studies::Check::Safety, _) => format!("at least ×{}", fmt(limit)),
+        (_, true) => format!("at most {} {unit}", fmt(limit)),
+        (_, false) => format!("at least {}{}", fmt(limit), if unit.is_empty() { String::new() } else { format!(" {unit}") }),
+    };
+    let name = world.get::<de_shape::ShapeProgram>(e).map(|p| p.name.clone()).unwrap_or_default();
+    let label = part.map(|p| format!("{name} › {p}")).unwrap_or(name);
+    Ok(RequirementResult {
+        passed,
+        measured: if c.value.is_finite() { c.value } else { 1e9 },
+        limit,
+        unit: if unit.is_empty() { "×".into() } else { unit.into() },
+        upper_bound: upper,
+        summary: format!("{}; {need}", c.summary),
+        violations: if passed { vec![] } else { vec![Violation { parts: vec![shape], names: vec![label], region: c.at.map(|a| [a[0] - 2.0, a[1] - 2.0, a[2] - 2.0, a[0] + 2.0, a[1] + 2.0, a[2] + 2.0]) }] },
+        fix: None,
+        accuracy_mm: None,
+    })
+}
+
 // ---- Commands --------------------------------------------------------------
 
 fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
@@ -478,6 +546,20 @@ fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
             }
         }
         Rule::NoClashesInMotion { .. } | Rule::AssemblyFits { .. } => {}
+        Rule::MinSafetyFactor { shape, min, .. } | Rule::MinFirstFrequency { shape, min, .. } | Rule::MinBucklingFactor { shape, min, .. } => {
+            if tx.get::<de_shape::ShapeProgram>(*shape).is_none() {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, format!("{shape} is not a shape: studies are on shapes")));
+            }
+            if !(*min > 0.0) {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, "the minimum must be greater than zero"));
+            }
+        }
+        Rule::MaxDeflection { shape, max, .. } => {
+            if tx.get::<de_shape::ShapeProgram>(*shape).is_none() {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, format!("{shape} is not a shape: studies are on shapes")));
+            }
+            positive(max, "the deflection limit")?;
+        }
     }
     Ok(())
 }

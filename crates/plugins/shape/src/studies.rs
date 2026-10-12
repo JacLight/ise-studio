@@ -330,6 +330,12 @@ pub fn buckling_of(program: &ShapeProgram, part: &(Option<String>, MaterialProps
     with_bodies(program, std::slice::from_ref(part), |b| fea::buckling(&b[0], study, count))
 }
 
+/// Steady temperatures in the studied part.
+pub fn thermal_of(program: &ShapeProgram, part: &(Option<String>, MaterialProps), study: &fea::ThermalStudy) -> Result<fea::Temperatures, String> {
+    let k = part.1.conductivity;
+    with_bodies(program, std::slice::from_ref(part), |b| fea::thermal(b[0].positions, b[0].triangles, k, study))
+}
+
 /// Temperatures through time in the studied part.
 pub fn transient_of(program: &ShapeProgram, part: &(Option<String>, MaterialProps), study: &fea::ThermalStudy, run: &fea::Transient, probes: &[[f64; 3]]) -> Result<fea::TransientTemperatures, String> {
     let m = &part.1;

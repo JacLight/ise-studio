@@ -8,6 +8,13 @@
 //   node tools/forma.mjs motion <joint id> [steps] [--set '{"Elbow":40}']   sweep a joint through its limits: what moves, closest approaches, clashes, where it binds
 //   node tools/forma.mjs fit <assembly or instance id | project> [--motion]   do screws, inserts, nuts, bearings and joined parts fit (and, with --motion, every joint's sweep)
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
+//   node tools/forma.mjs study <shape id> study.json [--part X]   save a part's study (faces as { normal, near: [x, y, z] })
+//   node tools/forma.mjs stress|fatigue|modes|buckle|heat|converge|inp <shape id> [--part X] [--count N] [--resolutions 32,48,64]
+//                                             run the part's saved study (inp: a CalculiX deck on stdout)
+//   node tools/forma.mjs probe <key> x,y,z · section <key> x,y,z nx,ny,nz · path <key> x,y,z x,y,z [n] · csv <key>
+//                                             read a stress result back (the key a stress run prints)
+//   node tools/forma.mjs frame frame.json     a frame of beams (joints, members with sections, supports, loads)
+//   node tools/forma.mjs materials [search]   the material library with sources, and the project's materials
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs list                 every entity, one line each
 //   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
@@ -197,6 +204,106 @@ if (command === "run") {
     if (r.pass && extra !== "all") console.log(`  (${r.pass} passing items hidden; add "all" to list them)`);
     for (const n of r.notes) console.log(`  ! ${n}`);
     failed = !r.ok;
+  }
+} else if (["stress", "fatigue", "modes", "buckle", "heat", "converge", "inp", "probe", "section", "path", "csv", "frame", "materials", "study"].includes(command)) {
+  // Simulation: a part's saved study run as kept, results read back, frames, materials.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const part = flag("--part");
+  const count = flag("--count");
+  const resolutions = flag("--resolutions");
+  const [, id, ...rest] = args;
+  const q = new URLSearchParams({ ...(project ? { project } : {}), ...(part ? { part } : {}) });
+  const n = (v, d = 2) => (v == null || !Number.isFinite(v) ? String(v) : Number(v.toFixed(d)).toString());
+  const v3 = (v) => `[${v.map((x) => n(x, 2)).join(", ")}]`;
+  const get = async (path, init) => {
+    const res = await fetch(`${http}${path}`, init);
+    if (!res.ok) throw new Error(await res.text());
+    return res;
+  };
+  try {
+    if (command === "study") {
+      // forma study <shape id> study.json [--part X]: save a study (faces as { normal, near: [x, y, z] }).
+      const study = JSON.parse(readFileSync(rest[0], "utf8"));
+      const r = await engine.commit("shape.set_study", { target: id, study: { ...study, part: part ?? study.part ?? null } });
+      if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
+      console.log(`✓ study saved on ${id}${part ? ` (${part})` : ""}`);
+    } else if (command === "materials") {
+      const m = await (await get(`/materials?${q}`)).json();
+      const words = rest.join(" ").toLowerCase();
+      for (const x of m.library.filter((x) => !words || x.name.toLowerCase().includes(words))) {
+        console.log(`${x.name} (${x.family}): E ${n(x.e / 1000, 1)} GPa, ν ${x.nu}, ρ ${x.density} kg/m³, yield ${x.yield_strength} MPa, UTS ${x.uts} MPa, Et ${x.tangent_modulus} MPa, fatigue ${x.fatigue_strength ?? "—"} MPa @ ${x.fatigue_cycles.toExponential(0)}${x.endurance_limit ? " (limit)" : ""}, k ${x.conductivity} W/m·K, c ${x.specific_heat} J/kg·K, α ${n(x.expansion * 1e6, 1)} µm/m·K\n    source: ${x.source}`);
+      }
+      for (const x of m.project) console.log(`project material ${x.id} “${x.name}”${x.set ? ` — set here: ${JSON.stringify(x.set)}` : ""}${x.properties ? "" : " — no figures (unknown name: set its properties)"}`);
+    } else if (command === "frame") {
+      const f = JSON.parse(readFileSync(id, "utf8"));
+      const r = await (await get(`/frame`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(f) })).json();
+      console.log(`${r.safety >= 1 ? "✓" : "✗"} frame: safety ×${n(r.safety)} (${n(r.max_stress, 1)} MPa at most), moves ${n(r.max_displacement, 3)} mm at most, ${n(r.mass, 3)} kg${r.buckling != null ? `, lowest buckling ×${n(r.buckling)}` : ""}`);
+      r.members.forEach((m, i) => console.log(`  member ${i + 1} (${m.a}→${m.b}, ${n(m.length, 0)} mm, ${m.material}): ${n(m.axial, 0)} N axial, ${n(m.max_stress, 1)} MPa, ×${n(m.safety)}${m.buckling_factor != null ? `, buckles ×${n(m.buckling_factor)}` : ""}`));
+      for (const [node, f] of r.reactions) console.log(`  support at joint ${node}: ${v3(f.slice(0, 3))} N, ${v3(f.slice(3))} N·mm`);
+      for (const x of r.notes) console.log(`  ! ${x}`);
+    } else if (["probe", "section", "path", "csv"].includes(command)) {
+      // forma probe <key> x,y,z · section <key> x,y,z nx,ny,nz · path <key> x,y,z x,y,z [points] · csv <key>
+      const key = id;
+      if (command === "csv") process.stdout.write(await (await get(`/results/${key}/csv`)).text());
+      else if (command === "probe") {
+        const p = await (await get(`/results/${key}/probe?at=${rest[0]}`)).json();
+        console.log(`at ${v3(p.at)}: von Mises ${n(p.von_mises, 2)} MPa, principal ${v3(p.principal)} MPa, stress [xx yy zz xy yz zx] ${v3(p.stress)}, moves ${v3(p.displacement.map((x) => x * 1000))} µm, safety ×${n(p.safety)}${p.plastic_strain != null ? `, plastic strain ${n(p.plastic_strain, 5)}` : ""}`);
+      } else if (command === "section") {
+        const s = await (await get(`/results/${key}/section?point=${rest[0]}&normal=${rest[1]}`)).json();
+        console.log(`section through ${v3(s.point)} square to ${v3(s.normal)}: ${s.cells.length} cubes, ${n(s.area, 1)} mm² cut, up to ${n(s.max, 1)} MPa, force across ${v3(s.force)} N`);
+      } else {
+        const p = await (await get(`/results/${key}/path?a=${rest[0]}&b=${rest[1]}&points=${rest[2] ?? 21}`)).json();
+        console.log("distance_mm,von_mises_mpa,dx_um,dy_um,dz_um");
+        for (const s of p.samples) console.log(`${n(s.distance, 2)},${n(s.probe.von_mises, 2)},${s.probe.displacement.map((x) => n(x * 1000, 2)).join(",")}`);
+      }
+    } else {
+      if (!id) throw new Error(`say which shape: forma ${command} <shape id> [--part Name]`);
+      q.set("kind", command);
+      if (count) q.set("count", count);
+      if (resolutions) q.set("resolutions", resolutions);
+      const res = await get(`/simulate/${id}?${q}`, { method: "POST" });
+      if (command === "inp") process.stdout.write(await res.text());
+      else {
+        const r = await res.json();
+        if (command === "stress" || command === "fatigue") {
+          const x = r.result;
+          console.log(`${x.safety >= 1 ? "✓" : "✗"} ${r.material}: safety ×${n(x.safety)} against yield (${n(x.max_stress, 1)} MPa at ${v3(x.max_stress_at)}, yield ${n(x.yield_strength, 0)} MPa); moves ${n(x.max_displacement, 4)} mm at most (at ${v3(x.max_displacement_at)}); ${x.elements} cubes of ${n(x.cell, 2)} mm`);
+          for (const p of x.parts ?? []) console.log(`  ${p.name}: ${n(p.max_stress, 1)} MPa, ${n(p.max_displacement, 4)} mm, ×${n(p.safety)}${p.floating ? " (not held: slides away)" : ""}`);
+          for (const rc of x.reactions ?? []) console.log(`  ${rc.name} holds with ${v3(rc.force)} N, ${v3(rc.moment)} N·mm about ${v3(rc.at)}`);
+          for (const b of x.bolts ?? []) console.log(`  bolt in ${b.part}: preload ${n(b.preload, 0)} N, now ${n(b.force, 0)} N`);
+          if (x.plastic) console.log(`  yielded: ${x.plastic.yielded} cubes, plastic strain up to ${n(x.plastic.max_strain, 5)} at ${v3(x.plastic.at)}${x.plastic.settled ? "" : " (not settled)"}`);
+          if (r.fatigue) console.log(`  fatigue: Goodman ×${n(r.fatigue.min_factor)} at ${v3(r.fatigue.at)}, life ${r.fatigue.life === null || r.fatigue.life > 1e15 ? "unlimited" : r.fatigue.life.toExponential(2) + " cycles"} (σa ${n(r.fatigue.amplitude, 1)}, σm ${n(r.fatigue.mean, 1)} MPa, Se ${n(r.fatigue.strength, 1)} MPa)`);
+          for (const t of [...x.notes, ...(r.fatigue?.notes ?? [])]) console.log(`  ! ${t}`);
+          console.log(`  result key ${r.key} (forma probe|section|path|csv ${r.key} …)`);
+          failed = x.safety < 1;
+        } else if (command === "modes") {
+          r.modes.forEach((m, i) => console.log(`  mode ${i + 1}: ${n(m.frequency, 1)} Hz (${n(m.frequency * 60, 0)} rpm), mostly ${m.direction}`));
+          console.log(`  mass ${n(r.mass, 4)} kg${r.prestress ? ", prestressed" : ""}`);
+          for (const t of r.notes) console.log(`  ! ${t}`);
+        } else if (command === "buckle") {
+          r.modes.forEach((m, i) => console.log(`  buckling mode ${i + 1}: ×${n(m.factor)} the loads, mostly ${m.direction}`));
+          console.log(`  largest stress ${n(r.max_stress, 1)} MPa (yields at ×${n(r.yield_factor)})`);
+          for (const t of r.notes) console.log(`  ! ${t}`);
+        } else if (command === "heat") {
+          if (r.times) console.log(`  after ${n(r.times.at(-1), 1)} s: ${n(r.last.min, 1)}–${n(r.last.max, 1)} °C (hottest through time ${n(Math.max(...r.max), 1)} °C)`);
+          else console.log(`  ${n(r.min, 1)}–${n(r.max, 1)} °C; ${n(r.heat_in, 2)} W in, ${n(r.to_holds, 2)} W to held faces, ${n(r.to_air, 2)} W to air`);
+          for (const t of r.notes) console.log(`  ! ${t}`);
+        } else if (command === "converge") {
+          console.log("  resolution  cube_mm  cubes   max_stress_MPa  change  max_move_mm  change  seconds");
+          for (const row of r.rows) console.log(`  ${String(row.resolution).padEnd(10)}  ${n(row.cell, 3).padEnd(7)}  ${String(row.elements).padEnd(6)}  ${n(row.max_stress, 2).padEnd(14)}  ${row.stress_change == null ? "—     " : n(row.stress_change * 100, 1) + " %"}  ${n(row.max_displacement, 5).padEnd(11)}  ${row.displacement_change == null ? "—     " : n(row.displacement_change * 100, 1) + " %"}  ${n(row.seconds, 1)}`);
+          if (r.displacement_limit != null) console.log(`  movement extrapolated to fine cubes: ${n(r.displacement_limit, 5)} mm`);
+          for (const t of r.notes) console.log(`  ! ${t}`);
+          failed = !r.converged;
+        }
+      }
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
   }
 } else if (command === "stock") {
   // The stock library: families, or the sizes matching a search ("M3×12", "608", "servo").
