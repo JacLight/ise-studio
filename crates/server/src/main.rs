@@ -10,11 +10,13 @@
 mod ai;
 mod history;
 mod machines;
+mod meshes;
 mod pcb;
 mod pcb_library;
 mod pcb_libs;
 mod pcb_schematic;
 mod peers;
+mod pictures;
 mod share;
 mod sourcing;
 mod stock;
@@ -391,6 +393,9 @@ enum AiMessage {
         text: String,
         #[serde(default)]
         context: ai::ViewContext,
+        /// Pictures or PDFs attached in the panel (ids from `POST /ai/attachments`).
+        #[serde(default)]
+        attachments: Vec<String>,
     },
     AiStop {
         request_id: u64,
@@ -478,7 +483,8 @@ struct EntityView<'a> {
     components: BTreeMap<&'static str, Value>,
     status: Option<&'a Status>,
     mass: Option<&'a MassProperties>,
-    mesh: Option<&'a DisplayMesh>,
+    /// The display mesh by content: fetched once from `GET /mesh/<ref>`.
+    mesh: Option<meshes::MeshRef>,
     result: Option<&'a RequirementResult>,
     shape: Option<&'a ShapeStats>,
     /// Parameter values after formulas, and the formulas in readable names.
@@ -497,10 +503,22 @@ struct EntityView<'a> {
     /// An instance showing a configuration of its shape: that configuration's
     /// stats, mesh and mass.
     #[serde(skip_serializing_if = "Option::is_none")]
-    configured: Option<&'a de_shape::configs::Configured>,
+    configured: Option<ConfiguredView<'a>>,
     /// Mass (kg) of each part of an assembly, in the order of `shape.parts`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     part_masses: Vec<Option<f64>>,
+}
+
+/// A configuration as an instance shows it, its mesh named by content.
+#[derive(Serialize)]
+struct ConfiguredView<'a> {
+    config: &'a str,
+    name: &'a str,
+    stats: &'a ShapeStats,
+    mesh: meshes::MeshRef,
+    mass: &'a MassProperties,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    part_masses: &'a [Option<f64>],
 }
 
 fn view(project: &Project, id: StableId) -> Option<EntityView<'_>> {
@@ -509,12 +527,19 @@ fn view(project: &Project, id: StableId) -> Option<EntityView<'_>> {
         components: project.entity_state(id)?,
         status: project.get::<Status>(id),
         mass: project.get::<MassProperties>(id),
-        mesh: project.get::<DisplayMesh>(id),
+        mesh: project.get::<DisplayMesh>(id).map(meshes::reference),
         result: project.get::<RequirementResult>(id),
         shape: project.get::<ShapeSolid>(id).map(|s| &s.stats),
         assembly: project.get::<de_assembly::AssemblyStats>(id),
         placed: project.get::<de_assembly::joints::Placed>(id),
-        configured: project.get::<de_assembly::InstanceConfigured>(id).and_then(|c| c.0.as_deref()),
+        configured: project.get::<de_assembly::InstanceConfigured>(id).and_then(|c| c.0.as_deref()).map(|c| ConfiguredView {
+            config: &c.config,
+            name: &c.name,
+            stats: &c.stats,
+            mesh: meshes::reference(&c.mesh),
+            mass: &c.mass,
+            part_masses: &c.part_masses,
+        }),
         sketch: project.get::<de_shape::sketch::SolvedSketch>(id),
         params: project.get::<de_shape::ResolvedParams>(id),
         formulas: project
@@ -887,8 +912,8 @@ async fn session(app: Arc<App>, socket: WebSocket, user_id: String) {
             // Messages for Forma AI run alongside the engine, not on its lock.
             if let Ok(m) = serde_json::from_str::<AiMessage>(text.as_str()) {
                 let reply = match m {
-                    AiMessage::AiAsk { request_id, text, context } => {
-                        let result = app.ai.ask(Arc::clone(&app), &actor.user_id, &text, context).await;
+                    AiMessage::AiAsk { request_id, text, context, attachments } => {
+                        let result = app.ai.ask(Arc::clone(&app), &actor.user_id, &text, context, &attachments).await;
                         reply(request_id, result.map(|_| json!({ "queued": true })).map_err(|e| CommandError::new(ErrorCode::Internal, e)))
                     }
                     AiMessage::AiStop { request_id } => {
@@ -1108,6 +1133,36 @@ impl Source {
                 out.push((label(&self.name), placed));
             }
             _ => {}
+        }
+        Ok(())
+    }
+
+    /// Every part as a mesh in world millimetres, coloured by its material,
+    /// for the engine's pictures (`/look`). Shapes come as the view shows them.
+    fn meshes(&self, out: &mut Vec<de_shape::render::Mesh>) -> Result<(), String> {
+        for m in &self.members {
+            m.meshes(out)?;
+        }
+        let items = match &self.program {
+            Some(p) => fabricate::items(p, p.display_tolerance())?,
+            None if self.boxed.is_some() => self.items(0.01)?,
+            None => return Ok(()),
+        };
+        let r = self.rotation;
+        let turn = |v: &[f32]| -> [f32; 3] {
+            let v = [v[0] as f64, v[1] as f64, v[2] as f64];
+            [0, 1, 2].map(|i| (r[i][0] * v[0] + r[i][1] * v[1] + r[i][2] * v[2]) as f32)
+        };
+        for item in items {
+            let (positions, normals, indices) = de_shape::runtime::mesh_with_normals(&item.solid);
+            let positions = positions.chunks_exact(3).flat_map(|p| {
+                let q = turn(p);
+                [q[0] + self.at[0] as f32, q[1] + self.at[1] as f32, q[2] + self.at[2] as f32]
+            });
+            let normals = normals.chunks_exact(3).flat_map(turn).collect();
+            let (material, _) = self.material(item.material.as_deref());
+            let (color, metal) = de_shape::render::material_color(Some(material.as_str()).filter(|m| !m.is_empty()));
+            out.push(de_shape::render::Mesh { positions: positions.collect(), normals, indices, color, metal });
         }
         Ok(())
     }
@@ -2347,6 +2402,12 @@ async fn main() -> std::io::Result<()> {
     let ai = Arc::new(ai::AiConfig { repo: root.canonicalize().unwrap_or(root.clone()), port, claude, model: std::env::var("FORMA_AI_MODEL").ok() });
     // Imported files, stored by content, shared by every project in the folder.
     de_shape::assets::set_dir(dir.join("assets"));
+    // Slow results (motion sweeps) kept between runs, by what they came from.
+    de_shape::cache::set_dir(dir.join(".cache"));
+    // The stock library's sizes, worked out while nobody waits (the I key's browser reads them).
+    std::thread::spawn(|| {
+        let _ = de_shape::library::summary();
+    });
     let engine = engine_id(&dir)?;
     println!("engine {engine}");
     let machines = machines::MachineQueries::new(&root);
@@ -2392,6 +2453,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
     let ui = ServeDir::new(web).fallback(ServeFile::new(web.join("index.html")));
     Router::new()
         .route("/ws", get(websocket))
+        .route("/mesh/{key}", get(meshes::fetch))
         .route("/export/{file}", get(export))
         .route("/projects", get(projects))
         .route("/projects/{name}/info", axum::routing::post(project_info))
@@ -2479,6 +2541,10 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/{id}/layers", get(pcb::layers))
         .route("/pcb/{id}/file/{name}", get(pcb::file))
         .route("/import/{file}", axum::routing::post(import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
+        .route("/images", get(pictures::list))
+        .route("/images/{file}", get(pictures::get).post(pictures::add).layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)))
+        .route("/ai/attachments/{file}", get(pictures::attachment).post(pictures::attach).layer(axum::extract::DefaultBodyLimit::max(40 * 1024 * 1024)))
+        .route("/look", get(pictures::look))
         .fallback_service(ui)
         // Everything above answers to this computer only.
         .layer(axum::middleware::from_fn(local_only))
@@ -2487,6 +2553,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         // View-only links: the page and its read-only session, for the link's project only.
         .route("/view/{token}", get(share::page))
         .route("/view/{token}/ws", get(share::socket))
+        .route("/view/{token}/mesh/{key}", get(meshes::fetch_shared))
         // The web app's bundles (static, named by content), for the view-only page.
         .nest_service("/assets", ServeDir::new(web.join("assets")).append_index_html_on_directories(false))
         .layer(axum::middleware::from_fn(cache_policy))

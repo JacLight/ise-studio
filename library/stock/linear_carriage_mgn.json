@@ -1,0 +1,183 @@
+{
+ "id": "linear_carriage_mgn",
+ "name": "Miniature linear guide block",
+ "standard": "HIWIN MGN",
+ "category": "Bearings & motion",
+ "summary": "MGN7/9/12/15 miniature guide block, standard (C) or long (H): steel body with four tapped holes, end caps, seals and recirculating balls. Same frame as the rail: centred on x = 0, rail base z = 0, mounting face on top; Slide connector joins the rail's",
+ "keywords": [
+  "MGN12H",
+  "MGN12C",
+  "MGN9H",
+  "MGN9C",
+  "MGN7C",
+  "MGN15H",
+  "carriage",
+  "linear block",
+  "slider",
+  "linear guide block",
+  "HIWIN",
+  "bearing block",
+  "3D printer",
+  "Voron"
+ ],
+ "source": [
+  "common.js",
+  "mgn.js",
+  "linear_carriage_mgn.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Steel S55C, hardened": 7850,
+  "Acetal (POM)": 1410,
+  "Nitrile rubber (NBR)": 1300,
+  "Bearing steel 52100": 7810
+ },
+ "params": [
+  {
+   "key": "series",
+   "label": "Rail width (MGN series)",
+   "value": 12,
+   "unit": "mm",
+   "min": 7,
+   "max": 15,
+   "step": 1
+  },
+  {
+   "key": "long",
+   "label": "Long block H (1) or standard C (0)",
+   "value": 1,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "series",
+  "long"
+ ],
+ "rows": [
+  {
+   "name": "MGN7C",
+   "values": {
+    "series": 7,
+    "long": 0
+   }
+  },
+  {
+   "name": "MGN7H",
+   "values": {
+    "series": 7,
+    "long": 1
+   }
+  },
+  {
+   "name": "MGN9C",
+   "values": {
+    "series": 9,
+    "long": 0
+   }
+  },
+  {
+   "name": "MGN9H",
+   "values": {
+    "series": 9,
+    "long": 1
+   }
+  },
+  {
+   "name": "MGN12C",
+   "values": {
+    "series": 12,
+    "long": 0
+   }
+  },
+  {
+   "name": "MGN12H",
+   "values": {
+    "series": 12,
+    "long": 1
+   }
+  },
+  {
+   "name": "MGN15C",
+   "values": {
+    "series": 15,
+    "long": 0
+   }
+  },
+  {
+   "name": "MGN15H",
+   "values": {
+    "series": 15,
+    "long": 1
+   }
+  }
+ ],
+ "default": "MGN12H",
+ "checks": {
+  "MGN12H": {
+   "size": [
+    45.4,
+    27,
+    10
+   ],
+   "connectors": [
+    "Slide",
+    "Top",
+    "Bottom",
+    "Hole 1",
+    "Hole 2",
+    "Hole 3",
+    "Hole 4"
+   ],
+   "connector_at": {
+    "Top": [
+     0,
+     0,
+     13
+    ],
+    "Hole 1": [
+     10,
+     10,
+     13
+    ],
+    "Slide": [
+     0,
+     0,
+     0
+    ]
+   },
+   "metrics": {
+    "Tapped thread": 3,
+    "Tapped depth": 3.5,
+    "Hole spacing C": 20
+   },
+   "partNumber": "MGN12H",
+   "massG": 54
+  },
+  "MGN12C": {
+   "size": [
+    34.7,
+    27,
+    10
+   ],
+   "massG": 34
+  },
+  "MGN7C": {
+   "size": [
+    22.5,
+    17,
+    6.5
+   ]
+  },
+  "MGN15H": {
+   "size": [
+    58.8,
+    32,
+    12
+   ],
+   "massG": 92
+  }
+ }
+}

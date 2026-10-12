@@ -419,3 +419,33 @@ fn inserted_stock_library_items_are_buy_lines_with_their_catalogue_facts() {
     let unit_mass = 24.0 * screws.mass_kg.unwrap() + 4.0 * bearings.mass_kg.unwrap();
     assert!((b.totals.mass_kg.unwrap() - unit_mass).abs() < 1e-9);
 }
+
+#[test]
+fn cut_to_length_stock_is_costed_by_its_length() {
+    let mut p = project();
+    // A program declaring a piece cut to length with a price per metre and no unitPrice.
+    let src = r#"stock({ partNumber: `RHS 40×20×2 × ${p.length} S235JRH`, cutLength: p.length, pricePerM: 4.2, massG: 1.7 * p.length });
+        return box(40, 20, p.length);"#;
+    run(&mut p, "shape.create", json!({ "name": "Rail", "source": src, "params": [{ "key": "length", "label": "Length", "value": 2350, "unit": "mm", "min": 10 }], "placement": { "x": { "value": 0, "unit": "m" }, "y": { "value": 0, "unit": "m" }, "z": { "value": 0, "unit": "m" } } })).unwrap();
+    // A library beam at its default length.
+    run(&mut p, "stock.insert", json!({ "family": "ipe", "size": "IPE 200" })).unwrap();
+
+    let b = compute(&p, Scope::Project, 3);
+    let rail = b.buy.iter().find(|l| l.stock.as_ref().is_some_and(|s| s.part_number == "RHS 40×20×2 × 2350 S235JRH")).expect("the rail");
+    let s = rail.stock.as_ref().unwrap();
+    assert_eq!((s.cut_length_mm, s.price_per_m), (Some(2350.0), Some(4.2)));
+    assert_eq!(rail.unit_price, Some(9.87), "2.35 m at 4.20 a metre");
+    assert_eq!(rail.order_qty, 3);
+    assert!((rail.length_m.unwrap() - 7.05).abs() < 1e-9, "three pieces of 2.35 m: {:?}", rail.length_m);
+    assert!((rail.extended.unwrap() - 3.0 * 9.87).abs() < 1e-9);
+    let csv = bom::flat_csv(&b);
+    assert!(csv.lines().any(|l| l.contains("RHS 40×20×2 × 2350 S235JRH") && l.contains(",1,3,2350.0,")), "the CSV gives the cut length:\n{csv}");
+
+    let beam = b.buy.iter().find(|l| l.stock.as_ref().is_some_and(|s| s.part_number.starts_with("IPE 200 × "))).expect("the beam");
+    let s = beam.stock.as_ref().unwrap();
+    let (len, per_m) = (s.cut_length_mm.expect("a cut length"), s.price_per_m.expect("a price per metre"));
+    assert_eq!(s.part_number, format!("IPE 200 × {len} S235JR"));
+    assert!((beam.unit_price.unwrap() - per_m * len / 1000.0).abs() < 0.006, "the piece is priced by its length");
+    assert!((beam.mass_kg.unwrap() - 22.4 * len / 1000.0).abs() < 1e-6, "22.4 kg/m");
+    assert!((beam.length_m.unwrap() - 3.0 * len / 1000.0).abs() < 1e-9);
+}

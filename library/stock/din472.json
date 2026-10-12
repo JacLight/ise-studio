@@ -1,0 +1,140 @@
+{
+ "id": "din472",
+ "name": "Retaining ring for bores",
+ "standard": "DIN 472",
+ "category": "Inserts & pins",
+ "summary": "Circlip for bores (internal, lugs inside), spring steel, free state. Bottom face on z = 0, axis +Z.",
+ "keywords": [
+  "circlip",
+  "retaining ring",
+  "snap ring",
+  "Seeger",
+  "internal circlip",
+  "DIN 472",
+  "bore ring",
+  "groove"
+ ],
+ "source": [
+  "common.js",
+  "din472.js",
+  "retaining_ring.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Spring steel C75S",
+ "materials": {
+  "Spring steel C75S": 7850
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Bore diameter",
+   "value": 10,
+   "unit": "mm",
+   "min": 8,
+   "max": 30,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "d"
+ ],
+ "rows": [
+  {
+   "name": "Ø8",
+   "values": {
+    "d": 8
+   }
+  },
+  {
+   "name": "Ø10",
+   "values": {
+    "d": 10
+   }
+  },
+  {
+   "name": "Ø12",
+   "values": {
+    "d": 12
+   }
+  },
+  {
+   "name": "Ø15",
+   "values": {
+    "d": 15
+   }
+  },
+  {
+   "name": "Ø16",
+   "values": {
+    "d": 16
+   }
+  },
+  {
+   "name": "Ø19",
+   "values": {
+    "d": 19
+   }
+  },
+  {
+   "name": "Ø20",
+   "values": {
+    "d": 20
+   }
+  },
+  {
+   "name": "Ø22",
+   "values": {
+    "d": 22
+   }
+  },
+  {
+   "name": "Ø24",
+   "values": {
+    "d": 24
+   }
+  },
+  {
+   "name": "Ø25",
+   "values": {
+    "d": 25
+   }
+  },
+  {
+   "name": "Ø28",
+   "values": {
+    "d": 28
+   }
+  },
+  {
+   "name": "Ø30",
+   "values": {
+    "d": 30
+   }
+  }
+ ],
+ "default": "Ø10",
+ "checks": {
+  "Ø10": {
+   "metrics": {
+    "Bore Ø": 10,
+    "Groove Ø": 10.4,
+    "Groove width": 1.1,
+    "Thickness": 1,
+    "Pliers hole Ø": 1.2
+   },
+   "connectors": [
+    "Bottom face",
+    "Top face",
+    "Axis"
+   ],
+   "connector_at": {
+    "Top face": [
+     0,
+     0,
+     1
+    ]
+   },
+   "partNumber": "DIN 472 10×1"
+  }
+ }
+}

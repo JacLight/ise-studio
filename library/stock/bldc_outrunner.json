@@ -1,0 +1,97 @@
+{
+ "id": "bldc_outrunner",
+ "name": "Brushless outrunner",
+ "category": "Motors",
+ "summary": "Brushless outrunner motors (2204, 2212, 2810): bell, stator, base with M3 holes, shaft, phase leads. Base mounting face on z = 0, motor and shaft up +Z.",
+ "keywords": [
+  "brushless",
+  "BLDC",
+  "outrunner",
+  "drone motor",
+  "quadcopter motor",
+  "A2212",
+  "2212",
+  "2204",
+  "2810",
+  "FPV motor",
+  "RC motor"
+ ],
+ "source": [
+  "common.js",
+  "bldc_outrunner.js"
+ ],
+ "display_tolerance": 0.02,
+ "materials": {
+  "Aluminium": 2700,
+  "Steel": 7850,
+  "NdFeB": 7500,
+  "Silicone wire (copper)": 3000,
+  "2204 stator, laminations and windings (lumped)": 6500.0,
+  "2212 stator, laminations and windings (lumped)": 6400.0,
+  "2810 stator, laminations and windings (lumped)": 6800.0
+ },
+ "params": [
+  {
+   "key": "size",
+   "label": "Stator size",
+   "value": 2212,
+   "unit": "",
+   "min": 2204,
+   "max": 2810
+  }
+ ],
+ "columns": [
+  "size"
+ ],
+ "rows": [
+  {
+   "name": "2204 2300KV",
+   "values": {
+    "size": 2204
+   }
+  },
+  {
+   "name": "2212 1000KV",
+   "values": {
+    "size": 2212
+   }
+  },
+  {
+   "name": "2810 1100KV",
+   "values": {
+    "size": 2810
+   }
+  }
+ ],
+ "default": "2212 1000KV",
+ "checks": {
+  "2212 1000KV": {
+   "massG": 47,
+   "partNumber": "BLDC 2212 1000KV",
+   "metrics": {
+    "Bell diameter": 27.7
+   },
+   "connectors": [
+    "Shaft",
+    "Prop seat",
+    "Base",
+    "Hole 1",
+    "Hole 2",
+    "Hole 3",
+    "Hole 4"
+   ],
+   "connector_at": {
+    "Hole 1": [
+     -8,
+     0,
+     0
+    ],
+    "Hole 2": [
+     8,
+     0,
+     0
+    ]
+   }
+  }
+ }
+}

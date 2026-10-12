@@ -290,6 +290,8 @@ fn stock_of(l: &BomLine) -> de_shape::stock::Stock {
         currency: l.choice.as_ref().and_then(|c| c.currency.clone()),
         pack: None,
         mass_g: None,
+        cut_length_mm: None,
+        price_per_m: None,
         sources: lcsc.chain(chosen).collect(),
     }
 }

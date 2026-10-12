@@ -1,0 +1,197 @@
+{
+ "id": "alu_round_tube",
+ "name": "Aluminium round tube",
+ "standard": "EN 755-9",
+ "category": "Structural sections",
+ "summary": "Extruded aluminium round tube Ø10×1 to Ø100×5 (EN AW-6060 T6, EN 755-9), cut to length. Axis on Z from z = 0.",
+ "keywords": [
+  "aluminium tube",
+  "aluminum round tube",
+  "pipe",
+  "round tube",
+  "6060",
+  "6063",
+  "EN 755"
+ ],
+ "source": [
+  "common.js",
+  "sections.js",
+  "alu_round_tube.js"
+ ],
+ "display_tolerance": 0.02,
+ "material": "Aluminium EN AW-6060 T6",
+ "materials": {
+  "Aluminium EN AW-6060 T6": 2700
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Outside diameter",
+   "value": 20,
+   "unit": "mm",
+   "min": 4,
+   "max": 300
+  },
+  {
+   "key": "t",
+   "label": "Wall",
+   "value": 2,
+   "unit": "mm",
+   "min": 0.5,
+   "max": 20
+  },
+  {
+   "key": "length",
+   "label": "Length (cut)",
+   "value": 1000,
+   "unit": "mm",
+   "min": 10,
+   "max": 6000
+  }
+ ],
+ "columns": [
+  "d",
+  "t"
+ ],
+ "rows": [
+  {
+   "name": "Ø10×1",
+   "values": {
+    "d": 10,
+    "t": 1
+   }
+  },
+  {
+   "name": "Ø12×1",
+   "values": {
+    "d": 12,
+    "t": 1
+   }
+  },
+  {
+   "name": "Ø16×1.5",
+   "values": {
+    "d": 16,
+    "t": 1.5
+   }
+  },
+  {
+   "name": "Ø20×1.5",
+   "values": {
+    "d": 20,
+    "t": 1.5
+   }
+  },
+  {
+   "name": "Ø20×2",
+   "values": {
+    "d": 20,
+    "t": 2
+   }
+  },
+  {
+   "name": "Ø25×1.5",
+   "values": {
+    "d": 25,
+    "t": 1.5
+   }
+  },
+  {
+   "name": "Ø25×2",
+   "values": {
+    "d": 25,
+    "t": 2
+   }
+  },
+  {
+   "name": "Ø30×2",
+   "values": {
+    "d": 30,
+    "t": 2
+   }
+  },
+  {
+   "name": "Ø32×2",
+   "values": {
+    "d": 32,
+    "t": 2
+   }
+  },
+  {
+   "name": "Ø40×2",
+   "values": {
+    "d": 40,
+    "t": 2
+   }
+  },
+  {
+   "name": "Ø40×3",
+   "values": {
+    "d": 40,
+    "t": 3
+   }
+  },
+  {
+   "name": "Ø50×2",
+   "values": {
+    "d": 50,
+    "t": 2
+   }
+  },
+  {
+   "name": "Ø50×3",
+   "values": {
+    "d": 50,
+    "t": 3
+   }
+  },
+  {
+   "name": "Ø60×3",
+   "values": {
+    "d": 60,
+    "t": 3
+   }
+  },
+  {
+   "name": "Ø80×3",
+   "values": {
+    "d": 80,
+    "t": 3
+   }
+  },
+  {
+   "name": "Ø100×3",
+   "values": {
+    "d": 100,
+    "t": 3
+   }
+  },
+  {
+   "name": "Ø100×5",
+   "values": {
+    "d": 100,
+    "t": 5
+   }
+  }
+ ],
+ "default": "Ø20×2",
+ "checks": {
+  "Ø20×2": {
+   "size": [
+    20,
+    20,
+    1000
+   ],
+   "partNumber": "Al tube Ø20×2 × 1000 EN AW-6060 T6",
+   "massG": 305.4,
+   "connectors": [
+    "End A",
+    "End B",
+    "Axis",
+    "Surface +X",
+    "Surface +Y"
+   ],
+   "tolerance": 0.1
+  }
+ }
+}

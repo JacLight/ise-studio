@@ -1,0 +1,208 @@
+{
+ "id": "alu_channel",
+ "name": "Aluminium channel",
+ "standard": "EN 755-9",
+ "category": "Structural sections",
+ "summary": "Extruded aluminium U channel 15×15×2 to 100×50×5 (EN AW-6060 T6, EN 755-9), cut to length. Back of the web on x = 0, flanges toward +X, length along +Z.",
+ "keywords": [
+  "aluminium channel",
+  "aluminum U channel",
+  "U profile",
+  "C channel",
+  "6060",
+  "6063",
+  "EN 755"
+ ],
+ "source": [
+  "common.js",
+  "sections.js",
+  "alu_channel.js"
+ ],
+ "display_tolerance": 0.02,
+ "material": "Aluminium EN AW-6060 T6",
+ "materials": {
+  "Aluminium EN AW-6060 T6": 2700
+ },
+ "params": [
+  {
+   "key": "h",
+   "label": "Depth (web)",
+   "value": 40,
+   "unit": "mm",
+   "min": 5,
+   "max": 300
+  },
+  {
+   "key": "b",
+   "label": "Flange",
+   "value": 20,
+   "unit": "mm",
+   "min": 5,
+   "max": 150
+  },
+  {
+   "key": "t",
+   "label": "Thickness",
+   "value": 2,
+   "unit": "mm",
+   "min": 1,
+   "max": 15
+  },
+  {
+   "key": "length",
+   "label": "Length (cut)",
+   "value": 1000,
+   "unit": "mm",
+   "min": 10,
+   "max": 6000
+  }
+ ],
+ "columns": [
+  "h",
+  "b",
+  "t"
+ ],
+ "rows": [
+  {
+   "name": "15×15×2",
+   "values": {
+    "h": 15,
+    "b": 15,
+    "t": 2
+   }
+  },
+  {
+   "name": "20×20×2",
+   "values": {
+    "h": 20,
+    "b": 20,
+    "t": 2
+   }
+  },
+  {
+   "name": "25×25×2",
+   "values": {
+    "h": 25,
+    "b": 25,
+    "t": 2
+   }
+  },
+  {
+   "name": "30×30×2",
+   "values": {
+    "h": 30,
+    "b": 30,
+    "t": 2
+   }
+  },
+  {
+   "name": "30×20×2",
+   "values": {
+    "h": 30,
+    "b": 20,
+    "t": 2
+   }
+  },
+  {
+   "name": "40×20×2",
+   "values": {
+    "h": 40,
+    "b": 20,
+    "t": 2
+   }
+  },
+  {
+   "name": "40×40×3",
+   "values": {
+    "h": 40,
+    "b": 40,
+    "t": 3
+   }
+  },
+  {
+   "name": "50×25×3",
+   "values": {
+    "h": 50,
+    "b": 25,
+    "t": 3
+   }
+  },
+  {
+   "name": "50×30×3",
+   "values": {
+    "h": 50,
+    "b": 30,
+    "t": 3
+   }
+  },
+  {
+   "name": "50×50×4",
+   "values": {
+    "h": 50,
+    "b": 50,
+    "t": 4
+   }
+  },
+  {
+   "name": "60×30×3",
+   "values": {
+    "h": 60,
+    "b": 30,
+    "t": 3
+   }
+  },
+  {
+   "name": "60×40×4",
+   "values": {
+    "h": 60,
+    "b": 40,
+    "t": 4
+   }
+  },
+  {
+   "name": "80×40×4",
+   "values": {
+    "h": 80,
+    "b": 40,
+    "t": 4
+   }
+  },
+  {
+   "name": "100×40×5",
+   "values": {
+    "h": 100,
+    "b": 40,
+    "t": 5
+   }
+  },
+  {
+   "name": "100×50×5",
+   "values": {
+    "h": 100,
+    "b": 50,
+    "t": 5
+   }
+  }
+ ],
+ "default": "40×20×2",
+ "checks": {
+  "40×20×2": {
+   "size": [
+    20,
+    40,
+    1000
+   ],
+   "partNumber": "Al channel 40×20×2 × 1000 EN AW-6060 T6",
+   "massG": 411.6,
+   "connectors": [
+    "End A",
+    "End B",
+    "Axis",
+    "Web back",
+    "Web inside",
+    "Top flange",
+    "Bottom flange"
+   ]
+  }
+ }
+}
