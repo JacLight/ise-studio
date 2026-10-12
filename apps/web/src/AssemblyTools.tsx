@@ -115,7 +115,7 @@ export function MateBuilder(props: { scope: string | null; entities: ReadonlyMap
   return (
     <div className="aj-builder">
       <ol className="aj-steps">
-        {["Face that stays", "Face that moves", "Mate"].map((s, i) => (
+        {["Stays", "Moves", "Mate"].map((s, i) => (
           <li key={s} className={i === step ? "now" : i < step ? "done" : ""}>
             <span>{i < step ? <Icon name="check" /> : i + 1}</span>
             {s}
@@ -268,7 +268,7 @@ export function DofSummary(props: { scope: string | null; stamp: string; onRepor
           {bad ? "Cannot all hold" : free.length ? `${report.free} freedom${report.free === 1 ? "" : "s"} left` : "Fully defined"}
           <small>
             {" "}
-            · moves with {report.mobility} degree{report.mobility === 1 ? "" : "s"} of freedom
+            · mobility {report.mobility}
             {redundant.length ? ` · ${redundant.length} redundant` : ""}
           </small>
         </span>
@@ -675,13 +675,21 @@ export function Player(props: { played: Played; unit: string; name: string; view
     props.overlay?.(at);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [at, played, view]);
-  useEffect(() => () => view.poses(null), [view]);
+  // Leaving stops an export part way and puts the parts back.
+  const alive = useRef(true);
+  useEffect(
+    () => () => {
+      alive.current = false;
+      view.poses(null);
+    },
+    [view],
+  );
   const value = played.frames[Math.round(at)]?.value ?? 0;
   const pct = (v: number) => ((v - first) / Math.max(1e-9, span - first)) * 100;
   const exportPng = async () => {
     setPlaying(false);
     const files: { name: string; data: Uint8Array }[] = [];
-    for (let k = 0; k <= last; k++) {
+    for (let k = 0; k <= last && alive.current; k++) {
       setExporting(`Frame ${k + 1} of ${last + 1}…`);
       view.poses(posesAtFrame(played, k));
       props.overlay?.(k);
@@ -693,6 +701,7 @@ export function Player(props: { played: Played; unit: string; name: string; view
       for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i);
       files.push({ name: `${props.name.replace(/[^\w-]+/g, "-")}-${String(k).padStart(4, "0")}.png`, data });
     }
+    if (!alive.current) return;
     download(zip(files), `${props.name.replace(/[^\w-]+/g, "-")}-frames.zip`);
     setExporting(null);
     setAt(last);
@@ -708,7 +717,7 @@ export function Player(props: { played: Played; unit: string; name: string; view
     rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
     const done = new Promise<void>((r) => (rec.onstop = () => r()));
     rec.start();
-    for (let k = 0; k <= last; k++) {
+    for (let k = 0; k <= last && alive.current; k++) {
       setExporting(`Recording ${k + 1} of ${last + 1}…`);
       view.poses(posesAtFrame(played, k));
       props.overlay?.(k);
@@ -716,6 +725,7 @@ export function Player(props: { played: Played; unit: string; name: string; view
     }
     rec.stop();
     await done;
+    if (!alive.current) return;
     download(new Blob(chunks, { type: "video/webm" }), `${props.name.replace(/[^\w-]+/g, "-")}.webm`);
     setExporting(null);
   };
@@ -795,7 +805,7 @@ export function AssemblyStudio(props: { scope: string; frame: Transform; entitie
     <section className="props-section at-studio">
       <header>
         <h3>Assembly studio</h3>
-        <span className="section-note">poses · exploded views · motion · robot · interference</span>
+        <span className="section-note">saved views and motion</span>
       </header>
       <div className="seg-toggle at-tabs" role="tablist">
         {TABS.map((t) => (
@@ -928,7 +938,7 @@ function Exploded({ scope, frame, entities, run, view }: StudioProps) {
             <Icon name="explode" />
             <button type="button" className="at-row-main at-link" onClick={() => (open?.id === e.id ? close() : show(e.id))}>
               <strong>{v.name}</strong>
-              <small>{v.steps.length} steps</small>
+              <small>{v.steps.length === 1 ? "1 step" : `${v.steps.length} steps`}</small>
             </button>
             <button type="button" className="at-icon" title="Delete the exploded view" onClick={() => (open?.id === e.id && close(), run("assembly.explode.delete", { target: e.id }))}>
               <Icon name="trash" />
@@ -1005,7 +1015,7 @@ function Studies({ scope, entities, run, view }: StudioProps) {
             <button type="button" className="at-row-main at-link" onClick={() => (playing?.id === e.id ? (setPlaying(null), view.poses(null)) : open(e.id, s.name))}>
               <strong>{s.name}</strong>
               <small>
-                {n1(s.duration, 1)} s · {s.tracks.length} joints{busy === e.id ? " · playing it through…" : ""}
+                {n1(s.duration, 1)} s · {s.tracks.length === 1 ? "1 joint" : `${s.tracks.length} joints`}{busy === e.id ? " · playing it through…" : ""}
               </small>
             </button>
             <button type="button" className="at-icon" title="Delete the study" onClick={() => (playing?.id === e.id && setPlaying(null), run("assembly.motion_study.delete", { target: e.id }))}>
@@ -1073,7 +1083,12 @@ type Trajectory = Played & { waypoints: { reached: boolean; error_mm: number }[]
 function Robot({ scope, frame, entities, run, view }: StudioProps) {
   useCleanView(view);
   const members = membersOf(scope, entities);
-  const held = members.filter((m) => m.placed?.by);
+  // Parts a joint places (hinges, sliders…): the ends of chains; what only mates hold is no arm.
+  const held = members.filter((m) => {
+    const by = m.placed?.by ? entities.get(m.placed.by) : undefined;
+    const kind = (by?.components["assembly.joint"] as { kind?: string } | undefined)?.kind ?? "";
+    return !!by && !isMate(kind);
+  });
   const guess = held.find((m) => /grip|hand|tool|effector|finger|wrist|claw/i.test(instance(m)!.name)) ?? held[held.length - 1];
   const [tip, setTip] = useState<string | null>(guess?.id ?? null);
   const [chain, setChain] = useState<ChainInfo | null>(null);
@@ -1241,7 +1256,7 @@ function Robot({ scope, frame, entities, run, view }: StudioProps) {
   );
 }
 
-type Clash = { a: string; b: string; a_path: string[]; b_path: string[]; volume: number; at?: V3; size?: V3; gap: number; joined: boolean };
+type Clash = { a: string; b: string; a_path: string[]; b_path: string[]; volume: number; at?: V3; size?: V3; gap: number; joined: boolean; fastener?: boolean };
 type InterferenceReport = { name: string; parts: number; checked: number; overlaps: Clash[]; touching: Clash[]; near: Clash[]; clearance: number; notes: string[] };
 
 function Interference({ scope, frame, view, onSelect }: StudioProps) {
@@ -1277,19 +1292,19 @@ function Interference({ scope, frame, view, onSelect }: StudioProps) {
       {error && <p className="print-note bad">{error}</p>}
       {r && (
         <>
-          <div className={`gear-verdict ${r.overlaps.some((o) => !o.joined) ? "bad" : "ok"}`}>
+          <div className={`gear-verdict ${r.overlaps.some((o) => !o.joined && !o.fastener) ? "bad" : "ok"}`}>
             <span>
               {r.parts} parts · {r.overlaps.length} overlap · {r.touching.length} touch{r.clearance ? ` · ${r.near.length} within ${r.clearance} mm` : ""}
             </span>
           </div>
           <ul className="aj-pairs">
-            {[...r.overlaps, ...r.near].slice(0, 40).map((o) => (
+            {[...r.overlaps.filter((o) => !o.joined && !o.fastener), ...r.near, ...r.overlaps.filter((o) => o.joined || o.fastener)].slice(0, 40).map((o) => (
               <li key={`${o.a_path.join()}|${o.b_path.join()}`}>
                 <button type="button" onClick={() => o.a_path[0] && onSelect(o.a_path[0])}>
-                  <span className={`aj-dot ${o.volume > 0 ? (o.joined ? "joined" : "hit") : "near"}`} />
+                  <span className={`aj-dot ${o.volume > 0 ? (o.joined || o.fastener ? "joined" : "hit") : "near"}`} />
                   <span>
                     {o.a} – {o.b}
-                    {o.joined && <em>joined</em>}
+                    {o.fastener ? <em>fastener</em> : o.joined && <em>joined</em>}
                   </span>
                   <small>{o.volume > 0 ? `${n1(o.volume, 2)} mm³` : `${n1(o.gap, 2)} mm`}</small>
                 </button>

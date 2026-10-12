@@ -326,6 +326,13 @@ fn entity(world: &World, id: StableId) -> Option<de_core::bevy_ecs::entity::Enti
     world.resource::<IdIndex>().get(id)
 }
 
+/// Whether an instance is a threaded fastener (a screw, a heat-set insert, a
+/// nut): overlap with what it threads or melts into is meant.
+pub fn is_fastener(world: &World, id: StableId) -> bool {
+    let Some(inst) = entity(world, id).and_then(|e| world.get::<Instance>(e)) else { return false };
+    matches!(kind_of(world, id, inst), Kind::Screw { .. } | Kind::Insert { .. } | Kind::Nut { .. })
+}
+
 fn kind_of(world: &World, id: StableId, inst: &Instance) -> Kind {
     let Some(def) = entity(world, inst.of) else { return Kind::Stock };
     let configured = entity(world, id).and_then(|e| world.get::<crate::InstanceConfigured>(e)).and_then(|c| c.0.clone());

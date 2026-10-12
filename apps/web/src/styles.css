@@ -14125,3 +14125,8 @@ a.button .icon {
 .at-player .row-buttons {
   flex-wrap: wrap;
 }
+
+.at-row-main.at-link {
+  justify-items: start;
+  text-align: left;
+}

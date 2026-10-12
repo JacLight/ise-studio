@@ -35,6 +35,8 @@ pub struct Clash {
     pub gap: f64,
     /// A joint joins the two instances directly.
     pub joined: bool,
+    /// One of them is a screw, insert or nut threading into the other: overlap there is meant.
+    pub fastener: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -123,6 +125,7 @@ pub fn report(world: &World, of: Option<StableId>, clearance: f64) -> Result<Int
             // Where their paths part: two sibling instances.
             let split = a.path.iter().zip(&b.path).position(|(x, y)| x != y);
             let is_joined = split.is_some_and(|s| joined(world, a.path[s], b.path[s]));
+            let fastener = [a.path.last(), b.path.last()].into_iter().flatten().any(|i| crate::fit::is_fastener(world, *i));
             let clash = |volume: f64, at: Option<V3>, size: Option<V3>, gap: f64| Clash {
                 a: a.names.clone(),
                 b: b.names.clone(),
@@ -133,6 +136,7 @@ pub fn report(world: &World, of: Option<StableId>, clearance: f64) -> Result<Int
                 size,
                 gap: (gap * 1e4).round() / 1e4,
                 joined: is_joined,
+                fastener,
             };
             let both = a.solid.intersection(&b.solid);
             let v = if both.is_empty() { 0.0 } else { both.volume() };
@@ -158,11 +162,11 @@ pub fn report(world: &World, of: Option<StableId>, clearance: f64) -> Result<Int
     }
     out.overlaps.sort_by(|x, y| y.volume.total_cmp(&x.volume));
     out.near.sort_by(|x, y| x.gap.total_cmp(&y.gap));
-    let unmeant = out.overlaps.iter().filter(|c| !c.joined).count();
+    let unmeant = out.overlaps.iter().filter(|c| !c.joined && !c.fastener).count();
     out.notes.push(if out.overlaps.is_empty() {
         format!("No parts overlap among {} parts.", out.parts)
     } else {
-        format!("{} overlapping pair{} ({} not joined by a joint).", out.overlaps.len(), if out.overlaps.len() == 1 { "" } else { "s" }, unmeant)
+        format!("{} overlapping pair{}: {} not meant (neither joined by a joint nor a fastener threading in).", out.overlaps.len(), if out.overlaps.len() == 1 { "" } else { "s" }, unmeant)
     });
     Ok(out)
 }

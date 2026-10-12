@@ -170,7 +170,7 @@ Robots (any serial chain of joints):
 
 Interference across an assembly:
 
-- `./forma interference <assembly|instance|top> [clearance]` (GET `/interference/<id>?clearance=`): every pair of placed parts at every depth that overlap (mm³, and the overlap's box and middle), touch, or come within `clearance` mm; pairs a joint joins directly are marked `joined` (contact meant; overlap rarely is). Checked: two 10 mm cubes 5 mm apart overlap by exactly 500 mm³ (5 × 10 × 10); one 0.5 mm above is reported 0.5 mm away. Run it after assembling and before printing.
+- `./forma interference <assembly|instance|top> [clearance]` (GET `/interference/<id>?clearance=`): every pair of placed parts at every depth that overlap (mm³, and the overlap's box and middle), touch, or come within `clearance` mm; pairs a joint joins directly are marked `joined` (contact meant; overlap rarely is) and pairs where one is a screw, heat-set insert or nut are marked `fastener` (threads and inserts overlap what they go into by design); only the rest fail. Checked: two 10 mm cubes 5 mm apart overlap by exactly 500 mm³ (5 × 10 × 10); one 0.5 mm above is reported 0.5 mm away. Run it after assembling and before printing.
 
 - `assembly.group.create { name, members }` groups two or more items so they are picked and moved together; nothing about the items changes. `assembly.group.update { target, name?, members? }` renames or changes membership; deleting the group (`core.entity.delete`) ungroups. Several changes that belong together go in one `core.batch { steps: [{ operation, parameters }] }` (one undo step, all or nothing).
 
