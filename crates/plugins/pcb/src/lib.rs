@@ -43,6 +43,7 @@ pub mod geom;
 pub mod gerber;
 pub mod gerber_check;
 pub mod idf;
+pub mod io;
 pub mod kicad;
 pub mod kicad_lib;
 pub mod libedit;
@@ -101,6 +102,7 @@ impl Plugin for PcbPlugin {
             .derived(Derived { name: "pcb.board", inputs: &[Board::KIND], reads_dependencies: true, compute: board::compute });
         schematic::register(r);
         spice::register(r);
+        io::register(r);
         library::register(r);
         variants::register(r);
         blocks::register(r);

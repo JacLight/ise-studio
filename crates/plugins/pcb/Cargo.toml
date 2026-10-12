@@ -13,3 +13,5 @@ de-sourcing.workspace = true
 manifold-csg = "0.4"
 serde.workspace = true
 serde_json.workspace = true
+miniz_oxide = "0.8"
+base64 = "0.22"

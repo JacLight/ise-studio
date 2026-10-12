@@ -12918,6 +12918,16 @@ a.button .icon {
   align-self: flex-start;
 }
 
+.pcb-interchange .pcb-file small {
+  flex: 1;
+  margin: 0 8px;
+  color: #8f879c;
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .pcb-shop-sum {
   display: grid;
   grid-template-columns: 1fr 1fr;

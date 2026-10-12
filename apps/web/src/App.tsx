@@ -4,7 +4,7 @@ import { type Proposal, interpret } from "./assistant";
 import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
 import { StockBrowser } from "./StockBrowser";
-import { PcbWorkspace, importKicadFile } from "./Pcb";
+import { EDA_DROP, PcbWorkspace, importEdaFile } from "./Pcb";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
 import { type Bench, Workbench } from "./Bom";
 import { RequirementsPanel } from "./RequirementsPanel";
@@ -1104,9 +1104,9 @@ export function App({ engine }: { engine: Engine }) {
         setPrefs((p) => ({ ...p, aiMode: p.aiMode === "mini" || p.aiMode === "hidden" ? p.lastMode : p.aiMode }));
         return;
       }
-      // A KiCad board becomes a Forma board, opened in the Electronics workspace.
-      if (/\.kicad_pcb$/i.test(f.name)) {
-        void importKicadFile(f, (op, p, done) => run(op, p).then((out) => (out && done && notify(done), out))).then((made) => made && setPcbOpen(true));
+      // A board or schematic from another EDA tool becomes Forma's, opened in the Electronics workspace.
+      if (EDA_DROP.test(f.name)) {
+        void importEdaFile(f, (op, p, done) => run(op, p).then((out) => (out && done && notify(done), out))).then((made) => made && setPcbOpen(true));
         return;
       }
       importStep(f);

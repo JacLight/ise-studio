@@ -2603,6 +2603,8 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/{id}/gerber-check", get(pcb::gerber_check))
         .route("/pcb/{id}/layers", get(pcb::layers))
         .route("/pcb/{id}/file/{name}", get(pcb::file))
+        .route("/pcb/{id}/exports", get(pcb::exports))
+        .route("/pcb/schematic/{id}/file/{name}", get(pcb::schematic_file))
         .route("/import/{file}", axum::routing::post(import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
         .route("/images", get(pictures::list))
         .route("/images/{file}", get(pictures::get).post(pictures::add).layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)))
