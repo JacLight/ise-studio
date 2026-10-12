@@ -172,19 +172,31 @@ fn compound(world: &World, id: StableId, entity: de_core::bevy_ecs::entity::Enti
     let mut members = Vec::new();
     for o in de_assembly::occurrences(world, id) {
         let se = world.resource::<IdIndex>().get(o.shape).ok_or_else(|| format!("{} does not exist", o.names.join(" › ")))?;
-        let program = de_shape::resolved_program(world, se).ok_or("not a shape")?;
-        let program = &program;
-        let solid = world.get::<ShapeSolid>(se).ok_or_else(|| format!("{} has not been evaluated", o.names.join(" › ")))?;
-        let (lo, hi) = o.transform.bounds(solid.stats.bounds_min, solid.stats.bounds_max);
+        // An instance showing a configuration is checked in that configuration
+        // (an M2×16 screw is not its definition's default M3×12).
+        let (display, program, bounds, mass_kg) = match &o.config {
+            Some(config) => {
+                let program = de_shape::configs::configured_program(world, se, config).map_err(|e| format!("{}: {e}", o.names.join(" › ")))?;
+                let configured = de_shape::configs::evaluate(world, se, config).map_err(|e| format!("{}: {e}", o.names.join(" › ")))?;
+                let ev = de_shape::evaluated_at(&program, program.display_tolerance()).map_err(|e| format!("{}: {e}", o.names.join(" › ")))?;
+                (Arc::new(ev.solid.translate(0.0, 0.0, 0.0)), program, (configured.stats.bounds_min, configured.stats.bounds_max), configured.mass.mass_kg)
+            }
+            None => {
+                let program = de_shape::resolved_program(world, se).ok_or("not a shape")?;
+                let solid = world.get::<ShapeSolid>(se).ok_or_else(|| format!("{} has not been evaluated", o.names.join(" › ")))?;
+                (solid.solid.clone(), program, (solid.stats.bounds_min, solid.stats.bounds_max), world.get::<MassProperties>(se).and_then(|m| m.mass_kg))
+            }
+        };
+        let (lo, hi) = o.transform.bounds(bounds.0, bounds.1);
         let mut path = o.names.clone();
         path.pop();
         members.push(PartView {
             id,
             aabb: Aabb { min: lo, max: hi },
             height_mm: hi[2] - lo[2],
-            mass_kg: world.get::<MassProperties>(se).and_then(|m| m.mass_kg),
+            mass_kg,
             placement_mm: o.transform.at,
-            shape: Some((solid.solid.clone(), program.clone())),
+            shape: Some((display, program)),
             part: None,
             rotation: o.transform.rot,
             members: Vec::new(),

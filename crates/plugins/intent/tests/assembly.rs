@@ -109,3 +109,31 @@ fn requirements_see_through_assemblies_and_rotations() {
     let r: RequirementResult = p.get::<RequirementResult>(req).unwrap().clone();
     assert!(r.passed, "stacked, touching only: {}", r.summary);
 }
+
+#[test]
+fn collisions_are_checked_in_each_instance_s_configuration() {
+    let mut p = project();
+    // A pin whose definition shows Short (10 long); the Long size reaches up into the block.
+    let pin = id(&run(&mut p, "shape.create", json!({
+        "name": "Pin", "source": "return box(5, 5, p.len);",
+        "params": [{ "key": "len", "label": "Length", "value": 10 }], "definition": true, "display_tolerance": 0.1
+    })).unwrap(), "id");
+    run(&mut p, "shape.config.set_table", json!({
+        "target": pin, "params": ["len"],
+        "rows": [{ "name": "Short", "values": { "len": 10 } }, { "name": "Long", "values": { "len": 40 } }]
+    })).unwrap();
+    let block = id(&run(&mut p, "shape.create", json!({
+        "name": "Block", "source": "return box(20, 20, 10);", "params": [], "definition": true, "display_tolerance": 0.1
+    })).unwrap(), "id");
+    let kit = id(&run(&mut p, "assembly.create", json!({ "name": "Kit" })).unwrap(), "id");
+    let pinned = id(&run(&mut p, "assembly.instance.create", json!({ "of": pin, "parent": kit, "name": "P", "at": [5, 5, 0], "config": "Long" })).unwrap(), "id");
+    run(&mut p, "assembly.instance.create", json!({ "of": block, "parent": kit, "name": "B", "at": [0, 0, 20] })).unwrap();
+    let top = id(&run(&mut p, "assembly.instance.create", json!({ "of": kit, "name": "Kit 1" })).unwrap(), "id");
+    let req = id(&run(&mut p, "intent.requirement.create", json!({ "name": "No clashes", "rule": { "kind": "no_collisions", "parts": [top] } })).unwrap(), "id");
+    let r: RequirementResult = p.get::<RequirementResult>(req).unwrap().clone();
+    assert!(!r.passed, "the Long pin reaches into the block: {}", r.summary);
+
+    run(&mut p, "assembly.instance.update", json!({ "target": pinned, "config": "Short" })).unwrap();
+    let r: RequirementResult = p.get::<RequirementResult>(req).unwrap().clone();
+    assert!(r.passed, "the Short pin stops below it: {}", r.summary);
+}
