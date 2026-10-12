@@ -41,6 +41,7 @@ import { EdgeLayer, type EdgePicture } from "./edgeLayer";
 import { ConnectorLayer, type ConnectorPicture } from "./connectorLayer";
 import { FaceLayer, type FacePicture, type FlatFace, PickedFacesLayer, curvedFaceAt, flatFaceAt } from "./faceLayer";
 import { SketchLayer, type SketchPicture, segmentPoints } from "./sketchLayer";
+import { DraftLayer, type DraftPicture } from "./draftLayer";
 import { type Plane, normalOf, positions, radiusOf, toWorld } from "./sketchModel";
 import {
   type Frac,
@@ -363,6 +364,11 @@ type Props = {
   isolated: string | null;
   /** Paint instances by their sale status instead of their materials. */
   colorBy: "material" | "status";
+  /** Draft objects to draw (lines, hatches, text, dimensions), with what is selected. */
+  draft?: DraftPicture | null;
+  onSelectDraft?: (id: string) => void;
+  /** Colours layers give items (an item, or an instance at any depth, by id). */
+  tints?: ReadonlyMap<string, string>;
   /** The sketch being edited, if any: clicks then draw on its plane. */
   sketch: SketchPicture | null;
   onSketchPointer: (e: SketchPointer) => void;
@@ -776,14 +782,16 @@ export function statusColor(status: string | undefined) {
  * instance (at any depth) tinted, and, by status, each shape painted with the
  * sale status of the nearest instance above it that has one.
  */
-function paintInstance(part: Part, entities: ReadonlyMap<string, EntityView>, selected: string | null, hidden: ReadonlySet<string>, isolated: string | null, colorBy: "material" | "status") {
+function paintInstance(part: Part, entities: ReadonlyMap<string, EntityView>, selected: string | null, hidden: ReadonlySet<string>, isolated: string | null, colorBy: "material" | "status", tints?: ReadonlyMap<string, string>) {
   for (const mesh of part.meshes) {
     const path = mesh.userData.path as string[];
     mesh.visible = !path.some((id) => hidden.has(id)) && (!isolated || path.includes(isolated));
     const chosen = !!selected && path.includes(selected);
     let status: string | undefined;
     for (let i = path.length - 1; i >= 0 && !status; i--) status = instance(entities.get(path[i]))?.properties?.status;
-    const paint = colorBy === "status" ? statusColor(status) : null;
+    let tint: string | undefined;
+    for (let i = path.length - 1; i >= 0 && !tint; i--) tint = tints?.get(path[i]);
+    const paint = colorBy === "status" ? statusColor(status) : (tint ?? null);
     for (const m of bodyMaterials(mesh)) {
       const look = m.userData.look as Look;
       m.color.set(paint ?? look.color);
@@ -854,6 +862,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
   const sketchLayerRef = useRef<SketchLayer | null>(null);
   if (!sketchLayerRef.current) sketchLayerRef.current = new SketchLayer();
   const sketchLayer = sketchLayerRef.current;
+  const draftLayerRef = useRef<DraftLayer | null>(null);
+  if (!draftLayerRef.current) draftLayerRef.current = new DraftLayer();
+  const draftLayer = draftLayerRef.current;
+  const draftLabels = useRef<HTMLDivElement>(null);
   const edgeLayerRef = useRef<EdgeLayer | null>(null);
   const turning = useRef<Turning | null>(null);
   const motionGrab = useRef<MotionGrab | null>(null);
@@ -1489,6 +1501,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       fog.far = Math.max(distance * 6, beyond * 2.5);
       layoutOverlays();
       sketchLayer.layout(toScreen);
+      draftLayer.layout(toScreen);
       // A part the camera is inside (a case, a room's shell, a floor passed
       // through) steps aside, as if the camera had walked in: what it holds
       // shows instead of the inside of its walls.
@@ -2334,8 +2347,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     renderer.domElement.addEventListener("pointerup", onCanvasUp);
 
     three.current = { renderer, scene, camera, controls, tumble: tumbler, sun, parts: new Map(), gizmo, push, overlayRoot, overlayLabels: [], ground, grid, gridCell: 20, wireframe: false, invalidate, flight: null, extent: new THREE.Sphere(new THREE.Vector3(), 100) };
-    scene.add(sketchLayer.root, edgeLayer.root, faceLayer.root, pickedLayer.root, connectorLayer.root);
+    scene.add(sketchLayer.root, draftLayer.root, edgeLayer.root, faceLayer.root, pickedLayer.root, connectorLayer.root);
     if (sketchLabels.current) sketchLayer.setHost(sketchLabels.current);
+    if (draftLabels.current) draftLayer.setHost(draftLabels.current);
+    draftLayer.onSelect = (id) => callbacks.current.onSelectDraft?.(id);
     sketchLayer.onEditDimension = (key, x, y) => callbacks.current.onEditDimension(key, x, y);
     resize();
 
@@ -2428,7 +2443,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       // The picked part of an assembly glows; the rest of the assembly stays as built.
       const picked = id === selected && props.selectedPart ? assemblyParts(entities.get(id)).findIndex((p) => p.name === props.selectedPart) : -1;
       if (part.shared) {
-        paintInstance(part, entities, selected, props.hidden, props.isolated, props.colorBy);
+        paintInstance(part, entities, selected, props.hidden, props.isolated, props.colorBy, props.tints);
         continue;
       }
       part.group.visible = !props.hidden.has(id) && (!props.isolated || props.isolated === id);
@@ -2437,6 +2452,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         const base = m.userData.look as Look;
         const ghost = picked >= 0 && i !== picked;
         const opacity = ghost ? Math.min(base.opacity ?? 1, 0.14) : (base.opacity ?? 1);
+        // A layer's colour paints its parts; without one, the part's own look.
+        m.color.set(props.colorBy === "material" ? (props.tints?.get(id) ?? base.color) : m.color);
         m.emissive.set(i === picked ? ACCENT : "#000000");
         m.emissiveIntensity = i === picked ? 0.45 : 0;
         m.transparent = opacity < 1;
@@ -2483,7 +2500,13 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       cam.updateProjectionMatrix();
     }
     t.invalidate();
-  }, [entities, selected, live, props.also, props.pivotMode, props.pivotLive, props.selectedPart, props.hidden, props.isolated, props.colorBy, props.teammates]);
+  }, [entities, selected, live, props.also, props.pivotMode, props.pivotLive, props.selectedPart, props.hidden, props.isolated, props.colorBy, props.teammates, props.tints]);
+
+  // Draft objects: redrawn when they or the selection change.
+  useEffect(() => {
+    draftLayer.update(props.draft ?? null);
+    three.current?.invalidate();
+  }, [props.draft, draftLayer]);
 
   // The sketch being edited: redrawn on every change; orbiting waits while sketching.
   useEffect(() => {
@@ -2962,6 +2985,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       <div ref={labelLayer} className="intent-layer" aria-hidden />
       {viewTools && <ViewToolbar tools={viewTools} selected={props.selected} onFitAll={() => three.current && fitView(three.current, undefined, true)} />}
       <div ref={sketchLabels} className="sketch-layer" />
+      <div ref={draftLabels} className="draft-layer" />
       <div ref={label} className="model-dimension" aria-hidden />
       <div ref={faceBadge} className="face-badge" aria-hidden />
       <div ref={pivotTip} className="face-badge pivot-tip" aria-hidden />
