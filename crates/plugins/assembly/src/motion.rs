@@ -140,13 +140,16 @@ fn default_range(kind: JointKind, key: &str, set: &ParameterSet, value: f64) -> 
 /// Sweeps joint `joint`'s value `key` (default its main one) from `from` to
 /// `to` (default its limits) in `steps` steps, other joints held at their
 /// values or at `set` (joint id → values) when given.
+/// Sweeps joint `joint`'s value `key` (default its main one) from `from` to
+/// `to` (default its limits) in `steps` steps, other joints held at their
+/// values or at `set` (joint id → values) when given.
 pub fn sweep(world: &World, joint: StableId, key: Option<&str>, from: Option<f64>, to: Option<f64>, steps: usize, set: &HashMap<StableId, Vec<f64>>, gaps_too: bool) -> Result<AssemblySweep, String> {
     let je = entity(world, joint).ok_or_else(|| format!("joint {joint} does not exist"))?;
     let j: Joint = world.get::<Joint>(je).cloned().ok_or_else(|| format!("{joint} is not a joint"))?;
     let params = world.get::<ParameterSet>(je).cloned().ok_or("the joint has no values")?;
     let keys: Vec<&str> = j.kind.values().iter().map(|(k, _, _)| *k).collect();
     if keys.is_empty() {
-        return Err(format!("{} is a fixed joint: nothing moves", params.name));
+        return Err(format!("{} is a {} joint: nothing moves", params.name, j.kind.word()));
     }
     let key = key.unwrap_or(keys[0]);
     let index = keys.iter().position(|k| *k == key).ok_or_else(|| format!("{} has no value “{key}” (it has {})", params.name, keys.join(", ")))?;
@@ -161,14 +164,18 @@ pub fn sweep(world: &World, joint: StableId, key: Option<&str>, from: Option<f64
     }
     let steps = steps.clamp(2, 3600);
     let unit = if j.kind.values()[index].2 == "deg" { "°" } else { "mm" };
-    // Every instance of the assembly (or the top), in a stable order.
-    let mut ids: Vec<(StableId, String)> = world
-        .resource::<IdIndex>()
-        .iter()
-        .filter_map(|(id, e)| world.get::<Instance>(e).filter(|i| i.parent == j.assembly).map(|i| (id, i.name.clone())))
+    let frames: Vec<(f64, HashMap<StableId, Vec<f64>>)> = (0..=steps)
+        .map(|k| {
+            let v = from + (to - from) * k as f64 / steps as f64;
+            let mut values = set.clone();
+            let mut mine = base.clone();
+            mine[index] = v;
+            values.insert(joint, mine);
+            (v, values)
+        })
         .collect();
-    ids.sort_by_key(|(id, _)| *id);
-    let mut out = AssemblySweep {
+    let p = play(world, j.assembly, &frames, gaps_too, unit, &params.name)?;
+    Ok(AssemblySweep {
         assembly: j.assembly,
         joint,
         name: params.name.clone(),
@@ -177,31 +184,64 @@ pub fn sweep(world: &World, joint: StableId, key: Option<&str>, from: Option<f64
         unit: unit.into(),
         from,
         to,
-        instances: vec![],
-        frames: vec![],
-        binds_at: None,
-        pairs: vec![],
-        clashes: vec![],
-        search: 0.0,
-        notes: vec![],
-    };
+        instances: p.instances,
+        frames: p.frames,
+        binds_at: p.binds_at,
+        pairs: p.pairs,
+        clashes: p.clashes,
+        search: p.search,
+        notes: p.notes,
+    })
+}
+
+/// An assembly played through a list of joint settings: what [`sweep`]
+/// does for one joint, for any number at once (a motion study's timeline,
+/// a robot's trajectory).
+#[derive(Clone, Debug, Serialize)]
+pub struct Played {
+    pub assembly: Option<StableId>,
+    pub instances: Vec<SweptInstance>,
+    /// Each step; `value` is the step's label (a time in seconds, a swept value).
+    pub frames: Vec<SweepFrame>,
+    /// The label where it stopped, if the joints could not follow further.
+    pub binds_at: Option<f64>,
+    pub pairs: Vec<PairGap>,
+    pub clashes: Vec<PairGap>,
+    pub search: f64,
+    pub notes: Vec<String>,
+}
+
+/// Plays the assembly (or the top) through `frames`: each a label and the
+/// joint values to hold (others keep theirs). `unit` words where it binds;
+/// `what` names what drives it in notes.
+pub fn play(world: &World, scope: Option<StableId>, frames: &[(f64, HashMap<StableId, Vec<f64>>)], gaps_too: bool, unit: &str, what: &str) -> Result<Played, String> {
+    // Every instance of the assembly (or the top), in a stable order.
+    let mut ids: Vec<(StableId, String)> = world
+        .resource::<IdIndex>()
+        .iter()
+        .filter_map(|(id, e)| world.get::<Instance>(e).filter(|i| i.parent == scope).map(|i| (id, i.name.clone())))
+        .collect();
+    ids.sort_by_key(|(id, _)| *id);
+    let mut out = Played { assembly: scope, instances: vec![], frames: vec![], binds_at: None, pairs: vec![], clashes: vec![], search: 0.0, notes: vec![] };
     let mut guess: HashMap<StableId, Transform> = HashMap::new();
     let mut poses_per_frame: Vec<Vec<Transform>> = vec![];
-    for k in 0..=steps {
-        let v = from + (to - from) * k as f64 / steps as f64;
-        let mut values = set.clone();
-        let mut mine = base.clone();
-        mine[index] = v;
-        values.insert(joint, mine);
-        match joints::solve_scope(world, j.assembly, &values, &guess) {
+    for (v, values) in frames {
+        match joints::solve_scope(world, scope, values, &guess) {
             Ok(sol) => {
+                // Pattern copies follow their seeds.
+                let mut posed = sol.poses.clone();
+                for (id, _) in &ids {
+                    if let Some(t) = crate::patterns::member_at(world, *id, &posed) {
+                        posed.insert(*id, t);
+                    }
+                }
                 let poses: Vec<Transform> = ids
                     .iter()
-                    .map(|(id, _)| sol.poses.get(id).copied().or_else(|| entity(world, *id).and_then(|e| placement(world, e))).unwrap_or(Transform::IDENTITY))
+                    .map(|(id, _)| posed.get(id).copied().or_else(|| entity(world, *id).and_then(|e| placement(world, e))).unwrap_or(Transform::IDENTITY))
                     .collect();
                 guess = sol.poses.clone();
                 out.frames.push(SweepFrame {
-                    value: round(v, 1e6),
+                    value: round(*v, 1e6),
                     poses: poses.iter().map(|t| (t.at.map(|c| round(c, 1e6)), t.quaternion())).collect(),
                     joints: sol.values.iter().map(|(k, v)| (*k, v.iter().map(|x| round(*x, 1e6)).collect())).collect(),
                 });
@@ -211,8 +251,8 @@ pub fn sweep(world: &World, joint: StableId, key: Option<&str>, from: Option<f64
                 if out.frames.is_empty() {
                     return Err(e);
                 }
-                out.binds_at = Some(round(v, 1e6));
-                out.notes.push(format!("It binds at {} {unit}: {e}", round(v, 100.0)));
+                out.binds_at = Some(round(*v, 1e6));
+                out.notes.push(format!("It binds at {} {unit}: {e}", round(*v, 100.0)));
                 break;
             }
         }
@@ -220,11 +260,11 @@ pub fn sweep(world: &World, joint: StableId, key: Option<&str>, from: Option<f64
     let moved = |i: usize| poses_per_frame.iter().any(|f| f[i].distance(&poses_per_frame[0][i], 100.0) > 1e-7);
     out.instances = ids.iter().enumerate().map(|(i, (id, name))| SweptInstance { id: *id, name: name.clone(), moves: moved(i) }).collect();
     if !out.instances.iter().any(|i| i.moves) {
-        out.notes.push(format!("Nothing moves when {} turns or slides: no instance hangs from it.", params.name));
+        out.notes.push(format!("Nothing moves when {what} turns or slides: no instance hangs from it."));
         return Ok(out);
     }
     if gaps_too {
-        gaps(world, &j, &ids, &poses_per_frame, &mut out)?;
+        gaps(world, &ids, &poses_per_frame, &mut out)?;
     }
     Ok(out)
 }
@@ -234,7 +274,7 @@ fn round(v: f64, k: f64) -> f64 {
 }
 
 /// Closest approach of every pair whose relative placement changes.
-fn gaps(world: &World, _j: &Joint, ids: &[(StableId, String)], frames: &[Vec<Transform>], out: &mut AssemblySweep) -> Result<(), String> {
+fn gaps(world: &World, ids: &[(StableId, String)], frames: &[Vec<Transform>], out: &mut Played) -> Result<(), String> {
     let bodies: Vec<Body> = ids.iter().map(|(id, _)| body(world, *id)).collect::<Result<_, _>>()?;
     let size = bodies.iter().filter(|b| b.lo[0].is_finite()).map(|b| (0..3).map(|k| b.hi[k] - b.lo[k]).fold(0.0, f64::max)).fold(0.0, f64::max);
     let search = (size * 0.05).clamp(2.0, 20.0);

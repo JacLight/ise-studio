@@ -1446,7 +1446,7 @@ fn joined_item(cx: &mut Ctx, joint: StableId, j: &joints::Joint, a: usize, b: us
     }
     let printed = ia.kind.printed() || ib.kind.printed();
     let mut checks = vec![];
-    let moving = j.kind != JointKind::Fixed;
+    let moving = !j.kind.rigid();
     if let Some((v, lo, hi)) = overlap(ia, ib) {
         if v > 0.01 {
             let at = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0, (lo[2] + hi[2]) / 2.0];
@@ -1575,7 +1575,7 @@ pub fn report(world: &World, scope: Option<StableId>, options: &FitOptions) -> R
         if let Some(b) = j.b.instance() {
             seated_by.entry(b).or_insert_with(|| joints::joint_name(world, *jid));
         }
-        if j.kind == JointKind::Fixed {
+        if j.kind.rigid() {
             let (x, y) = (find(&mut parent, end(&j.a)), find(&mut parent, end(&j.b)));
             parent[x] = y;
         }
@@ -1640,7 +1640,7 @@ pub fn report(world: &World, scope: Option<StableId>, options: &FitOptions) -> R
     }
     if options.motion {
         for (jid, j) in &all_joints {
-            if j.kind != JointKind::Fixed {
+            if !j.kind.values().is_empty() && j.kind != JointKind::Distance && j.kind != JointKind::Angle {
                 items.push(motion_item(&cx, *jid, options.steps));
             }
         }
