@@ -87,6 +87,15 @@ class Solid {
   hull() {
     return new Solid(__n.sop("hull", this.h, []));
   }
+  /** Minkowski sum: this swept over every point of the others (faceted in STEP). */
+  minkowski(...others) {
+    return others.flat().reduce((a, b) => new Solid(__n.sbool("minkowski", a.h, asSolid(b).h)), this);
+  }
+  /** Any affine map, a 3×4 matrix row by row ([[a, b, c, tx], …]); exact unless it shears. */
+  transform(m) {
+    const rows = m.length === 12 ? [m.slice(0, 4), m.slice(4, 8), m.slice(8, 12)] : m;
+    return new Solid(__n.sop("transform", this.h, [0, 1, 2].flatMap((i) => [0, 1, 2, 3].map((j) => rows[i]?.[j] ?? (i === j ? 1 : 0)))));
+  }
   get volume() {
     return __n.squery("volume", this.h)[0];
   }

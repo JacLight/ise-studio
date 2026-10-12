@@ -15,6 +15,7 @@ use std::{
 };
 
 const PRELUDE: &str = include_str!("prelude.js");
+pub(crate) const SCAD: &str = include_str!("scad.js");
 const MEMORY_LIMIT: usize = 512 * 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(10);
 /// Exact booleans on curved geometry are slower than meshes; exports get longer.
@@ -168,6 +169,10 @@ pub(crate) fn run_program<'f>(
         ctx.globals().set("__tolerance", tolerance).map_err(|e| e.to_string())?;
         ctx.globals().set("__inputs", if inputs.is_empty() { "{}" } else { inputs }).map_err(|e| e.to_string())?;
         run(&ctx, PRELUDE, "prelude")?;
+        // OpenSCAD files are read by an interpreter that only programs using it load.
+        if source.contains("openscad(") {
+            run(&ctx, SCAD, "openscad")?;
+        }
         let p = Object::new(ctx.clone()).map_err(|e| e.to_string())?;
         for (key, value) in params {
             p.set(key.as_str(), *value).map_err(|e| e.to_string())?;
@@ -330,6 +335,23 @@ pub(crate) fn finish_parts(list: Vec<(String, Option<String>, Option<String>, Ma
     })
 }
 
+/// Runs the OpenSCAD reader alone on a source and returns what the call
+/// `__scad.<what>(source)` gives, as JSON text (no geometry is built).
+pub(crate) fn scad_query(what: &str, source: &str) -> Result<String, String> {
+    let rt = Runtime::new().map_err(|e| e.to_string())?;
+    rt.set_memory_limit(64 * 1024 * 1024);
+    rt.set_max_stack_size(4 * 1024 * 1024);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    rt.set_interrupt_handler(Some(Box::new(move || Instant::now() > deadline)));
+    let context = Context::full(&rt).map_err(|e| e.to_string())?;
+    context.with(|ctx| {
+        run(&ctx, SCAD, "openscad")?;
+        ctx.globals().set("__source", source).map_err(|e| e.to_string())?;
+        let v = run(&ctx, &format!("JSON.stringify(__scad.{what}(__source))"), "openscad")?;
+        v.as_string().and_then(|s| s.to_string().ok()).ok_or_else(|| "the OpenSCAD reader returned nothing".to_string())
+    })
+}
+
 fn run<'js>(ctx: &Ctx<'js>, source: &str, label: &str) -> Result<JsValue<'js>, String> {
     use rquickjs::CatchResultExt;
     ctx.eval::<JsValue, _>(source).catch(ctx).map_err(|e| {
@@ -452,6 +474,11 @@ fn install_native<'js>(ctx: &Ctx<'js>, arena: &Rc<RefCell<Arena>>) -> rquickjs::
                         "scale" => s.scale(v(0)?, v(1)?, v(2)?),
                         "mirror" => s.mirror([v(0)?, v(1)?, v(2)?]),
                         "hull" => s.hull(),
+                        // A 3×4 affine matrix, row by row (Manifold takes it column by column).
+                        "transform" => {
+                            let r: Vec<f64> = (0..12).map(v).collect::<rquickjs::Result<_>>()?;
+                            s.transform(&[r[0], r[4], r[8], r[1], r[5], r[9], r[2], r[6], r[10], r[3], r[7], r[11]])
+                        }
                         other => return Err(throw(&ctx, format!("unknown operation {other}"))),
                     }
                 };
@@ -475,6 +502,7 @@ fn install_native<'js>(ctx: &Ctx<'js>, arena: &Rc<RefCell<Arena>>) -> rquickjs::
                         "union" => x.union(y),
                         "difference" => x.difference(y),
                         "intersection" => x.intersection(y),
+                        "minkowski" => x.minkowski_sum(y),
                         other => return Err(throw(&ctx, format!("unknown boolean {other}"))),
                     }
                 };

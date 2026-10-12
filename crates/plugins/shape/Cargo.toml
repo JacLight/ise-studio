@@ -14,6 +14,7 @@ serde_json.workspace = true
 rayon.workspace = true
 manifold-csg = "0.4"
 rquickjs = "0.14"
+miniz_oxide = "0.8"
 
 [dev-dependencies]
 de-occt.workspace = true
