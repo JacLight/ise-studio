@@ -1,0 +1,308 @@
+{
+ "id": "iso4027",
+ "name": "Set screw, cone point",
+ "standard": "ISO 4027",
+ "category": "Fasteners",
+ "summary": "Hex socket set screw (grub screw), cone point, steel 45H black oxide. Socket end flush at z = 0, point down −Z.",
+ "keywords": [
+  "set screw",
+  "grub screw",
+  "socket set screw",
+  "headless screw",
+  "DIN 914",
+  "45H",
+  "cone point",
+  "pointed"
+ ],
+ "source": [
+  "common.js",
+  "iso4027.js",
+  "set_screw.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Steel 45H",
+ "materials": {
+  "Steel 45H": 7850
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Thread diameter",
+   "value": 3,
+   "unit": "mm",
+   "min": 3,
+   "max": 8,
+   "step": 1
+  },
+  {
+   "key": "length",
+   "label": "Length",
+   "value": 6,
+   "unit": "mm",
+   "min": 3,
+   "max": 30
+  },
+  {
+   "key": "threads",
+   "label": "True helical thread (1 = on)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "d",
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "M3×3",
+   "values": {
+    "d": 3,
+    "length": 3
+   }
+  },
+  {
+   "name": "M3×4",
+   "values": {
+    "d": 3,
+    "length": 4
+   }
+  },
+  {
+   "name": "M3×5",
+   "values": {
+    "d": 3,
+    "length": 5
+   }
+  },
+  {
+   "name": "M3×6",
+   "values": {
+    "d": 3,
+    "length": 6
+   }
+  },
+  {
+   "name": "M3×8",
+   "values": {
+    "d": 3,
+    "length": 8
+   }
+  },
+  {
+   "name": "M3×10",
+   "values": {
+    "d": 3,
+    "length": 10
+   }
+  },
+  {
+   "name": "M4×4",
+   "values": {
+    "d": 4,
+    "length": 4
+   }
+  },
+  {
+   "name": "M4×5",
+   "values": {
+    "d": 4,
+    "length": 5
+   }
+  },
+  {
+   "name": "M4×6",
+   "values": {
+    "d": 4,
+    "length": 6
+   }
+  },
+  {
+   "name": "M4×8",
+   "values": {
+    "d": 4,
+    "length": 8
+   }
+  },
+  {
+   "name": "M4×10",
+   "values": {
+    "d": 4,
+    "length": 10
+   }
+  },
+  {
+   "name": "M4×12",
+   "values": {
+    "d": 4,
+    "length": 12
+   }
+  },
+  {
+   "name": "M5×5",
+   "values": {
+    "d": 5,
+    "length": 5
+   }
+  },
+  {
+   "name": "M5×6",
+   "values": {
+    "d": 5,
+    "length": 6
+   }
+  },
+  {
+   "name": "M5×8",
+   "values": {
+    "d": 5,
+    "length": 8
+   }
+  },
+  {
+   "name": "M5×10",
+   "values": {
+    "d": 5,
+    "length": 10
+   }
+  },
+  {
+   "name": "M5×12",
+   "values": {
+    "d": 5,
+    "length": 12
+   }
+  },
+  {
+   "name": "M5×16",
+   "values": {
+    "d": 5,
+    "length": 16
+   }
+  },
+  {
+   "name": "M6×6",
+   "values": {
+    "d": 6,
+    "length": 6
+   }
+  },
+  {
+   "name": "M6×8",
+   "values": {
+    "d": 6,
+    "length": 8
+   }
+  },
+  {
+   "name": "M6×10",
+   "values": {
+    "d": 6,
+    "length": 10
+   }
+  },
+  {
+   "name": "M6×12",
+   "values": {
+    "d": 6,
+    "length": 12
+   }
+  },
+  {
+   "name": "M6×16",
+   "values": {
+    "d": 6,
+    "length": 16
+   }
+  },
+  {
+   "name": "M6×20",
+   "values": {
+    "d": 6,
+    "length": 20
+   }
+  },
+  {
+   "name": "M8×8",
+   "values": {
+    "d": 8,
+    "length": 8
+   }
+  },
+  {
+   "name": "M8×10",
+   "values": {
+    "d": 8,
+    "length": 10
+   }
+  },
+  {
+   "name": "M8×12",
+   "values": {
+    "d": 8,
+    "length": 12
+   }
+  },
+  {
+   "name": "M8×16",
+   "values": {
+    "d": 8,
+    "length": 16
+   }
+  },
+  {
+   "name": "M8×20",
+   "values": {
+    "d": 8,
+    "length": 20
+   }
+  },
+  {
+   "name": "M8×25",
+   "values": {
+    "d": 8,
+    "length": 25
+   }
+  }
+ ],
+ "default": "M3×6",
+ "checks": {
+  "M3×6": {
+   "size": [
+    3,
+    3,
+    6
+   ],
+   "connectors": [
+    "Top face",
+    "Socket",
+    "Tip",
+    "Axis"
+   ],
+   "connector_at": {
+    "Tip": [
+     0,
+     0,
+     -6
+    ]
+   },
+   "metrics": {
+    "Hex key": 1.5
+   },
+   "partNumber": "ISO 4027 M3×6 45H"
+  },
+  "M8×20": {
+   "size": [
+    8,
+    8,
+    20
+   ],
+   "metrics": {
+    "Hex key": 4
+   }
+  }
+ }
+}

@@ -1,5 +1,5 @@
-// Aluminium T-slot extrusion, 20 series, B-type 6 mm slot (2020, 2040),
-// 6063-T5, cut to length.
+// Aluminium T-slot extrusion, 20 series, B-type 6 mm slot (2020, 2040,
+// 2060, 2080), 6063-T5, cut to length.
 //
 // Source: 20-series 6 mm slot profile as Misumi HFS5-2020 / HFS5-2040 and the
 // common "2020 B-type" profile: 20 mm module, slot opening 6.2 mm, lip 1.8 mm,
@@ -7,11 +7,14 @@
 // Linear mass: 2020 ≈ 0.50 kg/m (Haluminium 2020 datasheet: slot 6.2,
 // T-slot height 6.1, 0.50 kg/m); 2040 six-slot ≈ 1.0 kg/m (published values
 // 0.93 kg/m for a four-slot 20×40 (Systeal) to 1.19 kg/m (Framing Tech
-// six-slot)). The cavity shape between lip and core varies by maker; the
+// six-slot)); 2060 ≈ 1.5 kg/m and 2080 ≈ 2.0 kg/m (eight- and ten-slot,
+// 1.4–1.6 and 1.8–2.1 kg/m by maker). The cavity shape between lip and
+// core varies by maker; the
 // modelled section is the generic one, within a few percent of these masses.
 //
 // Stands on its end: the profile in XY, centred on the origin, the length
-// along +Z from z = 0. A 2040 is 20 wide in X and 40 deep in Y.
+// along +Z from z = 0. A 2040 (2060, 2080) is 20 wide in X and 40 (60, 80)
+// deep in Y.
 
 const SLOT = 6.2; // opening
 const LIP = 1.8; // lip thickness
@@ -39,11 +42,12 @@ function slotCavity() {
   ]);
 }
 
-const cells = p.cells >= 1.5 ? 2 : 1; // 2020 or 2040
+const cells = Math.min(4, Math.max(1, Math.round(p.cells))); // 2020, 2040, 2060, 2080
 const W = 20;
 const D = 20 * cells;
 const L = p.length;
-const centres = cells === 1 ? [0] : [-10, 10];
+const centres = [];
+for (let i = 0; i < cells; i++) centres.push(-D / 2 + 10 + 20 * i);
 let profile = rect(W, D, { center: true });
 const cuts = [];
 for (const cy of centres) {
@@ -53,9 +57,9 @@ for (const cy of centres) {
 }
 cuts.push(slotCavity().translate(0, D / 2 - 10)); // +Y end face
 cuts.push(slotCavity().rotate(180).translate(0, -(D / 2 - 10))); // −Y end face
-if (cells === 2) {
-  // Between the two cells: the two inner slot cavities joined into one
-  // closed void, as a 2040 has.
+for (let i = 1; i < cells; i++) {
+  // Between two cells: the two inner slot cavities joined into one closed
+  // void, as a 2040 has.
   cuts.push(
     polygon([
       [-TIP_HALF, -DEPTH],
@@ -66,15 +70,15 @@ if (cells === 2) {
       [-TIP_HALF, DEPTH],
       [-T_HALF, T_DEPTH],
       [-T_HALF, -T_DEPTH],
-    ]),
+    ]).translate(0, -D / 2 + 20 * i),
   );
 }
 profile = profile.subtract(...cuts);
 const bar = profile.extrude(L);
 
-const name = cells === 1 ? "2020" : "2040";
-const kgPerM = cells === 1 ? 0.5 : 1.0;
-const price = cells === 1 ? 0.9 + 0.009 * L : 1.4 + 0.016 * L;
+const name = `20${20 * cells}`;
+const kgPerM = 0.5 * cells;
+const price = [0.9 + 0.009 * L, 1.4 + 0.016 * L, 1.9 + 0.023 * L, 2.4 + 0.03 * L][cells - 1];
 stock({
   standard: "20 series B-type, 6 mm slot",
   partNumber: `${name}-B6-${num(L)}`,

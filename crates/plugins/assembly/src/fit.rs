@@ -349,7 +349,7 @@ fn kind_of(world: &World, id: StableId, inst: &Instance) -> Kind {
     let v = |k: &str| values.get(k).copied().unwrap_or(0.0);
     let declared_stock = stats.as_ref().is_some_and(|s| s.declared.stock.is_some());
     match family.as_deref() {
-        Some(f @ ("iso4762" | "iso7380" | "iso10642")) => {
+        Some(f @ ("iso4762" | "iso7380" | "iso10642" | "iso4017" | "iso4014")) => {
             let (dk, k) = stats.as_ref().map(|s| (s.bounds_max[0] - s.bounds_min[0], s.bounds_max[2].max(0.0))).unwrap_or((1.6 * v("d"), v("d")));
             Kind::Screw {
                 d: v("d"),
@@ -370,15 +370,22 @@ fn kind_of(world: &World, id: StableId, inst: &Instance) -> Kind {
             wall: metric("Minimum wall").unwrap_or(1.0),
             od: metric("Outside Ø").unwrap_or(0.0),
         },
-        Some("iso4032") => Kind::Nut { d: v("d"), s: metric("Across flats").unwrap_or(0.0), m: metric("Height").unwrap_or(0.0) },
-        Some("iso7089") => Kind::Washer { d: v("d") },
-        Some("bearing_deep_groove") => Kind::Bearing {
+        Some("iso4032" | "iso10511") => Kind::Nut { d: v("d"), s: metric("Across flats").unwrap_or(0.0), m: metric("Height").unwrap_or(0.0) },
+        Some("iso7089" | "iso7093" | "din127") => Kind::Washer { d: v("d") },
+        Some("bearing_deep_groove" | "bearing_flanged" | "bearing_thrust") => Kind::Bearing {
             d: v("d"),
             outer: v("D"),
             width: v("B"),
             number: stats.as_ref().and_then(|s| s.declared.stock.as_ref()).map(|s| s.part_number.clone()).unwrap_or_else(|| "bearing".into()),
         },
-        Some("iso8734") => Kind::Pin { d: v("d"), len: v("length") },
+        // Linear ball bushings: the shaft runs in the bore, the sleeve sits in a housing.
+        Some("linear_bearing_lmuu") => Kind::Bearing {
+            d: v("dr"),
+            outer: metric("Outside diameter").unwrap_or(0.0),
+            width: metric("Length").unwrap_or(0.0),
+            number: stats.as_ref().and_then(|s| s.declared.stock.as_ref()).map(|s| s.part_number.clone()).unwrap_or_else(|| "linear bearing".into()),
+        },
+        Some("iso8734" | "iso8752") => Kind::Pin { d: v("d"), len: v("length") },
         _ if metric("Tapped thread").is_some() => Kind::Tapped { depth: metric("Tapped depth").unwrap_or(0.0) },
         Some(_) => Kind::Stock,
         None if declared_stock => Kind::Stock,

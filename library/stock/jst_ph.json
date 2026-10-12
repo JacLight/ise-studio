@@ -1,0 +1,175 @@
+{
+ "id": "jst_ph",
+ "name": "JST PH connector",
+ "standard": "JST PH",
+ "category": "Electronics",
+ "summary": "JST PH 2.0 mm pitch wire-to-board: top-entry through-hole headers and crimp housings with contacts, 2–8 circuits. Header on the board (z = 0), pin 1 at the origin, pins along +X; housing's mating face on z = 0.",
+ "keywords": [
+  "JST",
+  "JST PH",
+  "PH",
+  "2.0mm",
+  "2mm",
+  "PHR",
+  "B2B-PH-K-S",
+  "LiPo battery connector",
+  "wire to board",
+  "connector",
+  "header",
+  "housing"
+ ],
+ "source": [
+  "common.js",
+  "elec.js",
+  "jst.js",
+  "jst_ph.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Nylon 66": 1140,
+  "Brass, tin-plated": 8500,
+  "Phosphor bronze, tin-plated": 8800
+ },
+ "params": [
+  {
+   "key": "kind",
+   "label": "Kind (0 header, 1 housing)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  },
+  {
+   "key": "pins",
+   "label": "Circuits",
+   "value": 4,
+   "unit": "",
+   "min": 2,
+   "max": 8,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "kind",
+  "pins"
+ ],
+ "rows": [
+  {
+   "name": "B2B-PH-K-S",
+   "values": {
+    "kind": 0,
+    "pins": 2
+   }
+  },
+  {
+   "name": "B3B-PH-K-S",
+   "values": {
+    "kind": 0,
+    "pins": 3
+   }
+  },
+  {
+   "name": "B4B-PH-K-S",
+   "values": {
+    "kind": 0,
+    "pins": 4
+   }
+  },
+  {
+   "name": "B5B-PH-K-S",
+   "values": {
+    "kind": 0,
+    "pins": 5
+   }
+  },
+  {
+   "name": "B6B-PH-K-S",
+   "values": {
+    "kind": 0,
+    "pins": 6
+   }
+  },
+  {
+   "name": "B7B-PH-K-S",
+   "values": {
+    "kind": 0,
+    "pins": 7
+   }
+  },
+  {
+   "name": "B8B-PH-K-S",
+   "values": {
+    "kind": 0,
+    "pins": 8
+   }
+  },
+  {
+   "name": "PHR-2",
+   "values": {
+    "kind": 1,
+    "pins": 2
+   }
+  },
+  {
+   "name": "PHR-3",
+   "values": {
+    "kind": 1,
+    "pins": 3
+   }
+  },
+  {
+   "name": "PHR-4",
+   "values": {
+    "kind": 1,
+    "pins": 4
+   }
+  },
+  {
+   "name": "PHR-5",
+   "values": {
+    "kind": 1,
+    "pins": 5
+   }
+  },
+  {
+   "name": "PHR-6",
+   "values": {
+    "kind": 1,
+    "pins": 6
+   }
+  },
+  {
+   "name": "PHR-7",
+   "values": {
+    "kind": 1,
+    "pins": 7
+   }
+  },
+  {
+   "name": "PHR-8",
+   "values": {
+    "kind": 1,
+    "pins": 8
+   }
+  }
+ ],
+ "default": "B4B-PH-K-S",
+ "checks": {
+  "B2B-PH-K-S": {
+   "size": [
+    5.9,
+    4.5,
+    9.4
+   ],
+   "tolerance": 0.06,
+   "partNumber": "B2B-PH-K-S",
+   "metrics": {
+    "Pitch": 2
+   }
+  },
+  "PHR-2": {
+   "partNumber": "PHR-2"
+  }
+ }
+}

@@ -1,0 +1,274 @@
+{
+ "id": "tslot_nut",
+ "name": "T-slot nut",
+ "standard": null,
+ "category": "Structural",
+ "summary": "T-slot nut for 20 series (6 mm slot) and 30 / 40 series (8 mm slot) extrusion: sliding, hammer (drop in and turn) or roll-in with spring ball; zinc-plated steel, tapped M3–M6. Placed in its slot: extrusion face on z = 0, slot along Y, thread along Z",
+ "keywords": [
+  "T-nut",
+  "t nut",
+  "tnut",
+  "hammer nut",
+  "drop-in nut",
+  "roll-in nut",
+  "sliding nut",
+  "spring ball nut",
+  "2020 nut",
+  "M5 T-nut",
+  "slot nut",
+  "extrusion nut",
+  "HNTT"
+ ],
+ "source": [
+  "common.js",
+  "tslot.js",
+  "tslot_nut.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Steel, zinc plated": 7850,
+  "Bearing steel 52100": 7850
+ },
+ "params": [
+  {
+   "key": "series",
+   "label": "Extrusion series",
+   "value": 20,
+   "unit": "mm",
+   "min": 20,
+   "max": 40,
+   "step": 10
+  },
+  {
+   "key": "d",
+   "label": "Thread",
+   "value": 5,
+   "unit": "mm",
+   "min": 3,
+   "max": 8
+  },
+  {
+   "key": "type",
+   "label": "Type: 0 sliding, 1 hammer, 2 roll-in",
+   "value": 1,
+   "unit": "",
+   "min": 0,
+   "max": 2,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "series",
+  "d",
+  "type"
+ ],
+ "rows": [
+  {
+   "name": "20 sliding M3",
+   "values": {
+    "series": 20,
+    "d": 3,
+    "type": 0
+   }
+  },
+  {
+   "name": "20 sliding M4",
+   "values": {
+    "series": 20,
+    "d": 4,
+    "type": 0
+   }
+  },
+  {
+   "name": "20 sliding M5",
+   "values": {
+    "series": 20,
+    "d": 5,
+    "type": 0
+   }
+  },
+  {
+   "name": "20 hammer M3",
+   "values": {
+    "series": 20,
+    "d": 3,
+    "type": 1
+   }
+  },
+  {
+   "name": "20 hammer M4",
+   "values": {
+    "series": 20,
+    "d": 4,
+    "type": 1
+   }
+  },
+  {
+   "name": "20 hammer M5",
+   "values": {
+    "series": 20,
+    "d": 5,
+    "type": 1
+   }
+  },
+  {
+   "name": "20 roll-in M3",
+   "values": {
+    "series": 20,
+    "d": 3,
+    "type": 2
+   }
+  },
+  {
+   "name": "20 roll-in M4",
+   "values": {
+    "series": 20,
+    "d": 4,
+    "type": 2
+   }
+  },
+  {
+   "name": "20 roll-in M5",
+   "values": {
+    "series": 20,
+    "d": 5,
+    "type": 2
+   }
+  },
+  {
+   "name": "30 sliding M5",
+   "values": {
+    "series": 30,
+    "d": 5,
+    "type": 0
+   }
+  },
+  {
+   "name": "30 sliding M6",
+   "values": {
+    "series": 30,
+    "d": 6,
+    "type": 0
+   }
+  },
+  {
+   "name": "30 hammer M5",
+   "values": {
+    "series": 30,
+    "d": 5,
+    "type": 1
+   }
+  },
+  {
+   "name": "30 hammer M6",
+   "values": {
+    "series": 30,
+    "d": 6,
+    "type": 1
+   }
+  },
+  {
+   "name": "30 roll-in M5",
+   "values": {
+    "series": 30,
+    "d": 5,
+    "type": 2
+   }
+  },
+  {
+   "name": "30 roll-in M6",
+   "values": {
+    "series": 30,
+    "d": 6,
+    "type": 2
+   }
+  },
+  {
+   "name": "40 sliding M5",
+   "values": {
+    "series": 40,
+    "d": 5,
+    "type": 0
+   }
+  },
+  {
+   "name": "40 sliding M6",
+   "values": {
+    "series": 40,
+    "d": 6,
+    "type": 0
+   }
+  },
+  {
+   "name": "40 hammer M5",
+   "values": {
+    "series": 40,
+    "d": 5,
+    "type": 1
+   }
+  },
+  {
+   "name": "40 hammer M6",
+   "values": {
+    "series": 40,
+    "d": 6,
+    "type": 1
+   }
+  },
+  {
+   "name": "40 roll-in M5",
+   "values": {
+    "series": 40,
+    "d": 5,
+    "type": 2
+   }
+  },
+  {
+   "name": "40 roll-in M6",
+   "values": {
+    "series": 40,
+    "d": 6,
+    "type": 2
+   }
+  }
+ ],
+ "default": "20 hammer M5",
+ "checks": {
+  "20 hammer M5": {
+   "size": [
+    9.8,
+    5.8,
+    4.55
+   ],
+   "connectors": [
+    "Slot face",
+    "Thread",
+    "Lip seat"
+   ],
+   "connector_at": {
+    "Lip seat": [
+     0,
+     0,
+     -1.8
+    ]
+   },
+   "metrics": {
+    "Tapped thread": 5,
+    "Tapped depth": 4.55
+   },
+   "partNumber": "TNUT-20-HAMMER-M5"
+  },
+  "20 sliding M3": {
+   "size": [
+    9.8,
+    10,
+    4.55
+   ]
+  },
+  "30 roll-in M6": {
+   "metrics": {
+    "Length along slot": 14
+   }
+  }
+ }
+}

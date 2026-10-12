@@ -16,6 +16,10 @@
 //   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
 //   node tools/forma.mjs get <id>             one entity in full (program source, params, results)
 //   node tools/forma.mjs commit <operation> '<json>'   one command (same $file inlining)
+//   node tools/forma.mjs image add <file> …   store pictures (PNG, JPEG) or fonts (TTF, OTF) for programs; prints each id
+//   node tools/forma.mjs image list           the pictures and fonts in the project
+//   node tools/forma.mjs look [what] [--view iso|front|top|…|az,el] [--size 1000x750] [--out file.png]
+//        a picture of the model (or one thing in it) drawn by the engine, saved to look/…png
 //   node tools/forma.mjs ops [filter]         the commands the engine accepts, with schemas
 //   node tools/forma.mjs view <action> [what] show something in the person's view (not saved):
 //        select L26 · frame L26 · isolate L26 · show_all · hide L19 · show L19
@@ -25,6 +29,7 @@
 //        section x 25 [flip] · section box x0 y0 z0 x1 y1 z1 · section off
 //        measure Bracket [Plate]   (part, or part to part, measured in their view)
 //   node tools/forma.mjs measure <part> [other part] [--part name]   volume, area, mass, centre of mass,
+//   node tools/forma.mjs drawing <id> [--sheet A3] [--part Name] [--page N] [--pdf f] [--svg f] [--dxf f] [--zip f]   the engineering drawing: sheets, dimensions, the checker's findings; saves files
 //        moments of inertia (kg·mm² about the centre of mass); with two: centre to centre and the gap per axis
 //
 // steps.json is an array of { "operation": "...", "parameters": { ... } }.
@@ -432,6 +437,71 @@ if (command === "run") {
     console.error(`✗ ${e.message}`);
     failed = true;
   }
+} else if (command === "drawing") {
+  // A shape's engineering drawing: what each sheet shows and what the checker
+  // measured on it; --pdf/--svg/--dxf/--zip save the files.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const files = { pdf: flag("--pdf"), svg: flag("--svg"), dxf: flag("--dxf"), zip: flag("--zip") };
+  const q = new URLSearchParams(project ? { project } : {});
+  for (const [k, f] of [["sheet", "--sheet"], ["part", "--part"], ["projection", "--projection"], ["config", "--config"]]) {
+    const v = flag(f);
+    if (v) q.set(k, v);
+  }
+  const only = flag("--page");
+  const id = args[1];
+  if (!id) {
+    console.error("✗ say which: forma drawing <shape or instance id> [--sheet A3] [--part Name] [--page N] [--pdf out.pdf] [--svg out.svg] [--dxf out.dxf] [--zip out.zip]");
+    process.exit(1);
+  }
+  const sheet = async (page) => {
+    const p = new URLSearchParams(q);
+    p.set("page", String(page));
+    const res = await fetch(`${http}/drawing/${id}?${p}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  };
+  try {
+    const first = await sheet(only ? +only : 1);
+    const pages = only ? [first] : [first, ...(await Promise.all(Array.from({ length: first.pages - 1 }, (_, i) => sheet(i + 2))))];
+    for (const d of pages) {
+      const views = d.views.map((v) => v.view).concat(d.iso ? ["iso"] : []).join(", ");
+      const quality = d.quality;
+      const clean = !quality.overlaps.length && !quality.on_lines.length && !quality.off_sheet.length && !quality.duplicates.length;
+      console.log(`${clean && !d.warnings.length ? "✓" : "!"} sheet ${d.page} of ${d.pages}: ${d.width}×${d.height} mm at ${d.scale_text}; views ${views || "none"}${d.balloons.length ? `; ${d.balloons.length} balloons` : ""}`);
+      const by = {};
+      for (const a of d.autos) (by[a.key.split(":")[0]] ??= []).push(a);
+      const kinds = { x: "x positions", y: "y positions", z: "z positions", d: "diameters", hole: "hole callouts", r: "radii", c: "chamfers" };
+      for (const [k, list] of Object.entries(by)) console.log(`  ${(kinds[k] ?? k).padEnd(14)} ${list.map((a) => `${a.key.slice(k.length + 1)}${a.text && !a.text.match(/^[\d.]+$/) ? ` (${a.text})` : ""}`).join(" · ")}`);
+      if (d.marks.length) console.log(`  your dimensions: ${d.marks.length}`);
+      const kinds2 = {};
+      for (const a of d.annotations) kinds2[a.kind] = (kinds2[a.kind] ?? 0) + 1;
+      const ann = Object.entries(kinds2).filter(([k]) => k !== "hole").map(([k, n]) => `${n} ${k}${n > 1 ? (k.endsWith("sh") ? "es" : "s") : ""}`);
+      if (ann.length) console.log(`  annotations: ${ann.join(", ")}`);
+      for (const w of d.warnings) console.log(`  ! ${w}`);
+      for (const [a, b] of quality.overlaps) console.log(`  ✗ overlapping text: “${a}” and “${b}”`);
+      for (const t of quality.on_lines) console.log(`  ✗ text over the part's lines: “${t}”`);
+      for (const t of quality.off_sheet) console.log(`  ✗ off the sheet: “${t}”`);
+      for (const t of quality.duplicates) console.log(`  ✗ dimensioned twice: ${t}`);
+      if (clean) console.log(`  checker: no overlaps, nothing over the part's lines, nothing said twice; smallest lettering ${quality.smallest_text} mm`);
+    }
+    const { writeFileSync } = await import("node:fs");
+    for (const [ext, out] of Object.entries(files)) {
+      if (!out) continue;
+      const p = new URLSearchParams(q);
+      if (only) p.set("page", only);
+      const res = await fetch(`${http}/drawing/${id}.${ext}?${p}`);
+      if (!res.ok) throw new Error(await res.text());
+      writeFileSync(out, Buffer.from(await res.arrayBuffer()));
+      console.log(`  saved ${out}`);
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
 } else if (command === "stock") {
   // The stock library: families, or the sizes matching a search ("M3×12", "608", "servo").
   const query = args.slice(1).join(" ");
@@ -465,6 +535,90 @@ if (command === "run") {
       shown++;
     }
     if (words.length && !shown) console.log(`nothing in the stock library matches “${query}”`);
+  }
+} else if (command === "image") {
+  // Pictures (and fonts) shape programs read: add one, or list them.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const q = project ? `?project=${encodeURIComponent(project)}` : "";
+  const sub = file;
+  if (sub === "add") {
+    const files = args.slice(2);
+    if (!files.length) {
+      console.error("✗ say which file: forma image add <photo.png|logo.jpg|font.ttf> …");
+      failed = true;
+    }
+    for (const f of files) {
+      let bytes;
+      try {
+        bytes = readFileSync(f);
+      } catch (e) {
+        console.error(`✗ ${f}: ${e.message}`);
+        failed = true;
+        continue;
+      }
+      const name = f.split("/").pop();
+      const res = await fetch(`${http}/images/${encodeURIComponent(name)}${q}`, { method: "POST", body: bytes });
+      if (!res.ok) {
+        console.error(`✗ ${await res.text()}`);
+        failed = true;
+        continue;
+      }
+      const e = await res.json();
+      const size = e.width ? `, ${e.width} × ${e.height} px` : "";
+      const use = e.kind === "ttf" || e.kind === "otf" ? `text("…", { font: "${e.id}" })` : `image("${e.id}")`;
+      console.log(`✓ ${name} (${e.kind.toUpperCase()}${size}) → ${e.id}\n  in a program: ${use}`);
+    }
+  } else if (sub === "list" || !sub) {
+    const res = await fetch(`${http}/images${q}`);
+    const list = await res.json();
+    if (!list.length) console.log("no pictures or fonts in this project yet (forma image add <file>)");
+    for (const e of list) console.log(`${e.id}  ${e.name} (${e.kind.toUpperCase()}${e.width ? `, ${e.width} × ${e.height} px` : ""})`);
+  } else {
+    console.error("usage: forma image add <file> … | forma image list");
+    failed = true;
+  }
+} else if (command === "look") {
+  // A picture of the model drawn by the engine, saved here to read.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const viewName = flag("--view") ?? "iso";
+  const size = flag("--size");
+  const out = flag("--out");
+  const what = args.slice(1).join(" ").trim();
+  let id = null;
+  if (what) {
+    const s = await engine.snapshot;
+    const name = (e) => {
+      const c = e.components;
+      return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["assembly.definition"]?.name;
+    };
+    const byId = s.entities.find((e) => e.id === what);
+    const named = byId ? [byId] : s.entities.filter((e) => name(e)?.toLowerCase() === what.toLowerCase());
+    const placed = named.filter((e) => e.components["assembly.instance"] || e.components["solid.placement"]);
+    const pick = placed.length ? placed : named;
+    if (pick.length !== 1) {
+      console.error(pick.length ? `✗ “${what}” matches ${pick.length} things: use an id (${pick.map((e) => e.id).join(", ")})` : `✗ nothing called “${what}”`);
+      failed = true;
+    } else id = pick[0].id;
+  }
+  if (!failed) {
+    const q = new URLSearchParams({ ...(project ? { project } : {}), ...(id ? { id } : {}), view: viewName, ...(size ? { size } : {}) });
+    const res = await fetch(`${http}/look?${q}`);
+    if (!res.ok) {
+      console.error(`✗ ${await res.text()}`);
+      failed = true;
+    } else {
+      const { mkdirSync, writeFileSync } = await import("node:fs");
+      const slug = (what || "all").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "part";
+      const path = out ?? `look/${slug}-${viewName.replace(/[^a-z0-9]+/gi, "_")}.png`;
+      if (path.includes("/")) mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, Buffer.from(await res.arrayBuffer()));
+      const b = res.headers.get("x-forma-bounds").split(",").map(Number);
+      console.log(`✓ ${path}  (${viewName} view; read the file to see it)\n  ${res.headers.get("x-forma-mm-per-px")} mm per pixel; bounds x ${b[0]}…${b[3]}, y ${b[1]}…${b[4]}, z ${b[2]}…${b[5]} mm; ${res.headers.get("x-forma-triangles")} triangles`);
+    }
   }
 } else if (command === "list") {
   const s = await engine.snapshot;
@@ -635,7 +789,7 @@ if (command === "run") {
     }
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | measure <part> [other] | view <action> [what]  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | measure <part> [other] | view <action> [what] | image add <file> | image list | look [what] [--view v]  [--project name] [--url ws://…]");
   failed = true;
 }
 

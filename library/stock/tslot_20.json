@@ -3,7 +3,7 @@
  "name": "T-slot extrusion",
  "standard": "20 series 6 mm slot",
  "category": "Structural",
- "summary": "2020 / 2040 aluminium T-slot extrusion, B-type 6 mm slot, Ø4.2 core bores for M5. Profile in XY, length along +Z.",
+ "summary": "2020 / 2040 / 2060 / 2080 aluminium T-slot extrusion, B-type 6 mm slot, Ø4.2 core bores for M5. Profile in XY, length along +Z.",
  "keywords": [
   "2020",
   "2040",
@@ -13,7 +13,9 @@
   "v-slot",
   "t-slot",
   "HFS5",
-  "framing"
+  "framing",
+  "2060",
+  "2080"
  ],
  "source": [
   "common.js",
@@ -27,11 +29,11 @@
  "params": [
   {
    "key": "cells",
-   "label": "Profile (1 = 2020, 2 = 2040)",
+   "label": "Profile (1 = 2020, 2 = 2040, 3 = 2060, 4 = 2080)",
    "value": 1,
    "unit": "",
    "min": 1,
-   "max": 2,
+   "max": 4,
    "step": 1
   },
   {
@@ -159,6 +161,62 @@
     "cells": 2,
     "length": 1000
    }
+  },
+  {
+   "name": "2060×200",
+   "values": {
+    "cells": 3,
+    "length": 200
+   }
+  },
+  {
+   "name": "2060×300",
+   "values": {
+    "cells": 3,
+    "length": 300
+   }
+  },
+  {
+   "name": "2060×500",
+   "values": {
+    "cells": 3,
+    "length": 500
+   }
+  },
+  {
+   "name": "2060×1000",
+   "values": {
+    "cells": 3,
+    "length": 1000
+   }
+  },
+  {
+   "name": "2080×200",
+   "values": {
+    "cells": 4,
+    "length": 200
+   }
+  },
+  {
+   "name": "2080×300",
+   "values": {
+    "cells": 4,
+    "length": 300
+   }
+  },
+  {
+   "name": "2080×500",
+   "values": {
+    "cells": 4,
+    "length": 500
+   }
+  },
+  {
+   "name": "2080×1000",
+   "values": {
+    "cells": 4,
+    "length": 1000
+   }
   }
  ],
  "default": "2020×500",
@@ -207,6 +265,27 @@
     "Slot +Y",
     "Slot -Y"
    ]
+  },
+  "2080×500": {
+   "size": [
+    20,
+    80,
+    500
+   ],
+   "massG": 1000,
+   "connectors": [
+    "Slot +X 4",
+    "Slot -X 1",
+    "Slot +Y",
+    "Slot -Y"
+   ],
+   "connector_at": {
+    "Slot +X 4": [
+     10,
+     30,
+     250
+    ]
+   }
   }
  }
 }

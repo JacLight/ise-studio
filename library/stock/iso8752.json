@@ -1,0 +1,388 @@
+{
+ "id": "iso8752",
+ "name": "Spring pin",
+ "standard": "ISO 8752",
+ "category": "Inserts & pins",
+ "summary": "Slotted spring (roll) pin, heavy duty, spring steel: driven into an H12 hole of its nominal diameter. One end on z = 0, axis +Z.",
+ "keywords": [
+  "spring pin",
+  "roll pin",
+  "slotted pin",
+  "tension pin",
+  "split pin",
+  "DIN 1481",
+  "pin"
+ ],
+ "source": [
+  "common.js",
+  "iso8752.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Spring steel",
+ "materials": {
+  "Spring steel": 7850
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Nominal diameter",
+   "value": 3,
+   "unit": "mm",
+   "min": 2,
+   "max": 8,
+   "step": 0.5
+  },
+  {
+   "key": "length",
+   "label": "Length",
+   "value": 16,
+   "unit": "mm",
+   "min": 4,
+   "max": 80
+  }
+ ],
+ "columns": [
+  "d",
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "Ø2×6",
+   "values": {
+    "d": 2,
+    "length": 6
+   }
+  },
+  {
+   "name": "Ø2×8",
+   "values": {
+    "d": 2,
+    "length": 8
+   }
+  },
+  {
+   "name": "Ø2×10",
+   "values": {
+    "d": 2,
+    "length": 10
+   }
+  },
+  {
+   "name": "Ø2×12",
+   "values": {
+    "d": 2,
+    "length": 12
+   }
+  },
+  {
+   "name": "Ø2×16",
+   "values": {
+    "d": 2,
+    "length": 16
+   }
+  },
+  {
+   "name": "Ø2×20",
+   "values": {
+    "d": 2,
+    "length": 20
+   }
+  },
+  {
+   "name": "Ø2.5×8",
+   "values": {
+    "d": 2.5,
+    "length": 8
+   }
+  },
+  {
+   "name": "Ø2.5×10",
+   "values": {
+    "d": 2.5,
+    "length": 10
+   }
+  },
+  {
+   "name": "Ø2.5×12",
+   "values": {
+    "d": 2.5,
+    "length": 12
+   }
+  },
+  {
+   "name": "Ø2.5×16",
+   "values": {
+    "d": 2.5,
+    "length": 16
+   }
+  },
+  {
+   "name": "Ø2.5×20",
+   "values": {
+    "d": 2.5,
+    "length": 20
+   }
+  },
+  {
+   "name": "Ø3×8",
+   "values": {
+    "d": 3,
+    "length": 8
+   }
+  },
+  {
+   "name": "Ø3×10",
+   "values": {
+    "d": 3,
+    "length": 10
+   }
+  },
+  {
+   "name": "Ø3×12",
+   "values": {
+    "d": 3,
+    "length": 12
+   }
+  },
+  {
+   "name": "Ø3×16",
+   "values": {
+    "d": 3,
+    "length": 16
+   }
+  },
+  {
+   "name": "Ø3×20",
+   "values": {
+    "d": 3,
+    "length": 20
+   }
+  },
+  {
+   "name": "Ø3×25",
+   "values": {
+    "d": 3,
+    "length": 25
+   }
+  },
+  {
+   "name": "Ø3×30",
+   "values": {
+    "d": 3,
+    "length": 30
+   }
+  },
+  {
+   "name": "Ø4×10",
+   "values": {
+    "d": 4,
+    "length": 10
+   }
+  },
+  {
+   "name": "Ø4×12",
+   "values": {
+    "d": 4,
+    "length": 12
+   }
+  },
+  {
+   "name": "Ø4×16",
+   "values": {
+    "d": 4,
+    "length": 16
+   }
+  },
+  {
+   "name": "Ø4×20",
+   "values": {
+    "d": 4,
+    "length": 20
+   }
+  },
+  {
+   "name": "Ø4×25",
+   "values": {
+    "d": 4,
+    "length": 25
+   }
+  },
+  {
+   "name": "Ø4×30",
+   "values": {
+    "d": 4,
+    "length": 30
+   }
+  },
+  {
+   "name": "Ø4×40",
+   "values": {
+    "d": 4,
+    "length": 40
+   }
+  },
+  {
+   "name": "Ø5×12",
+   "values": {
+    "d": 5,
+    "length": 12
+   }
+  },
+  {
+   "name": "Ø5×16",
+   "values": {
+    "d": 5,
+    "length": 16
+   }
+  },
+  {
+   "name": "Ø5×20",
+   "values": {
+    "d": 5,
+    "length": 20
+   }
+  },
+  {
+   "name": "Ø5×25",
+   "values": {
+    "d": 5,
+    "length": 25
+   }
+  },
+  {
+   "name": "Ø5×30",
+   "values": {
+    "d": 5,
+    "length": 30
+   }
+  },
+  {
+   "name": "Ø5×40",
+   "values": {
+    "d": 5,
+    "length": 40
+   }
+  },
+  {
+   "name": "Ø6×16",
+   "values": {
+    "d": 6,
+    "length": 16
+   }
+  },
+  {
+   "name": "Ø6×20",
+   "values": {
+    "d": 6,
+    "length": 20
+   }
+  },
+  {
+   "name": "Ø6×25",
+   "values": {
+    "d": 6,
+    "length": 25
+   }
+  },
+  {
+   "name": "Ø6×30",
+   "values": {
+    "d": 6,
+    "length": 30
+   }
+  },
+  {
+   "name": "Ø6×40",
+   "values": {
+    "d": 6,
+    "length": 40
+   }
+  },
+  {
+   "name": "Ø6×50",
+   "values": {
+    "d": 6,
+    "length": 50
+   }
+  },
+  {
+   "name": "Ø8×20",
+   "values": {
+    "d": 8,
+    "length": 20
+   }
+  },
+  {
+   "name": "Ø8×25",
+   "values": {
+    "d": 8,
+    "length": 25
+   }
+  },
+  {
+   "name": "Ø8×30",
+   "values": {
+    "d": 8,
+    "length": 30
+   }
+  },
+  {
+   "name": "Ø8×40",
+   "values": {
+    "d": 8,
+    "length": 40
+   }
+  },
+  {
+   "name": "Ø8×50",
+   "values": {
+    "d": 8,
+    "length": 50
+   }
+  },
+  {
+   "name": "Ø8×60",
+   "values": {
+    "d": 8,
+    "length": 60
+   }
+  }
+ ],
+ "default": "Ø3×16",
+ "checks": {
+  "Ø3×16": {
+   "size": [
+    3.36,
+    3.4,
+    16
+   ],
+   "tolerance": 0.06,
+   "connectors": [
+    "End",
+    "Other end",
+    "Axis"
+   ],
+   "connector_at": {
+    "Other end": [
+     0,
+     0,
+     16
+    ]
+   },
+   "metrics": {
+    "Hole Ø": 3,
+    "Free outside Ø": 3.4,
+    "Wall": 0.6
+   },
+   "partNumber": "ISO 8752 3×16 St"
+  },
+  "Ø8×60": {
+   "size": [
+    8.52,
+    8.65,
+    60
+   ],
+   "tolerance": 0.06
+  }
+ }
+}

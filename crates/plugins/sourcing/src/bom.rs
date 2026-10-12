@@ -165,6 +165,11 @@ pub struct BuyLine {
     pub mass_kg: Option<f64>,
     /// What to order for this BOM's quantity: rounded up to whole packs.
     pub order_qty: u32,
+    /// A cut-to-length item (beam, tube, bar): the metres the order comes
+    /// to (piece length × order_qty). Each piece is its own line, since its
+    /// length is in its part number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub length_m: Option<f64>,
     pub unit_price: Option<f64>,
     /// unit_price × order_qty.
     pub extended: Option<f64>,
@@ -527,6 +532,7 @@ impl<'w> Walker<'w> {
             qty,
             mass_kg,
             order_qty: qty,
+            length_m: None,
             unit_price: None,
             extended: None,
             award: None,
@@ -799,6 +805,7 @@ pub fn compute(world: &World, scope: Scope, options: &Options, sources: &[&dyn B
     }
     for l in &mut bom.buy {
         l.order_qty = pack_round(l.qty * q, l.stock.as_ref().and_then(|s| s.pack));
+        l.length_m = l.stock.as_ref().and_then(|s| s.cut_length_mm).map(|mm| mm * l.order_qty as f64 / 1000.0);
         if let Some(a) = find_award(&l.key) {
             l.award = Some(award_view(a, l.order_qty));
         }
@@ -941,7 +948,7 @@ pub fn flat_csv(bom: &Bom) -> String {
         let t = |f: fn(&Stock) -> Option<&String>| csv(s.and_then(f).map(String::as_str).unwrap_or(""));
         let _ = writeln!(
             out,
-            "{},Buy,{},{},{},{},{},{},,,{},{},,,,,{},{},{},{},{},{},{},{}",
+            "{},Buy,{},{},{},{},{},{},,,{},{},{},,,,{},{},{},{},{},{},{},{}",
             l.item,
             csv(s.map(|s| s.part_number.as_str()).unwrap_or("")),
             csv(&l.name),
@@ -951,6 +958,7 @@ pub fn flat_csv(bom: &Bom) -> String {
             t(|s| s.mpn.as_ref()),
             l.qty,
             l.order_qty,
+            num(s.and_then(|s| s.cut_length_mm), 1),
             num(l.mass_kg, 4),
             num(l.unit_price, 4),
             num(l.extended, 2),

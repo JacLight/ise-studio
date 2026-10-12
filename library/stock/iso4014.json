@@ -1,0 +1,276 @@
+{
+ "id": "iso4014",
+ "name": "Hex head bolt, part thread",
+ "standard": "ISO 4014",
+ "category": "Fasteners",
+ "summary": "Hexagon head bolt with a plain shank, thread 2d + 6, grade A, stainless A2-70. Washer face on z = 0, shank down −Z.",
+ "keywords": [
+  "hex bolt",
+  "hex head",
+  "hex screw",
+  "hex cap screw",
+  "bolt",
+  "DIN 931",
+  "spanner",
+  "wrench",
+  "partially threaded",
+  "part thread",
+  "shank"
+ ],
+ "source": [
+  "common.js",
+  "iso4014.js",
+  "hex_bolt.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Stainless steel A2",
+ "materials": {
+  "Stainless steel A2": 7900
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Thread diameter",
+   "value": 8,
+   "unit": "mm",
+   "min": 3,
+   "max": 12,
+   "step": 1
+  },
+  {
+   "key": "length",
+   "label": "Length",
+   "value": 50.0,
+   "unit": "mm",
+   "min": 5,
+   "max": 150
+  },
+  {
+   "key": "threads",
+   "label": "True helical thread (1 = on)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "d",
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "M3×25",
+   "values": {
+    "d": 3,
+    "length": 25
+   }
+  },
+  {
+   "name": "M3×30",
+   "values": {
+    "d": 3,
+    "length": 30
+   }
+  },
+  {
+   "name": "M4×30",
+   "values": {
+    "d": 4,
+    "length": 30
+   }
+  },
+  {
+   "name": "M4×40",
+   "values": {
+    "d": 4,
+    "length": 40
+   }
+  },
+  {
+   "name": "M5×30",
+   "values": {
+    "d": 5,
+    "length": 30
+   }
+  },
+  {
+   "name": "M5×40",
+   "values": {
+    "d": 5,
+    "length": 40
+   }
+  },
+  {
+   "name": "M5×50",
+   "values": {
+    "d": 5,
+    "length": 50
+   }
+  },
+  {
+   "name": "M6×40",
+   "values": {
+    "d": 6,
+    "length": 40
+   }
+  },
+  {
+   "name": "M6×50",
+   "values": {
+    "d": 6,
+    "length": 50
+   }
+  },
+  {
+   "name": "M6×60",
+   "values": {
+    "d": 6,
+    "length": 60
+   }
+  },
+  {
+   "name": "M6×80",
+   "values": {
+    "d": 6,
+    "length": 80
+   }
+  },
+  {
+   "name": "M8×40",
+   "values": {
+    "d": 8,
+    "length": 40
+   }
+  },
+  {
+   "name": "M8×50",
+   "values": {
+    "d": 8,
+    "length": 50
+   }
+  },
+  {
+   "name": "M8×60",
+   "values": {
+    "d": 8,
+    "length": 60
+   }
+  },
+  {
+   "name": "M8×80",
+   "values": {
+    "d": 8,
+    "length": 80
+   }
+  },
+  {
+   "name": "M8×100",
+   "values": {
+    "d": 8,
+    "length": 100
+   }
+  },
+  {
+   "name": "M10×50",
+   "values": {
+    "d": 10,
+    "length": 50
+   }
+  },
+  {
+   "name": "M10×60",
+   "values": {
+    "d": 10,
+    "length": 60
+   }
+  },
+  {
+   "name": "M10×80",
+   "values": {
+    "d": 10,
+    "length": 80
+   }
+  },
+  {
+   "name": "M10×100",
+   "values": {
+    "d": 10,
+    "length": 100
+   }
+  },
+  {
+   "name": "M12×60",
+   "values": {
+    "d": 12,
+    "length": 60
+   }
+  },
+  {
+   "name": "M12×80",
+   "values": {
+    "d": 12,
+    "length": 80
+   }
+  },
+  {
+   "name": "M12×100",
+   "values": {
+    "d": 12,
+    "length": 100
+   }
+  },
+  {
+   "name": "M12×120",
+   "values": {
+    "d": 12,
+    "length": 120
+   }
+  }
+ ],
+ "default": "M8×50",
+ "checks": {
+  "M8×50": {
+   "size": [
+    13,
+    15.01110699893027,
+    55.3
+   ],
+   "tolerance": 0.06,
+   "connectors": [
+    "Head seat",
+    "Axis",
+    "Head top"
+   ],
+   "connector_at": {
+    "Head top": [
+     0,
+     0,
+     5.3
+    ],
+    "Axis": [
+     0,
+     0,
+     -50.0
+    ]
+   },
+   "metrics": {
+    "Across flats": 13
+   },
+   "partNumber": "ISO 4014 M8×50 A2-70"
+  },
+  "M12×100": {
+   "size": [
+    18,
+    20.784609690826528,
+    107.5
+   ],
+   "tolerance": 0.06,
+   "metrics": {
+    "Across flats": 18,
+    "Head height": 7.5
+   }
+  }
+ }
+}

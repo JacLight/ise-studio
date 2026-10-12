@@ -1,0 +1,23 @@
+[
+  {
+    "operation": "solid.material.create",
+    "parameters": { "name": "PLA (Bambu, white)", "density": { "value": 1240, "unit": "kg/m3" } }
+  },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Valley relief plaque",
+      "description": "A bas-relief wall plaque from a picture (valley.jpg, added with ./forma image add): brightness becomes height, the moonlit pines standing 4 mm proud of the night sky. Framed, printed face up in one piece, with blind keyhole slots in the back.",
+      "source": { "$file": "plaque.js" },
+      "display_tolerance": 0.02,
+      "materials": { "PLA (Bambu, white)": "$0.id" },
+      "params": [
+        { "key": "width", "label": "Width", "value": 180, "unit": "mm", "min": 60, "max": 400 },
+        { "key": "depth", "label": "Relief depth", "value": 4, "unit": "mm", "min": 0.5, "max": 15, "step": 0.1 },
+        { "key": "base", "label": "Back thickness", "value": 3, "unit": "mm", "min": 2.4, "max": 10, "step": 0.1 },
+        { "key": "smooth", "label": "Smoothing", "value": 0.25, "unit": "mm", "min": 0, "max": 2, "step": 0.05 },
+        { "key": "frame", "label": "Frame width", "value": 7, "unit": "mm", "min": 0, "max": 30, "step": 0.5 }
+      ]
+    }
+  }
+]
