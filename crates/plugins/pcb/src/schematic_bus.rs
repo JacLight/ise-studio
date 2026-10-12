@@ -251,7 +251,15 @@ impl Command for Unfold {
         let bv = v.buses.iter().find(|b| b.id == self.bus && b.sheet == bus.sheet).ok_or_else(|| bad("bus not found in the schematic"))?;
         let name = bv.name.clone().ok_or_else(|| bad("the bus has no name yet: put a bus label on it (D[0..7], {SDA SCL})"))?;
         let all: Vec<String> = bv.members.iter().map(|m| m.member.clone()).collect();
-        let taken: Vec<String> = v.labels.iter().filter(|l| l.sheet == bus.sheet && l.kind == LabelKind::Local).map(|l| l.text.clone()).collect();
+        // Already broken out: members named on a wire leaving this bus through an entry.
+        let on_bus = |p: [f64; 2]| bus.points.windows(2).any(|w| crate::schematic_view::on_segment(p, w[0], w[1]));
+        let wires: Vec<&crate::schematic_view::WireView> = v
+            .bus_entries
+            .iter()
+            .filter(|e| e.sheet == bus.sheet && on_bus(e.at))
+            .filter_map(|e| v.wires.iter().find(|w| w.sheet == bus.sheet && (schematic::same(w.points[0], e.end) || schematic::same(*w.points.last().unwrap(), e.end))))
+            .collect();
+        let taken: Vec<String> = v.labels.iter().filter(|l| l.sheet == bus.sheet && wires.iter().any(|w| w.points.windows(2).any(|s| crate::schematic_view::on_segment(l.at, s[0], s[1])))).map(|l| l.text.clone()).collect();
         let want: Vec<String> = match self.members {
             Some(m) => {
                 for x in &m {

@@ -1,0 +1,727 @@
+/* Schematic editor: selection band and bar, buses, graphics tools, find, export, and the
+   Sheets / Fields / Setup panels. The base schematic styles live in styles.css (.sch-*). */
+
+.pcb-tabs.schx-tabs {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+
+.pcb-tabs.schx-tabs button {
+  flex: 1 0 22%;
+  height: 30px;
+  font-size: 11.5px;
+}
+
+.schx-band {
+  fill: #6d4ee812;
+  stroke: #6d4ee8;
+  pointer-events: none;
+}
+
+.schx-band.crossing {
+  fill: #1b7f3d12;
+  stroke: #1b7f3d;
+  stroke-dasharray: 4 3;
+}
+
+.schx-box-hit {
+  fill: transparent;
+  cursor: zoom-in;
+}
+
+.schx-box-hit:hover {
+  fill: #a05a000d;
+}
+
+.schx-selbar {
+  position: absolute;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border-radius: 10px;
+  background: #ffffffee;
+  box-shadow: 0 4px 16px #1d18301f, 0 0 0 1px #1d18300d;
+  font-size: 12px;
+  color: #5d576b;
+  z-index: 3;
+}
+
+.schx-selbar > span:first-child {
+  padding: 0 6px;
+  font-weight: 600;
+}
+
+.schx-selbar button {
+  min-width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  padding: 0 6px;
+  background: transparent;
+  color: #3b2f63;
+  font-size: 14px;
+  display: inline-grid;
+  place-items: center;
+}
+
+.schx-selbar button:hover {
+  background: #f1eef9;
+}
+
+.schx-selbar .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.schx-drop {
+  position: relative;
+}
+
+.schx-drop-menu {
+  position: absolute;
+  top: 38px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 210px;
+  padding: 4px;
+  border-radius: 10px;
+  background: white;
+  box-shadow: 0 8px 24px #1d183029, 0 0 0 1px #1d18300d;
+  display: flex;
+  flex-direction: column;
+  z-index: 5;
+}
+
+.schx-drop-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: #3d3748;
+  background: transparent;
+  justify-content: flex-start;
+}
+
+.schx-drop-menu button:hover {
+  background: #f1eef9;
+}
+
+.schx-drop-menu .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.schx-flip {
+  display: inline-grid;
+  transform: rotate(90deg);
+}
+
+/* Find and replace */
+.schx-find {
+  position: absolute;
+  top: 56px;
+  right: 12px;
+  width: min(440px, calc(100% - 24px));
+  padding: 6px;
+  border-radius: 12px;
+  background: #ffffffF5;
+  box-shadow: 0 8px 24px #1d183029, 0 0 0 1px #1d18300d;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.schx-find-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.schx-find-row > .icon {
+  width: 15px;
+  height: 15px;
+  color: #8a8496;
+  margin: 0 4px;
+}
+
+.schx-find-row input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  border: 1px solid #e6e3ec;
+  border-radius: 8px;
+  padding: 0 9px;
+  font-size: 13px;
+}
+
+.schx-find-row input:focus {
+  border-color: #6d4ee8;
+  outline: none;
+}
+
+.schx-find-row button {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 7px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #5d576b;
+  background: transparent;
+}
+
+.schx-find-row button.on {
+  background: #6d4ee8;
+  color: white;
+}
+
+.schx-find-row button:hover:not(.on) {
+  background: #f1eef9;
+}
+
+.schx-count {
+  font-size: 11px;
+  color: #8a8496;
+  min-width: 34px;
+  text-align: right;
+}
+
+.schx-hits {
+  max-height: 220px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.schx-hits button {
+  text-align: left;
+  justify-content: flex-start;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  background: transparent;
+  color: #2d2836;
+}
+
+.schx-hits button.active,
+.schx-hits button:hover {
+  background: #f1eef9;
+}
+
+.schx-hits .kind {
+  display: inline-block;
+  min-width: 44px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8a8496;
+}
+
+/* Export */
+.schx-menu {
+  position: absolute;
+  top: 56px;
+  right: 12px;
+  width: 320px;
+  padding: 10px 12px 12px;
+  border-radius: 12px;
+  background: white;
+  box-shadow: 0 8px 24px #1d183029, 0 0 0 1px #1d18300d;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.schx-menu-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.schx-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.schx-links a {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #f4f2f8;
+  color: #3b2f63;
+  text-decoration: none;
+}
+
+.schx-links a:hover {
+  background: #e9e4f8;
+}
+
+.schx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.schx-btn .icon {
+  width: 15px;
+  height: 15px;
+}
+
+/* Panels */
+.schx-x {
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #9a94a6;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.schx-x:hover {
+  background: #fdeeee;
+  color: #b93b3b;
+}
+
+.schx-card {
+  border: 1px solid #efedf3;
+  border-radius: 10px;
+  padding: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  background: white;
+}
+
+.schx-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.schx-row input,
+.schx-row select,
+.sch-field select,
+.sch-field textarea {
+  height: 30px;
+  min-width: 0;
+  flex: 1;
+  border: 1px solid #e6e3ec;
+  border-radius: 8px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  background: white;
+}
+
+.sch-field textarea {
+  height: auto;
+  padding: 6px 8px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.schx-row select {
+  flex: 0 0 auto;
+}
+
+.schx-alias {
+  font-size: 12px;
+  min-width: 64px;
+  color: #3b2f63;
+}
+
+.schx-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
+.schx-swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 0 0 1px #d9d5e2;
+}
+
+.schx-swatch.on {
+  box-shadow: 0 0 0 2px #6d4ee8;
+}
+
+.schx-swatch.none {
+  background: repeating-linear-gradient(45deg, #fff 0 3px, #e3dfe9 3px 6px);
+}
+
+.schx-color {
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.schx-seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.schx-seg button {
+  height: 28px;
+  min-width: 30px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 12px;
+  background: #f4f2f8;
+  color: #4b4458;
+}
+
+.schx-seg button.on {
+  background: #6d4ee8;
+  color: white;
+}
+
+.schx-members {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 340px;
+  overflow: auto;
+}
+
+.schx-member {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.schx-member .m {
+  font-weight: 600;
+  color: #1f4fbf;
+}
+
+.schx-member .n.none {
+  color: #a6a0b0;
+}
+
+.schx-member button {
+  height: 24px;
+  font-size: 11px;
+  padding: 0 7px;
+}
+
+.schx-table-edit table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.schx-table-edit td {
+  border: 1px solid #ece9f1;
+  padding: 0;
+}
+
+.schx-table-edit input {
+  width: 100%;
+  height: 26px;
+  border: none;
+  padding: 0 5px;
+  font-size: 12px;
+}
+
+.sch-props-row.wrap {
+  flex-wrap: wrap;
+}
+
+.secondary.danger {
+  color: #b93b3b;
+}
+
+.schx-note,
+.schx-selcount {
+  background: #f4f1fd;
+  border-radius: 8px;
+  padding: 7px 9px;
+  color: #4b3f80;
+}
+
+.schx-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.schx-class-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+}
+
+.schx-class-head strong {
+  flex: 1;
+}
+
+.schx-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+}
+
+.schx-pair {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 5px;
+}
+
+/* Field table */
+.schx-fields-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.schx-fields-bar .pcb-search {
+  flex: 1;
+}
+
+.schx-grid-wrap {
+  overflow: auto;
+  max-height: calc(100vh - 300px);
+  border: 1px solid #efedf3;
+  border-radius: 10px;
+  background: white;
+}
+
+.schx-grid {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.schx-grid th {
+  position: sticky;
+  top: 0;
+  background: #f7f6fa;
+  font-weight: 600;
+  text-align: left;
+  padding: 6px 8px;
+  white-space: nowrap;
+  color: #5d576b;
+  border-bottom: 1px solid #ece9f1;
+  z-index: 1;
+}
+
+.schx-grid td {
+  border-bottom: 1px solid #f2f0f5;
+  border-right: 1px solid #f6f4f8;
+  padding: 0;
+  white-space: nowrap;
+}
+
+.schx-grid td input:not([type="checkbox"]) {
+  width: 118px;
+  height: 27px;
+  border: none;
+  padding: 0 7px;
+  font-size: 12px;
+  background: transparent;
+}
+
+.schx-grid td input:focus {
+  outline: 2px solid #6d4ee855;
+  background: white;
+}
+
+.schx-grid td.qty {
+  text-align: center;
+  color: #8a8496;
+  padding: 0 6px;
+}
+
+.schx-grid td.refs {
+  padding: 0 7px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  color: #3b2f63;
+  font-weight: 600;
+}
+
+/* Setup */
+.schx-sec {
+  border: 1px solid #efedf3;
+  border-radius: 10px;
+  background: white;
+}
+
+.schx-sec-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-start;
+  height: 36px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #2d2836;
+  background: transparent;
+}
+
+.schx-sec-head .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.schx-sec-body {
+  padding: 0 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.schx-sev span {
+  font-size: 11.5px;
+}
+
+.schx-sev {
+  grid-template-columns: 1fr 100px;
+}
+
+.schx-matrix-wrap {
+  overflow: auto;
+}
+
+.schx-matrix {
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.schx-matrix th {
+  padding: 2px 3px;
+  color: #6b6578;
+  font-weight: 600;
+  text-align: center;
+}
+
+.schx-matrix td {
+  padding: 1px;
+}
+
+.schx-matrix td.blank {
+  background: transparent;
+}
+
+.schx-matrix .lvl {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.schx-matrix .lvl.ok {
+  background: #e7f5ec;
+}
+
+.schx-matrix .lvl.warning {
+  background: #fff1d6;
+  color: #9a6400;
+}
+
+.schx-matrix .lvl.error {
+  background: #fde3e3;
+  color: #b93b3b;
+}
+
+.schx-matrix .lvl.changed {
+  border-color: #6d4ee8;
+}
+
+/* ERC with exclusions */
+.schx-erc {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.schx-erc .pcb-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.schx-erc.excluded {
+  opacity: 0.55;
+}
+
+.schx-exclude {
+  font-size: 10.5px;
+  padding: 0 6px;
+  border-radius: 7px;
+  background: transparent;
+  color: #8a8496;
+}
+
+.schx-exclude:hover {
+  background: #f1eef9;
+  color: #3b2f63;
+}
+
+.schx-netcard .tag {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  background: #eef0f6;
+}
+
+/* Labels inside the panels sit tight (the global label style spaces form rows). */
+.schx-setup .sch-field,
+.schx-card .sch-field,
+.schx-menu .sch-field,
+.sch-props .sch-field,
+.schx-setup .sch-check,
+.schx-menu .sch-check,
+.schx-fields .sch-check,
+.schx-row .sch-check {
+  margin: 0;
+}
+
+.sch-field > span {
+  float: none;
+}
+
+.schx-hits button {
+  border: none;
+  box-shadow: none;
+  height: auto;
+  min-height: 28px;
+  display: block;
+}
+
+.sch-props-row button {
+  white-space: nowrap;
+}

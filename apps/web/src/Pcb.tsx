@@ -272,12 +272,17 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-      if (e.metaKey || e.ctrlKey) return;
       const k = e.key.toLowerCase();
       const handled = () => {
         e.preventDefault();
         e.stopImmediatePropagation();
       };
+      // The schematic takes its own Ctrl/Cmd keys (copy, paste, find, select all).
+      if (keyPane.current === "schematic" && schKeys.current && (e.metaKey || e.ctrlKey)) {
+        if (schKeys.current(e)) return handled();
+        return;
+      }
+      if (e.metaKey || e.ctrlKey) return;
       if (keyPane.current === "schematic" && schKeys.current) {
         if (schKeys.current(e)) return handled();
         if (e.key === "Escape") {

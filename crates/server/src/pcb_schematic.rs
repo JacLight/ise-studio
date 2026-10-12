@@ -6,6 +6,9 @@
 //! - `GET /pcb/schematics?project=`                  schematics (id, name, board, errors)
 //! - `GET /pcb/schematic/<id>?project=`              view + pending sync report
 //! - `GET /pcb/schematic/<id>/schematic.pdf?project=` every sheet as a PDF page
+//! - `GET /pcb/schematic/<id>/sheet/<sheet>.svg?project=` one sheet as SVG
+//! - `GET /pcb/schematic/<id>/netlist?format=kicad|orcad|cadstar|spice` a netlist file
+//! - `GET /pcb/schematic/<id>/bom?group=Value,Footprint&fields=Reference,Qty,Value&dnp=1&format=csv|json`
 //! - `POST /pcb/schematic/<id>/simulate?project=`    ngspice on the schematic (body: a SimRequest)
 //! - `GET /pcb/simulations?project=`                 saved simulations (requirements)
 
@@ -107,6 +110,62 @@ pub async fn show(State(server): State<Arc<Server>>, Path(id): Path<String>, Que
         Ok((v, sync)) => axum::Json(json!({ "schematic": &*v, "errors": v.errors(), "sync": sync })).into_response(),
         Err(r) => r,
     }
+}
+
+fn attachment(query: &HashMap<String, String>, name: &str) -> String {
+    if query.contains_key("download") { format!("attachment; filename=\"{name}\"") } else { format!("inline; filename=\"{name}\"") }
+}
+
+/// One sheet as SVG.
+pub async fn svg(State(server): State<Arc<Server>>, Path((id, sheet)): Path<(String, String)>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let (v, _) = match view(&server, &query, &id) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let sheet = sheet.trim_end_matches(".svg").to_string();
+    let Some(body) = de_pcb::schematic_export::svg(&v, &sheet) else { return fail(StatusCode::NOT_FOUND, format!("no sheet {sheet}")) };
+    let name = format!("{}-sheet{sheet}.svg", de_pcb::gerber::file_stem(&v.name));
+    ([(header::CONTENT_TYPE, "image/svg+xml".to_string()), (header::CONTENT_DISPOSITION, attachment(&query, &name))], body).into_response()
+}
+
+/// A netlist file.
+pub async fn netlist(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let (v, _) = match view(&server, &query, &id) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let format = query.get("format").map(String::as_str).unwrap_or("kicad");
+    match de_pcb::schematic_export::netlist(&v, format) {
+        Ok(body) => {
+            let name = format!("{}.{}", de_pcb::gerber::file_stem(&v.name), de_pcb::schematic_export::extension(format));
+            ([(header::CONTENT_TYPE, "text/plain; charset=utf-8".to_string()), (header::CONTENT_DISPOSITION, attachment(&query, &name))], body).into_response()
+        }
+        Err(e) => fail(StatusCode::BAD_REQUEST, e),
+    }
+}
+
+/// The bill of materials straight from the schematic, grouped and with the fields asked for.
+pub async fn bom(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let (v, _) = match view(&server, &query, &id) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let list = |k: &str, d: &[&str]| -> Vec<String> {
+        match query.get(k) {
+            Some(x) => x.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+            None => d.iter().map(|s| s.to_string()).collect(),
+        }
+    };
+    let group = list("group", &["Value", "Footprint", "MPN"]);
+    let fields = list("fields", &de_pcb::schematic_export::BOM_FIELDS[..8]);
+    let dnp = query.get("dnp").is_some_and(|x| x == "1" || x == "true");
+    if query.get("format").map(String::as_str) == Some("json") {
+        let rows = de_pcb::schematic_export::bom_rows(&v, &group, &fields, dnp);
+        return axum::Json(json!({ "fields": fields, "group": group, "rows": rows })).into_response();
+    }
+    let body = de_pcb::schematic_export::bom_csv(&v, &group, &fields, dnp);
+    let name = format!("{}-bom.csv", de_pcb::gerber::file_stem(&v.name));
+    ([(header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()), (header::CONTENT_DISPOSITION, attachment(&query, &name))], body).into_response()
 }
 
 pub async fn pdf(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {

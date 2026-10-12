@@ -124,6 +124,8 @@ pub struct GraphicView {
     pub kind: &'static str,
     pub draw: Vec<Draw>,
     pub bbox: [f64; 4],
+    /// The item's own fields (a picture's data left out), for editing.
+    pub props: serde_json::Value,
 }
 
 /// Schematic setup, as stored, plus the effective pin-conflict matrix.
@@ -1696,26 +1698,30 @@ pub fn resolve_items(id: StableId, s: &Schematic, raw: &SchItems, world: &World)
         .collect();
     let no_connects: Vec<MarkView> = it.no_connects.iter().map(|(nid, n)| MarkView { id: *nid, sheet: n.sheet.clone(), at: n.at }).collect();
     let mut graphics: Vec<GraphicView> = Vec::new();
-    let mut graphic = |id: StableId, sheet: &str, kind: &'static str, draw: Vec<Draw>| {
+    let mut graphic = |id: StableId, sheet: &str, kind: &'static str, draw: Vec<Draw>, mut props: serde_json::Value| {
+        if let Some(o) = props.as_object_mut() {
+            o.remove("data");
+            o.remove("schematic");
+        }
         let mut b = EMPTY;
         for d in &draw {
             let x = draw_box(d);
             bbox_add(&mut b, [x[0], x[1]]);
             bbox_add(&mut b, [x[2], x[3]]);
         }
-        graphics.push(GraphicView { id, sheet: sheet.to_string(), kind, draw, bbox: b });
+        graphics.push(GraphicView { id, sheet: sheet.to_string(), kind, draw, bbox: b, props });
     };
     for (gid, g) in &it.images {
-        graphic(*gid, &g.sheet, "image", schematic_graphics::image_draw(g));
+        graphic(*gid, &g.sheet, "image", schematic_graphics::image_draw(g), serde_json::to_value(g).unwrap_or_default());
     }
     for (gid, g) in &it.shapes {
-        graphic(*gid, &g.sheet, "shape", schematic_graphics::shape_draw(g));
+        graphic(*gid, &g.sheet, "shape", schematic_graphics::shape_draw(g), serde_json::to_value(g).unwrap_or_default());
     }
     for (gid, g) in &it.text_boxes {
-        graphic(*gid, &g.sheet, "text_box", schematic_graphics::text_box_draw(g, s));
+        graphic(*gid, &g.sheet, "text_box", schematic_graphics::text_box_draw(g, s), serde_json::to_value(g).unwrap_or_default());
     }
     for (gid, g) in &it.tables {
-        graphic(*gid, &g.sheet, "table", schematic_graphics::table_draw(g, s));
+        graphic(*gid, &g.sheet, "table", schematic_graphics::table_draw(g, s), serde_json::to_value(g).unwrap_or_default());
     }
     let mut bus_views = Vec::new();
     for g in groups_b.values() {
