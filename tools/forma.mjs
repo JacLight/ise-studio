@@ -18,6 +18,7 @@
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
 //   node tools/forma.mjs pcb import <file> [--format f] [--name n] [--board id] [companions…]   a board/schematic from KiCad, Eagle, EasyEDA, Altium, CADSTAR, Fabmaster, PADS, gEDA
 //   node tools/forma.mjs pcb exports <id> | export <id> <file name | kicad_sch | ipc2581 | odb | d356 | …> [--out path]   files for other EDA tools
+//   node tools/forma.mjs sch export <schematic> netlist|bom|svg|pdf [--format kicad|orcad|cadstar|spice] [--out f]   schematic files; sch find|erc|buses|sheets <schematic>
 //   node tools/forma.mjs pcb lib|logo|assign|variant|block …   project/global libraries, wizards, logos, footprint assignment, variants, design blocks
 //   node tools/forma.mjs simulate <schematic> [--tran 30ms] [--expect "min(V(3V3), burst) > 3.0"] [--save name]   ngspice on a schematic
 //   node tools/forma.mjs list                 every entity, one line each
@@ -393,6 +394,78 @@ if (command === "run") {
     } else {
       throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | import <file> [--format f] | exports <id> | export <id> <name|kind> [--out path] | library [update] | lib … | logo <image> | assign <schematic> | variant <schematic> … | block …");
     }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
+} else if (command === "sch") {
+  // Schematic files and lookups: netlists, BOM, SVG/PDF plots, find, ERC with exclusion keys, buses.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const q = (extra = {}) => new URLSearchParams({ ...(project ? { project } : {}), ...extra });
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const fetchOk = async (path) => {
+    const res = await fetch(`${http}${path}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res;
+  };
+  const usage = "usage: forma sch export <schematic> netlist [--format kicad|orcad|cadstar|spice] | bom [--group Value,Footprint] [--fields Reference,Qty,Value,…] [--dnp] | svg [--sheet 1] | pdf  [--out file]\n       forma sch find <schematic> <text> · forma sch erc <schematic> [--all] · forma sch buses <schematic> · forma sch sheets <schematic>";
+  try {
+    const sub = file;
+    const out = flag("--out");
+    const write = async (body, binary) => {
+      if (!out) return process.stdout.write(binary ? Buffer.from(body) : body);
+      const { writeFileSync } = await import("node:fs");
+      writeFileSync(out, binary ? Buffer.from(body) : body);
+      console.log(`✓ wrote ${out} (${binary ? body.byteLength : body.length} bytes)`);
+    };
+    const id = args[2];
+    if (!id && sub) throw new Error(usage);
+    const detail = async () => (await (await fetchOk(`/pcb/schematic/${id}?${q()}`)).json()).schematic;
+    if (sub === "export") {
+      const what = args[3];
+      if (what === "netlist") {
+        await write(await (await fetchOk(`/pcb/schematic/${id}/netlist?${q({ format: flag("--format") ?? "kicad" })}`)).text());
+      } else if (what === "bom") {
+        const extra = {};
+        const g = flag("--group");
+        const f = flag("--fields");
+        if (g !== null) extra.group = g;
+        if (f !== null) extra.fields = f;
+        if (args.includes("--dnp")) extra.dnp = "1";
+        await write(await (await fetchOk(`/pcb/schematic/${id}/bom?${q(extra)}`)).text());
+      } else if (what === "svg") {
+        await write(await (await fetchOk(`/pcb/schematic/${id}/sheet/${encodeURIComponent(flag("--sheet") ?? "1")}.svg?${q()}`)).text());
+      } else if (what === "pdf") {
+        if (!out) throw new Error("a PDF needs --out file.pdf");
+        await write(await (await fetchOk(`/pcb/schematic/${id}/schematic.pdf?${q()}`)).arrayBuffer(), true);
+      } else throw new Error(usage);
+    } else if (sub === "find") {
+      const words = args.slice(3).join(" ").toLowerCase();
+      if (!words) throw new Error("say what to find: forma sch find <schematic> <text>");
+      const v = await detail();
+      const hit = (s) => String(s ?? "").toLowerCase().includes(words);
+      for (const s of v.symbols) if ([s.reference, s.value, s.footprint, s.mpn, ...Object.values(s.fields ?? {})].some(hit)) console.log(`symbol ${s.reference} ${s.value} (${s.footprint || "no footprint"}) sheet ${s.sheet}  id ${s.id}`);
+      for (const l of v.labels) if (hit(l.text)) console.log(`${l.kind} label ${l.text} at ${l.at.join(",")} sheet ${l.sheet}  id ${l.id}`);
+      for (const t of v.texts) if (hit(t.text)) console.log(`note “${t.text.split("\n")[0]}” sheet ${t.sheet}  id ${t.id}`);
+      for (const n of v.nets) if (hit(n.name) || n.pins.some(hit)) console.log(`net ${n.name}${n.class ? ` [${n.class}]` : ""}: ${n.pins.join(" ")}`);
+      for (const b of v.buses) if (hit(b.name) || b.members.some((m) => hit(m.member))) console.log(`bus ${b.name ?? "(unnamed)"} sheet ${b.sheet}  id ${b.id}`);
+    } else if (sub === "erc") {
+      const v = await detail();
+      const list = v.violations.filter((x) => args.includes("--all") || !x.excluded);
+      for (const x of list) console.log(`${x.excluded ? "excluded" : x.severity === "error" ? "✗" : "!"} ${x.code}: ${x.message}  (sheet ${x.sheet}, key ${x.key})`);
+      console.log(`${v.stats.errors} errors, ${v.stats.warnings} warnings${v.violations.some((x) => x.excluded) ? `, ${v.violations.filter((x) => x.excluded).length} excluded` : ""}`);
+    } else if (sub === "buses") {
+      const v = await detail();
+      if (!v.buses.length) console.log("no buses");
+      for (const b of v.buses) console.log(`${b.name ?? "(unnamed bus)"} sheet ${b.sheet} id ${b.id}\n  ${b.members.map((m) => `${m.member}${m.net && m.net !== m.member ? `=${m.net}` : ""}${m.net ? "" : " (unused)"}`).join("  ")}`);
+    } else if (sub === "sheets") {
+      const v = await detail();
+      const depth = (s) => (s.parent ? 1 + depth(v.sheets.find((x) => x.id === s.parent) ?? {}) : 0);
+      for (const s of v.sheets) console.log(`${"  ".repeat(depth(s))}${s.id} ${s.name} (page ${s.page}${s.instance_of ? `, instance of ${s.instance_of}` : ""}) ${v.symbols.filter((x) => x.sheet === s.id).length} symbols`);
+    } else throw new Error(usage);
   } catch (e) {
     console.error(`✗ ${e.message}`);
     failed = true;
