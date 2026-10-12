@@ -19,6 +19,8 @@ Run it from your working folder. It acts on the open project. It is your only wa
 ./forma ops [filter]                 commands the engine accepts, with their JSON schemas
 ./forma commit <operation> '<json>'  run one command
 ./forma run steps.json               run several; "$N.id" refers to step N's output, {"$file": "x.js"} inlines a file
+./forma import <file> [--name N]     a file in (see Exact geometry, files in and out)
+./forma export <id|name|project> --format step|iges|stl|obj|ply|glb|3mf|dxf|zip [--part P] [--out path]   a file out; prints where and how big
 ```
 
 Write programs as files in `programs/` (in your folder) and pass them with `{"$file": "programs/name.js"}`; several files join in order (`{"$file": ["lib.js", "main.js"]}`). Read the vocabulary in the prelude (path given below) before writing one, and the examples for working patterns.
@@ -110,13 +112,14 @@ The same setup carries what a draughtsman adds (all lists optional; an empty set
 - Renaming a datum: `shape.rename_datum { target, part?, sheet?, from: "A", to: "D" }` changes the symbol and every frame reference to it (also inside `A-B`) on all sheets of the same part. A frame referring to a letter no datum symbol marks is warned.
 - Several sheets: `sheets: [{ part?, views?: ["front","top","right","iso"], scale?: 2, size?: "A4", section?, dimensions?, details?, frames?, datums?, hole_fits? }]` adds sheets 2, 3… after the standard first sheet (the setup's own fields). Each draws its part (default: the drawing's part / whole assembly), only the views listed (all when empty; an `["iso"]` sheet is the isometric alone at the sheet's scale), at `scale` (snapped to a standard one; warned and reduced if it does not fit). Title blocks read `A3 · 2 of 4`. `.pdf` is every sheet, a page each (`page=N` for one); `.dxf` is one sheet (`page=N`, default 1); `.zip` is a DXF per sheet. Datum letters belong to a part: two sheets of different parts may each have an A.
 
-## Exact geometry, STEP in and out
+## Exact geometry, files in and out
 
 The engine evaluates every program twice over: as meshes for the view and checks, and exactly (OpenCascade B-rep) for STEP. Boxes, cylinders, cones, spheres, profiles (polygons, circles, offsets), extrude, revolve, booleans, fillets, chamfers, pushes, shells and drafts are exact; geometry a program computes as triangles (`fromMesh`) or hulls is exported faceted. Prefer the exact vocabulary when a part will be machined.
 
 - Printing: `/export/<id>.3mf` is the whole shape as one object (separate bodies stay separate shells, so print-in-place mechanisms print whole); the person's Send to Bambu Studio button saves it in ~/Downloads/Forma prints and opens it in Bambu Studio. For print-in-place designs keep ≥ 0.3 mm between moving surfaces, and stand every moving part on the bed where you can: a face printed over a layer gap makes Bambu Studio warn of a "floating cantilever" (herringbone teeth or 45° cones hold parts together instead of a floor; see examples/gearbox-print).
-- Export: `/export/<id>.step` (whole design, every part named and placed), `?part=<name>` for one part; fabrication packages include a STEP per distinct part.
-- Import: a person drops a STEP file in the view; it becomes a shape whose program is `return importStep("<sha>")` (bodies as parts, named as in the file). You can use `importStep(sha, { material, process })` in your own programs, place it in assemblies, subtract from it, link parameters around it.
+- Out (`./forma export`, or the person's download): STEP and IGES exact (every part named, placed, coloured by its material's look); STL, OBJ, PLY and GLB meshes (OBJ and GLB keep an object/node per part; OBJ, PLY and GLB carry colour; GLB is metres, Y up, for viewers and the web, the rest millimetres, Z up); 3MF for printing; DXF for a sheet part; the fabrication zip. `--part <name>` is one part at the origin; fabrication packages include a STEP per distinct part.
+- In (`./forma import <file>`, or the person drops it on the view): STEP and IGES become a shape `return importStep("<sha>")` / `importIges("<sha>")` of the file's exact bodies (IGES surfaces that close are sewn into solids); STL, OBJ, PLY, glTF/GLB and 3MF become `return importMesh("<sha>")`: triangles, faceted in exact exports, so no fillets or edge picks on them. Bodies are parts named as in the file. Colours the file gives are listed in the program's comment and the import's reply: give the parts real materials from them (a colour says nothing of density). Use `importStep/importIges/importMesh(sha, { material, process })` in your own programs: place, subtract, link parameters around them. A mesh with holes is refused: it must be a closed solid.
+- 2D: DXF and SVG become a sketch on XY named after the file (lines, arcs and circles stay so; splines, ellipses and SVG curves become Béziers; blocks placed; units honoured; moved to start at the origin), unconstrained, ready for `sketch("Name").extrude(3)` or to dimension and edit. DWG cannot be read (its only open reader is GPL): ask for a DXF.
 
 ## Components and assemblies
 

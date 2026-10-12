@@ -22,6 +22,7 @@ import { Icon } from "./icons";
 import { sketchOf } from "./sketchModel";
 import { ComponentTree, InstanceBody, ParameterSets, StackingPlan, parameterSet, stackingSubject } from "./Components";
 import { type AiMode, type Group, type PanelKind, type UiPrefs, loadPrefs, savePrefs } from "./ui";
+import { IMPORT_ACCEPT, IMPORT_FORMATS, type ImportReply, importSummary, importable } from "./fileFormats";
 import { ProjectsHome } from "./ProjectsHome";
 import { VersionsSection, openVersion } from "./Versions";
 import { type CommentPin, type CommentsView, type MarkupTool, type PinAnchor, type Stroke, type ThreadMarks, CommentsPanel, DraftCard, ThreadCard, colorFor, initialsOf, pinsFor, placeName, useThreads } from "./Comments";
@@ -976,16 +977,19 @@ export function App({ engine }: { engine: Engine }) {
   }, [selected, edger, sketcher.editing, faceTool, openFaceTool]);
 
 
-  /** A STEP file in: stored by the engine, added as a part named after the file, then selected. */
-  const importStep = useCallback(
+  /** A file in: stored by the engine, added as a part (or, for a drawing, a sketch) named after the file, then selected. */
+  const importFile = useCallback(
     async (file: File) => {
-      if (!/\.(step|stp)$/i.test(file.name)) return notify("Forma imports STEP files (.step, .stp)");
+      if (/\.dwg$/i.test(file.name)) return notify("DWG cannot be read here (closed format): save it as DXF and drop that");
+      if (!importable(file.name)) return notify(`Forma imports ${IMPORT_FORMATS} files`);
       notify(`Importing ${file.name}…`);
       try {
         const res = await fetch(projectUrl(`/import/${encodeURIComponent(file.name)}?user=${encodeURIComponent(state.userId)}`), { method: "POST", body: file });
         if (!res.ok) return notify(await res.text());
-        const out = (await res.json()) as { id: string; bodies: number };
-        notify(`Imported ${file.name}: ${out.bodies} ${out.bodies === 1 ? "body" : "bodies"}`);
+        const out = (await res.json()) as ImportReply;
+        notify(importSummary(file.name, out));
+        // A drawing is a sketch: listed with the others, ready to open and extrude.
+        if (out.kind === "sketch") return setPanel("objects");
         // The reply and the live update that brings the part can come in either order.
         selectWhenReady(out.id);
         setPanel("properties");
@@ -996,7 +1000,7 @@ export function App({ engine }: { engine: Engine }) {
     [notify, state.userId, selectWhenReady],
   );
 
-  // Drop a STEP file anywhere on the canvas to import it.
+  // Drop a file (STEP, IGES, a mesh, a drawing) anywhere on the canvas to import it.
   useEffect(() => {
     const over = (e: DragEvent) => {
       if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
@@ -1010,7 +1014,7 @@ export function App({ engine }: { engine: Engine }) {
         void importKicadFile(f, (op, p, done) => run(op, p).then((out) => (out && done && notify(done), out))).then((made) => made && setPcbOpen(true));
         return;
       }
-      importStep(f);
+      importFile(f);
     };
     window.addEventListener("dragover", over);
     window.addEventListener("drop", drop);
@@ -1018,7 +1022,7 @@ export function App({ engine }: { engine: Engine }) {
       window.removeEventListener("dragover", over);
       window.removeEventListener("drop", drop);
     };
-  }, [importStep, run, notify]);
+  }, [importFile, run, notify]);
 
   /** Steps that keep saved groups tidy when items leave them: shrink the group, or drop it below two. */
   const regroupSteps = useCallback(
@@ -1305,20 +1309,20 @@ export function App({ engine }: { engine: Engine }) {
         </div>
         {state.connection === "online" && parts.length === 0 && !sketcher.editing && !planeMenu && (
           <div className="empty-hint">
-            <p>Start with a part, ask Forma AI, or drop a STEP file here.</p>
+            <p>Start with a part, ask Forma AI, or drop a file here: STEP, IGES, STL, OBJ, PLY, glTF, 3MF, or a DXF/SVG drawing.</p>
             <div className="empty-actions">
               <button type="button" className="primary" onClick={addPart}>
                 Add box part
               </button>
               <label className="secondary import-step">
-                Import STEP
+                Import file
                 <input
                   type="file"
-                  accept=".step,.stp,.STEP,.STP"
-                  aria-label="Import STEP file"
+                  accept={IMPORT_ACCEPT}
+                  aria-label="Import a file"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f) importStep(f);
+                    if (f) importFile(f);
                     e.target.value = "";
                   }}
                 />
@@ -1524,7 +1528,7 @@ export function App({ engine }: { engine: Engine }) {
               onSelect={(id) => setSelected(id)}
               onAdd={addPart}
               run={run}
-              onImport={importStep}
+              onImport={importFile}
               parameters={[...state.entities.values()].some((e) => parameterSet(e)) ? <ParameterSets entities={state.entities} run={run} /> : undefined}
               sketches={
                 [...state.entities.values()].some((e) => sketchOf(e)) ? (

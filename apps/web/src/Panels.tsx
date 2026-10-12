@@ -39,6 +39,7 @@ import {
 } from "./model";
 import { ScrubField } from "./ScrubField";
 import type { PanelKind } from "./ui";
+import { IMPORT_ACCEPT } from "./fileFormats";
 
 const FINISH_LABEL: Record<EdgeFinish["kind"], string> = { fillet: "Fillet", chamfer: "Chamfer", push: "Push", shell: "Shell", draft: "Draft" };
 
@@ -234,11 +235,11 @@ export function ObjectsBody(props: {
         </a>
       )}
       {props.onImport && (
-        <label className="secondary add-part import-step" title="A supplier's part or another CAD tool's model: exact geometry, named bodies">
-          <Icon name="download" /> Import STEP
+        <label className="secondary add-part import-step" title="A supplier's part or another tool's model (STEP, IGES, STL, OBJ, PLY, glTF, 3MF), or a DXF/SVG drawing as a sketch">
+          <Icon name="download" /> Import file
           <input
             type="file"
-            accept=".step,.stp,.STEP,.STP"
+            accept={IMPORT_ACCEPT}
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) props.onImport!(f);
@@ -463,7 +464,7 @@ export function PropertiesBody(props: PropertiesProps) {
           <strong>{partName(part)}</strong>
           <small>
             {prog
-              ? `${prog.source.includes("importStep(") ? "Imported STEP · exact geometry" : "AI-made shape"} · ${(props.shapeStats?.triangles ?? 0).toLocaleString()} triangles`
+              ? `${prog.source.includes("importStep(") ? "Imported STEP · exact geometry" : prog.source.includes("importIges(") ? "Imported IGES · exact geometry" : prog.source.includes("importMesh(") ? "Imported mesh" : "AI-made shape"} ·${(props.shapeStats?.triangles ?? 0).toLocaleString()} triangles`
               : `Box part · ${part.id.slice(-6)}`}
           </small>
         </div>
