@@ -13,6 +13,7 @@ mod machines;
 mod meshes;
 mod pcb;
 mod pcb_library;
+mod pcb_tools;
 mod pcb_schematic;
 mod peers;
 mod pictures;
@@ -2511,6 +2512,14 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/kicad/footprint/{id}", get(pcb_library::footprint))
         .route("/pcb/kicad/symbol/{id}", get(pcb_library::symbol))
         .route("/pcb/verify-footprints", get(pcb_library::verify))
+        .route("/pcb/calc", get(pcb_tools::calc_list))
+        .route("/pcb/calc/{name}", get(pcb_tools::calc))
+        .route("/pcb/gerbview", axum::routing::post(pcb_tools::gerbview_post).layer(axum::extract::DefaultBodyLimit::max(128 * 1024 * 1024)))
+        .route("/pcb/gerbview/pdf", axum::routing::post(pcb_tools::gerbview_pdf).layer(axum::extract::DefaultBodyLimit::max(128 * 1024 * 1024)))
+        .route("/pcb/{id}/panel", get(pcb_tools::panel_show))
+        .route("/pcb/{id}/panel.zip", get(pcb_tools::panel_zip))
+        .route("/pcb/{id}/gerbview", get(pcb_tools::board_gerbview))
+        .route("/pcb/{id}/board.glb", get(pcb_tools::board_glb))
         .route("/pcb/boards", get(pcb::boards))
         .route("/pcb/buy", get(pcb::buy))
         .route("/pcb/settings", get(pcb::settings_get).post(pcb::settings_post))

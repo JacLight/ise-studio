@@ -10,6 +10,7 @@
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
+//   node tools/forma.mjs pcb calc|panel|gerbview|glb …   board calculators, panelization, the Gerber viewer, the board as glTF
 //   node tools/forma.mjs simulate <schematic> [--tran 30ms] [--expect "min(V(3V3), burst) > 3.0"] [--save name]   ngspice on a schematic
 //   node tools/forma.mjs list                 every entity, one line each
 //   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
@@ -298,6 +299,102 @@ if (command === "run") {
       }
       for (const u of c.unreadable) console.log(`  ✗ ${u}`);
       failed = !c.ok;
+    } else if (sub === "calc") {
+      // Board calculators: no name lists them; key=value words set inputs.
+      const [, , id, ...rest] = args;
+      if (!id) {
+        const r = await get("/pcb/calc");
+        for (const c of r.calculators) console.log(`${c.id.padEnd(11)} ${c.title}: ${c.inputs.map((i) => `${i.key}=${i.default}${i.unit ? ` ${i.unit}` : ""}${i.options ? ` (${i.options.join("|")})` : ""}`).join(", ") || "no inputs"}`);
+      } else {
+        const params = Object.fromEntries(rest.filter((w) => w.includes("=")).map((w) => [w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1)]));
+        const r = await get(`/pcb/calc/${encodeURIComponent(id)}?${q(params)}`);
+        console.log(`${r.title} (${Object.entries(r.inputs).map(([k, v]) => `${k}=${v}`).join(" ")})`);
+        for (const x of r.results) console.log(`  ${String(x.label).padEnd(40)} ${x.value} ${x.unit}`);
+        if (r.bands) console.log(`  bands: ${r.bands.map((b) => b.colour).join(", ")}`);
+        if (r.values) console.log(`  ${r.values.join("  ")}`);
+        for (const t of [r.table, r.levels].filter(Boolean)) {
+          console.log(`  ${t.columns.join(" | ")}`);
+          for (const row of t.rows) console.log(`  ${row.join(" | ")}`);
+        }
+        for (const n of r.notes ?? []) console.log(`  · ${n}`);
+        if (r.source) console.log(`  (${r.source})`);
+      }
+    } else if (sub === "panel") {
+      // A panel of the board: layout and checks; --out writes its fab package.
+      const out = flag("--out");
+      const fab = flag("--fab");
+      const [, , board, ...rest] = args;
+      if (!board) throw new Error("usage: forma pcb panel <board id> [rows=2 cols=3 separation=mousebites|vscore|tabs frame=rails-tb|rails-lr|frame|none gap=2 tab_width=3 tabs=1 rail=5 fiducials=true tooling=true …] [--fab jlcpcb] [--out panel.zip]");
+      const params = { ...Object.fromEntries(rest.filter((w) => w.includes("=")).map((w) => [w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1)])), ...(fab ? { fab } : {}) };
+      const r = await get(`/pcb/${board}/panel?${q(params)}`);
+      const p = r.panel;
+      const bad = r.readback.filter((x) => !x.ok);
+      console.log(`${p.problems.length || bad.length ? "✗" : "✓"} ${p.spec.rows} × ${p.spec.cols} panel of ${r.board.name}: ${p.size.map((v) => v.toFixed(2)).join(" × ")} mm, ${p.spec.separation}, frame ${p.spec.frame}`);
+      console.log(`  ${p.tabs.length} tabs, ${p.bites.length} mouse bites, ${p.vcuts.length} V-cuts, ${p.fiducials.length} fiducials, ${p.tooling.length} tooling holes; substrate ${p.area.toFixed(1)} mm² in ${p.outline.length} contour(s)`);
+      for (const x of p.problems) console.log(`  ✗ ${x}`);
+      for (const x of p.notes) console.log(`  · ${x}`);
+      for (const x of r.readback) console.log(`  ${x.ok ? "✓" : "✗"} ${x.file}: ${x.ok ? (x.holes != null ? `${x.holes} holes` : `${x.objects} objects (${x.function})`) : x.error}`);
+      if (out) {
+        const { writeFileSync } = await import("node:fs");
+        const res = await fetch(`${http}/pcb/${board}/panel.zip?${q(params)}`);
+        if (!res.ok) throw new Error(await res.text());
+        writeFileSync(out, Buffer.from(await res.arrayBuffer()));
+        console.log(`  wrote ${out}`);
+      }
+      failed = p.problems.length > 0 || bad.length > 0;
+    } else if (sub === "gerbview") {
+      // Read any Gerber/Excellon files or zips (or a board's own package with --board): layers, apertures, nets;
+      // --compare older files to see what changed; --pdf writes the layers as a PDF.
+      const { writeFileSync } = await import("node:fs");
+      const compare = flag("--compare");
+      const pdf = flag("--pdf");
+      const board = flag("--board");
+      const paths = args.slice(2);
+      const upload = (list) => list.map((f) => ({ name: f.split("/").pop(), data: readFileSync(f).toString("base64") }));
+      let files;
+      if (board) {
+        const zip = await fetch(`${http}/pcb/${board}/fab.zip?${q()}`);
+        if (!zip.ok) throw new Error(await zip.text());
+        files = [{ name: "board.zip", data: Buffer.from(await zip.arrayBuffer()).toString("base64") }];
+      } else {
+        if (!paths.length) throw new Error("usage: forma pcb gerbview <files or zip…> | --board <id> [--compare <older files or zip>] [--pdf out.pdf]");
+        files = upload(paths);
+      }
+      const post = async (path, body) => {
+        const res = await fetch(`${http}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+        if (!res.ok) throw new Error(await res.text());
+        return res;
+      };
+      const r = await (await post("/pcb/gerbview", { files, summary: true, ...(compare ? { against: upload(compare.split(",")) } : {}) })).json();
+      console.log(`${r.layers.length} layers, ${r.size.join(" × ")} mm, ${r.nets} nets, ${r.parts} parts${r.job ? ", job file" : ""}`);
+      for (const l of r.layers) console.log(`  ${l.function.padEnd(22)} ${l.file}${l.guessed ? " (layer guessed from its name)" : ""}: ${l.kind === "drill" ? l.tools.map(([t, d, h, s]) => `T${t} ø${d}×${h}${s ? `+${s} slots` : ""}`).join(", ") : `${l.objects} objects, ${l.apertures} apertures, ${l.nets} nets`}`);
+      for (const [f, e] of r.unreadable) console.log(`  ✗ ${f}: ${e}`);
+      if (r.other.length) console.log(`  other files: ${r.other.join(", ")}`);
+      if (r.compare) {
+        console.log("Compared with the earlier files:");
+        for (const d of r.compare) {
+          console.log(`  ${d.same ? "=" : "≠"} ${d.function.padEnd(22)} ${d.before ?? "(none)"} → ${d.after ?? "(none)"}${d.same ? "" : d.holes_added.length || d.holes_removed.length ? `: ${d.holes_added.length} holes added, ${d.holes_removed.length} removed` : `: +${d.added} mm², −${d.removed} mm²`}`);
+          for (const h of [...d.holes_added.map((x) => `+ ${x}`), ...d.holes_removed.map((x) => `− ${x}`)].slice(0, 8)) console.log(`      ${h}`);
+        }
+      }
+      if (pdf) {
+        const looks = r.layers.filter((l) => !l.function.startsWith("Paste")).map((l) => ({ file: l.file }));
+        const res = await post("/pcb/gerbview/pdf", { files, looks, background: "#ffffff" });
+        writeFileSync(pdf, Buffer.from(await res.arrayBuffer()));
+        console.log(`wrote ${pdf}`);
+      }
+      failed = r.unreadable.length > 0;
+    } else if (sub === "glb") {
+      // The populated board as binary glTF.
+      const board = args[2];
+      if (!board) throw new Error("usage: forma pcb glb <board id> [--out board.glb]");
+      const out = flag("--out") ?? "board.glb";
+      const res = await fetch(`${http}/pcb/${board}/board.glb?${q()}`);
+      if (!res.ok) throw new Error(await res.text());
+      const { writeFileSync } = await import("node:fs");
+      const bytes = Buffer.from(await res.arrayBuffer());
+      writeFileSync(out, bytes);
+      console.log(`wrote ${out} (${(bytes.length / 1024).toFixed(0)} kB)`);
     } else if (sub === "library") {
       if (args[2] === "update") {
         const res = await fetch(`${http}/pcb/kicad/fetch?repo=all`, { method: "POST" });
@@ -306,7 +403,7 @@ if (command === "run") {
       const s = await get("/pcb/kicad");
       console.log(`KiCad libraries in ${s.root}\n  footprints: ${s.footprints ?? "not downloaded yet"}\n  symbols:    ${s.symbols ?? "not downloaded yet"}\n  ${s.licence}`);
     } else {
-      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | library [update]");
+      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | calc [name key=value…] | panel <board> [key=value…] [--out panel.zip] | gerbview <files…>|--board <id> [--compare old] [--pdf out.pdf] | glb <board> [--out f.glb] | library [update]");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
