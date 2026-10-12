@@ -3,14 +3,17 @@
  "name": "Stepper motor",
  "standard": "NEMA 17",
  "category": "Motors",
- "summary": "NEMA 17 hybrid stepper, 1.8°, 42.3 mm square, Ø22 pilot, 31 mm M3 pattern, Ø5 D-shaft. Shaft up +Z, mounting face on z = 0.",
+ "summary": "NEMA 17 hybrid stepper (34 / 40 / 48 mm bodies and the 23 mm pancake), 1.8°, 42.3 mm square, Ø22 pilot, 31 mm M3 pattern, Ø5 D-shaft. Shaft up +Z, mounting face on z = 0.",
  "keywords": [
   "stepper",
   "NEMA17",
   "17HS4401",
   "42mm",
   "motor",
-  "1.8 degree"
+  "1.8 degree",
+  "pancake stepper",
+  "extruder motor",
+  "17HS10-0704S"
  ],
  "source": [
   "common.js",
@@ -37,6 +40,12 @@
   "length"
  ],
  "rows": [
+  {
+   "name": "42×23",
+   "values": {
+    "length": 23
+   }
+  },
   {
    "name": "42×34",
    "values": {
@@ -113,6 +122,9 @@
     47.79,
     72
    ]
+  },
+  "42×23": {
+   "massG": 140
   }
  }
 }
