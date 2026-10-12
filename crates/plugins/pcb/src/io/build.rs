@@ -220,7 +220,7 @@ fn footprint_of(p: &PartIn, name: &str) -> Footprint {
             };
             let shape = if q.shape == PadShape::Custom && polygon.is_empty() { PadShape::Rect } else { q.shape };
             let lr = if lr > 359.9999 { 0.0 } else { r6(lr) };
-            Pad { number: q.number.clone(), kind: q.kind, shape, size: [r6(q.size[0]), r6(q.size[1])], at: r6p(local(p.at, p.rotation, bottom, q.at)), rotation: lr, drill: q.drill.map(|d| [r6(d[0]), r6(d[1])]), corner: q.corner, paste: vec![], polygon }
+            Pad { number: q.number.clone(), kind: q.kind, shape, size: [r6(q.size[0]), r6(q.size[1])], at: r6p(local(p.at, p.rotation, bottom, q.at)), rotation: lr, drill: q.drill.map(|d| [r6(d[0]), r6(d[1])]), corner: q.corner, paste: vec![], polygon, extra: Default::default() }
         })
         .collect();
     let silk: Vec<Vec<P>> = p.silk.iter().map(|l| l.iter().map(|g| r6p(local(p.at, p.rotation, bottom, *g))).collect()).collect();

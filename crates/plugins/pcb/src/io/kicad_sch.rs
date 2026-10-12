@@ -506,7 +506,7 @@ fn power_symbol(lib_id: &str, net: &str) -> Sexp {
         body.push(gfx(&Gfx::Line { pts: vec![[0.0, 0.0], [0.0, 1.27]], width: 0.0 }));
         body.push(gfx(&Gfx::Line { pts: vec![[-0.762, 1.27], [0.762, 1.27]], width: 0.0 }));
     }
-    let pin = PinDef { number: "1".into(), name: net.into(), at: [0.0, 0.0], side: Dir::Up, length: 0.0, etype: PinType::PowerIn, hidden: true, unit: 0, pads: vec![] };
+    let pin = PinDef { number: "1".into(), name: net.into(), at: [0.0, 0.0], side: Dir::Up, length: 0.0, etype: PinType::PowerIn, hidden: true, unit: 0, shape: Default::default(), pads: vec![] };
     let mut v = vec![s(lib_id), list("power", vec![]), list("pin_numbers", vec![atom("hide")]), list("pin_names", vec![list("offset", vec![n(0.0)]), atom("hide")]), list("exclude_from_sim", vec![atom("no")]), list("in_bom", vec![atom("no")]), list("on_board", vec![atom("yes")])];
     v.push(property("Reference", "#PWR", [0.0, 0.0], 0.0, true));
     v.push(property("Value", net, [0.0, if ground { -3.81 } else { 3.81 }], 0.0, false));

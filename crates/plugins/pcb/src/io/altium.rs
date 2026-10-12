@@ -724,7 +724,7 @@ pub fn read_sch(bytes: &[u8]) -> Result<Draft, String> {
                 let dir = [[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]][(cong & 3) as usize];
                 let tip = [body[0] + dir[0] * len, body[1] + dir[1] * len];
                 let number = r.get("DESIGNATOR").cloned().unwrap_or_default();
-                c.pins.push(PinDef { number, name: r.get("NAME").cloned().map(|n| crate::kicad_lib::plain(&n.replace('\\', ""))).filter(|n| !n.is_empty()).unwrap_or_else(|| "~".into()), at: tip, side: if len > 0.0 { sch::side_from(body, tip) } else { Dir::Left }, length: len, etype: etype(pnum(r, "ELECTRICAL")), hidden: cong & 4 != 0, unit: 0, pads: vec![] });
+                c.pins.push(PinDef { number, name: r.get("NAME").cloned().map(|n| crate::kicad_lib::plain(&n.replace('\\', ""))).filter(|n| !n.is_empty()).unwrap_or_else(|| "~".into()), at: tip, side: if len > 0.0 { sch::side_from(body, tip) } else { Dir::Left }, length: len, etype: etype(pnum(r, "ELECTRICAL")), hidden: cong & 4 != 0, unit: 0, shape: Default::default(), pads: vec![] });
             }
             "34" => c.reference = r.get("TEXT").cloned().unwrap_or_default(),
             "41" => {

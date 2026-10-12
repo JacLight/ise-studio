@@ -248,6 +248,10 @@ impl Draft {
                     show_pin_names: !s.virtual_part,
                     virtual_part: s.virtual_part,
                     keywords: vec![],
+                    demorgan: vec![],
+                    demorgan_pins: BTreeMap::new(),
+                    body_style: 1,
+                    fields: BTreeMap::new(),
                 };
                 out.symbols.push(SchSymbol {
                     schematic: placeholder,
@@ -312,7 +316,7 @@ pub fn line(pts: Vec<P>) -> Gfx {
 
 /// A pin from its connection point and the way it leaves the body.
 pub fn pin(number: &str, name: &str, at: P, side: Dir, length: f64, etype: PinType) -> PinDef {
-    PinDef { number: number.to_string(), name: if name.is_empty() { "~".into() } else { name.to_string() }, at, side, length, etype, hidden: false, unit: 0, pads: vec![] }
+    PinDef { number: number.to_string(), name: if name.is_empty() { "~".into() } else { name.to_string() }, at, side, length, etype, hidden: false, unit: 0, shape: Default::default(), pads: vec![] }
 }
 
 /// The direction a pin leaves the body when its line runs from `body` to `tip` (source coordinates).

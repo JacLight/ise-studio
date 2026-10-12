@@ -485,7 +485,7 @@ pub fn read_std_schematic(text: &str) -> Result<Draft, String> {
 }
 
 fn d_pin(sym: &mut DraftSymbol, number: String, name: String, tip: P, body: P, len: f64) {
-    sym.pins.push(PinDef { number, name: if name.is_empty() { "~".into() } else { name }, at: tip, side: if len > 1e-9 { sch::side_from(body, tip) } else { Dir::Left }, length: len, etype: PinType::Passive, hidden: false, unit: 0, pads: vec![] });
+    sym.pins.push(PinDef { number, name: if name.is_empty() { "~".into() } else { name }, at: tip, side: if len > 1e-9 { sch::side_from(body, tip) } else { Dir::Left }, length: len, etype: PinType::Passive, hidden: false, unit: 0, shape: Default::default(), pads: vec![] });
 }
 
 // ---- Pro -----------------------------------------------------------------------------------

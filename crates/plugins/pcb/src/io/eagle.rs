@@ -467,7 +467,7 @@ pub fn read_schematic(text: &str) -> Result<Draft, String> {
                 pin_at.insert((pname.clone(), gate.clone(), pn.clone()), tip);
                 let pads = connects.get(&(gate.clone(), pn.clone())).cloned().unwrap_or_default();
                 let number = pads.first().cloned().unwrap_or_else(|| base_name(&pn));
-                pins.push(PinDef { number, name: base_name(&pn), at: tip, side, length: len.max(0.0), etype: pin_type(p.attr("direction")), hidden: false, unit: 0, pads });
+                pins.push(PinDef { number, name: base_name(&pn), at: tip, side, length: len.max(0.0), etype: pin_type(p.attr("direction")), hidden: false, unit: 0, shape: Default::default(), pads });
             }
             // A supply symbol (no package, supply pins): a power port per pin.
             let supply = package.is_none() && !pins.is_empty() && sym.all("pin").all(|p| p.attr("direction") == Some("sup"));
