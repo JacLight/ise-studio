@@ -11,6 +11,7 @@ mod ai;
 mod history;
 mod machines;
 mod pcb;
+mod pcb_schematic;
 mod peers;
 mod share;
 mod sourcing;
@@ -2282,6 +2283,11 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/stock", get(stock::list))
         .route("/stock/{family}/preview", get(stock::preview))
         .route("/pcb/library", get(pcb::library))
+        .route("/pcb/symbols", get(pcb_schematic::library))
+        .route("/pcb/symbols/{name}", get(pcb_schematic::preview))
+        .route("/pcb/schematics", get(pcb_schematic::list))
+        .route("/pcb/schematic/{id}", get(pcb_schematic::show))
+        .route("/pcb/schematic/{id}/schematic.pdf", get(pcb_schematic::pdf))
         .route("/pcb/boards", get(pcb::boards))
         .route("/pcb/buy", get(pcb::buy))
         .route("/pcb/settings", get(pcb::settings_get).post(pcb::settings_post))

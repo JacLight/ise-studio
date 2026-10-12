@@ -452,6 +452,29 @@ fn sot23() -> Footprint {
     with_courtyard(f, goals::GULL.courtyard)
 }
 
+fn sot223() -> Footprint {
+    // JEDEC TO-261AA: HE 6.70–7.30, D 6.30–6.70, E 3.30–3.70, e 2.30, L 0.75–1.10 (foot), b 0.66–0.84, tab b1 2.90–3.10, A ≤ 1.80.
+    let pl = land(Range(6.70, 7.30), Range(0.75, 1.10), Range(0.66, 0.84), goals::GULL);
+    let tab = land(Range(6.70, 7.30), Range(0.75, 1.10), Range(2.90, 3.10), goals::GULL);
+    let pads = vec![
+        smd("1", [-pl.center, 2.3], [pl.length, pl.width]),
+        smd("2", [-pl.center, 0.0], [pl.length, pl.width]),
+        smd("3", [-pl.center, -2.3], [pl.length, pl.width]),
+        smd("4", [tab.center, 0.0], [tab.length, tab.width]),
+    ];
+    let f = Footprint {
+        name: "SOT-223".into(),
+        description: format!("SOT-223 (TO-261AA), 3 pins + tab (4, joined to pin 2 inside on regulators), pitch 2.30 mm; pads {:.3} × {:.2} mm, tab {:.2} mm wide", pl.length, pl.width, tab.width),
+        source: "IPC-7351B land equations; package: JEDEC TO-261AA outline".into(),
+        pads,
+        courtyard: None,
+        silk: vec![],
+        body: vec![body([0.0, 0.0], [3.50, 6.50], [0.0, 1.80], "Epoxy")],
+        kind: "ic".into(),
+    };
+    with_courtyard(f, goals::GULL.courtyard)
+}
+
 fn sot23_5() -> Footprint {
     // JEDEC MO-178 AA: HE 2.60–3.00, D 2.80–3.00, E1 1.50–1.70, e 0.95, L 0.30–0.60, b 0.30–0.50, A ≤ 1.45.
     let land = land(Range(2.60, 3.00), Range(0.30, 0.60), Range(0.30, 0.50), goals::GULL);
@@ -776,7 +799,7 @@ pub fn names() -> Vec<String> {
             v.push(format!("{p}_{}", c.code));
         }
     }
-    v.extend(["SOT-23", "SOT-23-5", "SOIC-8", "TSSOP-20", "QFN-32_5x5", "USB-C_16P", "ESP32-WROOM-32", "SW_Tactile_6x6", "LED_3mm", "LED_5mm"].map(String::from));
+    v.extend(["SOT-23", "SOT-23-5", "SOT-223", "SOIC-8", "TSSOP-20", "QFN-32_5x5", "USB-C_16P", "ESP32-WROOM-32", "SW_Tactile_6x6", "LED_3mm", "LED_5mm"].map(String::from));
     for n in 2..=6 {
         v.push(format!("JST_PH_{n}"));
     }
@@ -806,6 +829,7 @@ pub fn get(name: &str) -> Option<Footprint> {
     Some(match name {
         "SOT-23" => sot23(),
         "SOT-23-5" => sot23_5(),
+        "SOT-223" => sot223(),
         "SOIC-8" => soic8(),
         "TSSOP-20" => tssop20(),
         "QFN-32_5x5" => qfn32(),

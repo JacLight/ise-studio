@@ -8,6 +8,7 @@
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
+import { SchematicPane } from "./Schematic";
 
 type P = [number, number];
 type Prim = { pts: P[]; r: number };
@@ -175,6 +176,25 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
   const [net, setNet] = useState<string | null>(null);
   const [focusViolation, setFocusViolation] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // Schematic, board, or both side by side; keys go to the pane last clicked.
+  const [pane, setPane] = useState<"schematic" | "split" | "board">(() => {
+    try {
+      const v = localStorage.getItem("forma.pcb.pane");
+      return v === "schematic" || v === "split" ? v : "board";
+    } catch {
+      return "board";
+    }
+  });
+  const schKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
+  const keyPane = useRef<"schematic" | "board">("board");
+  useEffect(() => {
+    try {
+      localStorage.setItem("forma.pcb.pane", pane);
+    } catch {
+      /* private window */
+    }
+    keyPane.current = pane === "board" ? "board" : "schematic";
+  }, [pane]);
 
   // Boards in the project, then the chosen board in full, again after every change.
   useEffect(() => {
@@ -236,6 +256,15 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
         e.preventDefault();
         e.stopImmediatePropagation();
       };
+      if (keyPane.current === "schematic" && schKeys.current) {
+        if (schKeys.current(e)) return handled();
+        if (e.key === "Escape") {
+          handled();
+          return props.onClose();
+        }
+        if (k.length === 1 && !e.altKey && k !== "a" && k !== "l") e.stopImmediatePropagation();
+        return;
+      }
       if (e.key === "Escape") {
         handled();
         if (sel || net) {
@@ -318,6 +347,21 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
         </div>
         <div className="pcb-head-actions">
           {b && (
+            <div className="pcb-pane-switch" role="tablist" aria-label="View">
+              {(
+                [
+                  ["schematic", "Schematic"],
+                  ["split", "Both"],
+                  ["board", "Board"],
+                ] as const
+              ).map(([k, label]) => (
+                <button key={k} type="button" role="tab" aria-selected={pane === k} className={pane === k ? "active" : ""} onClick={() => setPane(k)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          {b && (
             <button type="button" className={`pcb-drc-pill ${detail!.errors ? "bad" : "good"}`} onClick={() => setTab("checks")} title="Design-rule check">
               <Icon name={detail!.errors ? "alert" : "check"} />
               {detail!.errors ? `${detail!.errors} DRC ${detail!.errors === 1 ? "error" : "errors"}` : "DRC passes"}
@@ -336,6 +380,49 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
         <NewBoard run={commit} canEdit={props.canEdit} onMade={(id) => setBoardId(id)} />
       ) : !b ? (
         <div className="pcb-empty">{error ? <p className="pcb-error">{error}</p> : <div className="pcb-spinner" />}</div>
+      ) : pane !== "board" ? (
+        <div className={`pcb-body ${pane === "split" ? "split" : ""}`}>
+          <div className="pcb-sch-host" onPointerDownCapture={() => (keyPane.current = "schematic")}>
+            <SchematicPane
+              boardId={b.id}
+              boardRefs={b.components.map((c) => ({ id: c.id, reference: c.reference }))}
+              revision={props.revision}
+              commit={commit}
+              notify={notify}
+              canEdit={props.canEdit}
+              probeRef={selComp?.reference ?? null}
+              onProbe={(r) => {
+                const c = r ? b.components.find((x) => x.reference === r) : null;
+                setSel(c ? { kind: "component", id: c.id } : null);
+              }}
+              net={net}
+              onNet={setNet}
+              keys={schKeys}
+            />
+          </div>
+          {pane === "split" && (
+            <div className="pcb-split-board" onPointerDownCapture={() => (keyPane.current = "board")}>
+              <BoardCanvas
+                b={b}
+                layers={layers}
+                onLayers={setLayers}
+                fromBelow={fromBelow}
+                onFromBelow={setFromBelow}
+                active={active}
+                onActive={setActive}
+                sel={sel}
+                onSel={setSel}
+                net={net}
+                onNet={setNet}
+                focus={null}
+                commit={commit}
+                canEdit={props.canEdit}
+                onAutoroute={autoroute}
+                busy={busy}
+              />
+            </div>
+          )}
+        </div>
       ) : (
         <div className="pcb-body">
           <aside className="pcb-side">

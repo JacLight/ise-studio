@@ -10,8 +10,9 @@
 //! coordinates, zone fills, connectivity, the ratsnest and every design-rule
 //! violation tied to the objects it is about — recomputes whenever one changes.
 //!
-//! The netlist is the pads' nets. A schematic, when there is one, will own
-//! symbols and wires and write those same pad nets; nothing else changes.
+//! The netlist is the pads' nets. A schematic (`schematic`), when there is
+//! one, owns symbols and wires and writes those same pad nets through
+//! "Update board from schematic"; boards without one keep `pcb.netlist.set`.
 //!
 //! Each board keeps a real 3D part in step (a shape program the engine writes:
 //! the FR4 with its holes, exposed copper and every component body at its
@@ -44,8 +45,14 @@ pub mod outputs;
 pub mod reader;
 pub mod render3d;
 pub mod route;
+pub mod schematic;
+pub mod schematic_layout;
+pub mod schematic_pdf;
+pub mod schematic_sync;
+pub mod schematic_view;
 pub mod sexpr;
 pub mod sourcing;
+pub mod symbols;
 
 pub use board::BoardView;
 pub use footprints::Footprint;
@@ -81,6 +88,7 @@ impl Plugin for PcbPlugin {
             .command::<OutlineToSketch>()
             .command::<SetSourcing>()
             .derived(Derived { name: "pcb.board", inputs: &[Board::KIND], reads_dependencies: true, compute: board::compute });
+        schematic::register(r);
     }
 }
 
