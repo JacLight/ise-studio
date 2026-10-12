@@ -1,0 +1,261 @@
+/* Electronics: show/hide on the board, the fab read-back, simulation. */
+
+.pcb-tabs button {
+  min-width: 0;
+  padding: 0 3px;
+}
+
+.pcb-eye {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  color: #a19bad;
+  opacity: 0.35;
+}
+
+.pcb-row:hover .pcb-eye,
+.pcb-eye.off {
+  opacity: 1;
+}
+
+.pcb-eye:hover {
+  background: #efedf3;
+  color: #2d2836;
+}
+
+.pcb-eye.off {
+  color: #c2410c;
+}
+
+.pcb-eye.off svg {
+  opacity: 0.5;
+}
+
+.pcb-gcheck {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.pcb-gview {
+  width: 100%;
+  border-radius: 8px;
+  background: #14161a;
+}
+
+.pcb-glayers,
+.pcb-sim-signals {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 8px;
+  font-size: 11px;
+  color: #4b4656;
+}
+
+.pcb-glayers label,
+.pcb-sim-signals label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pcb-glayers i,
+.pcb-sim-signals i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.pcb-glayers label.bad {
+  color: #b42318;
+}
+
+.pcb-gresult,
+.pcb-sim-verdict {
+  font-size: 11.5px;
+  line-height: 1.45;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #f1faf4;
+  color: #1d5f35;
+}
+
+.pcb-gresult.bad,
+.pcb-sim-verdict.bad {
+  background: #fdf2f1;
+  color: #8f1d14;
+}
+
+.pcb-gresult p,
+.pcb-sim-verdict {
+  margin: 0;
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.pcb-gresult ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  color: #3b3646;
+}
+
+.pcb-gresult li .bad,
+.pcb-gresult li.bad {
+  color: #b42318;
+}
+
+.pcb-gresult li .note {
+  color: #737985;
+}
+
+.pcb-sim {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pcb-sim-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.pcb-sim-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: #7c7689;
+  min-width: 0;
+}
+
+.pcb-sim-form label.wide,
+.pcb-sim-form .row {
+  grid-column: 1 / -1;
+}
+
+.pcb-sim-form textarea {
+  font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+}
+
+.pcb-sim-saved {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pcb-plot {
+  width: 100%;
+  background: #fff;
+  border: 1px solid #efedf3;
+  border-radius: 8px;
+}
+
+.pcb-plot text {
+  font-size: 7.5px;
+  fill: #8a8496;
+}
+
+.pcb-plot .grid {
+  stroke: #f0eef4;
+  stroke-width: 0.5;
+}
+
+.pcb-plot .win {
+  fill: #2563eb10;
+}
+
+.pcb-plot .win.burst {
+  fill: #e0614f1c;
+}
+
+.pcb-sim-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+}
+
+.pcb-sim-checks li {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  color: #1d5f35;
+}
+
+.pcb-sim-checks li.warn {
+  color: #9a5b00;
+}
+
+.pcb-sim-checks li.fail {
+  color: #b42318;
+}
+
+.pcb-sim-checks b,
+.pcb-sim-meas b {
+  color: #2d2836;
+  font-weight: 600;
+}
+
+.pcb-sim-checks em {
+  font-style: normal;
+  color: #7c7689;
+  margin-left: 4px;
+}
+
+.pcb-sim-checks small,
+.pcb-sim-models small {
+  display: block;
+  color: #6b6577;
+}
+
+.pcb-sim-meas {
+  margin: 0;
+  padding-left: 14px;
+  font-size: 11px;
+  color: #4b4656;
+  line-height: 1.5;
+}
+
+.pcb-sim-models {
+  font-size: 11px;
+  color: #4b4656;
+}
+
+.pcb-sim-models ul {
+  padding-left: 14px;
+  margin: 4px 0 0;
+}
+
+.pcb-sim-models em {
+  color: #9a5b00;
+  font-style: normal;
+}
+
+.pcb-sim-models .muted {
+  color: #8a8496;
+}
+
+.pcb-glayers input,
+.pcb-sim-signals input {
+  width: auto;
+  height: auto;
+  flex: none;
+  margin: 0;
+}

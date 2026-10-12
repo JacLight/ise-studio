@@ -25,7 +25,10 @@ import { type AiMode, type Group, type PanelKind, type UiPrefs, loadPrefs, saveP
 import { ProjectsHome } from "./ProjectsHome";
 import { VersionsSection, openVersion } from "./Versions";
 import { type CommentPin, type CommentsView, type MarkupTool, type PinAnchor, type Stroke, type ThreadMarks, CommentsPanel, DraftCard, ThreadCard, colorFor, initialsOf, pinsFor, placeName, useThreads } from "./Comments";
-import { type ViewName, Viewport, type ViewportHandle } from "./Viewport";
+import { type DisplayMode, type ViewName, Viewport, type ViewportHandle } from "./Viewport";
+import type { Axis } from "./viewTools";
+import { copyOffset, copySteps, inverted, ofType, selectable } from "./selection";
+import { SelectionTools } from "./SelectionTools";
 import type { ConnectorPick, JointView } from "./Joints";
 import type { Transform } from "./model";
 
@@ -214,12 +217,42 @@ export function App({ engine }: { engine: Engine }) {
             }
             break;
           case "camera":
-            if (value === "top" || value === "front" || value === "bottom" || value === "perspective") {
-              setView(value);
-              viewport.current?.view(value);
-              later(() => viewport.current?.fit());
+            if (value && ["perspective", "iso", "front", "back", "left", "right", "top", "bottom"].includes(value)) {
+              setView(value as ViewName);
+              viewport.current?.view(value as ViewName);
             }
             break;
+          case "projection":
+            viewport.current?.tools()?.setOrthographic(/^ortho/i.test(value ?? ""));
+            break;
+          case "display":
+            if (value && ["shaded", "edges", "wireframe", "hidden", "xray"].includes(value)) viewport.current?.tools()?.setDisplay(value as DisplayMode);
+            break;
+          case "section": {
+            // "x 25", "x 25 flip", "box x0 y0 z0 x1 y1 z1", "box", "off".
+            const tools = viewport.current?.tools();
+            const words = (value ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+            if (!tools) break;
+            if (!words.length || words[0] === "off" || words[0] === "clear") tools.setSection([]);
+            else if (words[0] === "box") {
+              const n = words.slice(1).map(Number);
+              if (n.length === 6 && n.every(Number.isFinite)) tools.sectionBox([n[0], n[1], n[2]], [n[3], n[4], n[5]]);
+              else tools.sectionBox();
+            } else if (["x", "y", "z"].includes(words[0])) {
+              const at = Number(words[1]);
+              const b = tools.boundsNow();
+              const k = "xyz".indexOf(words[0]);
+              tools.sectionAxis(words[0] as Axis, Number.isFinite(at) ? at : b ? (b.min[k] + b.max[k]) / 2 : 0, words.includes("flip"));
+            }
+            break;
+          }
+          case "measure": {
+            const tools = viewport.current?.tools();
+            if (!tools || !target) break;
+            tools.setMeasuring(true);
+            later(() => void tools.measureItems(target, value || null));
+            break;
+          }
         }
       }),
     [engine],
@@ -1087,6 +1120,110 @@ export function App({ engine }: { engine: Engine }) {
     if (!selected) setAlso([]);
   }, [selected]);
 
+  /** Several items at once (a selection box, select all, by type, invert). */
+  const selectMany = useCallback(
+    (ids: string[], add = false) => {
+      const now = add ? [...(selected ? [selected] : []), ...alsoRef.current] : [];
+      const all = [...new Set([...now, ...ids])];
+      setSelected(all[0] ?? null);
+      setAlso(all.slice(1));
+      if (all.length) setPanel((p) => (p === "objects" || p === "views" ? p : "properties"));
+    },
+    [selected],
+  );
+  /** What is shown: hidden items and (when one is isolated) everything else are left out of select all and invert. */
+  const unseen = useMemo(() => {
+    const out = new Set(hiddenItems);
+    if (isolated) for (const id of selectable(state.entities)) if (id !== isolated) out.add(id);
+    return out;
+  }, [hiddenItems, isolated, state.entities]);
+  const selection = useMemo(() => (selected ? [selected, ...also] : []), [selected, also]);
+  const clipboard = useRef<string[]>([]);
+  const [canPaste, setCanPaste] = useState(false);
+  /** Copies of `ids` beside them (new ids); selects them once they arrive. */
+  const pasteCopies = useCallback(
+    async (ids: string[]) => {
+      const entities = engine.getState().entities;
+      const recipes = copySteps(ids, entities, copyOffset(ids, entities));
+      if (!recipes.length) return notify("Nothing here can be copied (only parts, boxes and instances)");
+      const r = (await run("core.batch", { steps: recipes.map((c) => c.step) })) as { output?: { outputs?: { id?: string }[] } } | null;
+      const made = (r?.output?.outputs ?? []).map((o) => o?.id).filter((x): x is string => !!x);
+      const after = recipes.flatMap((c, i) => (c.after && made[i] ? [c.after(made[i])] : [])).filter((x) => !!x);
+      if (after.length) await run("core.batch", { steps: after });
+      if (made.length) {
+        notify(`${made.length === 1 ? "Copy" : `${made.length} copies`} placed beside ${ids.length === 1 ? "the original" : "the originals"}`);
+        requestAnimationFrame(() => selectMany(made));
+      }
+    },
+    [engine, run, notify, selectMany],
+  );
+  const hideSelection = useCallback(() => {
+    if (!selection.length) return;
+    setHiddenItems((h) => new Set([...h, ...selection]));
+    if (isolated && selection.includes(isolated)) setIsolated(null);
+    setSelected(null);
+    setAlso([]);
+  }, [selection, isolated]);
+  const isolateSelection = useCallback(() => {
+    if (!selected) return;
+    // Isolating shows it even if it was hidden.
+    setHiddenItems((h) => {
+      const n = new Set(h);
+      n.delete(selected);
+      return n;
+    });
+    setIsolated(selected);
+    setAlso([]);
+    requestAnimationFrame(() => viewport.current?.frame(selected, true));
+  }, [selected]);
+  const showAll = useCallback(() => {
+    setIsolated(null);
+    setHiddenItems(new Set());
+    requestAnimationFrame(() => viewport.current?.fit());
+  }, []);
+  const selectionActions = {
+    count: selection.length,
+    canPaste,
+    onAll: () => selectMany(selectable(state.entities, unseen)),
+    onType: (t: Parameters<typeof ofType>[1]) => selectMany(ofType(state.entities, t, unseen)),
+    onInvert: () => selectMany(inverted(state.entities, selection, unseen)),
+    onCopy: () => {
+      clipboard.current = selection;
+      setCanPaste(selection.length > 0);
+      if (selection.length) notify(`Copied ${selection.length === 1 ? "1 item" : `${selection.length} items`}`);
+    },
+    onPaste: () => void (clipboard.current.length && pasteCopies(clipboard.current.filter((id) => state.entities.has(id)))),
+    onDuplicate: () => void (selection.length && pasteCopies(selection)),
+    onHide: hideSelection,
+    onIsolate: isolateSelection,
+    onShowAll: showAll,
+  };
+  const selectionRef = useRef(selectionActions);
+  selectionRef.current = selectionActions;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isTyping(e.target) || document.querySelector("dialog[open]")) return;
+      const a = selectionRef.current;
+      const mod = e.metaKey || e.ctrlKey;
+      const key = e.key.toLowerCase();
+      if (mod && !e.altKey && !e.shiftKey) {
+        // Text selected on the page copies as text, as usual.
+        if (key === "c" && window.getSelection()?.toString()) return;
+        const act = { a: a.onAll, i: a.onInvert, c: a.onCopy, v: a.onPaste, d: a.onDuplicate }[key];
+        if (!act) return;
+        e.preventDefault();
+        act();
+      } else if (e.altKey && !mod && (e.code === "KeyH" || e.code === "KeyI")) {
+        e.preventDefault();
+        if (e.code === "KeyI") a.onIsolate();
+        else if (e.shiftKey) a.onShowAll();
+        else a.onHide();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const togglePanel = useCallback((p: PanelKind) => setPanel((current) => (current === p ? null : p)), []);
   const hide = useCallback((g: Group) => setPrefs((p) => ({ ...p, hidden: { ...p.hidden, [g]: true } })), []);
   const show = useCallback((g: Group) => setPrefs((p) => ({ ...p, hidden: { ...p.hidden, [g]: false } })), []);
@@ -1280,6 +1417,7 @@ export function App({ engine }: { engine: Engine }) {
             if (frac && selected) run("solid.part.set_pivot", { target: selected, u: frac[0], v: frac[1], w: frac[2] });
           }}
           onSelect={select}
+          onSelectMany={selectMany}
           teammates={teammates}
           onHover3D={onHover3D}
           comments={commentsView}
@@ -1719,6 +1857,7 @@ export function App({ engine }: { engine: Engine }) {
               }}
             />
           )}
+          {panel === "views" && <SelectionTools {...selectionActions} />}
         </ToolPanel>
       )}
 
