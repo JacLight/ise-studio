@@ -378,3 +378,15 @@ fn a_rectangular_array_is_rows_of_a_row() {
     // The far corner hole sits at (30, 16).
     assert!(solved.points.values().any(|q| (q[0] - 30.0).abs() < 1e-6 && (q[1] - 16.0).abs() < 1e-6));
 }
+
+#[test]
+fn splitting_a_slot_side_keeps_it_clean() {
+    let mut p = project();
+    let s = empty(&mut p, "Slot");
+    let out = run(&mut p, "sketch.add", json!({ "target": s, "shape": { "kind": "slot", "a": [0, 0], "b": [40, 0], "radius": 6 } })).unwrap();
+    for (c, at) in [(ids(&out, "curves")[2], [20.0, 6.0]), (ids(&out, "curves")[0], [20.0, -6.0])] {
+        run(&mut p, "sketch.split", json!({ "target": s, "curve": c, "at": at })).unwrap();
+        let (_, solved) = state(&p, s);
+        assert!(solved.redundant.is_empty() && solved.partially_redundant.is_empty() && solved.conflicts.is_empty(), "{solved:?}");
+    }
+}

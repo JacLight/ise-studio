@@ -697,6 +697,24 @@ impl Command for SplitSketch {
                 made.push(nid);
             }
         }
+        // A tangency or square join at an end the second piece now owns moves to it.
+        if let Some(&nid) = made.get(1) {
+            let second = cx.sketch.geometry.curves.iter().find(|c| c.id() == nid).and_then(|c| c.ends());
+            let first = cx.sketch.geometry.curves.iter().find(|c| c.id() == id).and_then(|c| c.ends());
+            let owns = |e: Option<(u32, u32)>, p: u32| e.is_some_and(|(a, b)| a == p || b == p);
+            for c in &mut cx.sketch.geometry.constraints {
+                if let Constraint::Tangent { a, b, at: Some(j) } | Constraint::Perpendicular { a, b, at: Some(j) } = c
+                    && owns(second, *j)
+                    && !owns(first, *j)
+                {
+                    for k in [a, b] {
+                        if *k == id {
+                            *k = nid;
+                        }
+                    }
+                }
+            }
+        }
         let target = self.target;
         cx.finish_with(tx, target, id, json!({ "id": target, "curves": made, "point": m }))
     }
