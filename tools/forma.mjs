@@ -301,6 +301,97 @@ if (command === "run") {
     console.error(`✗ ${e.message}`);
     failed = true;
   }
+} else if (command === "simulate") {
+  // ngspice on a schematic: waveforms, measurements, datasheet checks and expectations.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const all = (name) => {
+    const out = [];
+    for (let i = args.indexOf(name); i >= 0; i = args.indexOf(name)) out.push(args.splice(i, 2)[1]);
+    return out;
+  };
+  const time = (s) => {
+    const m = String(s).trim().match(/^([-\d.e+]+)\s*(s|ms|us|µs|ns)?$/i);
+    if (!m) throw new Error(`“${s}” is not a time (30ms, 50us, 0.02)`);
+    return Number(m[1]) * ({ s: 1, ms: 1e-3, us: 1e-6, µs: 1e-6, ns: 1e-9 }[(m[2] ?? "s").toLowerCase()] ?? 1);
+  };
+  const num = (s) => {
+    const m = String(s).trim().match(/^([-\d.e+]+)\s*([a-zµ]*)$/i);
+    if (!m) throw new Error(`“${s}” is not a number`);
+    const p = { m: 1e-3, u: 1e-6, µ: 1e-6, n: 1e-9, k: 1e3, meg: 1e6 }[m[2].replace(/[vahzs]$/i, "").toLowerCase()] ?? 1;
+    return Number(m[1]) * p;
+  };
+  try {
+    const tran = all("--tran")[0];
+    const dc = all("--dc")[0];
+    const ac = all("--ac")[0];
+    const save = all("--save")[0];
+    const csv = all("--csv")[0];
+    const derate = all("--derate")[0];
+    const step = all("--step")[0];
+    const schematic = args[1];
+    if (!schematic) throw new Error('usage: forma simulate <schematic id> [--tran 30ms] [--dc NET:0:6:0.1] [--ac NET:10:1e6] [--source NET=5V,r=0.2,rise=1ms] [--press SW2@20ms:5ms] [--burst U1@5ms:2ms:0.5A] [--expect "min(V(3V3), burst) > 3.0"]… [--derate 0.6] [--save name] [--csv out.csv]');
+    let analysis = { kind: "tran", stop: tran ? time(tran) : 0.03, step: step ? time(step) : null };
+    if (dc) {
+      const [net, from, to, st] = dc.split(":");
+      analysis = { kind: "dc", net, from: num(from), to: num(to), step: num(st ?? "0.05") };
+    } else if (ac) {
+      const [net, from, to] = ac.split(":");
+      analysis = { kind: "ac", net, from: num(from ?? "10"), to: num(to ?? "1e6"), points: 20 };
+    } else if (args.includes("--op")) {
+      args.splice(args.indexOf("--op"), 1);
+      analysis = { kind: "op" };
+    }
+    const sources = all("--source").map((s) => {
+      const [net, rest] = s.split("=");
+      const [v, ...kv] = rest.split(",");
+      const o = Object.fromEntries(kv.map((x) => x.split("=")));
+      return { net, volts: num(v), r: o.r != null ? num(o.r) : null, rise: o.rise != null ? time(o.rise) : null, delay: o.delay != null ? time(o.delay) : null };
+    });
+    const presses = all("--press").map((s) => {
+      const [part, rest] = s.split("@");
+      const [at, hold] = rest.split(":");
+      return { part, at: time(at), hold: time(hold ?? "10ms") };
+    });
+    const bursts = all("--burst").map((s) => {
+      const [part, rest] = s.split("@");
+      const [at, length, current, baseA] = rest.split(":");
+      return { part, at: time(at), length: time(length ?? "2ms"), current: num(current ?? "0.5"), base: baseA ? num(baseA) : null };
+    });
+    const request = { analysis, sources, presses, bursts, expect: all("--expect"), mlcc_derating: derate ? Number(derate) : null };
+    const res = await fetch(`${http}/pcb/schematic/${schematic}/simulate${project ? `?project=${encodeURIComponent(project)}` : ""}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request) });
+    if (!res.ok) throw new Error(await res.text());
+    const r = await res.json();
+    const mark = { pass: "✓", warn: "!", fail: "✗" };
+    console.log(`${r.ok ? "✓" : "✗"} ${analysis.kind} analysis, ${r.x.length} points; ${r.parts.length} parts modelled${r.skipped.length ? `, ${r.skipped.length} left out` : ""}`);
+    for (const p of r.parts) console.log(`  ${p.reference.padEnd(5)} ${p.model}${p.approximate ? "  [approximate]" : ""}`);
+    for (const s of r.skipped) console.log(`  ·     ${s}`);
+    for (const a of r.assumptions) console.log(`  assumed: ${a}`);
+    if (r.windows.length > 1) console.log(`  windows: ${r.windows.map((w) => `${w.name} ${(w.from * 1e3).toFixed(3)}–${(w.to * 1e3).toFixed(3)} ms`).join(", ")}`);
+    if (r.checks.length) console.log("Datasheet checks:");
+    for (const c of r.checks) console.log(`  ${mark[c.status]} ${c.name} (${c.limit}): ${c.detail}`);
+    if (r.expectations.length) console.log("Expectations:");
+    for (const c of r.expectations) console.log(`  ${mark[c.status]} ${c.name}: ${c.detail}`);
+    if (r.measurements.length) console.log("Measurements:");
+    for (const c of r.measurements) console.log(`  ${c.name}: ${c.detail}`);
+    if (analysis.kind === "op" || analysis.kind === "dc" || analysis.kind === "ac") {
+      for (const s of r.signals) console.log(`  ${s.name}: ${s.values.length === 1 ? s.values[0] : `${s.values[0].toPrecision(4)} … ${s.values[s.values.length - 1].toPrecision(4)} ${s.unit}`}`);
+    }
+    if (csv) {
+      const { writeFileSync } = await import("node:fs");
+      const head = [r.x_name, ...r.signals.map((s) => s.name)].join(",");
+      writeFileSync(csv, [head, ...r.x.map((x, i) => [x, ...r.signals.map((s) => s.values[i])].join(","))].join("\n") + "\n");
+      console.log(`waveforms written to ${csv}`);
+    }
+    if (save) {
+      const c = await engine.commit("pcb.simulation.save", { schematic, name: save, request });
+      if (!c.ok) throw new Error(`${c.error.code} ${c.error.message}`);
+      console.log(`✓ saved as “${save}”: ./forma check runs it from now on`);
+    }
+    failed = !r.ok;
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
 } else if (command === "stock") {
   // The stock library: families, or the sizes matching a search ("M3×12", "608", "servo").
   const query = args.slice(1).join(" ");

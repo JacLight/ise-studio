@@ -54,6 +54,7 @@ pub mod schematic_sync;
 pub mod schematic_view;
 pub mod sexpr;
 pub mod sourcing;
+pub mod spice;
 pub mod symbols;
 pub mod verify;
 
@@ -92,6 +93,7 @@ impl Plugin for PcbPlugin {
             .command::<SetSourcing>()
             .derived(Derived { name: "pcb.board", inputs: &[Board::KIND], reads_dependencies: true, compute: board::compute });
         schematic::register(r);
+        spice::register(r);
     }
 }
 
