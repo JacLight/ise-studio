@@ -1,0 +1,227 @@
+{
+ "id": "bearing_thrust",
+ "name": "Thrust ball bearing",
+ "standard": "ISO 104",
+ "category": "Bearings & motion",
+ "summary": "Single-direction thrust ball bearing (511xx, miniature F…M): shaft washer and housing washer with raceway grooves, balls in a steel cage. Axis +Z, shaft washer on z = 0, housing washer up to z = T",
+ "keywords": [
+  "thrust bearing",
+  "axial bearing",
+  "51100",
+  "51101",
+  "51102",
+  "51103",
+  "51104",
+  "51105",
+  "F8-16M",
+  "F6-14M",
+  "F8-19M",
+  "lazy susan",
+  "turntable bearing"
+ ],
+ "source": [
+  "common.js",
+  "bearing.js",
+  "bearing_thrust.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Bearing steel 52100": 7810,
+  "Steel (cage)": 7850
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Bore",
+   "value": 8,
+   "unit": "mm",
+   "min": 1,
+   "max": 100
+  },
+  {
+   "key": "D",
+   "label": "Outside diameter",
+   "value": 16,
+   "unit": "mm",
+   "min": 3,
+   "max": 200
+  },
+  {
+   "key": "B",
+   "label": "Height",
+   "value": 5,
+   "unit": "mm",
+   "min": 1,
+   "max": 50
+  }
+ ],
+ "columns": [
+  "d",
+  "D",
+  "B"
+ ],
+ "rows": [
+  {
+   "name": "51100",
+   "values": {
+    "d": 10,
+    "D": 24,
+    "B": 9
+   },
+   "description": "10×24×9 mm"
+  },
+  {
+   "name": "51101",
+   "values": {
+    "d": 12,
+    "D": 26,
+    "B": 9
+   },
+   "description": "12×26×9 mm"
+  },
+  {
+   "name": "51102",
+   "values": {
+    "d": 15,
+    "D": 28,
+    "B": 9
+   },
+   "description": "15×28×9 mm"
+  },
+  {
+   "name": "51103",
+   "values": {
+    "d": 17,
+    "D": 30,
+    "B": 9
+   },
+   "description": "17×30×9 mm"
+  },
+  {
+   "name": "51104",
+   "values": {
+    "d": 20,
+    "D": 35,
+    "B": 10
+   },
+   "description": "20×35×10 mm"
+  },
+  {
+   "name": "51105",
+   "values": {
+    "d": 25,
+    "D": 42,
+    "B": 11
+   },
+   "description": "25×42×11 mm"
+  },
+  {
+   "name": "F3-8M",
+   "values": {
+    "d": 3,
+    "D": 8,
+    "B": 3.5
+   },
+   "description": "3×8×3.5 mm"
+  },
+  {
+   "name": "F4-10M",
+   "values": {
+    "d": 4,
+    "D": 10,
+    "B": 4
+   },
+   "description": "4×10×4 mm"
+  },
+  {
+   "name": "F5-12M",
+   "values": {
+    "d": 5,
+    "D": 12,
+    "B": 4
+   },
+   "description": "5×12×4 mm"
+  },
+  {
+   "name": "F6-14M",
+   "values": {
+    "d": 6,
+    "D": 14,
+    "B": 5
+   },
+   "description": "6×14×5 mm"
+  },
+  {
+   "name": "F8-16M",
+   "values": {
+    "d": 8,
+    "D": 16,
+    "B": 5
+   },
+   "description": "8×16×5 mm"
+  },
+  {
+   "name": "F8-19M",
+   "values": {
+    "d": 8,
+    "D": 19,
+    "B": 7
+   },
+   "description": "8×19×7 mm"
+  },
+  {
+   "name": "F10-18M",
+   "values": {
+    "d": 10,
+    "D": 18,
+    "B": 5.5
+   },
+   "description": "10×18×5.5 mm"
+  }
+ ],
+ "default": "F8-16M",
+ "checks": {
+  "F8-16M": {
+   "size": [
+    16,
+    16,
+    5
+   ],
+   "connectors": [
+    "Bore",
+    "Outer seat",
+    "Face A",
+    "Face B"
+   ],
+   "connector_at": {
+    "Face B": [
+     0,
+     0,
+     5
+    ]
+   },
+   "metrics": {
+    "Bore": 8,
+    "Housing washer bore": 8.2
+   },
+   "partNumber": "F8-16M"
+  },
+  "51100": {
+   "size": [
+    24,
+    24,
+    9
+   ],
+   "partNumber": "51100",
+   "massG": 20
+  },
+  "51105": {
+   "size": [
+    42,
+    42,
+    11
+   ],
+   "massG": 56
+  }
+ }
+}

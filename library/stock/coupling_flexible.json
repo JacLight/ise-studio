@@ -1,0 +1,207 @@
+{
+ "id": "coupling_flexible",
+ "name": "Flexible shaft coupling",
+ "standard": null,
+ "category": "Bearings & motion",
+ "summary": "Helical beam flexible shaft coupling (D19L25, D25L30), one-piece aluminium with a helical slot, two set screws per hub. Axis +Z, bore A from z = 0, bore B from z = L",
+ "keywords": [
+  "flexible coupling",
+  "shaft coupling",
+  "helical coupling",
+  "beam coupling",
+  "D19L25",
+  "5x8 coupling",
+  "motor coupling",
+  "stepper coupling",
+  "lead screw coupling",
+  "3D printer"
+ ],
+ "source": [
+  "common.js",
+  "coupling_flexible.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Aluminium 7075": 2810,
+  "Steel 45H": 7850
+ },
+ "params": [
+  {
+   "key": "D",
+   "label": "Outside diameter",
+   "value": 19,
+   "unit": "mm",
+   "min": 19,
+   "max": 25
+  },
+  {
+   "key": "d1",
+   "label": "Bore A",
+   "value": 5,
+   "unit": "mm",
+   "min": 3,
+   "max": 12
+  },
+  {
+   "key": "d2",
+   "label": "Bore B",
+   "value": 8,
+   "unit": "mm",
+   "min": 3,
+   "max": 12
+  }
+ ],
+ "columns": [
+  "D",
+  "d1",
+  "d2"
+ ],
+ "rows": [
+  {
+   "name": "D19L25 4×5",
+   "values": {
+    "D": 19,
+    "d1": 4,
+    "d2": 5
+   }
+  },
+  {
+   "name": "D19L25 5×5",
+   "values": {
+    "D": 19,
+    "d1": 5,
+    "d2": 5
+   }
+  },
+  {
+   "name": "D19L25 5×6",
+   "values": {
+    "D": 19,
+    "d1": 5,
+    "d2": 6
+   }
+  },
+  {
+   "name": "D19L25 5×6.35",
+   "values": {
+    "D": 19,
+    "d1": 5,
+    "d2": 6.35
+   }
+  },
+  {
+   "name": "D19L25 5×8",
+   "values": {
+    "D": 19,
+    "d1": 5,
+    "d2": 8
+   }
+  },
+  {
+   "name": "D19L25 6×6",
+   "values": {
+    "D": 19,
+    "d1": 6,
+    "d2": 6
+   }
+  },
+  {
+   "name": "D19L25 6×8",
+   "values": {
+    "D": 19,
+    "d1": 6,
+    "d2": 8
+   }
+  },
+  {
+   "name": "D19L25 6.35×8",
+   "values": {
+    "D": 19,
+    "d1": 6.35,
+    "d2": 8
+   }
+  },
+  {
+   "name": "D19L25 8×8",
+   "values": {
+    "D": 19,
+    "d1": 8,
+    "d2": 8
+   }
+  },
+  {
+   "name": "D25L30 8×8",
+   "values": {
+    "D": 25,
+    "d1": 8,
+    "d2": 8
+   }
+  },
+  {
+   "name": "D25L30 8×10",
+   "values": {
+    "D": 25,
+    "d1": 8,
+    "d2": 10
+   }
+  },
+  {
+   "name": "D25L30 10×10",
+   "values": {
+    "D": 25,
+    "d1": 10,
+    "d2": 10
+   }
+  },
+  {
+   "name": "D25L30 8×12",
+   "values": {
+    "D": 25,
+    "d1": 8,
+    "d2": 12
+   }
+  },
+  {
+   "name": "D25L30 10×12",
+   "values": {
+    "D": 25,
+    "d1": 10,
+    "d2": 12
+   }
+  }
+ ],
+ "default": "D19L25 5×8",
+ "checks": {
+  "D19L25 5×8": {
+   "size": [
+    19,
+    19,
+    25
+   ],
+   "connectors": [
+    "Bore A",
+    "Bore B",
+    "Axis"
+   ],
+   "connector_at": {
+    "Bore B": [
+     0,
+     0,
+     25
+    ]
+   },
+   "metrics": {
+    "Bore A": 5,
+    "Bore B": 8
+   },
+   "partNumber": "CPL-HEL-D19L25-5x8"
+  },
+  "D25L30 10×12": {
+   "size": [
+    25,
+    25,
+    30
+   ]
+  }
+ }
+}

@@ -1,0 +1,177 @@
+{
+ "id": "tslot_40",
+ "name": "T-slot extrusion",
+ "standard": "40 series 8 mm slot",
+ "category": "Structural",
+ "summary": "4040 / 4080 aluminium T-slot extrusion, B-type 8 mm slot, Ø6.8 core bores for M8, hollow corners. Profile in XY, length along +Z.",
+ "keywords": [
+  "4040",
+  "4080",
+  "extrusion",
+  "aluminium profile",
+  "aluminum",
+  "t-slot",
+  "8mm slot",
+  "framing",
+  "HFS8",
+  "CNC frame"
+ ],
+ "source": [
+  "common.js",
+  "tslot.js",
+  "tslot_40.js"
+ ],
+ "display_tolerance": 0.02,
+ "material": "Aluminium 6063-T5",
+ "materials": {
+  "Aluminium 6063-T5": 2700
+ },
+ "params": [
+  {
+   "key": "cells",
+   "label": "Profile (1 = 4040, 2 = 4080)",
+   "value": 1,
+   "unit": "",
+   "min": 1,
+   "max": 2,
+   "step": 1
+  },
+  {
+   "key": "length",
+   "label": "Length",
+   "value": 500,
+   "unit": "mm",
+   "min": 10,
+   "max": 3000
+  }
+ ],
+ "columns": [
+  "cells",
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "4040×100",
+   "values": {
+    "cells": 1,
+    "length": 100
+   }
+  },
+  {
+   "name": "4040×200",
+   "values": {
+    "cells": 1,
+    "length": 200
+   }
+  },
+  {
+   "name": "4040×300",
+   "values": {
+    "cells": 1,
+    "length": 300
+   }
+  },
+  {
+   "name": "4040×400",
+   "values": {
+    "cells": 1,
+    "length": 400
+   }
+  },
+  {
+   "name": "4040×500",
+   "values": {
+    "cells": 1,
+    "length": 500
+   }
+  },
+  {
+   "name": "4040×600",
+   "values": {
+    "cells": 1,
+    "length": 600
+   }
+  },
+  {
+   "name": "4040×800",
+   "values": {
+    "cells": 1,
+    "length": 800
+   }
+  },
+  {
+   "name": "4040×1000",
+   "values": {
+    "cells": 1,
+    "length": 1000
+   }
+  },
+  {
+   "name": "4080×300",
+   "values": {
+    "cells": 2,
+    "length": 300
+   }
+  },
+  {
+   "name": "4080×500",
+   "values": {
+    "cells": 2,
+    "length": 500
+   }
+  },
+  {
+   "name": "4080×1000",
+   "values": {
+    "cells": 2,
+    "length": 1000
+   }
+  }
+ ],
+ "default": "4040×500",
+ "checks": {
+  "4040×500": {
+   "size": [
+    40,
+    40,
+    500
+   ],
+   "partNumber": "4040-B8-500",
+   "connectors": [
+    "End A",
+    "End B",
+    "Slot +X",
+    "Slot -X",
+    "Slot +Y",
+    "Slot -Y"
+   ],
+   "connector_at": {
+    "End B": [
+     0,
+     0,
+     500
+    ],
+    "Slot +X": [
+     20.0,
+     0,
+     250
+    ]
+   }
+  },
+  "4080×1000": {
+   "size": [
+    40,
+    80,
+    1000
+   ],
+   "connectors": [
+    "Slot +X 1",
+    "Slot +X 2",
+    "Slot -X 1",
+    "Slot -X 2",
+    "Slot +Y",
+    "Slot -Y"
+   ]
+  }
+ }
+}
