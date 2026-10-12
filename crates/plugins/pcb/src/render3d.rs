@@ -58,6 +58,19 @@ pub fn scene_of(view: &BoardView, board: &Board, items: &crate::Items) -> Value 
         sides.insert(side.into(), json!({ "pads": pads, "openings": openings, "tracks": tracks, "zones": zones, "silk": silk }));
     }
     let bodies = crate::bodies::bodies(board, &items.components);
+    // Parts not placed (DNP) drawn on request: their bodies apart.
+    let unplaced: Vec<(StableId, crate::PcbComponent)> = items.components.iter().filter(|(_, c)| c.dnp).map(|(id, c)| (*id, crate::PcbComponent { dnp: false, ..c.clone() })).collect();
+    let dnp_bodies = crate::bodies::bodies(board, &unplaced);
+    // What each part is, for showing and hiding by type in the 3D view.
+    let parts: Vec<Value> = view
+        .components
+        .iter()
+        .map(|c| {
+            let pads: Vec<&crate::board::PadView> = view.pads.iter().filter(|p| p.reference == c.reference).collect();
+            let kind = if pads.iter().any(|p| p.kind == PadKind::Tht) { "tht" } else if pads.iter().any(|p| p.kind == PadKind::Smd) { "smd" } else { "other" };
+            json!({ "reference": c.reference, "value": c.value, "footprint": c.footprint, "kind": kind, "dnp": c.dnp, "side": c.side })
+        })
+        .collect();
     json!({
         "id": view.id,
         "thickness": view.thickness,
@@ -72,5 +85,7 @@ pub fn scene_of(view: &BoardView, board: &Board, items: &crate::Items) -> Value 
         "holes": view.holes.iter().map(|h| json!({ "at": [r(h.at[0]), r(h.at[1])], "size": [r(h.size[0]), r(h.size[1])], "rot": r(h.rotation), "plated": h.plated })).collect::<Vec<_>>(),
         "sides": sides,
         "bodies": bodies,
+        "dnp_bodies": dnp_bodies,
+        "parts": parts,
     })
 }

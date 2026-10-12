@@ -11,5 +11,6 @@ de-solid.workspace = true
 de-shape.workspace = true
 de-sourcing.workspace = true
 manifold-csg = "0.4"
+miniz_oxide = "0.8"
 serde.workspace = true
 serde_json.workspace = true
