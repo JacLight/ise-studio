@@ -112,7 +112,9 @@ pub struct ViewContext {
 
 impl Ai {
     pub fn new(config: Arc<AiConfig>, project: &str, projects_dir: &Path) -> Ai {
-        let folder = projects_dir.join(format!("{project}.ai"));
+        // Absolute, so the session's permission rules (written as absolute paths) match it
+        // even when the engine was started with a relative projects folder.
+        let folder = projects_dir.canonicalize().unwrap_or_else(|_| projects_dir.to_path_buf()).join(format!("{project}.ai"));
         let chat = std::fs::read_to_string(folder.join("chat.jsonl"))
             .map(|t| t.lines().filter_map(|l| serde_json::from_str(l).ok()).collect())
             .unwrap_or_default();
@@ -541,4 +543,17 @@ fn describe(project: &Project, id: StableId) -> Option<String> {
         return Some(format!("assembly definition “{}”", a.name));
     }
     project.get::<de_solid::BoxFeature>(id).map(|_| "box part".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_session_folder_is_absolute_even_from_a_relative_projects_folder() {
+        let config = Arc::new(AiConfig { repo: PathBuf::from("."), port: 0, claude: None, model: None });
+        let ai = Ai::new(config, "demo", Path::new("."));
+        assert!(ai.folder.is_absolute(), "{}", ai.folder.display());
+        assert!(ai.folder.ends_with("demo.ai"));
+    }
 }
