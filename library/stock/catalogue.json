@@ -5,7 +5,8 @@
     "Inserts & pins",
     "Bearings & motion",
     "Motors",
-    "Structural"
+    "Structural",
+    "Structural sections"
   ],
   "order": [
     "iso4762",
@@ -24,6 +25,27 @@
     "servo_hobby",
     "servo_horn",
     "nema17",
-    "tslot_20"
+    "tslot_20",
+    "ipe",
+    "hea",
+    "heb",
+    "upn",
+    "upe",
+    "angle_equal",
+    "angle_unequal",
+    "tee_section",
+    "flat_bar",
+    "round_bar",
+    "shs_cold",
+    "rhs_cold",
+    "chs_cold",
+    "shs_hot",
+    "rhs_hot",
+    "chs_hot",
+    "alu_angle",
+    "alu_flat",
+    "alu_box_tube",
+    "alu_round_tube",
+    "alu_channel"
   ]
 }

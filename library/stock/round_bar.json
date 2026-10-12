@@ -1,0 +1,224 @@
+{
+ "id": "round_bar",
+ "name": "Round bar",
+ "standard": "EN 10060",
+ "category": "Structural sections",
+ "summary": "Hot-rolled steel round bar Ø6 to Ø120 (EN 10060), S235JR, cut to length. Axis on Z from z = 0.",
+ "keywords": [
+  "round bar",
+  "rod",
+  "steel bar",
+  "EN 10060",
+  "RD",
+  "solid round"
+ ],
+ "source": [
+  "common.js",
+  "sections.js",
+  "round_bar.js"
+ ],
+ "display_tolerance": 0.02,
+ "material": "Structural steel S235JR",
+ "materials": {
+  "Structural steel S235JR": 7850
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Diameter",
+   "value": 20,
+   "unit": "mm",
+   "min": 5,
+   "max": 200
+  },
+  {
+   "key": "length",
+   "label": "Length (cut)",
+   "value": 1000,
+   "unit": "mm",
+   "min": 10,
+   "max": 12000
+  }
+ ],
+ "columns": [
+  "d"
+ ],
+ "rows": [
+  {
+   "name": "RD 6",
+   "values": {
+    "d": 6
+   }
+  },
+  {
+   "name": "RD 8",
+   "values": {
+    "d": 8
+   }
+  },
+  {
+   "name": "RD 10",
+   "values": {
+    "d": 10
+   }
+  },
+  {
+   "name": "RD 12",
+   "values": {
+    "d": 12
+   }
+  },
+  {
+   "name": "RD 14",
+   "values": {
+    "d": 14
+   }
+  },
+  {
+   "name": "RD 16",
+   "values": {
+    "d": 16
+   }
+  },
+  {
+   "name": "RD 18",
+   "values": {
+    "d": 18
+   }
+  },
+  {
+   "name": "RD 20",
+   "values": {
+    "d": 20
+   }
+  },
+  {
+   "name": "RD 22",
+   "values": {
+    "d": 22
+   }
+  },
+  {
+   "name": "RD 25",
+   "values": {
+    "d": 25
+   }
+  },
+  {
+   "name": "RD 28",
+   "values": {
+    "d": 28
+   }
+  },
+  {
+   "name": "RD 30",
+   "values": {
+    "d": 30
+   }
+  },
+  {
+   "name": "RD 32",
+   "values": {
+    "d": 32
+   }
+  },
+  {
+   "name": "RD 35",
+   "values": {
+    "d": 35
+   }
+  },
+  {
+   "name": "RD 40",
+   "values": {
+    "d": 40
+   }
+  },
+  {
+   "name": "RD 45",
+   "values": {
+    "d": 45
+   }
+  },
+  {
+   "name": "RD 50",
+   "values": {
+    "d": 50
+   }
+  },
+  {
+   "name": "RD 55",
+   "values": {
+    "d": 55
+   }
+  },
+  {
+   "name": "RD 60",
+   "values": {
+    "d": 60
+   }
+  },
+  {
+   "name": "RD 70",
+   "values": {
+    "d": 70
+   }
+  },
+  {
+   "name": "RD 80",
+   "values": {
+    "d": 80
+   }
+  },
+  {
+   "name": "RD 90",
+   "values": {
+    "d": 90
+   }
+  },
+  {
+   "name": "RD 100",
+   "values": {
+    "d": 100
+   }
+  },
+  {
+   "name": "RD 120",
+   "values": {
+    "d": 120
+   }
+  }
+ ],
+ "default": "RD 20",
+ "checks": {
+  "RD 20": {
+   "size": [
+    20,
+    20,
+    1000
+   ],
+   "partNumber": "RD 20 × 1000 S235JR",
+   "massG": 2466.2,
+   "connectors": [
+    "End A",
+    "End B",
+    "Axis"
+   ],
+   "connector_at": {
+    "End B": [
+     0,
+     0,
+     1000
+    ]
+   }
+  },
+  "RD 120": {
+   "size": [
+    120,
+    120,
+    1000
+   ],
+   "tolerance": 0.1
+  }
+ }
+}

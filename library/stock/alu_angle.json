@@ -1,0 +1,271 @@
+{
+ "id": "alu_angle",
+ "name": "Aluminium angle",
+ "standard": "EN 755-9",
+ "category": "Structural sections",
+ "summary": "Extruded aluminium angles 10×10×1.5 to 100×100×8 and unequal 20×10 to 80×40 (EN AW-6060 T6, EN 755-9), cut to length. Heel on the origin, leg a up +Y, leg b along +X, length along +Z.",
+ "keywords": [
+  "aluminium angle",
+  "aluminum angle",
+  "L profile",
+  "6060",
+  "6063",
+  "EN 755"
+ ],
+ "source": [
+  "common.js",
+  "sections.js",
+  "alu_angle.js"
+ ],
+ "display_tolerance": 0.02,
+ "material": "Aluminium EN AW-6060 T6",
+ "materials": {
+  "Aluminium EN AW-6060 T6": 2700
+ },
+ "params": [
+  {
+   "key": "a",
+   "label": "Leg a",
+   "value": 20,
+   "unit": "mm",
+   "min": 5,
+   "max": 200
+  },
+  {
+   "key": "b",
+   "label": "Leg b",
+   "value": 20,
+   "unit": "mm",
+   "min": 5,
+   "max": 200
+  },
+  {
+   "key": "t",
+   "label": "Thickness",
+   "value": 2,
+   "unit": "mm",
+   "min": 1,
+   "max": 15
+  },
+  {
+   "key": "length",
+   "label": "Length (cut)",
+   "value": 1000,
+   "unit": "mm",
+   "min": 10,
+   "max": 6000
+  }
+ ],
+ "columns": [
+  "a",
+  "b",
+  "t"
+ ],
+ "rows": [
+  {
+   "name": "10×10×1.5",
+   "values": {
+    "a": 10,
+    "b": 10,
+    "t": 1.5
+   }
+  },
+  {
+   "name": "15×15×1.5",
+   "values": {
+    "a": 15,
+    "b": 15,
+    "t": 1.5
+   }
+  },
+  {
+   "name": "15×15×2",
+   "values": {
+    "a": 15,
+    "b": 15,
+    "t": 2
+   }
+  },
+  {
+   "name": "20×20×2",
+   "values": {
+    "a": 20,
+    "b": 20,
+    "t": 2
+   }
+  },
+  {
+   "name": "20×20×3",
+   "values": {
+    "a": 20,
+    "b": 20,
+    "t": 3
+   }
+  },
+  {
+   "name": "25×25×2",
+   "values": {
+    "a": 25,
+    "b": 25,
+    "t": 2
+   }
+  },
+  {
+   "name": "25×25×3",
+   "values": {
+    "a": 25,
+    "b": 25,
+    "t": 3
+   }
+  },
+  {
+   "name": "30×30×2",
+   "values": {
+    "a": 30,
+    "b": 30,
+    "t": 2
+   }
+  },
+  {
+   "name": "30×30×3",
+   "values": {
+    "a": 30,
+    "b": 30,
+    "t": 3
+   }
+  },
+  {
+   "name": "40×40×3",
+   "values": {
+    "a": 40,
+    "b": 40,
+    "t": 3
+   }
+  },
+  {
+   "name": "40×40×4",
+   "values": {
+    "a": 40,
+    "b": 40,
+    "t": 4
+   }
+  },
+  {
+   "name": "50×50×3",
+   "values": {
+    "a": 50,
+    "b": 50,
+    "t": 3
+   }
+  },
+  {
+   "name": "50×50×5",
+   "values": {
+    "a": 50,
+    "b": 50,
+    "t": 5
+   }
+  },
+  {
+   "name": "60×60×5",
+   "values": {
+    "a": 60,
+    "b": 60,
+    "t": 5
+   }
+  },
+  {
+   "name": "80×80×6",
+   "values": {
+    "a": 80,
+    "b": 80,
+    "t": 6
+   }
+  },
+  {
+   "name": "100×100×8",
+   "values": {
+    "a": 100,
+    "b": 100,
+    "t": 8
+   }
+  },
+  {
+   "name": "20×10×2",
+   "values": {
+    "a": 20,
+    "b": 10,
+    "t": 2
+   }
+  },
+  {
+   "name": "30×20×2",
+   "values": {
+    "a": 30,
+    "b": 20,
+    "t": 2
+   }
+  },
+  {
+   "name": "40×20×2",
+   "values": {
+    "a": 40,
+    "b": 20,
+    "t": 2
+   }
+  },
+  {
+   "name": "40×30×3",
+   "values": {
+    "a": 40,
+    "b": 30,
+    "t": 3
+   }
+  },
+  {
+   "name": "50×30×3",
+   "values": {
+    "a": 50,
+    "b": 30,
+    "t": 3
+   }
+  },
+  {
+   "name": "60×40×4",
+   "values": {
+    "a": 60,
+    "b": 40,
+    "t": 4
+   }
+  },
+  {
+   "name": "80×40×4",
+   "values": {
+    "a": 80,
+    "b": 40,
+    "t": 4
+   }
+  }
+ ],
+ "default": "20×20×2",
+ "checks": {
+  "20×20×2": {
+   "size": [
+    20,
+    20,
+    1000
+   ],
+   "partNumber": "Al angle 20×20×2 × 1000 EN AW-6060 T6",
+   "massG": 205.8,
+   "connectors": [
+    "End A",
+    "End B",
+    "Axis",
+    "Leg A back",
+    "Leg B back",
+    "Leg A inside",
+    "Leg B inside"
+   ]
+  }
+ }
+}
