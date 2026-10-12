@@ -243,6 +243,38 @@ fn peers_converge_through_change_sets() {
 }
 
 #[test]
+fn a_saved_log_replays_with_derived_results_computed_once_at_the_end() {
+    let mut saved = Project::new("p", registry());
+    let a = set(&mut saved, json!({ "value": 1 }));
+    let b = set(&mut saved, json!({ "value": 10, "depends_on": [a] }));
+    let c = set(&mut saved, json!({ "value": 100, "depends_on": [b] }));
+    set(&mut saved, json!({ "target": a, "value": 5 }));
+    let bad = set(&mut saved, json!({ "value": -1 }));
+    let d = set(&mut saved, json!({ "value": 7, "depends_on": [bad] }));
+
+    let mut loaded = Project::new("p", registry());
+    loaded.begin_replay();
+    for change in saved.log() {
+        loaded.replay(change.clone()).unwrap();
+    }
+    // Nothing is computed while the log replays.
+    assert_eq!(total_of(&loaded, c), None);
+    loaded.finish_replay();
+    for id in [a, b, c] {
+        assert_eq!(total_of(&loaded, id), total_of(&saved, id));
+        assert_eq!(loaded.status(id), Some(&Status::Current));
+    }
+    assert_eq!(total_of(&loaded, c), Some(115));
+    assert!(matches!(loaded.status(bad), Some(Status::Failed(_))));
+    assert!(matches!(loaded.status(d), Some(Status::Blocked(_))));
+    assert_eq!(loaded.revision(), saved.revision());
+
+    // Later changes compute as usual.
+    set(&mut loaded, json!({ "target": a, "value": 2 }));
+    assert_eq!(total_of(&loaded, c), Some(112));
+}
+
+#[test]
 fn command_schemas_are_published() {
     let r = registry();
     let names: Vec<_> = r.commands().map(|c| (c.plugin, c.name)).collect();

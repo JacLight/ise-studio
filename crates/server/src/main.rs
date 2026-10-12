@@ -2199,6 +2199,7 @@ fn load(name: &str, path: &PathBuf, registry: Arc<Registry>, engine: &str) -> st
     let mut project = Project::new(name, registry);
     project.set_origin(engine);
     if path.exists() {
+        project.begin_replay();
         for (n, line) in BufReader::new(File::open(path)?).lines().enumerate() {
             let line = line?;
             if line.trim().is_empty() {
@@ -2210,6 +2211,7 @@ fn load(name: &str, path: &PathBuf, registry: Arc<Registry>, engine: &str) -> st
                 .replay(change)
                 .map_err(|e| std::io::Error::other(format!("{}:{}: {e}", path.display(), n + 1)))?;
         }
+        project.finish_replay();
     }
     Ok(project)
 }

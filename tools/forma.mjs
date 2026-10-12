@@ -5,6 +5,9 @@
 //   node tools/forma.mjs run steps.json [--project name] [--url ws://127.0.0.1:7420/ws]
 //   node tools/forma.mjs check
 //   node tools/forma.mjs gears <id> [torque N·m] [rpm]   turn a gear train through a full turn; tooth strength with a load
+//   node tools/forma.mjs motion <joint id> [steps] [--set '{"Elbow":40}']   sweep a joint through its limits: what moves, closest approaches, clashes, where it binds
+//   node tools/forma.mjs fit <assembly or instance id | project> [--motion]   do screws, inserts, nuts, bearings and joined parts fit (and, with --motion, every joint's sweep)
+//   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs list                 every entity, one line each
 //   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
@@ -139,6 +142,61 @@ if (command === "run") {
       for (const n of m.notes) console.log(`    ! ${n}`);
     }
     failed = s.clashes.length > 0;
+  }
+} else if (command === "motion" || command === "fit" || command === "bom") {
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const setFlag = args.indexOf("--set");
+  const set = setFlag >= 0 ? args.splice(setFlag, 2)[1] : null;
+  const motionFlag = args.indexOf("--motion");
+  if (motionFlag >= 0) args.splice(motionFlag, 1);
+  const [, id, extra] = args;
+  if (!id) {
+    console.error(`✗ say which: forma ${command} <id${command === "motion" ? "" : " | project"}>`);
+    process.exit(1);
+  }
+  const q = new URLSearchParams(project ? { project } : {});
+  let path;
+  if (command === "motion") {
+    path = `assembly-motion/${id}`;
+    if (extra) q.set("steps", extra);
+    if (set) q.set("set", set);
+  } else if (command === "fit") {
+    path = `fit/${id}`;
+    if (motionFlag < 0) q.set("motion", "off");
+  } else {
+    path = `bom/${id}`;
+    q.set("format", "csv");
+    if (extra) q.set("qty", extra);
+  }
+  const res = await fetch(`${http}/${path}?${q}`);
+  if (!res.ok) {
+    console.error(`✗ ${await res.text()}`);
+    failed = true;
+  } else if (command === "bom") {
+    process.stdout.write(await res.text());
+  } else if (command === "motion") {
+    const s = await res.json();
+    const moving = s.instances.filter((i) => i.moves).map((i) => i.name);
+    console.log(`${s.clashes.length || s.binds_at != null ? "✗" : "✓"} ${s.name}: ${s.from}…${s.to}${s.unit} in ${s.frames.length - 1} steps; ${moving.length} of ${s.instances.length} instances move`);
+    for (const c of s.clashes) console.log(`  clash  ${c.a} ↔ ${c.b} from ${c.range?.[0] ?? c.at} to ${c.range?.[1] ?? c.at}${s.unit}`);
+    const near = s.pairs.filter((p) => !p.joined && p.gap >= 1e-4).slice(0, 8);
+    for (const p of near) console.log(`  close  ${p.a} ↔ ${p.b}: ${p.gap} mm at ${p.at}${s.unit}`);
+    const touching = s.pairs.filter((p) => p.joined && p.gap < 1e-4).length;
+    if (touching) console.log(`  (${touching} joined or turning-in-contact pairs touch as designed)`);
+    for (const n of s.notes) console.log(`  ! ${n}`);
+    failed = s.clashes.length > 0 || s.binds_at != null;
+  } else {
+    const r = await res.json();
+    console.log(`${r.ok ? "✓" : "✗"} ${r.name}: ${r.pass} fit, ${r.warn} with warnings, ${r.fail} failing (${r.profile?.printer ?? "printer"} profile)`);
+    const order = { fail: 0, warn: 1, pass: 2 };
+    for (const it of [...r.items].sort((a, b) => order[a.status] - order[b.status])) {
+      if (it.status === "pass" && extra !== "all") continue;
+      console.log(`  ${it.status.padEnd(4)} ${it.kind.padEnd(12)} ${it.title}${it.joint ? ` (${it.joint})` : ""}`);
+      for (const c of it.checks.filter((c) => c.status !== "pass")) console.log(`         ${c.what}: ${c.text}`);
+    }
+    if (r.pass && extra !== "all") console.log(`  (${r.pass} passing items hidden; add "all" to list them)`);
+    for (const n of r.notes) console.log(`  ! ${n}`);
+    failed = !r.ok;
   }
 } else if (command === "stock") {
   // The stock library: families, or the sizes matching a search ("M3×12", "608", "servo").

@@ -166,7 +166,7 @@ for (let k = 1; k <= 2; k++) insert("M3×5.7", `Forearm cheek insert ${k + 2}`, 
 const pinW = stock("iso8734", "Ø5×16", "Wrist pin", 32);
 fixed([faR, "Wrist pin"], [pinW, "Axis"], { aligned: true });
 const h2 = stock("servo_horn", "25T Ø24", "Elbow horn", 34);
-const elbow = joint("hinge", [s2, "Output shaft"], [h2, "Spline"], { name: "Elbow", value: 0, limits: [-60, 90] });
+const elbow = joint("hinge", [s2, "Output shaft"], [h2, "Spline"], { name: "Elbow", value: 0, limits: [-30, 90] });
 const eL = inst(P.elbowL, "Elbow cheek, horn side", 35);
 fixed([h2, "Face"], [eL, "Elbow horn"]);
 hornScrews(eL, "Elbow", "M3×8", 36);

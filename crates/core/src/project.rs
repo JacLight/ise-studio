@@ -89,6 +89,8 @@ pub struct Project {
     incoming_seen: Option<BTreeMap<String, u64>>,
     /// Peers' change sets that arrived before something they build on.
     waiting: Vec<WireChangeSet>,
+    /// Derived results wait for [`Project::finish_replay`] (while a saved log is replayed).
+    deferring: bool,
 }
 
 impl Project {
@@ -107,6 +109,7 @@ impl Project {
             undo: FxHashMap::default(),
             redo: FxHashMap::default(),
             origin: "local".into(),
+            deferring: false,
             clock: 0,
             writers: FxHashMap::default(),
             log: Vec::new(),
@@ -160,6 +163,22 @@ impl Project {
     /// Every change set in the order this copy took it (what to save and to share).
     pub fn log(&self) -> &[WireChangeSet] {
         &self.log
+    }
+
+    /// Holds derived results back while a saved log is replayed: each entry
+    /// would otherwise recompute what it touches (a project with motion
+    /// requirements re-ran every sweep once per saved change).
+    pub fn begin_replay(&mut self) {
+        self.deferring = true;
+    }
+
+    /// Computes every derived result once, after [`Project::begin_replay`].
+    pub fn finish_replay(&mut self) {
+        if !std::mem::take(&mut self.deferring) {
+            return;
+        }
+        let ops: Vec<Op> = self.world.resource::<IdIndex>().iter().map(|(id, _)| Op::Create { id }).collect();
+        self.recompute(&ops);
     }
 
     /// Replays one saved log entry: a change made here, or a peer's change merged again.
@@ -720,7 +739,9 @@ impl Project {
         let base_revision = self.revision;
         self.revision = base_revision.next();
         self.update_dependents(&ops);
-        self.recompute(&ops);
+        if !self.deferring {
+            self.recompute(&ops);
+        }
 
         let index = self.journal.len();
         match origin {

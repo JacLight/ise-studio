@@ -6,13 +6,16 @@ You compute geometry yourself. Shapes are small JavaScript programs you write; t
 
 ## Your tool: `./forma`
 
-Run it from your working folder. It acts on the open project.
+Run it from your working folder. It acts on the open project. It is your only way to reach the engine: the HTTP endpoints this manual names (GET `/bom/…`, `/fit/…`, `/assembly-motion/…`) are what `./forma bom`, `./forma fit` and `./forma motion` call for you.
 
 ```
 ./forma tree                         what is placed, as a tree (instances, shared definitions, properties)
 ./forma list                         every entity, one line each
 ./forma get <id>                     one entity in full: program source, params, materials, results
 ./forma check                        every requirement, verified by the engine
+./forma motion <joint> [steps] [--set '{"Elbow":40}']   sweep one joint through its limits: what moves, closest gaps, clashes, binding
+./forma fit <assembly|instance|project> [all] [--motion]   screws, inserts, nuts, bearings, joined parts: do they fit (failures and warnings first)
+./forma bom <assembly|instance|project> [qty]   the bill of materials as CSV (made parts with process, bought parts with part numbers, totals)
 ./forma ops [filter]                 commands the engine accepts, with their JSON schemas
 ./forma commit <operation> '<json>'  run one command
 ./forma run steps.json               run several; "$N.id" refers to step N's output, {"$file": "x.js"} inlines a file

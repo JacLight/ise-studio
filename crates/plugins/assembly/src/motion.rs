@@ -83,6 +83,8 @@ pub struct AssemblySweep {
 /// One instance's solids, in its own coordinates.
 pub(crate) struct Body {
     pub(crate) leaves: Vec<(Arc<Manifold>, Transform)>,
+    /// Each leaf's box in the instance's coordinates.
+    pub(crate) boxes: Vec<([f64; 3], [f64; 3])>,
     pub(crate) lo: [f64; 3],
     pub(crate) hi: [f64; 3],
 }
@@ -95,6 +97,7 @@ pub(crate) fn body(world: &World, id: StableId) -> Result<Body, String> {
     let e = entity(world, id).ok_or("an instance is gone")?;
     let own = placement(world, e).unwrap_or(Transform::IDENTITY).inverse();
     let mut leaves = vec![];
+    let mut boxes = vec![];
     let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
     for o in crate::occurrences(world, id) {
         let se = entity(world, o.shape).ok_or("a component is gone")?;
@@ -106,16 +109,18 @@ pub(crate) fn body(world: &World, id: StableId) -> Result<Body, String> {
             None => world.get::<ShapeSolid>(se).ok_or_else(|| format!("{} has no valid result", o.names.join(" › ")))?.solid.clone(),
         };
         let inner = own.then(&o.transform);
-        if let Some(bb) = solid.bounding_box() {
-            let (a, b) = inner.bounds(bb.min(), bb.max());
-            for k in 0..3 {
-                lo[k] = lo[k].min(a[k]);
-                hi[k] = hi[k].max(b[k]);
-            }
+        let (a, b) = match solid.bounding_box() {
+            Some(bb) => inner.bounds(bb.min(), bb.max()),
+            None => ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]),
+        };
+        for k in 0..3 {
+            lo[k] = lo[k].min(a[k]);
+            hi[k] = hi[k].max(b[k]);
         }
         leaves.push((solid, inner));
+        boxes.push((a, b));
     }
-    Ok(Body { leaves, lo, hi })
+    Ok(Body { leaves, boxes, lo, hi })
 }
 
 /// The values a joint sweeps between by default: its limits, else a full
@@ -251,25 +256,40 @@ fn gaps(world: &World, _j: &Joint, ids: &[(StableId, String)], frames: &[Vec<Tra
     let every = frames.len().div_ceil(180).max(1);
     let mut best = vec![(f64::INFINITY, 0.0, None::<[f64; 2]>); pairs.len()];
     let mut most = vec![0.0f64; pairs.len()];
+    // Leaves are placed only when a pair comes near enough to measure: an
+    // instance that holds still is placed once for the whole sweep, a moving
+    // one once per step (placing a mesh rebuilds its collision tree).
+    let still: Vec<bool> = (0..bodies.len()).map(|i| frames.iter().all(|f| f[i].distance(&frames[0][i], size.max(1.0)) <= 1e-9)).collect();
+    let mut placed_still: HashMap<(usize, usize), Manifold> = HashMap::new();
+    let apart = |(la, ha): ([f64; 3], [f64; 3]), (lb, hb): ([f64; 3], [f64; 3])| (0..3).map(|k| (lb[k] - ha[k]).max(la[k] - hb[k]).max(0.0).powi(2)).sum::<f64>().sqrt();
     for (n, f) in frames.iter().enumerate().step_by(every) {
         let value = out.frames[n].value;
-        let posed: HashMap<usize, Vec<Manifold>> = pairs
-            .iter()
-            .flat_map(|(a, b)| [*a, *b])
-            .map(|i| (i, bodies[i].leaves.iter().map(|(s, inner)| f[i].then(inner).solid(s)).collect()))
-            .collect();
+        let mut placed_now: HashMap<(usize, usize), Manifold> = HashMap::new();
         for (p, (a, b)) in pairs.iter().enumerate() {
-            // Placed boxes farther apart than the search: no closer look needed.
-            let (la, ha) = f[*a].bounds(bodies[*a].lo, bodies[*a].hi);
-            let (lb, hb) = f[*b].bounds(bodies[*b].lo, bodies[*b].hi);
-            let apart = (0..3).map(|k| (lb[k] - ha[k]).max(la[k] - hb[k]).max(0.0).powi(2)).sum::<f64>().sqrt();
-            let g = if apart >= search {
-                search
+            // Each step only asks whether the pair comes closer than it has so
+            // far: a pair in contact is then checked within a micron, not the
+            // whole search (measuring is per triangle pair within reach).
+            let reach = best[p].0.clamp(1e-3, search);
+            // Placed boxes farther apart than that: no closer look needed.
+            let g = if apart(f[*a].bounds(bodies[*a].lo, bodies[*a].hi), f[*b].bounds(bodies[*b].lo, bodies[*b].hi)) >= reach {
+                reach
             } else {
-                let mut g = f64::INFINITY;
-                for x in &posed[a] {
-                    for y in &posed[b] {
-                        g = g.min(x.min_gap(y, search));
+                let mut g = reach;
+                for (x, bx) in bodies[*a].boxes.iter().enumerate() {
+                    let wx = f[*a].bounds(bx.0, bx.1);
+                    for (y, by) in bodies[*b].boxes.iter().enumerate() {
+                        if apart(wx, f[*b].bounds(by.0, by.1)) >= g {
+                            continue;
+                        }
+                        for (i, l) in [(*a, x), (*b, y)] {
+                            let cache = if still[i] { &mut placed_still } else { &mut placed_now };
+                            cache.entry((i, l)).or_insert_with(|| {
+                                let (s, inner) = &bodies[i].leaves[l];
+                                f[i].then(inner).solid(s)
+                            });
+                        }
+                        let get = |i: usize, l: usize| if still[i] { &placed_still[&(i, l)] } else { &placed_now[&(i, l)] };
+                        g = g.min(get(*a, x).min_gap(get(*b, y), g));
                     }
                 }
                 g
