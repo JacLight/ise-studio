@@ -473,9 +473,11 @@ class Part {
  * and fabrication file). Names must be unique within the assembly.
  *   part("Left side", panel, { material: "Birch ply", process: "cnc_router" })
  */
-function part(name, solid, { material, process, stock: bought } = {}) {
+function part(name, solid, { material, process, stock: bought, ifc } = {}) {
   if (typeof name !== "string" || !name.trim()) throw new TypeError("part() needs a name");
   asSolid(solid);
+  // What it is as a building element: "IfcWall", or { class, level, psets, … } (see bim.js).
+  if (ifc !== undefined) __bimElement(name.trim(), ifc);
   if (bought !== undefined) {
     if (process !== undefined && process !== "buy") throw new Error(`part ${name}: a stock part is bought (process "buy")`);
     process = "buy";
@@ -766,6 +768,7 @@ function __result(out, p) {
     stock: __declared.stock ?? undefined,
     parts: Object.fromEntries(Object.entries(__declared.parts).filter(([n]) => names && names.has(n))),
     connectors: __declared.connectors.filter((c) => c.part === undefined || !off.has(c.part)),
+    bim: __bimDeclared(names),
   };
   const m = __mechanism;
   const mechanism = m.bodies.length || m.meshes.length || m.joints.length ? m : undefined;

@@ -15,6 +15,8 @@ use std::{
 };
 
 const PRELUDE: &str = include_str!("prelude.js");
+/// Building information vocabulary (levels, walls, doors, spaces…), after the prelude.
+const BIM_PRELUDE: &str = include_str!("bim.js");
 const MEMORY_LIMIT: usize = 512 * 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(10);
 /// Exact booleans on curved geometry are slower than meshes; exports get longer.
@@ -168,6 +170,7 @@ pub(crate) fn run_program<'f>(
         ctx.globals().set("__tolerance", tolerance).map_err(|e| e.to_string())?;
         ctx.globals().set("__inputs", if inputs.is_empty() { "{}" } else { inputs }).map_err(|e| e.to_string())?;
         run(&ctx, PRELUDE, "prelude")?;
+        run(&ctx, BIM_PRELUDE, "bim")?;
         let p = Object::new(ctx.clone()).map_err(|e| e.to_string())?;
         for (key, value) in params {
             p.set(key.as_str(), *value).map_err(|e| e.to_string())?;
@@ -741,6 +744,13 @@ fn install_native<'js>(ctx: &Ctx<'js>, arena: &Rc<RefCell<Arena>>) -> rquickjs::
             })?,
         )?;
     }
+
+    native.set(
+        "ifcData",
+        Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String| -> rquickjs::Result<String> {
+            crate::assets::ifc_json(&sha).map(|j| (*j).clone()).map_err(|e| throw(&ctx, format!("importIfc: {e}")))
+        })?,
+    )?;
 
     {
         let arena = arena.clone();

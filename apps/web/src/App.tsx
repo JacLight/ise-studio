@@ -1012,13 +1012,13 @@ export function App({ engine }: { engine: Engine }) {
   /** A STEP file in: stored by the engine, added as a part named after the file, then selected. */
   const importStep = useCallback(
     async (file: File) => {
-      if (!/\.(step|stp)$/i.test(file.name)) return notify("Forma imports STEP files (.step, .stp)");
+      if (!/\.(step|stp|ifc)$/i.test(file.name)) return notify("Forma imports STEP (.step, .stp) and IFC (.ifc) files");
       notify(`Importing ${file.name}…`);
       try {
         const res = await fetch(projectUrl(`/import/${encodeURIComponent(file.name)}?user=${encodeURIComponent(state.userId)}`), { method: "POST", body: file });
         if (!res.ok) return notify(await res.text());
-        const out = (await res.json()) as { id: string; bodies: number };
-        notify(`Imported ${file.name}: ${out.bodies} ${out.bodies === 1 ? "body" : "bodies"}`);
+        const out = (await res.json()) as { id: string; bodies: number; ifc?: boolean };
+        notify(out.ifc ? `Imported ${file.name}: ${out.bodies} building elements` : `Imported ${file.name}: ${out.bodies} ${out.bodies === 1 ? "body" : "bodies"}`);
         // The reply and the live update that brings the part can come in either order.
         selectWhenReady(out.id);
         setPanel("properties");
@@ -1452,7 +1452,7 @@ export function App({ engine }: { engine: Engine }) {
                 Import STEP
                 <input
                   type="file"
-                  accept=".step,.stp,.STEP,.STP"
+                  accept=".step,.stp,.STEP,.STP,.ifc,.IFC"
                   aria-label="Import STEP file"
                   onChange={(e) => {
                     const f = e.target.files?.[0];

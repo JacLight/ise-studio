@@ -13,6 +13,7 @@ de-shape.workspace = true
 de-assembly.workspace = true
 de-sourcing.workspace = true
 de-pcb.workspace = true
+de-bim.workspace = true
 de-occt.workspace = true
 sha2 = "0.10"
 tokio-tungstenite = "0.29"

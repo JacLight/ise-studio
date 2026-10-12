@@ -89,8 +89,8 @@ export function ToolRail(props: {
   openComments: number;
   onComment: () => void;
   /** The bill of materials / sourcing workbench open, if it is. */
-  bench: "bom" | "sourcing" | null;
-  onBench: (b: "bom" | "sourcing") => void;
+  bench: "bom" | "sourcing" | "building" | null;
+  onBench: (b: "bom" | "sourcing" | "building") => void;
   /** The Electronics (PCB) workspace open. */
   pcbOpen: boolean;
   onPcb: () => void;
@@ -134,6 +134,7 @@ export function ToolRail(props: {
       <IconButton icon="chip" label="Electronics: PCB boards (L)" className={props.pcbOpen ? "active" : ""} onClick={props.onPcb} />
       <IconButton icon="list" label="Bill of materials (B)" className={props.bench === "bom" ? "active" : ""} onClick={() => props.onBench("bom")} />
       <IconButton icon="truck" label="Sourcing: suppliers, quotes" className={props.bench === "sourcing" ? "active" : ""} onClick={() => props.onBench("sourcing")} />
+      <IconButton icon="building" label="Building: levels, schedules, IFC, plans" className={props.bench === "building" ? "active" : ""} onClick={() => props.onBench("building")} />
       <IconButton icon="spark" label="Open AI chat (A)" className="ai-tool" onClick={props.onAi} />
       <IconButton icon="minus" label="Hide tools" onClick={props.onHide} />
     </nav>

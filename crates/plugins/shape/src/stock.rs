@@ -89,10 +89,14 @@ pub struct Declared {
     pub parts: BTreeMap<String, Stock>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub connectors: Vec<Connector>,
+    /// Building information: parts as building elements (IFC class, level,
+    /// property sets, quantities), levels, spaces, openings, zones, grids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bim: Option<de_bim::Declared>,
 }
 
 impl Declared {
     pub fn is_empty(&self) -> bool {
-        self.stock.is_none() && self.parts.is_empty() && self.connectors.is_empty()
+        self.stock.is_none() && self.parts.is_empty() && self.connectors.is_empty() && self.bim.as_ref().is_none_or(|b| b.is_empty())
     }
 }

@@ -8,6 +8,7 @@
 //! Clients pick a project with `?project=<name>` on `/ws` and `/export`.
 
 mod ai;
+mod bim;
 mod history;
 mod machines;
 mod pcb;
@@ -2215,8 +2216,9 @@ async fn import(
 ) -> axum::response::Response {
     let fail = |code: StatusCode, message: String| (code, message).into_response();
     let lower = file.to_lowercase();
-    if !(lower.ends_with(".step") || lower.ends_with(".stp")) {
-        return fail(StatusCode::BAD_REQUEST, "Forma imports STEP files (.step, .stp)".into());
+    let is_ifc = lower.ends_with(".ifc");
+    if !(lower.ends_with(".step") || lower.ends_with(".stp") || is_ifc) {
+        return fail(StatusCode::BAD_REQUEST, "Forma imports STEP (.step, .stp) and IFC (.ifc) files".into());
     }
     let app = match server.project(query.get("project")) {
         Ok(app) => app,
@@ -2231,53 +2233,75 @@ async fn import(
             return fail(StatusCode::INTERNAL_SERVER_ERROR, format!("could not store the file: {e}"));
         }
     }
-    // Read it once now: a file that does not read is refused, not stored as a broken part.
-    let check = {
-        let stored = stored.clone();
-        tokio::task::spawn_blocking(move || -> Result<(usize, [f64; 6]), String> {
-            let mut a = de_occt::Arena::new();
-            let bodies = a.read_step(&stored)?;
-            if bodies.is_empty() {
-                return Err("the file has no solid bodies".into());
+    // An IFC file: its building elements, levels, spaces and properties (see `bim`).
+    let mut ifc_materials: Vec<String> = vec![];
+    let (name, source, shown, count) = if is_ifc {
+        let checked = {
+            let (file, body) = (file.clone(), body.clone());
+            tokio::task::spawn_blocking(move || bim::ifc_source(&file, &body)).await.unwrap_or_else(|e| Err(e.to_string()))
+        };
+        match checked {
+            Ok((name, source, shown, n, materials)) => {
+                ifc_materials = materials;
+                (name, source.replace("{SHA}", &sha), shown, n)
             }
-            let mut b = [f64::INFINITY, f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
-            for (_, s) in &bodies {
-                let x = a.bounds(*s)?;
-                for k in 0..3 {
-                    b[k] = b[k].min(x[k]);
-                    b[k + 3] = b[k + 3].max(x[k + 3]);
-                }
+            Err(e) => {
+                let _ = std::fs::remove_file(&stored);
+                return fail(StatusCode::UNPROCESSABLE_ENTITY, format!("{file} could not be read: {e}"));
             }
-            Ok((bodies.len(), b))
-        })
-        .await
-        .unwrap_or_else(|e| Err(e.to_string()))
-    };
-    let (count, bounds) = match check {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = std::fs::remove_file(&stored);
-            return fail(StatusCode::UNPROCESSABLE_ENTITY, format!("{file} could not be read: {e}"));
         }
+    } else {
+        // Read it once now: a file that does not read is refused, not stored as a broken part.
+        let check = {
+            let stored = stored.clone();
+            tokio::task::spawn_blocking(move || -> Result<(usize, [f64; 6]), String> {
+                let mut a = de_occt::Arena::new();
+                let bodies = a.read_step(&stored)?;
+                if bodies.is_empty() {
+                    return Err("the file has no solid bodies".into());
+                }
+                let mut b = [f64::INFINITY, f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+                for (_, s) in &bodies {
+                    let x = a.bounds(*s)?;
+                    for k in 0..3 {
+                        b[k] = b[k].min(x[k]);
+                        b[k + 3] = b[k + 3].max(x[k + 3]);
+                    }
+                }
+                Ok((bodies.len(), b))
+            })
+            .await
+            .unwrap_or_else(|e| Err(e.to_string()))
+        };
+        let (count, bounds) = match check {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = std::fs::remove_file(&stored);
+                return fail(StatusCode::UNPROCESSABLE_ENTITY, format!("{file} could not be read: {e}"));
+            }
+        };
+        // Show it about as finely as its size calls for (a bolt to ±0.01 mm, a building to ±5).
+        let size = (0..3).map(|k| bounds[k + 3] - bounds[k]).fold(0.0, f64::max);
+        let shown = (size / 4000.0).clamp(0.005, 5.0);
+        let name = file.rsplit_once('.').map(|(n, _)| n).unwrap_or(&file).replace(['_', '-'], " ");
+        let source = format!(
+            "// Imported from “{file}” ({count} {}). The geometry is the file's own exact B-rep:\n// the view meshes it, STEP exports pass it through untouched.\nreturn importStep(\"{sha}\");",
+            if count == 1 { "body" } else { "bodies" }
+        );
+        (name, source, shown, count)
     };
-    // Show it about as finely as its size calls for (a bolt to ±0.01 mm, a building to ±5).
-    let size = (0..3).map(|k| bounds[k + 3] - bounds[k]).fold(0.0, f64::max);
-    let shown = (size / 4000.0).clamp(0.005, 5.0);
-    let name = file.rsplit_once('.').map(|(n, _)| n).unwrap_or(&file).replace(['_', '-'], " ");
-    let source = format!(
-        "// Imported from “{file}” ({count} {}). The geometry is the file's own exact B-rep:\n// the view meshes it, STEP exports pass it through untouched.\nreturn importStep(\"{sha}\");",
-        if count == 1 { "body" } else { "bodies" }
-    );
     let user = query.get("user").filter(|u| !u.is_empty()).cloned().unwrap_or_else(|| "local".into());
     let actor = Actor { user_id: user, session_id: StableId::new().to_string() };
+    // The file's materials, as material entities (existing ones by name, else new at typical densities).
+    let materials = bim::materials(&app, &actor, &ifc_materials);
     let revision = app.project.lock().unwrap().revision();
     let message = json!({
         "type": "commit", "request_id": 1, "operation": "shape.create", "expected_revision": revision,
-        "parameters": { "name": name, "description": format!("Imported from {file}."), "source": source, "params": [], "display_tolerance": shown }
+        "parameters": { "name": name, "description": format!("Imported from {file}."), "source": source, "params": [], "display_tolerance": shown, "materials": materials }
     });
     let reply: Value = serde_json::from_str(&app.handle(&actor, &message.to_string())).unwrap_or_default();
     if reply["ok"] == true {
-        (StatusCode::OK, axum::Json(json!({ "id": reply["value"]["output"]["id"], "bodies": count, "sha": sha }))).into_response()
+        (StatusCode::OK, axum::Json(json!({ "id": reply["value"]["output"]["id"], "bodies": count, "ifc": is_ifc, "sha": sha }))).into_response()
     } else {
         fail(StatusCode::UNPROCESSABLE_ENTITY, reply["error"]["message"].as_str().unwrap_or("the import failed").to_string())
     }
@@ -2400,6 +2424,10 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/machines/jcz/status", axum::routing::post(machines::status))
         .route("/gears/{id}", axum::routing::post(gear_check))
         .route("/drawing/{file}", get(drawing))
+        .route("/bim/{id}", get(bim::structure))
+        .route("/ifc/{file}", get(bim::ifc))
+        .route("/schedule/{id}", get(bim::schedule))
+        .route("/plan/{file}", get(bim::plan))
         .route("/motion/{id}", get(motion))
         .route("/assembly-motion/{id}", get(assembly_motion))
         .route("/connectors/{id}", get(connectors))

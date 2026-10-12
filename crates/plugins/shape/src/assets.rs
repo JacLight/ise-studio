@@ -27,19 +27,42 @@ pub fn dir() -> Option<PathBuf> {
     DIR.get().cloned()
 }
 
-/// Every imported file a program reads (`importStep("<sha>")`).
+/// Every imported file a program reads (`importStep("<sha>")`,
+/// `importIfc("<sha>")`; an IFC file is a STEP physical file too, stored the same way).
 pub fn referenced(source: &str) -> Vec<String> {
     let mut out = Vec::new();
-    let mut rest = source;
-    while let Some(i) = rest.find("importStep(") {
-        rest = &rest[i + "importStep(".len()..];
-        let r = rest.trim_start().trim_start_matches(['"', '\'', '`']);
-        let sha: String = r.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
-        if sha.len() == 64 && !out.contains(&sha) {
-            out.push(sha);
+    for call in ["importStep(", "importIfc("] {
+        let mut rest = source;
+        while let Some(i) = rest.find(call) {
+            rest = &rest[i + call.len()..];
+            let r = rest.trim_start().trim_start_matches(['"', '\'', '`']);
+            let sha: String = r.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+            if sha.len() == 64 && !out.contains(&sha) {
+                out.push(sha);
+            }
         }
     }
     out
+}
+
+/// An imported IFC file read into elements, levels, spaces and the rest, as
+/// JSON for `importIfc` (cached: reading a file is the slow part).
+pub fn ifc_json(sha: &str) -> Result<std::sync::Arc<String>, String> {
+    static CACHE: OnceLock<Mutex<Vec<(String, std::sync::Arc<String>)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(Vec::new()));
+    if let Some((_, j)) = cache.lock().unwrap().iter().find(|(s, _)| s == sha) {
+        return Ok(j.clone());
+    }
+    let bytes = std::fs::read(path(sha)?).map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&bytes);
+    let read = de_bim::ifc_read::read(&text)?;
+    let json = std::sync::Arc::new(serde_json::to_string(&read).map_err(|e| e.to_string())?);
+    let mut c = cache.lock().unwrap();
+    if c.len() >= 4 {
+        c.remove(0);
+    }
+    c.push((sha.to_string(), json.clone()));
+    Ok(json)
 }
 
 /// A STEP file's bodies as meshes within `tolerance` mm of the exact surfaces,

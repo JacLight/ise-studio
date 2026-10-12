@@ -7,6 +7,7 @@ import { AnimatedNumber } from "./AnimatedNumber";
 import { type EntityView, projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
 import { PROCESS_NAMES, assemblyDef, instance, materialLook, program } from "./model";
+import { BuildingView } from "./Building";
 import { SourcingView } from "./Sourcing";
 
 export type Estimate = { material?: number; process?: number; setup: number; hours?: number; basis: string[] };
@@ -142,7 +143,7 @@ export function useBom(scope: string, qty: number, config: string | null, revisi
   return { bom, error, loading };
 }
 
-export type Bench = "bom" | "sourcing";
+export type Bench = "bom" | "sourcing" | "building";
 
 /** What a BOM can be of: the selected item when it is a shape, instance or assembly, else the project. */
 function scopeOf(entities: ReadonlyMap<string, EntityView>, id: string | null): { id: string; name: string } | null {
@@ -184,6 +185,9 @@ export function Workbench(props: {
           <button type="button" role="tab" aria-selected={props.tab === "sourcing"} className={props.tab === "sourcing" ? "active" : ""} onClick={() => props.onTab("sourcing")}>
             <Icon name="truck" /> Sourcing
           </button>
+          <button type="button" role="tab" aria-selected={props.tab === "building"} className={props.tab === "building" ? "active" : ""} onClick={() => props.onTab("building")}>
+            <Icon name="building" /> Building
+          </button>
         </div>
         <IconButton icon="close" label="Close (Esc)" onClick={props.onClose} />
       </header>
@@ -195,6 +199,8 @@ export function Workbench(props: {
             props.onTab("sourcing");
           }}
         />
+      ) : props.tab === "building" ? (
+        <BuildingView entities={props.entities} revision={props.revision} selected={props.selected} />
       ) : (
         <SourcingView entities={props.entities} revision={props.revision} run={props.run} notify={props.notify} open={rfqOpen} onOpen={setRfqOpen} onBom={() => props.onTab("bom")} />
       )}

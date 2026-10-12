@@ -16,6 +16,7 @@ Run it from your working folder. It acts on the open project. It is your only wa
 ./forma motion <joint> [steps] [--set '{"Elbow":40}']   sweep one joint through its limits: what moves, closest gaps, clashes, binding
 ./forma fit <assembly|instance|project> [all] [--motion]   screws, inserts, nuts, bearings, joined parts: do they fit (failures and warnings first)
 ./forma bom <assembly|instance|project> [qty]   the bill of materials as CSV (made parts with process, bought parts with part numbers, totals)
+./forma bim | schedule | ifc | plan  buildings: levels and rooms, schedules, IFC export/import, plans, sections, elevations (see Buildings)
 ./forma ops [filter]                 commands the engine accepts, with their JSON schemas
 ./forma commit <operation> '<json>'  run one command
 ./forma run steps.json               run several; "$N.id" refers to step N's output, {"$file": "x.js"} inlines a file
@@ -109,6 +110,29 @@ The same setup carries what a draughtsman adds (all lists optional; an empty set
 - Placed by hand: `place` on a frame (its lower left corner from the point it applies to, sheet mm), a datum (its square's centre from the point on the feature) or a detail (the enlarged view's centre on the sheet). Anything put off the sheet is moved back on; covering other lines is warned. Leave `place` out to let the drawing find room. Annotations in the JSON carry `origin` (what moves) and `anchor` (the point on the view).
 - Renaming a datum: `shape.rename_datum { target, part?, sheet?, from: "A", to: "D" }` changes the symbol and every frame reference to it (also inside `A-B`) on all sheets of the same part. A frame referring to a letter no datum symbol marks is warned.
 - Several sheets: `sheets: [{ part?, views?: ["front","top","right","iso"], scale?: 2, size?: "A4", section?, dimensions?, details?, frames?, datums?, hole_fits? }]` adds sheets 2, 3… after the standard first sheet (the setup's own fields). Each draws its part (default: the drawing's part / whole assembly), only the views listed (all when empty; an `["iso"]` sheet is the isometric alone at the sheet's scale), at `scale` (snapped to a standard one; warned and reduced if it does not fit). Title blocks read `A3 · 2 of 4`. `.pdf` is every sheet, a page each (`page=N` for one); `.dxf` is one sheet (`page=N`, default 1); `.zip` is a DXF per sheet. Datum letters belong to a part: two sheets of different parts may each have an A.
+
+## Buildings (BIM)
+
+A building is a shape program whose parts are its building elements. The building vocabulary (`crates/plugins/shape/src/bim.js`, loaded after the prelude) makes the geometry and says what each part is: IFC class, level, property sets (`Pset_WallCommon`…), base quantities (`Qto_…`: lengths mm, areas m², volumes m³), type, tag, classification. Read `bim.js` before writing one; `examples/house` is a worked two-storey house.
+
+- Structure: `site({ name, latitude, longitude, elevation (m), address, north })`, `building({ name, address })`, `const L1 = level("First floor", 3000, { height: 2800 })` (elevation is project z of the floor; elements take `level: L1`). `grid("Grid", { x: [0, 4500, 9000], y: [0, 3500], level })` draws numbered/lettered lines with bubbles and returns `{ at(i, j) }`.
+- Elements (each returns a list of parts; spread them into what the program returns): `wall(name, { from, to, thickness, height, level, base, align: center|left|right, external, loadBearing, openings, profile: [[along, up]…] (a gable's elevation), extend })`; `walls(name, { points, closed, names, openings: [[…], …] per segment })` mitres the corners; `slab(name, { outline: points|Profile, thickness, level (its top), holes, kind: FLOOR|ROOF|BASESLAB|LANDING })`; `roof(name, { x, y, width, depth, kind: gable|hip|shed|flat, slope, thickness, overhang, ridge: x|y, level (the eaves) })`; `column(name, { at, size|diameter|section, height, level })`; `beam(name, { from, to (top of beam, 3D), size|section })` with `section("IPE 300" | "HEA 160" | "HEB 200" | "SHS 100x5" | "RHS 120x80x5" | "CHS 114.3x5" | "200x400")`; `stair(name, { at (foot, centre of width), dir (degrees), width, rise, going, maxRiser, waist, level })` (equal risers, plan treads dashed above the cut, arrow up); `ramp(name, { at, dir, length, width, rise })`; `railing(name, { path, height, spacing, bars })`; `curtainWall(name, { from, to, height, panel: [w, h], mullion: [w, d] })` (mullions and panels in one IfcCurtainWall); `rebar(name, { path: [[x,y,z]…], diameter, count, spacing, direction, mark, grade })` (bending schedule quantities: diameter, length each, count, total, kg).
+- Openings in a wall's `openings`: `door({ at (centre along the wall from its start), preset: single|double|sliding|entrance|garage, width, height, swing: left|right, side: 1|-1 })`, `window({ at, preset: fixed|casement|double|triple|sliding|high, width, height, sill })`, `opening({ at, width, height, sill })`. Each cuts its host, is declared as an opening hosted by the wall and filled by the door or window (one part each, bought: part number = its type), tagged D01, W01… in order, with its plan symbol (swing arc, sill lines). Move a door by changing `at`: the wall is re-cut, the opening follows.
+- Rooms are not parts: `space(name, { outline: points (or [outer, hole…]), level, height, longName, usage, zone })`; `zone(name, [space names])`. Any other part: `part(name, solid, { material, ifc: "IfcFurniture" | { class, predefined, type, level, tag, psets, quantities, classification: { system, code, name } } })`. Several parts as one element: `group(name, "IfcStair", { level })` and `ifc: { parent: name }` on each part.
+- Untagged parts are exported as IfcBuildingElementProxy; their level is the highest at or below their bottom. Floor instances of a tower with no `level()` anywhere become storeys named after the top-level instances.
+
+Use it:
+
+```
+./forma bim [id|project]                                   levels and what stands on each, rooms with areas, zones, grids, untagged parts
+./forma schedule [id|project] [--class wall,door] [--level "Ground floor"] [--by level,class] [--csv] [--psets] [--out file.csv]
+./forma ifc export [id|project] [file.ifc]                 IFC4 (project › site › building › storeys, elements with geometry, openings, spaces, zones, grids, materials, psets, Qto)
+./forma ifc import <file.ifc>                              adds the file as a shape `return importIfc("<sha>")` (elements as parts, with everything above)
+./forma plan [id|project] --level "Ground floor" [--cut 1200] [--pdf f.pdf] [--dxf f.dxf]   level plan: walls cut solid, doors with swings, rooms with areas, grid, dimensions, north
+./forma plan [id|project] --section x 5000 [--looking east] | --elevation south   [--sheet A3] [--scale 100]
+```
+
+Schedules come from the engine (never count by hand): each element's declared quantities plus its measured volume (m³) and, for walls, the openings in it; spaces with floor area, perimeter and volume; zones with their spaces' totals; `--by level,class` totals counts and every additive quantity. The BOM (`./forma bom`) lists each line's IFC class. The person drops an `.ifc` file on the view to import it, and has the building's levels, schedules, IFC export and plans in the Building tab of the workbench (B). Say plainly what IFC import approximated (the import's notes: curved B-rep faces by their edge loops, half-space clips left uncut).
 
 ## Exact geometry, STEP in and out
 
