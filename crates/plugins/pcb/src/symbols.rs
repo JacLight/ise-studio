@@ -16,6 +16,7 @@
 
 use de_core::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Electrical type of a pin, for the electrical-rules check.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -67,6 +68,34 @@ impl Dir {
     }
 }
 
+/// How a pin is drawn where it meets the body (IEEE 91 / KiCad's graphic styles).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PinShape {
+    #[default]
+    Line,
+    /// A bubble: active low / inverted.
+    Inverted,
+    /// A clock wedge inside the body.
+    Clock,
+    InvertedClock,
+    /// Active-low input: a half-arrow outside the body.
+    InputLow,
+    ClockLow,
+    /// Active-low output.
+    OutputLow,
+    /// Falling-edge clock.
+    EdgeClockHigh,
+    /// Not a logic connection (a cross on the pin).
+    NonLogic,
+}
+
+impl PinShape {
+    pub fn is_line(&self) -> bool {
+        *self == PinShape::Line
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PinDef {
     /// Pin number as the datasheet gives it ("1", "A4").
@@ -90,6 +119,9 @@ pub struct PinDef {
     /// Footprint pads it lands on; empty: the pad numbered like the pin.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pads: Vec<String>,
+    /// Graphic style where it meets the body (bubble, clock, …).
+    #[serde(default, skip_serializing_if = "PinShape::is_line")]
+    pub shape: PinShape,
 }
 
 fn pin_len() -> f64 {
@@ -188,6 +220,27 @@ pub struct SymbolDef {
     pub virtual_part: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keywords: Vec<String>,
+    /// The other body style per unit (De Morgan: an AND drawn as an OR with
+    /// inverted pins); empty when the symbol has one. A placed part draws
+    /// `units`; changing style swaps the two (`pcb.lib.body_style`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub demorgan: Vec<Vec<Gfx>>,
+    /// Pin shapes of the other body style, by pin number (De Morgan's inverted pins).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub demorgan_pins: BTreeMap<String, PinShape>,
+    /// Which body style `units` draws now: 1 normal, 2 De Morgan.
+    #[serde(default = "one_style", skip_serializing_if = "is_one_style")]
+    pub body_style: u8,
+    /// Other library fields (Datasheet, Tolerance, Voltage, …), copied to every placement.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, String>,
+}
+
+fn one_style() -> u8 {
+    1
+}
+fn is_one_style(v: &u8) -> bool {
+    *v <= 1
 }
 
 impl SymbolDef {
@@ -237,7 +290,7 @@ impl SymbolDef {
 const G: f64 = 2.54;
 
 fn pin(number: &str, name: &str, at: [f64; 2], side: Dir, length: f64, etype: PinType) -> PinDef {
-    PinDef { number: number.into(), name: name.into(), at, side, length, etype, hidden: false, unit: 0, pads: vec![] }
+    PinDef { number: number.into(), name: name.into(), at, side, length, etype, hidden: false, unit: 0, pads: vec![], shape: PinShape::Line }
 }
 
 fn line(pts: &[[f64; 2]]) -> Gfx {
@@ -271,6 +324,10 @@ fn base(name: &str, prefix: &str, category: &str, description: &str) -> SymbolDe
         show_pin_names: false,
         virtual_part: false,
         keywords: vec![],
+        demorgan: vec![],
+        demorgan_pins: BTreeMap::new(),
+        body_style: 1,
+        fields: BTreeMap::new(),
     }
 }
 
@@ -627,7 +684,7 @@ pub fn ic(name: &str, pins: &[PinSpec]) -> SymbolDef {
                 Dir::Down => [(i as f64 - (n as f64 - 1.0) / 2.0) * G, half_h + G],
             };
             let at = [snap(at[0]), snap(at[1])];
-            out.push(PinDef { number: p.number.clone(), name: p.name.clone(), at, side, length: G, etype: p.etype, hidden: false, unit: 0, pads: p.pads.clone() });
+            out.push(PinDef { number: p.number.clone(), name: p.name.clone(), at, side, length: G, etype: p.etype, hidden: false, unit: 0, pads: p.pads.clone(), shape: PinShape::Line });
         }
     };
     place(&sides[0], Dir::Left);
@@ -635,7 +692,7 @@ pub fn ic(name: &str, pins: &[PinSpec]) -> SymbolDef {
     place(&sides[2], Dir::Up);
     place(&sides[3], Dir::Down);
     for p in pins.iter().filter(|p| p.hidden && !p.number.is_empty()) {
-        out.push(PinDef { number: p.number.clone(), name: p.name.clone(), at: [0.0, 0.0], side: Dir::Left, length: 0.0, etype: p.etype, hidden: true, unit: 0, pads: p.pads.clone() });
+        out.push(PinDef { number: p.number.clone(), name: p.name.clone(), at: [0.0, 0.0], side: Dir::Left, length: 0.0, etype: p.etype, hidden: true, unit: 0, pads: p.pads.clone(), shape: PinShape::Line });
     }
     s.pins = out;
     s.units = vec![vec![rect([-half_w, -half_h], [half_w, half_h], Fill::Body)]];
@@ -688,7 +745,7 @@ fn usb_c() -> SymbolDef {
     s.show_pin_names = true;
     s.keywords = vec!["usb".into(), "type-c".into(), "connector".into()];
     let x = 10.16;
-    let p = |num: &str, name: &str, y: f64, pads: &[&str]| PinDef { number: num.into(), name: name.into(), at: [x + 5.08, y], side: Dir::Right, length: 5.08, etype: PinType::Passive, hidden: false, unit: 0, pads: pads.iter().map(|s| s.to_string()).collect() };
+    let p = |num: &str, name: &str, y: f64, pads: &[&str]| PinDef { number: num.into(), name: name.into(), at: [x + 5.08, y], side: Dir::Right, length: 5.08, etype: PinType::Passive, hidden: false, unit: 0, pads: pads.iter().map(|s| s.to_string()).collect(), shape: PinShape::Line };
     s.pins = vec![
         p("A4", "VBUS", -10.16, &["A4", "A9", "B4", "B9"]),
         p("A5", "CC1", -5.08, &["A5"]),
@@ -697,8 +754,8 @@ fn usb_c() -> SymbolDef {
         p("A7", "D-", 5.08, &["A7", "B7"]),
         p("A8", "SBU1", 10.16, &["A8"]),
         p("B8", "SBU2", 12.7, &["B8"]),
-        PinDef { number: "A1".into(), name: "GND".into(), at: [0.0, 20.32], side: Dir::Down, length: 5.08, etype: PinType::Passive, hidden: false, unit: 0, pads: vec!["A1".into(), "A12".into(), "B1".into(), "B12".into()] },
-        PinDef { number: "S1".into(), name: "SHIELD".into(), at: [-7.62, 20.32], side: Dir::Down, length: 5.08, etype: PinType::Passive, hidden: false, unit: 0, pads: vec!["S1".into()] },
+        PinDef { number: "A1".into(), name: "GND".into(), at: [0.0, 20.32], side: Dir::Down, length: 5.08, etype: PinType::Passive, hidden: false, unit: 0, pads: vec!["A1".into(), "A12".into(), "B1".into(), "B12".into()], shape: PinShape::Line },
+        PinDef { number: "S1".into(), name: "SHIELD".into(), at: [-7.62, 20.32], side: Dir::Down, length: 5.08, etype: PinType::Passive, hidden: false, unit: 0, pads: vec!["S1".into()], shape: PinShape::Line },
     ];
     let mut g = vec![rect([-x, -15.24], [x, 15.24], Fill::Body)];
     // The receptacle, drawn: a rounded slot with its tongue.

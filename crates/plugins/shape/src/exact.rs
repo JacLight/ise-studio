@@ -37,10 +37,10 @@ pub struct ExactPart {
     pub shape: Shape,
 }
 
-struct State {
-    arena: Arena,
-    faceted: Vec<String>,
-    tolerance: f64,
+pub(crate) struct State {
+    pub(crate) arena: Arena,
+    pub(crate) faceted: Vec<String>,
+    pub(crate) tolerance: f64,
 }
 
 /// Runs `source` exactly. `name` names a program that returns a single solid.
@@ -77,6 +77,13 @@ fn exact_within(arena: Arena, name: &str, source: &str, params: &[(String, f64)]
         (None, Some(specs)) => specs.into_iter().map(|s| ExactPart { name: s.name, material: s.material, process: s.process, shape: shape(s.h) }).collect(),
         (None, None) => return Err((state.arena, "the program must return a Solid or a list of parts".into())),
     };
+    let mut state = state;
+    // Parts show in STEP in their material's colour (unless painted otherwise).
+    for p in &parts {
+        if let Some(c) = p.material.as_deref().and_then(crate::sweep::colour_of) {
+            let _ = state.arena.paint_default(p.shape, c);
+        }
+    }
     let mut faceted = state.faceted;
     faceted.sort();
     faceted.dedup();
@@ -198,6 +205,41 @@ fn weld(positions: &[f64], triangles: &[u32], eps: f64) -> (Vec<f64>, Vec<u32>) 
     (out, tris)
 }
 
+/// Splits a 3×4 affine matrix (row by row) into what OpenCascade does
+/// exactly: a mirror in z, a scale per axis, a turn (degrees about X, then
+/// Y, then Z) and a move. `None` when it shears.
+pub(crate) fn affine_parts(r: &[f64]) -> Option<(bool, [f64; 3], [f64; 3], [f64; 3])> {
+    let col = |j: usize| [r[j], r[4 + j], r[8 + j]];
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let (mut cx, mut cy, mut cz) = (col(0), col(1), col(2));
+    let s = [dot(cx, cx).sqrt(), dot(cy, cy).sqrt(), dot(cz, cz).sqrt()];
+    let big = s.iter().cloned().fold(0.0, f64::max);
+    if s.iter().any(|v| *v <= 1e-12 * big.max(1.0)) {
+        return None;
+    }
+    let eps = 1e-9 * big * big;
+    if dot(cx, cy).abs() > eps || dot(cy, cz).abs() > eps || dot(cx, cz).abs() > eps {
+        return None;
+    }
+    for (c, k) in [(&mut cx, s[0]), (&mut cy, s[1]), (&mut cz, s[2])] {
+        for v in c.iter_mut() {
+            *v /= k;
+        }
+    }
+    let det = cx[0] * (cy[1] * cz[2] - cy[2] * cz[1]) - cy[0] * (cx[1] * cz[2] - cx[2] * cz[1]) + cz[0] * (cx[1] * cy[2] - cx[2] * cy[1]);
+    let mirror = det < 0.0;
+    if mirror {
+        cz = cz.map(|v| -v);
+    }
+    // R = [cx cy cz] as columns; R = Rz·Ry·Rx.
+    let m = |i: usize, j: usize| [cx, cy, cz][j][i];
+    let ry = (-m(2, 0)).clamp(-1.0, 1.0).asin();
+    let (rx, rz) = if ry.cos().abs() > 1e-9 { (m(2, 1).atan2(m(2, 2)), m(1, 0).atan2(m(0, 0))) } else { (0.0, (-m(0, 1)).atan2(m(1, 1))) };
+    let clean = |v: f64| if v.abs() < 1e-12 { 0.0 } else { v };
+    let scale = s.map(|v| if (v - 1.0).abs() < 1e-12 { 1.0 } else { v });
+    Some((mirror, scale, [clean(rx.to_degrees()), clean(ry.to_degrees()), clean(rz.to_degrees())], [r[3], r[7], r[11]]))
+}
+
 /// The outlines of a flat face's triangles (edges only one triangle has),
 /// counter-clockwise around the area and clockwise around holes.
 fn boundary_loops(positions: &[f64], triangles: &[u32]) -> Vec<Vec<[f64; 2]>> {
@@ -299,6 +341,36 @@ fn install<'js>(ctx: &Ctx<'js>, state: &Rc<RefCell<State>>) -> rquickjs::Result<
                         let m = to_manifold(&mut s.arena, t, tol).map_err(|e| fail(&ctx, "hull", e))?.hull();
                         from_manifold(&mut s.arena, &m)
                     }
+                    "transform" => {
+                        let r: Vec<f64> = (0..12).map(v).collect::<rquickjs::Result<_>>()?;
+                        match affine_parts(&r) {
+                            // Scale (with a mirror), turn, move: exact.
+                            Some((mirror, scale, euler, at)) => (|| {
+                                let mut x = t;
+                                if mirror {
+                                    x = s.arena.mirror(x, [0.0, 0.0, 1.0])?;
+                                }
+                                if scale != [1.0; 3] {
+                                    x = s.arena.scale(x, scale)?;
+                                }
+                                if euler != [0.0; 3] {
+                                    x = s.arena.rotate(x, euler)?;
+                                }
+                                if at != [0.0; 3] {
+                                    x = s.arena.translate(x, at)?;
+                                }
+                                Ok(x)
+                            })(),
+                            // A shear: through the mesh.
+                            None => {
+                                s.faceted.push("a sheared transform".into());
+                                let tol = s.tolerance;
+                                let m = to_manifold(&mut s.arena, t, tol).map_err(|e| fail(&ctx, "transform", e))?;
+                                let m = m.transform(&[r[0], r[4], r[8], r[1], r[5], r[9], r[2], r[6], r[10], r[3], r[7], r[11]]);
+                                from_manifold(&mut s.arena, &m)
+                            }
+                        }
+                    }
                     other => return Err(throw(&ctx, format!("unknown operation {other}"))),
                 };
                 r.map(handle).map_err(|e| fail(&ctx, &op, e))
@@ -311,6 +383,14 @@ fn install<'js>(ctx: &Ctx<'js>, state: &Rc<RefCell<State>>) -> rquickjs::Result<
         native.set(
             "sbool",
             Function::new(ctx.clone(), move |ctx: Ctx<'js>, op: String, a: u32, b: u32| -> rquickjs::Result<u32> {
+                if op == "minkowski" {
+                    let mut s = st.borrow_mut();
+                    s.faceted.push("Minkowski sum".into());
+                    let tol = s.tolerance;
+                    let x = to_manifold(&mut s.arena, shape(a), tol).map_err(|e| fail(&ctx, "minkowski", e))?;
+                    let y = to_manifold(&mut s.arena, shape(b), tol).map_err(|e| fail(&ctx, "minkowski", e))?;
+                    return from_manifold(&mut s.arena, &x.minkowski_sum(&y)).map(handle).map_err(|e| fail(&ctx, "minkowski", e));
+                }
                 let kind = match op.as_str() {
                     "union" => Bool::Union,
                     "difference" => Bool::Difference,
@@ -747,6 +827,9 @@ fn install<'js>(ctx: &Ctx<'js>, state: &Rc<RefCell<State>>) -> rquickjs::Result<
             })?,
         )?;
     }
+
+    // Sweeps, lofts, offsets and the rest (see `sweep`).
+    crate::sweep::install_exact(ctx, &native, state)?;
 
     ctx.globals().set("__native", native)?;
     Ok(())
