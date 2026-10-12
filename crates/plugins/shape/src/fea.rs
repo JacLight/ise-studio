@@ -13,10 +13,17 @@
 //! Units: millimetres, newtons, megapascals (N/mm²).
 
 mod contact;
+mod eigen;
+pub mod frame;
+mod inp;
 pub mod materials;
 mod multigrid;
+mod post;
 mod refine;
 
+pub use eigen::{Buckling, BucklingMode, buckling, modes_study};
+pub use post::{Fatigue, FatigueSpec, Probe, Section, csv, cube_near, fatigue, marin, path, principal, probe, section};
+pub use inp::{InpKind, calculix_inp};
 pub use refine::Peak;
 
 use rayon::prelude::*;
@@ -99,7 +106,9 @@ fn v_norm(a: [f64; 3]) -> f64 {
 /// way it faces, so it is found again after the part changes.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
 pub struct FacePick {
+    #[serde(default)]
     pub at: [f64; 3],
+    #[serde(default)]
     pub probe: [f64; 3],
     pub normal: [f64; 3],
     /// The part it is on, when not the study's own part (another part
@@ -111,6 +120,11 @@ pub struct FacePick {
     /// surface's where it was picked.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub curved: bool,
+    /// Instead of `at` and `probe`: a point on or near the face (part
+    /// coordinates, mm), as the AI gives it; saving the study pins it to
+    /// where it sits (see `studies::pin_face`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub near: Option<[f64; 3]>,
 }
 
 /// How two parts studied together act where they touch.
@@ -190,6 +204,42 @@ pub struct StudySpec {
     /// Re-solve the most stressed spot on finer cubes for its true peak.
     #[serde(default = "yes")]
     pub refine: bool,
+    /// Faces that slide (held square to themselves only): symmetry planes, frictionless supports.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sliding: Vec<FacePick>,
+    /// Faces moved by set amounts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub displacements: Vec<crate::studies::DisplacementPick>,
+    /// Faces on springs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub elastic_supports: Vec<crate::studies::ElasticPick>,
+    /// Bearing loads on round faces.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bearing_loads: Vec<crate::studies::BearingPick>,
+    /// Forces and moments at a point, carried to a face.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remote_loads: Vec<crate::studies::RemotePick>,
+    /// Gravity (m/s²) on the parts' own weight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gravity: Option<[f64; 3]>,
+    /// Spinning about an axis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spin: Option<Spin>,
+    /// Bolts pulled tight first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bolts: Vec<Bolt>,
+    /// Let the material yield (bilinear plasticity).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub plastic: bool,
+    /// Vibration counts the stiffness the loads' stress adds or takes away.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prestress: bool,
+    /// How the loads come and go, for a fatigue estimate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fatigue: Option<post::FatigueSpec>,
+    /// Heat over time instead of steady.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transient: Option<Transient>,
 }
 
 fn yes() -> bool {
@@ -231,6 +281,18 @@ impl StudySpec {
             && self.heat_stress.is_none()
             && self.resolution == default_resolution()
             && self.refine
+            && self.sliding.is_empty()
+            && self.displacements.is_empty()
+            && self.elastic_supports.is_empty()
+            && self.bearing_loads.is_empty()
+            && self.remote_loads.is_empty()
+            && self.gravity.is_none()
+            && self.spin.is_none()
+            && self.bolts.is_empty()
+            && !self.plastic
+            && !self.prestress
+            && self.fatigue.is_none()
+            && self.transient.is_none()
     }
 }
 
@@ -629,7 +691,11 @@ fn g_matrix(xi: [f64; 3], h: f64) -> [[f64; 9]; 6] {
 
 /// The condensed 24×24 stiffness of a cube of side h.
 fn element_stiffness(m: &Elastic, h: f64) -> Vec<f64> {
-    let d = d_matrix(m);
+    element_stiffness_d(&d_matrix(m), h)
+}
+
+/// The same with any material matrix (an elastoplastic tangent).
+fn element_stiffness_d(d: &[[f64; 6]; 6], h: f64) -> Vec<f64> {
     let gp = 1.0 / 3f64.sqrt();
     let w = (h / 2.0).powi(3); // Jacobian determinant × unit weights
     let mut kuu = vec![0.0; 24 * 24];
@@ -1184,22 +1250,11 @@ struct Model {
     /// Geometric stiffness from a stress state, 8 × 8 per cube (the same for
     /// each direction): a prestressed part, or the buckling eigenproblem.
     geo: Option<Vec<[f64; 64]>>,
+    /// Cubes with a stiffness of their own (an elastoplastic tangent), by cube; empty: none.
+    own: Vec<Option<Box<[f64]>>>,
 }
 
 impl Model {
-    fn build(positions: &[f32], triangles: &[u32], material: &Elastic, supports: &[Face], bores: &[Bore], resolution: usize) -> Result<Model, String> {
-        if supports.is_empty() && bores.is_empty() {
-            return Err("add a support: a face the part is held by".into());
-        }
-        let grid = voxelize(positions, triangles, resolution.clamp(8, 160));
-        let fill = grid.fill.clone();
-        let supports: Vec<(usize, &Face)> = supports.iter().map(|f| (0, f)).collect();
-        let bores: Vec<(usize, &Bore)> = bores.iter().map(|b| (0, b)).collect();
-        let mut model = Model::assemble(grid, &[fill], &[*material], &["the part".into()], &supports, &bores, true)?;
-        model.finish(&[false]);
-        Ok(model)
-    }
-
     /// Several parts on one grid, each cube going to the part that fills
     /// most of it, each part with nodes of its own. Supports and bores name
     /// the part they hold. `whole`: the grid holds the whole part, so it
@@ -1283,7 +1338,7 @@ impl Model {
         }
         let kes: Vec<Vec<f64>> = materials.iter().map(|m| element_stiffness(m, grid.h)).collect();
         let weight: Vec<f64> = cells.iter().map(|&[i, j, k]| (grid.fill[grid.cell(i, j, k)] as f64).min(1.0)).collect();
-        Ok(Model { grid, blocks, corners, cells, part, nodes, used, fixed, kes, weight, el_diag: vec![], diag: vec![], springs: vec![], floating: vec![None; parts], mg: None, base: vec![], geo: None })
+        Ok(Model { grid, blocks, corners, cells, part, nodes, used, fixed, kes, weight, el_diag: vec![], diag: vec![], springs: vec![], floating: vec![None; parts], mg: None, base: vec![], geo: None, own: vec![] })
     }
 
     /// Whether each part is held by a support of its own.
@@ -1301,11 +1356,26 @@ impl Model {
             (0..24).for_each(|r| ke[r * 25] += s);
             self.floating[p] = Some(s);
         }
+        self.rebuild();
+    }
+
+    /// Gives cubes stiffnesses of their own (None: elastic), then rebuilds the diagonal and the coarse grids.
+    fn set_own(&mut self, own: Vec<Option<Box<[f64]>>>) {
+        self.own = own;
+        self.rebuild();
+    }
+
+    /// The diagonal of the cubes, the springs (the study's own), and the coarse grids.
+    fn rebuild(&mut self) {
         let mut el_diag = vec![0.0; 3 * self.nodes];
-        for ((c, w), &p) in self.corners.iter().zip(&self.weight).zip(&self.part) {
+        for (e, ((c, w), &p)) in self.corners.iter().zip(&self.weight).zip(&self.part).enumerate() {
+            let ke: &[f64] = match self.own.get(e) {
+                Some(Some(m)) => m,
+                _ => &self.kes[p],
+            };
             for (r, &n) in c.iter().enumerate() {
                 for d in 0..3 {
-                    el_diag[3 * n + d] += w * self.kes[p][(3 * r + d) * 24 + 3 * r + d];
+                    el_diag[3 * n + d] += w * ke[(3 * r + d) * 24 + 3 * r + d];
                 }
             }
         }
@@ -1387,17 +1457,28 @@ impl Model {
 
     /// K·x with every entry (a held node's is the force holding it there).
     fn apply_raw(&self, x: &[f64]) -> Vec<f64> {
+        self.apply_with(x, true)
+    }
+
+    /// K·x; `own`: with each cube's own matrix where it has one (an
+    /// elastoplastic tangent), else every cube elastic.
+    fn apply_with(&self, x: &[f64], own: bool) -> Vec<f64> {
         let n3 = 3 * self.nodes;
         let mut y = self
             .corners
             .par_chunks(4096)
+            .enumerate()
             .zip(self.weight.par_chunks(4096))
             .zip(self.part.par_chunks(4096))
             .fold(
                 || vec![0.0; n3],
-                |mut y, ((chunk, weights), parts)| {
-                    for ((c, w), &p) in chunk.iter().zip(weights).zip(parts) {
-                        let ke = &self.kes[p];
+                |mut y, (((chunk_at, chunk), weights), parts)| {
+                    for (i, ((c, w), &p)) in chunk.iter().zip(weights).zip(parts).enumerate() {
+                        let e = chunk_at * 4096 + i;
+                        let ke: &[f64] = match self.own.get(e) {
+                            Some(Some(m)) if own => m,
+                            _ => &self.kes[p],
+                        };
                         let mut xe = [0.0; 24];
                         for (a, &n) in c.iter().enumerate() {
                             xe[3 * a..3 * a + 3].copy_from_slice(&x[3 * n..3 * n + 3]);
@@ -1497,7 +1578,7 @@ pub fn solve(positions: &[f32], triangles: &[u32], material: &Elastic, study: &S
 /// `contact`). Faces name the part they are on (none: the first part); bores
 /// are on the first part.
 pub fn solve_parts(bodies: &[Body], study: &Study) -> Result<Result_, String> {
-    let mut s = Setup::new(bodies, study)?;
+    let mut s = Setup::build(bodies, study, true)?;
     let several = bodies.len() > 1;
     let count = bodies.len();
     let nodes = s.model.nodes;
@@ -1833,12 +1914,13 @@ struct Setup {
 }
 
 impl Setup {
-    fn new(bodies: &[Body], study: &Study) -> Result<Setup, String> {
+    /// `need_load`: a static study needs something loading it; vibration does not.
+    fn build(bodies: &[Body], study: &Study, need_load: bool) -> Result<Setup, String> {
         if bodies.is_empty() {
             return Err("nothing to study".into());
         }
         let press_fit = bodies.len() > 1 && study.contacts.iter().any(|c| c.press_fit);
-        if !study.loaded() && study.heat.is_none() && !press_fit {
+        if need_load && !study.loaded() && study.heat.is_none() && !press_fit {
             return Err("add a load: a face and the force on it".into());
         }
         if !study.held() {
@@ -2284,20 +2366,67 @@ fn plastic_modulus(m: &Elastic) -> f64 {
     if m.tangent <= 0.0 { 0.0 } else { m.e * m.tangent / (m.e - m.tangent).max(1e-9 * m.e) }
 }
 
-/// Bilinear plasticity by the initial-strain method: the loads in steps;
-/// in each, the plastic strain is found by solving the elastic part with
-/// the plastic strain as a strain the cubes take freely, returning each
-/// cube's trial stress to the yield surface, until the plastic strain stops changing.
+/// The elastoplastic tangent of von Mises with linear hardening at a
+/// stress on the yield surface: D − (D·n)(n·D)/(n:D:n + H), with
+/// n = 3s/2q, which is D − 4G²·n nᵀ/(3G + H) (engineering shears).
+fn tangent_d(m: &Elastic, stress: &[f64; 6]) -> [[f64; 6]; 6] {
+    let mut d = d_matrix(m);
+    let p = (stress[0] + stress[1] + stress[2]) / 3.0;
+    let s = [stress[0] - p, stress[1] - p, stress[2] - p, stress[3], stress[4], stress[5]];
+    let q = (1.5 * (s[0] * s[0] + s[1] * s[1] + s[2] * s[2] + 2.0 * (s[3] * s[3] + s[4] * s[4] + s[5] * s[5]))).sqrt();
+    if q <= 0.0 {
+        return d;
+    }
+    let g = m.e / (2.0 * (1.0 + m.nu));
+    let a: [f64; 6] = std::array::from_fn(|r| 2.0 * g * 1.5 * s[r] / q);
+    let c = 1.0 / (3.0 * g + plastic_modulus(m));
+    for i in 0..6 {
+        for j in 0..6 {
+            d[i][j] -= c * a[i] * a[j];
+        }
+    }
+    d
+}
+
+/// A yielding cube's tangent stiffness, consistent with how its plastic
+/// strain acts (one strain over the cube, read at its centre): the elastic
+/// cube with the centre's stiffness changed, Kₑ + h³·B(0)ᵀ·(D_ep − D)·B(0).
+/// (The cube's bending modes stay elastic, as they do in the out-of-balance force.)
+fn plastic_stiffness(ke: &[f64], d: &[[f64; 6]; 6], dep: &[[f64; 6]; 6], h: f64) -> Box<[f64]> {
+    let b0 = b_matrix([0.0; 3], h);
+    let dd: [[f64; 6]; 6] = std::array::from_fn(|i| std::array::from_fn(|j| dep[i][j] - d[i][j]));
+    let db: Vec<[f64; 24]> = (0..6).map(|r| std::array::from_fn(|j| (0..6).map(|k| dd[r][k] * b0[k][j]).sum())).collect();
+    let v = h * h * h;
+    let mut out = ke.to_vec();
+    for i in 0..24 {
+        for j in 0..24 {
+            out[i * 24 + j] += v * (0..6).map(|r| b0[r][i] * db[r][j]).sum::<f64>();
+        }
+    }
+    out.into_boxed_slice()
+}
+
+/// Bilinear plasticity: the loads in steps, each found by Newton's method.
+/// The cubes' plastic strain is a strain they take freely (as heat is): the
+/// out-of-balance force is f + F(ε₀ + εₚ) − K·u, with εₚ the radial return
+/// of each cube's trial stress from the strain at the start of the step,
+/// and each correction is solved with the cubes that yield on their
+/// elastoplastic tangent. One part, without contact.
 fn plastic_solve(s: &mut Setup, ds: &[[[f64; 6]; 6]], base: &[[f64; 6]], u: &mut Vec<f64>, notes: &mut Vec<String>) -> Result<(Vec<[f64; 6]>, usize, bool, PlasticSummary, Vec<[f64; 6]>), String> {
     const STEPS: usize = 10;
-    const ROUNDS: usize = 80;
+    const ROUNDS: usize = 40;
+    if s.pairs.is_some() {
+        return Err("plasticity is for one part on its own: leave out the touching parts".into());
+    }
     let cells = s.model.cells.len();
+    let h = s.model.grid.h;
     let mut ep = vec![[0.0; 6]; cells];
     let mut hardened = vec![0.0; cells];
     let mut iterations = 0;
     let mut settled = true;
     let mut tensors = vec![[0.0; 6]; cells];
     let fixed_dofs: Vec<usize> = (0..u.len()).filter(|&i| s.model.used[i / 3] && s.model.fixed[i]).collect();
+    let scale = s.f.iter().map(|v| v.abs()).sum::<f64>() + eigen_forces(&s.model, ds, base).iter().map(|v| v.abs()).sum::<f64>() + s.model.apply_with(&s.u0, false).iter().map(|v| v.abs()).sum::<f64>();
     for step in 1..=STEPS {
         let frac = step as f64 / STEPS as f64;
         for &i in &fixed_dofs {
@@ -2305,30 +2434,51 @@ fn plastic_solve(s: &mut Setup, ds: &[[[f64; 6]; 6]], base: &[[f64; 6]], u: &mut
         }
         let mut trial_ep = ep.clone();
         let mut new_hard = hardened.clone();
+        let mut yielding = vec![false; cells];
         let mut done = false;
         for _ in 0..ROUNDS {
-            let eps: Vec<[f64; 6]> = (0..cells).map(|e| std::array::from_fn(|r| base[e][r] * frac + trial_ep[e][r])).collect();
-            let fe = eigen_forces(&s.model, ds, &eps);
-            let rhs: Vec<f64> = s.f.iter().zip(&fe).map(|(a, b)| a * frac + b).collect();
-            let (it, _, _) = solve_rhs(&mut s.model, s.pairs.as_ref(), &rhs, u);
-            iterations += it;
-            // Trial stresses against the plastic strain at the start of the step.
+            // Each cube's stress from the movement, returned to the yield surface.
             let committed: Vec<[f64; 6]> = (0..cells).map(|e| std::array::from_fn(|r| base[e][r] * frac + ep[e][r])).collect();
             let trial = strain_stresses(&s.model, ds, u, &committed);
-            let mut change: f64 = 0.0;
-            let mut scale: f64 = 0.0;
             for e in 0..cells {
                 let m = &s.materials[s.model.part[e]];
-                scale = scale.max(m.yield_strength / m.e);
-                let (next, dh) = match return_map(&trial[e], m, hardened[e]) {
-                    Some((dep, dh)) => (std::array::from_fn(|r| ep[e][r] + dep[r]), dh),
-                    None => (ep[e], 0.0),
-                };
-                change = change.max((0..6).map(|r| (next[r] - trial_ep[e][r]).abs()).fold(0.0, f64::max));
-                trial_ep[e] = next;
-                new_hard[e] = hardened[e] + dh;
+                match return_map(&trial[e], m, hardened[e]) {
+                    Some((dep, dh)) => {
+                        trial_ep[e] = std::array::from_fn(|r| ep[e][r] + dep[r]);
+                        new_hard[e] = hardened[e] + dh;
+                        yielding[e] = true;
+                    }
+                    None => {
+                        trial_ep[e] = ep[e];
+                        new_hard[e] = hardened[e];
+                        yielding[e] = false;
+                    }
+                }
             }
-            if change <= 1e-4 * scale {
+            let eps: Vec<[f64; 6]> = (0..cells).map(|e| std::array::from_fn(|r| base[e][r] * frac + trial_ep[e][r])).collect();
+            tensors = strain_stresses(&s.model, ds, u, &eps);
+            // Out of balance: f + F(ε) − K·u on the free directions.
+            let fe = eigen_forces(&s.model, ds, &eps);
+            let ku = s.model.apply_with(u, false);
+            let mut r: Vec<f64> = (0..u.len()).map(|i| s.f[i] * frac + fe[i] - ku[i]).collect();
+            s.model.mask(&mut r);
+            let size: f64 = r.iter().map(|v| v.abs()).sum();
+            if size <= 1e-6 * scale.max(1e-300) {
+                done = true;
+                break;
+            }
+            // The correction on the tangent stiffness (rebuilt when what yields changed).
+            let own: Vec<Option<Box<[f64]>>> = (0..cells)
+                .map(|e| yielding[e].then(|| plastic_stiffness(&s.model.kes[s.model.part[e]], &ds[s.model.part[e]], &tangent_d(&s.materials[s.model.part[e]], &tensors[e]), h)))
+                .collect();
+            s.model.set_own(own);
+            let mut du = vec![0.0; u.len()];
+            let (it, _) = s.model.cg(&r, &mut du, 1e-8);
+            iterations += it;
+            u.iter_mut().zip(&du).for_each(|(a, b)| *a += b);
+            // A correction too small to matter: settled (to the solver's own precision).
+            let (step_size, whole) = (du.iter().map(|v| v.abs()).fold(0.0, f64::max), u.iter().map(|v| v.abs()).fold(0.0, f64::max));
+            if step_size <= 1e-7 * whole.max(1e-300) {
                 done = true;
                 break;
             }
@@ -2336,21 +2486,15 @@ fn plastic_solve(s: &mut Setup, ds: &[[[f64; 6]; 6]], base: &[[f64; 6]], u: &mut
         settled &= done;
         ep = trial_ep;
         hardened = new_hard;
-        let eps: Vec<[f64; 6]> = (0..cells).map(|e| std::array::from_fn(|r| base[e][r] * frac + ep[e][r])).collect();
-        tensors = strain_stresses(&s.model, ds, u, &eps);
     }
+    s.model.set_own(vec![]);
     let yielded = hardened.iter().filter(|&&a| a > 0.0).count();
     let top = (0..cells).max_by(|&a, &b| hardened[a].total_cmp(&hardened[b])).unwrap_or(0);
     let tangent = s.materials[0].tangent;
     if !settled {
         notes.push("The plastic flow did not settle in every load step: the part may be near collapse (it cannot carry much more), and the figures are approximate.".into());
     }
-    notes.push(format!(
-        "Plasticity: von Mises with linear hardening ({} MPa past yield), the loads applied in {STEPS} steps; {} of {} cubes yielded.",
-        trim(tangent),
-        yielded,
-        cells
-    ));
+    notes.push(format!("Plasticity: von Mises with linear hardening ({} MPa past yield), the loads applied in {STEPS} steps; {} of {} cubes yielded.", trim(tangent), yielded, cells));
     let summary = PlasticSummary { max_strain: equivalent_strain(&ep[top]), at: cell_centre(&s.model.grid, s.model.cells[top]), yielded, steps: STEPS, settled, tangent };
     Ok((tensors, iterations, settled, summary, ep))
 }
@@ -2583,139 +2727,9 @@ fn symmetric_eigen(mut a: Vec<Vec<f64>>) -> (Vec<f64>, Vec<Vec<f64>>) {
 /// step solving K·z = M·x by conjugate gradients from the last answer.
 /// `density` in kg/m³.
 pub fn modes(positions: &[f32], triangles: &[u32], material: &Elastic, density: f64, supports: &[Face], count: usize, resolution: usize) -> Result<Modes, String> {
-    let model = Model::build(positions, triangles, material, supports, &[], resolution)?;
-    let count = count.clamp(1, 8);
-    let p = count + 3;
-    let n3 = 3 * model.nodes;
-    let h = model.grid.h;
-    // Lumped mass: each cube's mass (kg) shared by its 8 corners.
-    let cube = density * 1e-9 * h * h * h;
-    let mut mass = vec![0.0; n3];
-    for (c, w) in model.corners.iter().zip(&model.weight) {
-        for &n in c {
-            for d in 0..3 {
-                mass[3 * n + d] += cube * w / 8.0;
-            }
-        }
-    }
-    // Start from varied vectors (a fixed sequence, so results repeat).
-    let mut seed = 0x2545_f491_4f6c_dd1du64;
-    let mut rnd = move || {
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        (seed % 2000) as f64 / 1000.0 - 1.0
-    };
-    let mut x: Vec<Vec<f64>> = (0..p)
-        .map(|_| {
-            let mut v: Vec<f64> = (0..n3).map(|_| rnd()).collect();
-            model.mask(&mut v);
-            v
-        })
-        .collect();
-    let mut z: Vec<Vec<f64>> = vec![vec![0.0; n3]; p];
-    let mut last = vec![0.0; p];
-    let mut notes = vec![];
-    let mut lambda = vec![0.0; p];
-    for round in 0..40 {
-        let mut settled = true;
-        // Loose solves while the subspace is still far off, tight once it settles.
-        let tol = if round < 3 { 1e-4 } else { 1e-7 };
-        let solved: Vec<(Vec<f64>, bool)> = (0..p)
-            .into_par_iter()
-            .map(|i| {
-                let y: Vec<f64> = x[i].iter().zip(&mass).map(|(a, m)| a * m).collect();
-                let mut zi = z[i].clone();
-                let (_, ok) = model.cg(&y, &mut zi, tol);
-                (zi, ok)
-            })
-            .collect();
-        for (i, (zi, ok)) in solved.into_iter().enumerate() {
-            z[i] = zi;
-            settled &= ok;
-        }
-        if !settled && round == 0 {
-            notes.push("The part is not fully held: it can move freely, so the lowest frequencies are near zero. Add supports.".into());
-        }
-        // Rayleigh–Ritz in the space of z.
-        let kz: Vec<Vec<f64>> = z.iter().map(|zi| model.apply(zi)).collect();
-        let kr: Vec<Vec<f64>> = (0..p).map(|i| (0..p).map(|j| z[i].iter().zip(&kz[j]).map(|(a, b)| a * b).sum()).collect()).collect();
-        let mr: Vec<Vec<f64>> = (0..p).map(|i| (0..p).map(|j| z[i].iter().zip(&z[j]).zip(&mass).map(|((a, b), m)| a * b * m).sum()).collect()).collect();
-        // Mr = L Lᵀ; A = L⁻¹ Kr L⁻ᵀ.
-        let mut l = vec![vec![0.0; p]; p];
-        for i in 0..p {
-            for j in 0..=i {
-                let s: f64 = mr[i][j] - (0..j).map(|k| l[i][k] * l[j][k]).sum::<f64>();
-                if i == j {
-                    l[i][i] = s.max(1e-300).sqrt();
-                } else {
-                    l[i][j] = s / l[j][j];
-                }
-            }
-        }
-        let solve_l = |b: &[f64]| -> Vec<f64> {
-            let mut y = vec![0.0; p];
-            for i in 0..p {
-                y[i] = (b[i] - (0..i).map(|k| l[i][k] * y[k]).sum::<f64>()) / l[i][i];
-            }
-            y
-        };
-        // B = L⁻¹ Kr (columns), A = L⁻¹ Bᵀ.
-        let b: Vec<Vec<f64>> = (0..p).map(|j| solve_l(&(0..p).map(|i| kr[i][j]).collect::<Vec<_>>())).collect(); // b[j] = column j
-        let a: Vec<Vec<f64>> = (0..p).map(|i| solve_l(&(0..p).map(|j| b[j][i]).collect::<Vec<_>>())).collect();
-        let a: Vec<Vec<f64>> = (0..p).map(|i| (0..p).map(|j| (a[i][j] + a[j][i]) / 2.0).collect()).collect();
-        let (vals, vecs) = symmetric_eigen(a);
-        // Q = L⁻ᵀ V.
-        let solve_lt = |b: &[f64]| -> Vec<f64> {
-            let mut y = vec![0.0; p];
-            for i in (0..p).rev() {
-                y[i] = (b[i] - (i + 1..p).map(|k| l[k][i] * y[k]).sum::<f64>()) / l[i][i];
-            }
-            y
-        };
-        let q: Vec<Vec<f64>> = vecs.iter().map(|v| solve_lt(v)).collect(); // q[i] = coefficients of mode i
-        x = q.iter().map(|qi| (0..n3).map(|d| (0..p).map(|j| z[j][d] * qi[j]).sum()).collect()).collect();
-        // The next solves' answers are close to x/λ: start there.
-        z = x.iter().zip(&vals).map(|(xi, l)| xi.iter().map(|v| v / l.max(1e-300)).collect()).collect();
-        lambda = vals;
-        let done = (0..count).all(|i| (lambda[i] - last[i]).abs() <= 1e-5 * lambda[i].abs().max(1e-12));
-        last = lambda.clone();
-        if done && round > 1 {
-            break;
-        }
-    }
-    // Normalise each shape (largest movement 1) and read it per cube.
-    let nodes: Vec<usize> = (0..model.nodes).filter(|&n| model.used[n]).collect();
-    let modes = (0..count)
-        .map(|i| {
-            let v = &x[i];
-            let mag = |n: usize| (v[3 * n] * v[3 * n] + v[3 * n + 1] * v[3 * n + 1] + v[3 * n + 2] * v[3 * n + 2]).sqrt();
-            let top = nodes.iter().map(|&n| mag(n)).fold(0.0, f64::max).max(1e-300);
-            let mut along = [0.0; 3];
-            for &n in &nodes {
-                for (d, a) in along.iter_mut().enumerate() {
-                    *a += v[3 * n + d].abs();
-                }
-            }
-            let dir = (0..3).max_by(|&a, &b| along[a].total_cmp(&along[b])).unwrap_or(2);
-            Mode {
-                frequency: (lambda[i].max(0.0) * 1000.0).sqrt() / std::f64::consts::TAU,
-                direction: ["x", "y", "z"][dir].into(),
-                amount: model.corners.iter().map(|c| (c.iter().map(|&n| mag(n)).sum::<f64>() / 8.0 / top) as f32).collect(),
-                shape: nodes.iter().map(|&n| [v[3 * n] / top, v[3 * n + 1] / top, v[3 * n + 2] / top].map(|c| c as f32)).collect(),
-            }
-        })
-        .collect();
-    notes.push(format!("{} cubes of {} mm, masses lumped at their corners.", model.cells.len(), crate::drawing::length_text(h)));
-    Ok(Modes {
-        cell: h,
-        origin: model.grid.origin,
-        cells: model.cells.iter().map(|c| c.map(|v| v as u32)).collect(),
-        nodes: nodes.iter().map(|&n| model.node_at(n).map(|v| v as u32)).collect(),
-        modes,
-        mass: cube * model.weight.iter().sum::<f64>(),
-        notes,
-    })
+    let body = Body { name: String::new(), positions, triangles, material: Elastic { density, ..*material } };
+    let study = Study { supports: supports.to_vec(), resolution, ..Default::default() };
+    modes_study(&body, &study, count, false)
 }
 
 // ---- Heat ------------------------------------------------------------------------
@@ -2805,95 +2819,128 @@ pub fn thermal(positions: &[f32], triangles: &[u32], k: f64, study: &ThermalStud
     if study.holds.is_empty() && study.convection.is_none() {
         return Err("hold a face at a temperature, or cool it with air: heat needs somewhere to go".into());
     }
-    let grid = voxelize(positions, triangles, study.resolution.clamp(8, 160));
-    let h = grid.h;
-    let cells: Vec<[usize; 3]> = (0..grid.n[2]).flat_map(|z| (0..grid.n[1]).flat_map(move |y| (0..grid.n[0]).map(move |x| [x, y, z]))).filter(|&[i, j, kk]| grid.fill[grid.cell(i, j, kk)] >= MIN_FILL).collect();
-    if cells.is_empty() {
-        return Err("the part is too thin for this resolution: raise it".into());
-    }
-    let nodes = (grid.n[0] + 1) * (grid.n[1] + 1) * (grid.n[2] + 1);
-    let corners: Vec<[usize; 8]> = cells.iter().map(|&[i, j, kk]| grid.corners(i, j, kk)).collect();
-    let weight: Vec<f64> = cells.iter().map(|&[i, j, kk]| (grid.fill[grid.cell(i, j, kk)] as f64).min(1.0)).collect();
-    let mut used = vec![false; nodes];
-    for c in &corners {
-        for &n in c {
-            used[n] = true;
+    let hm = HeatModel::build(positions, triangles, k, study)?;
+    let mut t: Vec<f64> = (0..hm.nodes).map(|n| hm.fixed[n].unwrap_or(0.0)).collect();
+    hm.solve(&hm.q, &vec![0.0; hm.nodes], &mut t);
+    Ok(hm.temperatures(&t, study))
+}
+
+/// A part's cubes set up for heat: conduction, air on the outside, held
+/// faces and heat coming in.
+struct HeatModel {
+    grid: Grid,
+    cells: Vec<[usize; 3]>,
+    corners: Vec<[usize; 8]>,
+    weight: Vec<f64>,
+    used: Vec<bool>,
+    nodes: usize,
+    ke: [[f64; 8]; 8],
+    /// W/mm·K.
+    k_mm: f64,
+    /// W/K to the air at each node.
+    air: Vec<f64>,
+    air_area: f64,
+    fixed: Vec<Option<f64>>,
+    /// W in at each node (heat in, and the air's pull towards ambient).
+    q: Vec<f64>,
+    heat_in: f64,
+    k: f64,
+}
+
+impl HeatModel {
+    fn build(positions: &[f32], triangles: &[u32], k: f64, study: &ThermalStudy) -> Result<HeatModel, String> {
+        let grid = voxelize(positions, triangles, study.resolution.clamp(8, 160));
+        let h = grid.h;
+        let cells: Vec<[usize; 3]> = (0..grid.n[2]).flat_map(|z| (0..grid.n[1]).flat_map(move |y| (0..grid.n[0]).map(move |x| [x, y, z]))).filter(|&[i, j, kk]| grid.fill[grid.cell(i, j, kk)] >= MIN_FILL).collect();
+        if cells.is_empty() {
+            return Err("the part is too thin for this resolution: raise it".into());
         }
-    }
-    let ke = cube_conductance(h);
-    let k_mm = k / 1000.0; // W/mm·K
-    // Air: each outside face of a cube (no filled neighbour) sheds h·A·(T − ambient), shared by its 4 corners.
-    let mut air = vec![0.0; nodes]; // W/K at each node
-    let filled = |i: i64, j: i64, kk: i64| i >= 0 && j >= 0 && kk >= 0 && (i as usize) < grid.n[0] && (j as usize) < grid.n[1] && (kk as usize) < grid.n[2] && grid.fill[grid.cell(i as usize, j as usize, kk as usize)] >= MIN_FILL;
-    let mut air_area = 0.0;
-    if let Some(cv) = study.convection {
-        let per_face = cv.h * 1e-6 * h * h; // W/K for one cube face (W/m²K × mm² → ×1e-6)
-        for &[i, j, kk] in &cells {
-            let (i, j, kk) = (i as i64, j as i64, kk as i64);
-            for (d, quad) in [([-1, 0, 0], [0usize, 3, 7, 4]), ([1, 0, 0], [1, 2, 6, 5]), ([0, -1, 0], [0, 1, 5, 4]), ([0, 1, 0], [3, 2, 6, 7]), ([0, 0, -1], [0, 1, 2, 3]), ([0, 0, 1], [4, 5, 6, 7])] {
-                if filled(i + d[0], j + d[1], kk + d[2]) {
-                    continue;
+        let nodes = (grid.n[0] + 1) * (grid.n[1] + 1) * (grid.n[2] + 1);
+        let corners: Vec<[usize; 8]> = cells.iter().map(|&[i, j, kk]| grid.corners(i, j, kk)).collect();
+        let weight: Vec<f64> = cells.iter().map(|&[i, j, kk]| (grid.fill[grid.cell(i, j, kk)] as f64).min(1.0)).collect();
+        let mut used = vec![false; nodes];
+        for c in &corners {
+            for &n in c {
+                used[n] = true;
+            }
+        }
+        // Air: each outside face of a cube (no filled neighbour) sheds h·A·(T − ambient), shared by its 4 corners.
+        let mut air = vec![0.0; nodes];
+        let filled = |i: i64, j: i64, kk: i64| i >= 0 && j >= 0 && kk >= 0 && (i as usize) < grid.n[0] && (j as usize) < grid.n[1] && (kk as usize) < grid.n[2] && grid.fill[grid.cell(i as usize, j as usize, kk as usize)] >= MIN_FILL;
+        let mut air_area = 0.0;
+        if let Some(cv) = study.convection {
+            let per_face = cv.h * 1e-6 * h * h; // W/K for one cube face (W/m²K × mm² → ×1e-6)
+            for &[i, j, kk] in &cells {
+                let (i, j, kk) = (i as i64, j as i64, kk as i64);
+                for (d, quad) in [([-1, 0, 0], [0usize, 3, 7, 4]), ([1, 0, 0], [1, 2, 6, 5]), ([0, -1, 0], [0, 1, 5, 4]), ([0, 1, 0], [3, 2, 6, 7]), ([0, 0, -1], [0, 1, 2, 3]), ([0, 0, 1], [4, 5, 6, 7])] {
+                    if filled(i + d[0], j + d[1], kk + d[2]) {
+                        continue;
+                    }
+                    let c = grid.corners(i as usize, j as usize, kk as usize);
+                    for q in quad {
+                        air[c[q]] += per_face / 4.0;
+                    }
+                    air_area += h * h;
                 }
-                let c = grid.corners(i as usize, j as usize, kk as usize);
-                for q in quad {
-                    air[c[q]] += per_face / 4.0;
+            }
+        }
+        // Held nodes and their temperatures; heat in at the nodes of heated faces.
+        let mut fixed: Vec<Option<f64>> = vec![None; nodes];
+        for (s, hold) in study.holds.iter().enumerate() {
+            let on = nodes_on(&grid, &used, &hold.face);
+            if on.is_empty() {
+                return Err(format!("held face {} touches no part of the part", s + 1));
+            }
+            for n in on {
+                fixed[n] = Some(hold.temperature);
+            }
+        }
+        let mut q = vec![0.0; nodes];
+        let mut heat_in = 0.0;
+        let share = node_shares(nodes, &corners, &weight);
+        for (s, heat) in study.heats.iter().enumerate() {
+            let on: Vec<usize> = nodes_on(&grid, &used, &heat.face).into_iter().filter(|&n| fixed[n].is_none()).collect();
+            if on.is_empty() {
+                return Err(format!("heated face {} touches no free part of the part", s + 1));
+            }
+            if heat.face.curved {
+                // By area: the same heat through every square millimetre.
+                let whole = heat.face.area().max(1e-12);
+                for (n, a, _) in area_on_nodes(&on, |id| grid.position(id), h, &heat.face, |_| true) {
+                    q[n] += heat.watts * a / whole;
                 }
-                air_area += h * h;
+            } else {
+                for (n, v) in spread(&on, &share, heat.watts) {
+                    q[n] += v;
+                }
+            }
+            heat_in += heat.watts;
+        }
+        if let Some(cv) = study.convection {
+            for n in 0..nodes {
+                q[n] += air[n] * cv.ambient;
             }
         }
+        Ok(HeatModel { ke: cube_conductance(h), k_mm: k / 1000.0, grid, cells, corners, weight, used, nodes, air, air_area, fixed, q, heat_in, k })
     }
-    // Held nodes and their temperatures; heat in at the nodes of heated faces.
-    let mut fixed: Vec<Option<f64>> = vec![None; nodes];
-    for (s, hold) in study.holds.iter().enumerate() {
-        let on = nodes_on(&grid, &used, &hold.face);
-        if on.is_empty() {
-            return Err(format!("held face {} touches no part of the part", s + 1));
-        }
-        for n in on {
-            fixed[n] = Some(hold.temperature);
-        }
-    }
-    let mut q = vec![0.0; nodes];
-    let mut heat_in = 0.0;
-    let share = node_shares(nodes, &corners, &weight);
-    for (s, heat) in study.heats.iter().enumerate() {
-        let on: Vec<usize> = nodes_on(&grid, &used, &heat.face).into_iter().filter(|&n| fixed[n].is_none()).collect();
-        if on.is_empty() {
-            return Err(format!("heated face {} touches no free part of the part", s + 1));
-        }
-        if heat.face.curved {
-            // By area: the same heat through every square millimetre.
-            let whole = heat.face.area().max(1e-12);
-            for (n, a, _) in area_on_nodes(&on, |id| grid.position(id), h, &heat.face, |_| true) {
-                q[n] += heat.watts * a / whole;
-            }
-        } else {
-            for (n, v) in spread(&on, &share, heat.watts) {
-                q[n] += v;
-            }
-        }
-        heat_in += heat.watts;
-    }
-    if let Some(cv) = study.convection {
-        for n in 0..nodes {
-            q[n] += air[n] * cv.ambient;
-        }
-    }
-    // K·T (conduction plus air), all nodes.
-    let apply = |t: &[f64]| -> Vec<f64> {
-        let mut y = corners
+
+    /// (K + C)·T: conduction, air, and `c` (W/K per node) besides.
+    fn apply(&self, t: &[f64], c: &[f64]) -> Vec<f64> {
+        let nodes = self.nodes;
+        let mut y = self
+            .corners
             .par_chunks(4096)
-            .zip(weight.par_chunks(4096))
+            .zip(self.weight.par_chunks(4096))
             .fold(
                 || vec![0.0; nodes],
                 |mut y, (chunk, ws)| {
-                    for (c, w) in chunk.iter().zip(ws) {
+                    for (cn, w) in chunk.iter().zip(ws) {
                         for a in 0..8 {
                             let mut s = 0.0;
                             for b in 0..8 {
-                                s += ke[a][b] * t[c[b]];
+                                s += self.ke[a][b] * t[cn[b]];
                             }
-                            y[c[a]] += w * k_mm * s;
+                            y[cn[a]] += w * self.k_mm * s;
                         }
                     }
                     y
@@ -2903,68 +2950,181 @@ pub fn thermal(positions: &[f32], triangles: &[u32], k: f64, study: &ThermalStud
                 a.iter_mut().zip(&b).for_each(|(x, y)| *x += y);
                 a
             });
-        y.iter_mut().zip(&air).zip(t).for_each(|((y, a), t)| *y += a * t);
+        y.iter_mut().zip(&self.air).zip(t).zip(c).for_each(|(((y, a), t), c)| *y += (a + c) * t);
         y
-    };
-    let free = |n: usize| used[n] && fixed[n].is_none();
-    // T = T_held on held nodes; solve the rest of K·T = q for the free ones.
-    let mut t: Vec<f64> = (0..nodes).map(|n| fixed[n].unwrap_or(0.0)).collect();
-    let mut diag = air.clone();
-    for (c, w) in corners.iter().zip(&weight) {
-        for a in 0..8 {
-            diag[c[a]] += w * k_mm * ke[a][a];
+    }
+
+    fn free(&self, n: usize) -> bool {
+        self.used[n] && self.fixed[n].is_none()
+    }
+
+    /// Solves (K + C)·T = q on the free nodes, from `t` (held nodes keep their values).
+    fn solve(&self, q: &[f64], c: &[f64], t: &mut [f64]) -> usize {
+        let nodes = self.nodes;
+        let mut diag: Vec<f64> = self.air.iter().zip(c).map(|(a, c)| a + c).collect();
+        for (cn, w) in self.corners.iter().zip(&self.weight) {
+            for a in 0..8 {
+                diag[cn[a]] += w * self.k_mm * self.ke[a][a];
+            }
+        }
+        let mask = |v: &mut Vec<f64>| v.iter_mut().enumerate().for_each(|(n, x)| if !self.free(n) { *x = 0.0 });
+        let kt = self.apply(t, c);
+        let mut r: Vec<f64> = q.iter().zip(&kt).map(|(a, b)| a - b).collect();
+        mask(&mut r);
+        let rnorm0 = r.iter().map(|v| v * v).sum::<f64>().sqrt().max(1e-300);
+        let pre = |r: &[f64]| -> Vec<f64> { r.iter().zip(&diag).enumerate().map(|(n, (v, d))| if self.free(n) && *d > 0.0 { v / d } else { 0.0 }).collect() };
+        let mut z = pre(&r);
+        let mut p = z.clone();
+        let mut rz: f64 = r.iter().zip(&z).map(|(a, b)| a * b).sum();
+        let mut it = 0;
+        let _ = nodes;
+        while it < 20_000 && r.iter().map(|v| v * v).sum::<f64>().sqrt() > 1e-10 * rnorm0 {
+            let mut ap = self.apply(&p, c);
+            mask(&mut ap);
+            let pap: f64 = p.iter().zip(&ap).map(|(a, b)| a * b).sum();
+            if pap.abs() < 1e-300 {
+                break;
+            }
+            let alpha = rz / pap;
+            t.iter_mut().zip(&p).for_each(|(x, y)| *x += alpha * y);
+            r.iter_mut().zip(&ap).for_each(|(x, y)| *x -= alpha * y);
+            z = pre(&r);
+            let rz2: f64 = r.iter().zip(&z).map(|(a, b)| a * b).sum();
+            p.iter_mut().zip(&z).for_each(|(x, y)| *x = y + rz2 / rz * *x);
+            rz = rz2;
+            it += 1;
+        }
+        it
+    }
+
+    /// Each cube's temperature (the mean of its corners').
+    fn cell_temps(&self, t: &[f64]) -> Vec<f64> {
+        self.corners.iter().map(|c| c.iter().map(|&n| t[n]).sum::<f64>() / 8.0).collect()
+    }
+
+    /// The steady result: temperatures, and where the heat went.
+    fn temperatures(&self, t: &[f64], study: &ThermalStudy) -> Temperatures {
+        let nodes = self.nodes;
+        let zero = vec![0.0; nodes];
+        let kt = self.apply(t, &zero);
+        // A held node takes out what conduction brings it beyond its own input: q − K·T there.
+        let to_holds: f64 = (0..nodes).filter(|&n| self.used[n] && self.fixed[n].is_some()).map(|n| self.q[n] - kt[n]).sum();
+        let to_air: f64 = study.convection.map_or(0.0, |cv| (0..nodes).filter(|&n| self.used[n]).map(|n| self.air[n] * (t[n] - cv.ambient)).sum());
+        let cell_t = self.cell_temps(t);
+        let (max, min) = (0..nodes).filter(|&n| self.used[n]).fold((f64::NEG_INFINITY, f64::INFINITY), |(hi, lo), n| (hi.max(t[n]), lo.min(t[n])));
+        let mut notes = vec![format!("{} cubes of {} mm; conductivity {} W/m·K.", self.cells.len(), crate::drawing::length_text(self.grid.h), self.k)];
+        if study.convection.is_some() {
+            notes.push(format!("Air cools {} cm² of outside surface (as the cubes' faces).", crate::drawing::length_text(self.air_area / 100.0)));
+        }
+        Temperatures {
+            cell: self.grid.h,
+            origin: self.grid.origin,
+            cells: self.cells.iter().zip(&cell_t).map(|(c, v)| (c.map(|x| x as u32), *v as f32)).collect(),
+            max,
+            min,
+            heat_in: self.heat_in,
+            to_holds,
+            to_air,
+            notes,
         }
     }
-    let mask = |v: &mut Vec<f64>| v.iter_mut().enumerate().for_each(|(n, x)| if !free(n) { *x = 0.0 });
-    let kt = apply(&t);
-    let mut r: Vec<f64> = q.iter().zip(&kt).map(|(a, b)| a - b).collect();
-    mask(&mut r);
-    let rnorm0 = r.iter().map(|v| v * v).sum::<f64>().sqrt().max(1e-300);
-    let pre = |r: &[f64]| -> Vec<f64> { r.iter().zip(&diag).enumerate().map(|(n, (v, d))| if free(n) && *d > 0.0 { v / d } else { 0.0 }).collect() };
-    let mut z = pre(&r);
-    let mut p = z.clone();
-    let mut rz: f64 = r.iter().zip(&z).map(|(a, b)| a * b).sum();
-    let mut it = 0;
-    while it < 20_000 && r.iter().map(|v| v * v).sum::<f64>().sqrt() > 1e-10 * rnorm0 {
-        let mut ap = apply(&p);
-        mask(&mut ap);
-        let pap: f64 = p.iter().zip(&ap).map(|(a, b)| a * b).sum();
-        if pap.abs() < 1e-300 {
-            break;
-        }
-        let alpha = rz / pap;
-        t.iter_mut().zip(&p).for_each(|(x, y)| *x += alpha * y);
-        r.iter_mut().zip(&ap).for_each(|(x, y)| *x -= alpha * y);
-        z = pre(&r);
-        let rz2: f64 = r.iter().zip(&z).map(|(a, b)| a * b).sum();
-        p.iter_mut().zip(&z).for_each(|(x, y)| *x = y + rz2 / rz * *x);
-        rz = rz2;
-        it += 1;
-    }
-    // Where the heat went: into the holds (their reaction) and to the air.
-    let kt = apply(&t);
-    // A held node takes out what conduction brings it beyond its own input: q − K·T there.
-    let to_holds: f64 = (0..nodes).filter(|&n| used[n] && fixed[n].is_some()).map(|n| q[n] - kt[n]).sum();
-    let to_air: f64 = study.convection.map_or(0.0, |cv| (0..nodes).filter(|&n| used[n]).map(|n| air[n] * (t[n] - cv.ambient)).sum());
-    let cell_t: Vec<f64> = corners.iter().map(|c| c.iter().map(|&n| t[n]).sum::<f64>() / 8.0).collect();
-    let (max, min) = (0..nodes).filter(|&n| used[n]).fold((f64::NEG_INFINITY, f64::INFINITY), |(hi, lo), n| (hi.max(t[n]), lo.min(t[n])));
-    let mut notes = vec![format!("{} cubes of {} mm; conductivity {} W/m·K (typical).", cells.len(), crate::drawing::length_text(h), k)];
-    if study.convection.is_some() {
-        notes.push(format!("Air cools {} cm² of outside surface (as the cubes' faces).", crate::drawing::length_text(air_area / 100.0)));
-    }
-    Ok(Temperatures {
-        cell: h,
-        origin: grid.origin,
-        cells: cells.iter().zip(&cell_t).map(|(c, v)| (c.map(|x| x as u32), *v as f32)).collect(),
-        max,
-        min,
-        heat_in,
-        to_holds,
-        to_air,
-        notes,
-    })
 }
 
+/// How a transient heat study runs.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+pub struct Transient {
+    /// Seconds simulated, in `steps` equal steps (backward Euler: steady for any step size).
+    pub duration: f64,
+    #[serde(default = "default_steps")]
+    pub steps: usize,
+    /// °C everywhere at the start (held faces jump to theirs at once).
+    pub initial: f64,
+}
+
+fn default_steps() -> usize {
+    50
+}
+
+/// Temperatures through time.
+#[derive(Clone, Debug, Serialize)]
+pub struct TransientTemperatures {
+    /// Seconds, and the hottest and coolest °C then.
+    pub times: Vec<f64>,
+    pub max: Vec<f64>,
+    pub min: Vec<f64>,
+    /// Each cube's °C at some of the times (`frames` index into `times`), the last always among them.
+    pub frames: Vec<usize>,
+    pub cells: Vec<[u32; 3]>,
+    pub temperatures: Vec<Vec<f32>>,
+    pub cell: f64,
+    pub origin: [f64; 3],
+    /// The state at the end, as a steady study reports it.
+    pub last: Temperatures,
+    /// Each probe's °C at every time.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub probes: Vec<Vec<f64>>,
+    pub notes: Vec<String>,
+}
+
+/// Temperatures through time from a uniform start: C·dT/dt + K·T = q,
+/// stepped by backward Euler with masses (heat capacity) lumped at the
+/// cube corners. `k` W/m·K, `density` kg/m³, `specific_heat` J/kg·K.
+pub fn thermal_transient(positions: &[f32], triangles: &[u32], k: f64, density: f64, specific_heat: f64, study: &ThermalStudy, run: &Transient, probes: &[[f64; 3]]) -> Result<TransientTemperatures, String> {
+    if !(run.duration > 0.0) || run.steps == 0 {
+        return Err("a transient study needs a duration and steps".into());
+    }
+    if density <= 0.0 || specific_heat <= 0.0 {
+        return Err("the material needs a density and a specific heat for heat over time".into());
+    }
+    let hm = HeatModel::build(positions, triangles, k, study)?;
+    let steps = run.steps.min(2000);
+    let dt = run.duration / steps as f64;
+    let h = hm.grid.h;
+    // Heat capacity per node (J/K): ρ·c·V shared by the corners.
+    let mut cap = vec![0.0; hm.nodes];
+    for (c, w) in hm.corners.iter().zip(&hm.weight) {
+        for &n in c {
+            cap[n] += density * specific_heat * 1e-9 * h * h * h * w / 8.0;
+        }
+    }
+    let c_dt: Vec<f64> = cap.iter().map(|c| c / dt).collect();
+    let mut t: Vec<f64> = (0..hm.nodes).map(|n| hm.fixed[n].unwrap_or(run.initial)).collect();
+    let probe_cells: Vec<Option<usize>> = probes
+        .iter()
+        .map(|p| {
+            let idx = [0, 1, 2].map(|k| ((p[k] - hm.grid.origin[k]) / h - 0.5).round() as i64);
+            hm.cells.iter().position(|c| (0..3).all(|k| c[k] as i64 == idx[k]))
+        })
+        .collect();
+    let every = (steps / 20).max(1);
+    let (mut times, mut max, mut min, mut frames, mut temperatures) = (vec![0.0], vec![], vec![], vec![], vec![]);
+    let mut probe_out: Vec<Vec<f64>> = vec![vec![]; probes.len()];
+    let mut record = |t: &[f64], step: usize, times: &Vec<f64>, max: &mut Vec<f64>, min: &mut Vec<f64>, frames: &mut Vec<usize>, temperatures: &mut Vec<Vec<f32>>| {
+        let cells = hm.cell_temps(t);
+        let (hi, lo) = (0..hm.nodes).filter(|&n| hm.used[n]).fold((f64::NEG_INFINITY, f64::INFINITY), |(a, b), n| (a.max(t[n]), b.min(t[n])));
+        max.push(hi);
+        min.push(lo);
+        for (out, c) in probe_out.iter_mut().zip(&probe_cells) {
+            out.push(c.map_or(f64::NAN, |c| cells[c]));
+        }
+        if step % every == 0 || step == steps {
+            frames.push(times.len() - 1);
+            temperatures.push(cells.iter().map(|v| *v as f32).collect());
+        }
+    };
+    record(&t, 0, &times, &mut max, &mut min, &mut frames, &mut temperatures);
+    for step in 1..=steps {
+        // (K + C/Δt)·Tₙ₊₁ = q + C/Δt·Tₙ.
+        let rhs: Vec<f64> = hm.q.iter().zip(&c_dt).zip(&t).map(|((q, c), t)| q + c * t).collect();
+        hm.solve(&rhs, &c_dt, &mut t);
+        times.push(step as f64 * dt);
+        record(&t, step, &times, &mut max, &mut min, &mut frames, &mut temperatures);
+    }
+    let mut last = hm.temperatures(&t, study);
+    let mut notes = std::mem::take(&mut last.notes);
+    notes.push(format!("{} s in {} steps of {} s (backward Euler), from {} °C; heat capacity {} J/kg·K at {} kg/m³.", trim(run.duration), steps, trim(dt), trim(run.initial), trim(specific_heat), trim(density)));
+    Ok(TransientTemperatures { times, max, min, frames, cells: hm.cells.iter().map(|c| c.map(|x| x as u32)).collect(), temperatures, cell: h, origin: hm.grid.origin, last, probes: probe_out, notes })
+}
 /// The temperature at the cube nearest a point (°C).
 pub fn temperature_at(r: &Temperatures, point: [f64; 3]) -> Option<f64> {
     let idx = [0, 1, 2].map(|k| ((point[k] - r.origin[k]) / r.cell - 0.5).round() as i64);
