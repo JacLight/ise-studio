@@ -4,7 +4,8 @@
 // Changes preview live through `onLive` and commit once through `onCommit`.
 
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import { evaluate } from "./expr";
+import { evaluate as evaluateIn } from "./expr";
+import { UNIT_MM, useDisplayPrefs } from "./units";
 
 type Props = {
   label: string;
@@ -29,13 +30,20 @@ type Props = {
 const PIXELS_PER_STEP = 4;
 
 const round = (v: number, step: number) => Math.round(v / step) * step;
-const display = (v: number) => String(Number(v.toFixed(2)));
+const display = (v: number, places = 2) => String(Number(v.toFixed(places)));
 
 function modifier(e: { shiftKey: boolean; altKey: boolean }) {
   return e.shiftKey ? 10 : e.altKey ? 0.1 : 1;
 }
 
-export function ScrubField({ label, chip, tone, value, unit = "mm", min, max, step = 1, onLive, onCommit, formula, onFormula }: Props) {
+export function ScrubField({ label, chip, tone, value, unit: given = "mm", min, max, step = 1, onLive, onCommit, formula, onFormula }: Props) {
+  // Lengths show (and are typed) in the person's chosen unit; the engine keeps millimetres.
+  const prefs = useDisplayPrefs();
+  const length = given === "mm";
+  const unitMm = length ? UNIT_MM[prefs.length] : 1;
+  const unit = length ? prefs.length : given;
+  const places = length ? prefs.decimals + (unitMm >= 1000 || unitMm === 304.8 ? 2 : unitMm > 1 ? 1 : 0) : 2;
+  const evaluate = (text: string, current: number) => evaluateIn(text, current, unitMm);
   const [draft, setDraft] = useState<string | null>(null);
   const [scrubbing, setScrubbing] = useState(false);
   const [invalid, setInvalid] = useState(false);
@@ -71,7 +79,7 @@ export function ScrubField({ label, chip, tone, value, unit = "mm", min, max, st
 
   useEffect(() => () => window.clearTimeout(nudgeTimer.current), []);
 
-  const shown = draft ?? display(live.current ?? value);
+  const shown = draft ?? display((live.current ?? value) / unitMm, places);
 
   const startScrub = (e: React.PointerEvent<HTMLElement>) => {
     if (e.button !== 0) return;

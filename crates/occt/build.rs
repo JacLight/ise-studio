@@ -14,6 +14,8 @@ fn main() {
     let include = root.join("include/opencascade");
     let lib = root.join("lib");
     println!("cargo:rerun-if-changed=src/shim.cpp");
+    // solids.cpp is #included by shim.cpp (one translation unit).
+    println!("cargo:rerun-if-changed=src/solids.cpp");
     println!("cargo:rerun-if-env-changed=OCCT_DIR");
     cc::Build::new()
         .cpp(true)

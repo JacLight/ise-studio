@@ -15,7 +15,7 @@ import { type ConfigRow, type EdgeFinish, type Frac, type LiveEdit, type Shape, 
 import { GroupList, HistoryBody, ObjectsBody, ProjectBody, PropertiesBody, ToolPanel, ViewsBody } from "./Panels";
 import { useEdgeEditor } from "./EdgeEditor";
 import { type FaceToolKind, useFaceTool } from "./FaceTool";
-import type { MotionGrab, ProgramFace, StressView, TurnBody, TurnOptions } from "./Viewport";
+import type { AssemblyOverlay, GeometryHit, MotionGrab, ProgramFace, StressView, TurnBody, TurnOptions } from "./Viewport";
 import { useExplode } from "./Explode";
 import type { FaceDriver } from "./engine";
 import { SyncBanner, TeamDialog, TeamPill, useTeam } from "./Team";
@@ -34,6 +34,10 @@ import { copyOffset, copySteps, inverted, ofType, selectable } from "./selection
 import { SelectionTools } from "./SelectionTools";
 import type { ConnectorPick, JointView } from "./Joints";
 import type { Transform } from "./model";
+import { Console } from "./Console";
+import { SheetWorkspace } from "./SheetWorkspace";
+import { PreferencesDialog, ProjectFileRows } from "./Preferences";
+import { ArraySection, DraftProperties, DraftSection, draftOf, draftPicture, layerEffects, useDraftTool } from "./DraftTools";
 
 const DIMS = ["width", "depth", "height"] as const;
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -91,6 +95,9 @@ export function App({ engine }: { engine: Engine }) {
   const [panel, setPanel] = useState<PanelKind | null>(null);
   const [bench, setBench] = useState<Bench | null>(null);
   const [dialog, setDialog] = useState<"share" | "storage" | null>(null);
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [dataOpen, setDataOpen] = useState(false);
+  const [prefsOpen, setPrefsOpen] = useState(false);
   const [focus, setFocus] = useState(false);
   const [view, setView] = useState<ViewName>("perspective");
   const [wireframe, setWireframe] = useState(false);
@@ -104,7 +111,19 @@ export function App({ engine }: { engine: Engine }) {
   // Joints: connectors offered for picking in the view, and instances drawn where a scrubbed joint puts them.
   const [connectorPick, setConnectorPick] = useState<ConnectorPick | null>(null);
   const [posePreview, setPosePreview] = useState<Map<string, Transform> | null>(null);
-  const jointView = useMemo<JointView>(() => ({ pick: setConnectorPick, poses: setPosePreview }), []);
+  // Assembly tools: lines and dots drawn over the model, and clicks picking geometry for a mate.
+  const [assemblyOverlay, setAssemblyOverlay] = useState<AssemblyOverlay | null>(null);
+  const [geometryPick, setGeometryPick] = useState<((hit: GeometryHit) => void) | null>(null);
+  const jointView = useMemo<JointView>(
+    () => ({
+      pick: setConnectorPick,
+      poses: setPosePreview,
+      overlay: setAssemblyOverlay,
+      geometry: (f) => setGeometryPick(() => f),
+      snapshot: () => viewport.current?.snapshot() ?? null,
+    }),
+    [],
+  );
   const [live, setLiveState] = useState<LiveEdit | null>(null);
   const [lockRatio, setLockRatio] = useState(false);
   const [report, setReport] = useState<CheckReport | null>(null);
@@ -629,6 +648,18 @@ export function App({ engine }: { engine: Engine }) {
 
   // Sketching by hand: the editor, and the plane menu for a new sketch.
   const [planeMenu, setPlaneMenu] = useState(false);
+  const draftTool = useDraftTool({
+    entities: state.entities,
+    run,
+    notify,
+    onCreated: (id) => {
+      setSelected(id);
+    },
+  });
+  // Layers: what they hide and colour; draft objects to draw.
+  const layerFx = useMemo(() => layerEffects(state.entities), [state.entities]);
+  const shownHidden = useMemo(() => (layerFx.hidden.size ? new Set([...hiddenItems, ...layerFx.hidden]) : hiddenItems), [hiddenItems, layerFx]);
+  const draftPic = useMemo(() => draftPicture(state.entities, selected, hiddenItems), [state.entities, selected, hiddenItems]);
   const sketcher = useSketchEditor({
     entities: state.entities,
     run,
@@ -1038,6 +1069,31 @@ export function App({ engine }: { engine: Engine }) {
   const importFile = useCallback(
     async (file: File) => {
       if (/\.dwg$/i.test(file.name)) return notify("DWG cannot be read here (closed format): save it as DXF and drop that");
+      if (/\.forma$/i.test(file.name)) {
+        notify(`Opening ${file.name} as a new project…`);
+        const res = await fetch("/projects/import", { method: "POST", body: file });
+        if (!res.ok) return notify(await res.text());
+        const r = (await res.json()) as { name: string };
+        const url = new URL(location.href);
+        url.searchParams.set("project", r.name);
+        location.assign(url.toString());
+        return;
+      }
+      if (/\.(scad|csv|tsv|xlsx|xlsm)$/i.test(file.name)) {
+        notify(`Importing ${file.name}…`);
+        const res = await fetch(projectUrl(`/import/${encodeURIComponent(file.name)}?user=${encodeURIComponent(state.userId)}`), { method: "POST", body: file });
+        if (!res.ok) return notify(await res.text());
+        const out = (await res.json()) as { id: string; operation: string; output: { parameters?: string[]; notes?: string[] } };
+        if (out.operation === "shape.import_scad") {
+          notify(`Imported ${file.name}: a live OpenSCAD shape${out.output.parameters?.length ? ` with ${out.output.parameters.length} parameters (${out.output.parameters.slice(0, 4).join(", ")})` : ""}`);
+          selectWhenReady(out.id);
+          setPanel("properties");
+        } else {
+          notify(`Imported ${file.name} as a sheet${out.output.notes?.length ? ` (${out.output.notes.length} formulas kept as values)` : ""}`);
+          setDataOpen(true);
+        }
+        return;
+      }
       if (!importable(file.name)) return notify(`Forma imports ${IMPORT_FORMATS} files`);
       notify(`Importing ${file.name}…`);
       try {
@@ -1389,6 +1445,9 @@ export function App({ engine }: { engine: Engine }) {
       } else if (mod && key === "y") {
         e.preventDefault();
         redo();
+      } else if (mod && e.key === ",") {
+        e.preventDefault();
+        setPrefsOpen(true);
       } else if (mod || e.altKey) {
         return;
       } else if (key === "i" && !document.querySelector("dialog[open]")) {
@@ -1398,9 +1457,18 @@ export function App({ engine }: { engine: Engine }) {
         setPrefs((p) => ({ ...p, aiMode: p.aiMode === "hidden" ? p.lastMode : "hidden" }));
       } else if (key === "f") {
         setFocus((f) => !f);
+      } else if (e.key === "`") {
+        e.preventDefault();
+        setConsoleOpen((o) => !o);
+      } else if (key === "t" && !document.querySelector("dialog[open]")) {
+        e.preventDefault();
+        setDataOpen(true);
+      } else if (key === "g") {
+        draftTool.setOpen(!draftTool.open);
+        if (draftTool.open) draftTool.close();
       } else if (key === "p" && selected) {
         setPivotMode((on) => !on);
-      } else if (selected && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "PageUp", "PageDown"].includes(e.key)) {
+      } else if (selected && !draftOf(engine.getState().entities.get(selected)) && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "PageUp", "PageDown"].includes(e.key)) {
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
         const delta = {
@@ -1418,7 +1486,7 @@ export function App({ engine }: { engine: Engine }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo, remove, selected, restoreAll, nudge]);
+  }, [undo, redo, remove, selected, restoreAll, nudge, draftTool]);
 
   const hidden = prefs.hidden;
   const docked = prefs.aiMode === "docked" && !focus;
@@ -1446,11 +1514,17 @@ export function App({ engine }: { engine: Engine }) {
           onHover3D={onHover3D}
           comments={commentsView}
           selectedPart={selectedPartName}
-          hidden={hiddenItems}
+          hidden={shownHidden}
           isolated={isolated}
           colorBy={colorBy}
-          sketch={sketcher.picture}
-          onSketchPointer={sketcher.onPointer}
+          tints={layerFx.tints}
+          draft={draftPic}
+          onSelectDraft={(id) => {
+            setSelected(id);
+            setPanel("properties");
+          }}
+          sketch={draftTool.picture ?? sketcher.picture}
+          onSketchPointer={draftTool.picture ? draftTool.onPointer : sketcher.onPointer}
           onEditDimension={sketcher.openDim}
           edges={edger.picture}
           onEdgeClick={edger.toggle}
@@ -1469,6 +1543,8 @@ export function App({ engine }: { engine: Engine }) {
           connectors={connectorPick?.picture ?? null}
           onConnectorPick={(key) => connectorPick?.onPick(key)}
           poses={posePreview}
+          overlay={assemblyOverlay}
+          onGeometryPick={geometryPick}
           onTurnInstance={async (id, at, rotation) => (await run("assembly.instance.update", { target: id, at, rotation })) !== null}
         />
         {rendering && <RenderView source={renderSource} name={projectTitle()} onClose={() => setRendering(false)} />}
@@ -1503,6 +1579,7 @@ export function App({ engine }: { engine: Engine }) {
         )}
         {state.connection === "offline" && <div className="offline-note">Engine offline · reconnecting…</div>}
         {sketcher.bar}
+        {!sketcher.editing && draftTool.bar}
         {sketcher.dimEditor}
         {edger.bar}
         {faceTool.bar}
@@ -1635,6 +1712,12 @@ export function App({ engine }: { engine: Engine }) {
               onBench={(b) => setBench((current) => (current === b ? null : b))}
               pcbOpen={pcbOpen}
               onPcb={() => setPcbOpen((o) => !o)}
+              drafting={draftTool.open}
+              onDraft={() => (draftTool.open ? draftTool.close() : draftTool.setOpen(true))}
+              dataOpen={dataOpen}
+              onData={() => setDataOpen((o) => !o)}
+              consoleOpen={consoleOpen}
+              onConsole={() => setConsoleOpen((o) => !o)}
             />
           )}
           {hidden.view ? (
@@ -1672,12 +1755,15 @@ export function App({ engine }: { engine: Engine }) {
       {!focus && panel && (
         <ToolPanel kind={panel} onClose={() => setPanel(null)}>
           {panel === "project" && (
-            <ProjectBody
-              onStorage={() => setDialog("storage")}
-              onHistory={() => setPanel("history")}
-              onRestore={restoreAll}
-              onFocus={() => setFocus(true)}
-            />
+            <>
+              <ProjectFileRows onPrefs={() => setPrefsOpen(true)} onConsole={() => setConsoleOpen(true)} onData={() => setDataOpen(true)} notify={notify} />
+              <ProjectBody
+                onStorage={() => setDialog("storage")}
+                onHistory={() => setPanel("history")}
+                onRestore={restoreAll}
+                onFocus={() => setFocus(true)}
+              />
+            </>
           )}
           {panel === "comments" && (
             <CommentsPanel
@@ -1775,10 +1861,32 @@ export function App({ engine }: { engine: Engine }) {
               })()}
             />
           )}
-          {panel === "properties" && selectedPart && instance(selectedPart) && (
-            <InstanceBody entity={selectedPart} entities={state.entities} run={run} onSelect={select} joints={jointView} />
+          {panel === "objects" && (
+            <>
+              <h3 className="panel-section">Draft</h3>
+              <DraftSection
+                entities={state.entities}
+                selected={selected}
+                also={also}
+                run={run}
+                onSelect={(id) => {
+                  setSelected(id);
+                  setPanel("properties");
+                }}
+                onDraft={() => draftTool.setOpen(true)}
+              />
+            </>
           )}
-          {panel === "properties" && !(selectedPart && instance(selectedPart)) && (
+          {panel === "properties" && selectedPart && instance(selectedPart) && (
+            <>
+              <InstanceBody entity={selectedPart} entities={state.entities} run={run} onSelect={select} joints={jointView} />
+              <ArraySection entity={selectedPart} entities={state.entities} run={run} notify={notify} />
+            </>
+          )}
+          {panel === "properties" && selectedPart && draftOf(selectedPart) && (
+            <DraftProperties entity={selectedPart} entities={state.entities} also={also} run={run} notify={notify} onSelect={(id) => setSelected(id)} />
+          )}
+          {panel === "properties" && !(selectedPart && (instance(selectedPart) || draftOf(selectedPart))) && (
             <PropertiesBody
               part={selectedPart}
               shape={selectedPart && isPart(selectedPart) ? (live?.id === selectedPart.id ? live : shapeOf(selectedPart)) : null}
@@ -1919,6 +2027,9 @@ export function App({ engine }: { engine: Engine }) {
 
       {dialog === "share" && <TeamDialog team={team} entities={state.entities} run={run} refresh={refreshTeam} onClose={() => setDialog(null)} />}
       {dialog === "storage" && <StorageDialog revision={state.revision} onClose={() => setDialog(null)} />}
+      {consoleOpen && !focus && <Console engine={engine} onClose={() => setConsoleOpen(false)} />}
+      {dataOpen && <SheetWorkspace entities={state.entities} run={run} notify={notify} onClose={() => setDataOpen(false)} open={selected && state.entities.get(selected)?.components["shape.sheet"] ? selected : null} />}
+      {prefsOpen && <PreferencesDialog onClose={() => setPrefsOpen(false)} />}
       {pcbOpen && !focus && (
         <PcbWorkspace
           revision={state.revision}

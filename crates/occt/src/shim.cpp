@@ -110,6 +110,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <tuple>
 #include <string>
 #include <vector>
 
@@ -125,6 +126,8 @@ struct Arena {
   std::vector<double> edge_data;
   std::vector<double> loop_data;
   std::vector<double> view_data;
+  // Faces or whole shapes given a colour (r g b, 0–1; r < 0 for none) and a name, for STEP (solids.cpp).
+  std::vector<std::tuple<TopoDS_Shape, std::array<double, 3>, std::string>> painted;
 };
 
 int push(Arena* a, const TopoDS_Shape& s) {
@@ -220,6 +223,9 @@ TopoDS_Wire section(const TopoDS_Wire& w, double z, double twist_deg, double sx,
   t.SetTranslation(gp_Vec(0, 0, z));
   return TopoDS::Wire(transformed(transformed(s, r), t));
 }
+
+/// Paint (colours, face names) onto a part's STEP label (solids.cpp).
+void apply_paint(Arena* a, const Handle(XCAFDoc_ShapeTool) & tool, const Handle(XCAFDoc_ColorTool) & colours, const TDF_Label& label, const TopoDS_Shape& part);
 
 }  // namespace
 
@@ -863,6 +869,8 @@ int occ_write_cad(void* p, const int* hs, const char* const* names, const double
       TDataStd_Name::Set(l, TCollection_ExtendedString(names[i], true));
       if (colors && colors[3 * i] >= 0)
         paint->SetColor(l, Quantity_Color(colors[3 * i], colors[3 * i + 1], colors[3 * i + 2], Quantity_TOC_sRGB), XCAFDoc_ColorGen);
+      // What the program painted (the part, or single faces) wins over its material's look.
+      apply_paint(a, tool, paint, l, part);
     }
     if (iges) {
       Interface_Static::SetCVal("write.iges.unit", "MM");
@@ -1190,6 +1198,109 @@ int occ_faces(void* p, int h, const double** data, int* len) {
   });
 }
 
+/// What each face is, for reading features off a solid (drawings: holes,
+/// turned diameters, steps). Per face, 20 numbers: the kind (0 plane,
+/// 1 cylinder, 2 cone, 3 torus, 4 sphere, 5 other); a point (a plane's centre
+/// of area, else the axis's origin); a direction (a plane's outward normal,
+/// else the axis); the radius at the low and high end along the axis (a
+/// torus: major and minor radius); 1 when the face is concave about its axis
+/// (a hole's wall: the material is outside it); the face's extent along the
+/// axis from the point (low, high); the angle it sweeps round the axis
+/// (radians, 2π for a whole one); its area; and its bounding box.
+int occ_face_info(void* p, int h, const double** data, int* len) {
+  Arena* a = static_cast<Arena*>(p);
+  return guard(a, [&] {
+    const TopoDS_Shape* s = get(a, h);
+    if (!s) return -1;
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(*s, TopAbs_FACE, faces);
+    std::vector<double>& out = a->edge_data;
+    out.clear();
+    for (int i = 1; i <= faces.Extent(); i++) {
+      TopoDS_Face f = TopoDS::Face(faces(i));
+      BRepAdaptor_Surface surf(f);
+      GProp_GProps g;
+      BRepGProp::SurfaceProperties(f, g);
+      gp_Pnt c = g.CentreOfMass();
+      double umin = 0, umax = 0, vmin = 0, vmax = 0;
+      BRepTools::UVBounds(f, umin, umax, vmin, vmax);
+      double kind = 5, r0 = 0, r1 = 0, concave = 0, lo = 0, hi = 0, sweep = 0;
+      gp_Pnt o = c;
+      gp_Dir d(0, 0, 1);
+      // Whether the face's outward normal at the middle of its parameters points at the axis.
+      auto inward = [&](const gp_Ax1& ax) {
+        gp_Pnt pt;
+        gp_Vec du, dv;
+        surf.D1((umin + umax) / 2, (vmin + vmax) / 2, pt, du, dv);
+        gp_Vec n = du.Crossed(dv);
+        if (f.Orientation() == TopAbs_REVERSED) n.Reverse();
+        gp_Vec along(ax.Direction());
+        gp_Vec rel(ax.Location(), pt);
+        gp_Vec radial = rel - along * rel.Dot(along);
+        return n.Dot(radial) < 0 ? 1.0 : 0.0;
+      };
+      switch (surf.GetType()) {
+        case GeomAbs_Plane: {
+          kind = 0;
+          gp_Dir n = surf.Plane().Axis().Direction();
+          if (f.Orientation() == TopAbs_REVERSED) n.Reverse();
+          d = n;
+          lo = hi = gp_Vec(c.XYZ()).Dot(gp_Vec(n));
+          break;
+        }
+        case GeomAbs_Cylinder: {
+          kind = 1;
+          gp_Cylinder cy = surf.Cylinder();
+          o = cy.Location(), d = cy.Axis().Direction();
+          r0 = r1 = cy.Radius();
+          concave = inward(cy.Axis());
+          lo = vmin, hi = vmax;
+          sweep = umax - umin;
+          break;
+        }
+        case GeomAbs_Cone: {
+          kind = 2;
+          gp_Cone co = surf.Cone();
+          o = co.Location(), d = co.Axis().Direction();
+          double sa = co.SemiAngle();
+          // The cone's v runs along its side: v·cos along the axis, R + v·sin out from it.
+          r0 = co.RefRadius() + vmin * sin(sa), r1 = co.RefRadius() + vmax * sin(sa);
+          lo = vmin * cos(sa), hi = vmax * cos(sa);
+          concave = inward(co.Axis());
+          sweep = umax - umin;
+          break;
+        }
+        case GeomAbs_Torus: {
+          kind = 3;
+          gp_Torus t = surf.Torus();
+          o = t.Location(), d = t.Axis().Direction();
+          r0 = t.MajorRadius(), r1 = t.MinorRadius();
+          concave = inward(t.Axis());
+          sweep = umax - umin;
+          break;
+        }
+        case GeomAbs_Sphere: {
+          kind = 4;
+          gp_Sphere sp = surf.Sphere();
+          o = sp.Location();
+          r0 = r1 = sp.Radius();
+          break;
+        }
+        default:
+          break;
+      }
+      Bnd_Box box;
+      BRepBndLib::AddOptimal(f, box, false, false);
+      double x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;
+      if (!box.IsVoid()) box.Get(x0, y0, z0, x1, y1, z1);
+      for (double v : {kind, o.X(), o.Y(), o.Z(), d.X(), d.Y(), d.Z(), r0, r1, concave, lo, hi, sweep, g.Mass(), x0, y0, z0, x1, y1, z1}) out.push_back(v);
+    }
+    *data = out.data();
+    *len = (int)out.size();
+    return faces.Extent();
+  });
+}
+
 /// The solid of a shape (an offset can come back as a shell or a compound of one solid).
 static TopoDS_Shape as_solid(const TopoDS_Shape& r) {
   TopExp_Explorer solids(r, TopAbs_SOLID);
@@ -1488,3 +1599,6 @@ int occ_draft(void* p, int h, const int* idx, int n, double degrees, double dx, 
 }
 
 }  // extern "C"
+
+// Sweeps, lofts, offsets, defeaturing, paint, checks and BREP files.
+#include "solids.cpp"

@@ -1,13 +1,13 @@
-// Files the engine imports (POST /import/<name>): exact solids, meshes and 2D drawings.
+// Files the engine imports (POST /import/<name>): exact solids, meshes, 2D drawings, OpenSCAD and tables; .forma projects open as new projects.
 
 /** Extensions an import takes. */
-export const IMPORT_EXTENSIONS = ["step", "stp", "iges", "igs", "stl", "obj", "ply", "gltf", "glb", "3mf", "dxf", "svg"];
+export const IMPORT_EXTENSIONS = ["step", "stp", "stpz", "stepz", "gz", "brep", "brp", "iges", "igs", "stl", "obj", "ply", "gltf", "glb", "3mf", "dxf", "svg", "scad", "csv", "tsv", "xlsx", "xlsm", "forma"];
 
 /** For a file input's `accept`. */
 export const IMPORT_ACCEPT = IMPORT_EXTENSIONS.map((e) => `.${e}`).join(",");
 
 /** For messages: what can be imported. */
-export const IMPORT_FORMATS = "STEP, IGES, STL, OBJ, PLY, glTF, 3MF, DXF or SVG";
+export const IMPORT_FORMATS = "STEP (also compressed), BREP, IGES, STL, OBJ, PLY, glTF, 3MF, DXF, SVG, OpenSCAD, tables (CSV, XLSX) or project (.forma)";
 
 /** Whether a file looks like something the engine imports (it reads the bytes to be sure). */
 export const importable = (name: string) => IMPORT_EXTENSIONS.includes(name.split(".").pop()?.toLowerCase() ?? "");

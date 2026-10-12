@@ -102,9 +102,26 @@ pub(crate) fn cad_file(s: &Source, part: Option<&str>, tolerance: f64, format: d
 /// lines, arcs and circles kept as such, ready to extrude.
 pub(crate) async fn import(State(server): State<Arc<Server>>, Path(file): Path<String>, Query(query): Query<HashMap<String, String>>, body: axum::body::Bytes) -> axum::response::Response {
     let fail = |code: StatusCode, message: String| (code, message).into_response();
-    if file.to_lowercase().ends_with(".dwg") {
+    let lower = file.to_lowercase();
+    if lower.ends_with(".dwg") {
         return fail(StatusCode::UNSUPPORTED_MEDIA_TYPE, format!("{}.", formats::DWG));
     }
+    // OpenSCAD and tables go to the data importer (a live shape, a sheet).
+    if [".scad", ".csv", ".tsv", ".xlsx", ".xlsm"].iter().any(|x| lower.ends_with(x)) {
+        return match server.project(query.get("project")) {
+            Ok(app) => crate::data::import_data(app, &file, &query, &body).await,
+            Err(e) => fail(StatusCode::BAD_REQUEST, e),
+        };
+    }
+    // Compressed STEP and OpenCascade BREP are kept as the STEP they hold.
+    let (file, body) = if crate::exact_files::importable(&lower) && !lower.ends_with(".step") && !lower.ends_with(".stp") {
+        match crate::exact_files::to_step(&lower, &body) {
+            Ok(b) => (format!("{}.step", crate::exact_files::stem(&file)), axum::body::Bytes::from(b)),
+            Err(e) => return fail(StatusCode::UNPROCESSABLE_ENTITY, format!("{file} could not be read: {e}")),
+        }
+    } else {
+        (file, body)
+    };
     let Some(kind) = Kind::sniff(&body).or(Kind::from_name(&file)) else {
         return fail(StatusCode::BAD_REQUEST, format!("Forma imports {ACCEPTED} files"));
     };

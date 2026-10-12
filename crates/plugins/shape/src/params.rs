@@ -138,7 +138,9 @@ pub enum Expr {
     Call(String, Vec<Expr>),
 }
 
-const FUNCTIONS: &[&str] = &["min", "max", "abs", "round", "floor", "ceil", "sqrt", "sin", "cos", "tan"];
+const FUNCTIONS: &[&str] = &[
+    "min", "max", "abs", "round", "floor", "ceil", "sqrt", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "sum", "average", "avg", "count", "mod", "pow", "hypot", "exp", "ln", "log", "pi",
+];
 
 struct Parser<'a> {
     toks: Vec<Tok>,
@@ -202,8 +204,15 @@ impl Parser<'_> {
                 }
             }
             Some(Tok::Ref(name)) => {
-                if FUNCTIONS.contains(&name.as_str()) && self.peek() == Some(&Tok::Open) {
+                // Function names in any case (SUM, Sum, sum: spreadsheets write them in capitals).
+                let lower = name.to_ascii_lowercase();
+                if FUNCTIONS.contains(&lower.as_str()) && self.peek() == Some(&Tok::Open) {
                     self.next();
+                    if self.peek() == Some(&Tok::Close) {
+                        self.next();
+                        return Ok(Expr::Call(lower, vec![]));
+                    }
+                    let name = lower;
                     let mut args = vec![self.expr()?];
                     loop {
                         match self.next() {
@@ -265,6 +274,24 @@ impl Expr {
                     "sin" => one()?.to_radians().sin(),
                     "cos" => one()?.to_radians().cos(),
                     "tan" => one()?.to_radians().tan(),
+                    "asin" => one()?.asin().to_degrees(),
+                    "acos" => one()?.acos().to_degrees(),
+                    "atan" => one()?.atan().to_degrees(),
+                    "atan2" if v.len() == 2 => v[0].atan2(v[1]).to_degrees(),
+                    "sum" => v.iter().sum(),
+                    "average" | "avg" if !v.is_empty() => v.iter().sum::<f64>() / v.len() as f64,
+                    "count" => v.len() as f64,
+                    "mod" if v.len() == 2 && v[1] != 0.0 => v[0] - v[1] * (v[0] / v[1]).floor(),
+                    "pow" if v.len() == 2 => v[0].powf(v[1]),
+                    "hypot" => v.iter().map(|x| x * x).sum::<f64>().sqrt(),
+                    "exp" => one()?.exp(),
+                    "ln" => one()?.ln(),
+                    "log" => one()?.log10(),
+                    "pi" if v.is_empty() => std::f64::consts::PI,
+                    "atan2" | "pow" => return Err(format!("{f}() takes two values")),
+                    "mod" => return Err("mod() takes two values, the second not zero".into()),
+                    "pi" => return Err("pi() takes no values".into()),
+                    "average" | "avg" => return Err(format!("{f}() needs a value")),
                     _ => return Err(format!("unknown function {f}")),
                 }
             }
@@ -287,7 +314,7 @@ impl Expr {
 }
 
 /// Stored formulas reference by id: `#<uuid>.key`. Parses one of those.
-fn stored_ref(name: &str) -> Result<(Option<StableId>, String), String> {
+pub(crate) fn stored_ref(name: &str) -> Result<(Option<StableId>, String), String> {
     if let Some(rest) = name.strip_prefix('#') {
         let (id, key) = rest.split_once('.').ok_or_else(|| format!("bad reference {name}"))?;
         let id: StableId = serde_json::from_value(serde_json::json!(id)).map_err(|_| format!("bad reference {name}"))?;
@@ -312,51 +339,70 @@ pub fn params_of(world: &World, e: Entity) -> Option<(&str, &[Param])> {
     world.get::<ParameterSet>(e).map(|s| (s.name.as_str(), s.params.as_slice()))
 }
 
-/// Entities with referenceable parameters, by name.
-fn find_by_name(world: &World, name: &str) -> Vec<StableId> {
+/// The name of an entity whose values formulas can read, and the keys it
+/// has: a shape's, sketch's or parameter set's parameters, or a sheet's
+/// cells (by address) and their aliases.
+pub fn keys_of(world: &World, e: Entity) -> Option<(String, Vec<String>)> {
+    if let Some((name, params)) = params_of(world, e) {
+        return Some((name.to_string(), params.iter().map(|p| p.key.clone()).collect()));
+    }
+    world.get::<crate::sheet::Sheet>(e).map(|s| (s.name.clone(), s.keys()))
+}
+
+/// Entities with referenceable values, by name.
+pub(crate) fn find_by_name(world: &World, name: &str) -> Vec<StableId> {
     let index = world.resource::<IdIndex>();
     index
         .iter()
-        .filter(|(_, e)| params_of(world, *e).is_some_and(|(n, _)| n == name))
+        .filter(|(_, e)| keys_of(world, *e).is_some_and(|(n, _)| n == name))
         .map(|(id, _)| id)
         .collect()
+}
+
+/// Resolves a reference to another entity's value as people write it
+/// (`Tower footprint.width`, `Sizes.B2`) or as stored (`#<id>.key`).
+pub(crate) fn resolve_external(world: &World, name: &str) -> Result<(Option<StableId>, String), String> {
+    if name.starts_with('#') {
+        let (id, key) = stored_ref(name)?;
+        let e = id.and_then(|id| world.resource::<IdIndex>().get(id)).ok_or_else(|| format!("{name} does not exist"))?;
+        let (_, keys) = keys_of(world, e).ok_or_else(|| format!("{name} has no parameters"))?;
+        if !keys.iter().any(|k| *k == key) {
+            return Err(format!("{name}: no parameter “{key}”"));
+        }
+        return Ok((id, key));
+    }
+    // "Entity name.key": the name may itself contain dots, so try every split.
+    for (i, _) in name.match_indices('.').rev() {
+        let (ent, key) = (&name[..i], &name[i + 1..]);
+        let found = find_by_name(world, ent.trim());
+        match found.as_slice() {
+            [] => continue,
+            [id] => {
+                let e = world.resource::<IdIndex>().get(*id).unwrap();
+                let (_, keys) = keys_of(world, e).unwrap();
+                // A sheet's cells are written in any case (b2 is B2).
+                let key = key.trim();
+                let found = keys.iter().find(|k| *k == key).or_else(|| keys.iter().find(|k| k.eq_ignore_ascii_case(key) && crate::sheet::is_address(k))).cloned();
+                let Some(key) = found else {
+                    let shown: Vec<&str> = keys.iter().map(String::as_str).take(40).collect();
+                    return Err(format!("“{ent}” has no parameter “{key}” (it has {})", shown.join(", ")));
+                };
+                return Ok((Some(*id), key));
+            }
+            _ => return Err(format!("more than one thing is called “{ent}”; rename one")),
+        }
+    }
+    Err(format!("“{name}” is not a parameter here or Name.parameter of anything in the project"))
 }
 
 /// Turns a formula as people write it (names) into its stored form (ids),
 /// checking that every reference exists. `own` are this entity's parameter keys.
 pub fn canonical(world: &World, src: &str, own: &[String]) -> Result<String, String> {
     let resolve = |name: &str| -> Result<(Option<StableId>, String), String> {
-        if name.starts_with('#') {
-            let (id, key) = stored_ref(name)?;
-            let e = id.and_then(|id| world.resource::<IdIndex>().get(id)).ok_or_else(|| format!("{name} does not exist"))?;
-            let (_, params) = params_of(world, e).ok_or_else(|| format!("{name} has no parameters"))?;
-            if !params.iter().any(|p| p.key == key) {
-                return Err(format!("{name}: no parameter “{key}”"));
-            }
-            return Ok((id, key));
-        }
-        if own.iter().any(|k| k == name) {
+        if !name.starts_with('#') && own.iter().any(|k| k == name) {
             return Ok((None, name.to_string()));
         }
-        // "Entity name.key": the name may itself contain dots, so try every split.
-        for (i, _) in name.match_indices('.').rev() {
-            let (ent, key) = (&name[..i], &name[i + 1..]);
-            let found = find_by_name(world, ent.trim());
-            match found.as_slice() {
-                [] => continue,
-                [id] => {
-                    let e = world.resource::<IdIndex>().get(*id).unwrap();
-                    let (_, params) = params_of(world, e).unwrap();
-                    if !params.iter().any(|p| p.key == key.trim()) {
-                        let keys: Vec<&str> = params.iter().map(|p| p.key.as_str()).collect();
-                        return Err(format!("“{ent}” has no parameter “{key}” (it has {})", keys.join(", ")));
-                    }
-                    return Ok((Some(*id), key.trim().to_string()));
-                }
-                _ => return Err(format!("more than one thing is called “{ent}”; rename one")),
-            }
-        }
-        Err(format!("“{name}” is not a parameter here or Name.parameter of anything in the project"))
+        resolve_external(world, name)
     };
     let e = parse(src, &resolve)?;
     Ok(format!("={}", write(&e, &|id, key| match id {
@@ -370,7 +416,7 @@ pub fn display(world: &World, stored: &str) -> String {
     match parse_stored(stored) {
         Ok(e) => format!(
             "={}",
-            write(&e, &|id, key| match id.and_then(|id| world.resource::<IdIndex>().get(id)).and_then(|e| params_of(world, e)) {
+            write(&e, &|id, key| match id.and_then(|id| world.resource::<IdIndex>().get(id)).and_then(|e| keys_of(world, e)) {
                 Some((name, _)) => format!("{name}.{key}"),
                 None if id.is_some() => format!("(missing).{key}"),
                 None => key.to_string(),
@@ -380,7 +426,7 @@ pub fn display(world: &World, stored: &str) -> String {
     }
 }
 
-fn write(e: &Expr, name: &dyn Fn(Option<StableId>, &str) -> String) -> String {
+pub(crate) fn write(e: &Expr, name: &dyn Fn(Option<StableId>, &str) -> String) -> String {
     write_at(e, name, 0)
 }
 
@@ -487,6 +533,9 @@ pub fn resolve_with(world: &World, params: &[Param], given: &dyn Fn(StableId, &s
 }
 
 pub(crate) fn resolved_params(world: &World, e: Entity) -> Option<Result<ResolvedParams, String>> {
+    if let Some(sheet) = world.get::<crate::sheet::Sheet>(e) {
+        return Some(Ok(ResolvedParams(crate::sheet::evaluate(world, sheet).numbers())));
+    }
     let (_, params) = params_of(world, e)?;
     Some(resolve(world, params).map(ResolvedParams))
 }
@@ -548,7 +597,7 @@ pub(crate) fn link(tx: &mut Tx, id: StableId, old: &[Param], params: &mut [Param
 }
 
 /// Whether `a` depends on `b`, directly or through others.
-fn depends_on(tx: &Tx, a: StableId, b: StableId, depth: usize) -> bool {
+pub(crate) fn depends_on(tx: &Tx, a: StableId, b: StableId, depth: usize) -> bool {
     if a == b {
         return true;
     }
