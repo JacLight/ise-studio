@@ -329,10 +329,41 @@ pub struct DrawingSpec {
     /// ISO 286 fits on hole callouts, by diameter.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hole_fits: Vec<drawing::HoleFit>,
+    /// The drawing's own dimensions: which to leave out or tolerance (by key).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub auto: drawing::AutoSpec,
+    /// Threads on holes and diameters, by the diameter modelled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub threads: Vec<drawing::ThreadSpec>,
+    /// Surface texture symbols on single surfaces (ISO 1302).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub finishes: Vec<drawing::FinishSpec>,
+    /// Weld symbols (ISO 2553).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub welds: Vec<drawing::WeldSpec>,
+    /// Title block fields (every sheet's).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub title_block: drawing::TitleFields,
+    /// General notes (every sheet's).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+    /// The revision table (every sheet's), oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub revisions: Vec<drawing::Revision>,
+    /// The general surface texture (every sheet's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roughness: Option<drawing::Roughness>,
+    /// The exploded isometric of an assembly (first sheet).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explode: Option<drawing::Explode>,
     /// Sheets after the first (which shows the standard views set up above):
     /// each its own part, views, scale and annotations.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sheets: Vec<SheetSpec>,
+}
+
+fn is_default<T: Default + PartialEq>(v: &T) -> bool {
+    *v == T::default()
 }
 
 /// A further sheet of a drawing: one part of the assembly (or the whole
@@ -363,18 +394,48 @@ pub struct SheetSpec {
     pub datums: Vec<drawing::DatumSpec>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hole_fits: Vec<drawing::HoleFit>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub auto: drawing::AutoSpec,
+    /// Its threads (the first sheet's when empty).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub threads: Vec<drawing::ThreadSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub finishes: Vec<drawing::FinishSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub welds: Vec<drawing::WeldSpec>,
+    /// Its isometric exploded (an assembly's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explode: Option<drawing::Explode>,
 }
 
 impl DrawingSpec {
     /// Nothing set: the default drawing.
     pub fn is_empty(&self) -> bool {
-        self.section.is_none() && self.dimensions.is_empty() && self.details.is_empty() && self.frames.is_empty() && self.datums.is_empty() && self.hole_fits.is_empty() && self.sheets.is_empty()
+        self.section.is_none() && self.dimensions.is_empty() && self.details.is_empty() && self.frames.is_empty() && self.datums.is_empty() && self.hole_fits.is_empty() && self.sheets.is_empty() && is_default(&self.auto) && self.threads.is_empty() && self.finishes.is_empty() && self.welds.is_empty() && is_default(&self.title_block) && self.notes.is_empty() && self.revisions.is_empty() && self.roughness.is_none() && self.explode.is_none()
     }
 
     /// Each sheet's options and the part it draws, first sheet first; `base`
     /// carries the sheet size and projection asked for.
     pub fn sheet_options(&self, base: &drawing::Options) -> Vec<drawing::Options> {
-        let first = drawing::Options { part: self.part.clone().or(base.part.clone()), section: self.section, dimensions: self.dimensions.clone(), details: self.details.clone(), frames: self.frames.clone(), datums: self.datums.clone(), hole_fits: self.hole_fits.clone(), ..base.clone() };
+        let first = drawing::Options {
+            part: self.part.clone().or(base.part.clone()),
+            section: self.section,
+            dimensions: self.dimensions.clone(),
+            details: self.details.clone(),
+            frames: self.frames.clone(),
+            datums: self.datums.clone(),
+            hole_fits: self.hole_fits.clone(),
+            auto: self.auto.clone(),
+            threads: self.threads.clone(),
+            finishes: self.finishes.clone(),
+            welds: self.welds.clone(),
+            title_block: self.title_block.clone(),
+            notes: self.notes.clone(),
+            revisions: self.revisions.clone(),
+            roughness: self.roughness.clone(),
+            explode: self.explode.clone(),
+            ..base.clone()
+        };
         let first_part = first.part.clone();
         let rest = self.sheets.iter().map(|s| drawing::Options {
             sheet: s.size.unwrap_or(base.sheet),
@@ -388,6 +449,15 @@ impl DrawingSpec {
             hole_fits: s.hole_fits.clone(),
             views: s.views.clone(),
             scale: s.scale,
+            auto: s.auto.clone(),
+            threads: if s.threads.is_empty() { self.threads.clone() } else { s.threads.clone() },
+            finishes: s.finishes.clone(),
+            welds: s.welds.clone(),
+            title_block: self.title_block.clone(),
+            notes: self.notes.clone(),
+            revisions: self.revisions.clone(),
+            roughness: self.roughness.clone(),
+            explode: s.explode.clone(),
         });
         std::iter::once(first).chain(rest).collect()
     }

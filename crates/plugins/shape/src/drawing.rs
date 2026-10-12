@@ -12,7 +12,12 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 
 mod annotate;
+mod autodim;
+pub mod check;
+mod sheet;
+pub mod features;
 pub mod fits;
+pub use autodim::AutoMark;
 pub use annotate::{rename_datum, validate, AnnotationMark, DatumSpec, DetailFrame, DetailSpec, FrameSpec, GdtSymbol, HoleFit, MarkKind, Modifier, Tolerance};
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq, Hash)]
@@ -83,6 +88,196 @@ pub struct Options {
     /// The views' scale (snapped to a standard one); the largest that fits when absent.
     #[serde(default)]
     pub scale: Option<f64>,
+    /// The dimensions the drawing finds for itself: which to leave out, which to tolerance.
+    #[serde(default)]
+    pub auto: AutoSpec,
+    /// Threads on holes and diameters, by the diameter modelled.
+    #[serde(default)]
+    pub threads: Vec<ThreadSpec>,
+    /// What the title block says beyond what the part gives it.
+    #[serde(default)]
+    pub title_block: TitleFields,
+    /// General notes, numbered, beside the title block.
+    #[serde(default)]
+    pub notes: Vec<String>,
+    /// The revision table, oldest first.
+    #[serde(default)]
+    pub revisions: Vec<Revision>,
+    /// The surface texture everywhere not marked otherwise (ISO 1302 general symbol).
+    #[serde(default)]
+    pub roughness: Option<Roughness>,
+    /// Surface texture symbols on single surfaces.
+    #[serde(default)]
+    pub finishes: Vec<FinishSpec>,
+    /// Weld symbols (ISO 2553).
+    #[serde(default)]
+    pub welds: Vec<WeldSpec>,
+    /// Draw an assembly's isometric exploded: parts slid apart along an axis.
+    #[serde(default)]
+    pub explode: Option<Explode>,
+}
+
+/// An exploded isometric: each part slid along `axis` (x, y or z) clear of
+/// those it stacks on, `gap` sheet-independent mm apart (8 % of the
+/// assembly's size along the axis when absent).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
+pub struct Explode {
+    #[serde(default)]
+    pub axis: ExplodeAxis,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<f64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExplodeAxis {
+    X,
+    Y,
+    #[default]
+    Z,
+}
+
+/// Title block fields the person sets (each one replaces what the drawing would say).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
+pub struct TitleFields {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+    /// Who owns the drawing (company or project).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub company: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawn_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+    /// Finish or treatment: "Anodise clear, 10 µm", "Black oxide".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish: Option<String>,
+    /// The general tolerances (ISO 2768-m when absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerance: Option<String>,
+}
+
+/// One row of the revision table.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
+pub struct Revision {
+    pub rev: String,
+    pub description: String,
+    #[serde(default)]
+    pub date: String,
+    #[serde(default)]
+    pub by: String,
+}
+
+/// A surface texture requirement (ISO 1302 / ISO 21920-1).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
+pub struct Roughness {
+    /// Ra in µm (0.8, 1.6, 3.2…).
+    pub ra: f64,
+    /// How it is made: "ground", "turned", "milled", "lapped".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process: Option<String>,
+    /// Lay direction symbol: "=", "⊥", "X", "M", "C", "R".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lay: Option<String>,
+    /// Material must not be removed (an as-cast or as-rolled surface): the circle symbol.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_removal: bool,
+}
+
+/// A surface texture symbol on a surface: a point on its edge in a view (model mm along the view's axes).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
+pub struct FinishSpec {
+    pub view: ViewName,
+    pub at: [f64; 2],
+    #[serde(flatten)]
+    pub roughness: Roughness,
+}
+
+/// Weld kinds with their ISO 2553 symbols.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WeldKind {
+    #[default]
+    Fillet,
+    SquareButt,
+    VButt,
+    BevelButt,
+    Plug,
+    Spot,
+}
+
+/// A weld symbol pointing at a joint (a point in a view, model mm along its axes).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
+pub struct WeldSpec {
+    pub view: ViewName,
+    pub at: [f64; 2],
+    pub kind: WeldKind,
+    /// Its size: a fillet's throat (a5), a butt weld's penetration (s4), a spot's diameter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<f64>,
+    /// Weld length (mm), when it does not run the whole joint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub length: Option<f64>,
+    /// Both sides of the joint.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub both_sides: bool,
+    /// On the other side of the joint from the arrow.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub other_side: bool,
+    /// All round the part.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all_around: bool,
+    /// Made on site, not in the shop.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub field: bool,
+}
+
+/// How the drawing's own dimensions are kept: every feature is dimensioned
+/// once unless `off`; keys (as the drawing JSON's `autos` lists them, like
+/// "x:25", "d:20", "hole:5", "r:8", "c:1") pick single ones out.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
+pub struct AutoSpec {
+    /// No automatic dimensions at all (only overall sizes and the person's own).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub off: bool,
+    /// Keys of automatic dimensions left out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hide: Vec<String>,
+    /// Tolerances on automatic dimensions, by key.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tolerances: Vec<AutoTolerance>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
+pub struct AutoTolerance {
+    pub key: String,
+    pub tolerance: Tolerance,
+}
+
+/// A thread on the holes or the diameter modelled at `diameter` (a tapped
+/// hole is modelled at its tap drill, a threaded shank at its nominal size):
+/// called out ISO 965 style (M6-6H, M16×1.5-6g) and drawn the ISO 6410 way.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
+pub struct ThreadSpec {
+    pub diameter: f64,
+    /// "M6", "M16×1.5" (the pitch when it is not the coarse one).
+    pub size: String,
+    /// Tolerance class: "6H" for a tapped hole, "6g" for a bolt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<String>,
+    /// How long the thread is (a blind hole's full depth, a shank's whole stretch when absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth: Option<f64>,
 }
 
 /// A view a sheet can show: the three orthographic views and the isometric.
@@ -165,6 +360,11 @@ pub struct PartRow {
     pub quantity: usize,
     pub material: String,
     pub mass: String,
+    /// How it is made ("cnc_mill", "3d_print") or "buy".
+    pub process: String,
+    /// The parts of the program this row stands for, when it merges several
+    /// of the same part ("Spacer 1" … "Spacer 4" as "Spacer").
+    pub members: Vec<String>,
 }
 
 /// Where a view sits on the sheet: a model point p shows at
@@ -273,17 +473,21 @@ pub struct Drawing {
     pub annotations: Vec<AnnotationMark>,
     /// Where the detail views landed, for picking points on them.
     pub details: Vec<DetailFrame>,
+    /// The dimensions the drawing found for itself, by key.
+    pub autos: Vec<AutoMark>,
     /// This sheet's number and how many there are.
     pub page: usize,
     pub pages: usize,
     /// What could not go on the sheet.
     pub warnings: Vec<String>,
+    /// The checker's measurements of the finished sheet.
+    pub quality: check::Quality,
 }
 
 impl Drawing {
     /// An empty sheet.
     pub fn blank(width: f64, height: f64) -> Drawing {
-        Drawing { width, height, scale: 1.0, scale_text: String::new(), strokes: vec![], fills: vec![], texts: vec![], views: vec![], marks: vec![], iso: None, balloons: vec![], annotations: vec![], details: vec![], page: 1, pages: 1, warnings: vec![] }
+        Drawing { width, height, scale: 1.0, scale_text: String::new(), strokes: vec![], fills: vec![], texts: vec![], views: vec![], marks: vec![], iso: None, balloons: vec![], annotations: vec![], details: vec![], autos: vec![], page: 1, pages: 1, warnings: vec![], quality: Default::default() }
     }
 }
 
@@ -446,7 +650,25 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
     let b = arena.bounds(shape)?;
     let size3 = [b[3] - b[0], b[4] - b[1], b[5] - b[2]];
     let deflection = (size3.iter().cloned().fold(0.0, f64::max) / 2000.0).clamp(0.005, 1.0);
-    let shown = |k: ViewKind| options.views.is_empty() || options.views.contains(&k);
+    // One part is a detail drawing: its features are read off the solid and
+    // dimensioned. An assembly drawing shows how parts go together instead.
+    let feats = if parts.len() == 1 { Some(features::read(&arena.face_info(shape)?)) } else { None };
+    let dimensioned = feats.is_some() && !options.auto.off;
+    // A turned part shows its profile once, axis across the sheet where it can be.
+    let turned_views: Vec<ViewKind> = match feats.as_ref().and_then(|f| f.turned.as_ref()).and_then(|t| features::principal(t.line.dir)) {
+        Some(1) => vec![ViewKind::Right, ViewKind::Iso],
+        Some(_) => vec![ViewKind::Front, ViewKind::Iso],
+        None => vec![],
+    };
+    let exploded_only = [ViewKind::Iso];
+    let wanted: &[ViewKind] = if !options.views.is_empty() {
+        &options.views
+    } else if options.explode.is_some() && parts.len() >= 2 {
+        &exploded_only
+    } else {
+        &turned_views
+    };
+    let shown = |k: ViewKind| wanted.is_empty() || wanted.contains(&k);
     let (has_f, has_t, has_r, has_i) = (shown(ViewKind::Front), shown(ViewKind::Top), shown(ViewKind::Right), shown(ViewKind::Iso));
     let mut warnings = vec![];
     // A view the sheet leaves out is an empty one: no size, nothing drawn.
@@ -471,7 +693,30 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
     let top = view(arena, [0.0, 0.0, -1.0], [0.0, 1.0, 0.0], has_t)?;
     let right = view(arena, [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0], has_r)?;
     let (iso_dir, iso_up) = iso_frame();
-    let iso = view(arena, iso_dir, iso_up, has_i)?;
+    // An exploded isometric: each part slid clear along the axis.
+    let exploded: Option<Vec<(String, Shape)>> = match (&options.explode, parts.len() >= 2 && has_i) {
+        (Some(e), true) => {
+            let k = e.axis as usize;
+            let boxes: Vec<[f64; 6]> = parts.iter().map(|p| arena.bounds(p.1)).collect::<Result<_, _>>()?;
+            let gap = e.gap.unwrap_or_else(|| (0.12 * size3[k]).max(0.05 * (size3[0].hypot(size3[1]).hypot(size3[2]))));
+            let shifts = explode_shifts(&boxes, k, gap);
+            let mut moved = vec![];
+            for (p, sh) in parts.iter().zip(shifts) {
+                let mut v = [0.0; 3];
+                v[k] = sh;
+                moved.push((p.0.clone(), if sh.abs() > 1e-9 { arena.translate(p.1, v)? } else { p.1 }));
+            }
+            Some(moved)
+        }
+        _ => None,
+    };
+    let iso = match &exploded {
+        Some(moved) => {
+            let all = arena.compound(&moved.iter().map(|p| p.1).collect::<Vec<_>>())?;
+            View::of(arena.hlr_view(all, iso_dir, iso_up, deflection)?)
+        }
+        None => view(arena, iso_dir, iso_up, has_i)?,
+    };
     let has_ortho = has_f || has_t || has_r;
 
     let [w, h] = options.sheet.size();
@@ -482,15 +727,31 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
     // Frame: 20 mm binding margin on the left, 10 mm elsewhere (ISO 5457).
     let (fx0, fy0, fx1, fy1) = (20.0, 10.0, w - 10.0, h - 10.0);
     d.strokes.push(Stroke { pen: Pen::Frame, points: vec![[fx0, fy0], [fx1, fy0], [fx1, fy1], [fx0, fy1], [fx0, fy0]] });
-    let block = [180.0f64.min(fx1 - fx0), 32.0];
+    let block = [180.0f64.min(fx1 - fx0), TITLE_H];
     // The parts list sits on the title block, one row per part plus a header.
     let list_h = if title.parts.len() >= 2 { 6.0 * (title.parts.len() + 1) as f64 } else { 0.0 };
     // With a parts list, the isometric keeps a margin round it for its balloons.
     let ballooned = list_h > 0.0 && parts.len() >= 2;
     let room = if ballooned { BALLOON_GAP + BALLOON_R + 2.0 } else { 0.0 };
+    // Above the parts list: the line of general notes (units, scale, the general roughness).
+    let stack_h = block[1] + list_h + if options.roughness.is_some() { 10.0 } else { 7.0 };
+    // The numbered notes take the strip left of the title block (higher when they need it),
+    // the revision table the top right corner.
+    let notes_w = fx1 - block[0] - fx0 - 10.0;
+    let notes_h = sheet::notes_height(&options.notes, notes_w);
+    let table_h = sheet::revisions_height(&options.revisions);
+    // The revision table goes over the notes beside the title block when
+    // there is room there (ISO 7200 puts it next to the title block), else in
+    // the top right corner.
+    let rev_beside = table_h > 0.0 && notes_h + table_h + 4.0 <= stack_h && notes_w >= sheet::REV_W;
+    let rev_h = if rev_beside { 0.0 } else { table_h };
+    let notes_h = if rev_beside { notes_h + table_h + 4.0 } else { notes_h };
 
     // The views in a grid: front in the middle, the others where the projection puts them.
-    let gap = 22.0; // sheet mm between views: room for a dimension
+    // Sheet mm between views: room for a dimension, or a row of ordinates.
+    let gap = if dimensioned { 26.0 } else { 22.0 };
+    // Round the outside of the views: room for their dimensions.
+    let margin = 22.0;
     let (fw, fh) = (front.size()[0], front.size()[1]);
     let (tw, th) = (top.size()[0], top.size()[1]);
     let (rw, rh) = (right.size()[0], right.size()[1]);
@@ -498,20 +759,43 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
     // Gaps between the columns and rows of views only where both sides have one.
     let gx = if has_r && (has_f || has_t) { gap } else { 0.0 };
     let gy = if has_t && (has_f || has_r) { gap } else { 0.0 };
-    // The area above the title block, inside the frame, less a margin for dimensions.
-    let area = [fx1 - fx0 - 2.0 * gap, fy1 - fy0 - block[1] - list_h - 2.0 * gap];
     // The main scale fits the three orthographic views; the isometric takes
     // whatever scale fits the room left beside them (and says so). A sheet
     // of the isometric alone draws it at the main scale.
     let reserve = if has_i { 40.0 } else { 0.0 };
-    let fits = |s: f64| {
+    // Where the views go: above the title block (and parts list), or beside
+    // them when a long parts list leaves more room there. [x0, y0, x1, y1].
+    let regions = [[fx0, fy0 + stack_h.max(notes_h), fx1, fy1 - rev_h], [fx0, fy0 + notes_h, fx1 - block[0] - 4.0, fy1 - rev_h]];
+    let rev_rect = [fx1 - sheet::REV_W - 6.0, fy1 - rev_h - 6.0, fx1, fy1];
+    let fits_in = |r: [f64; 4], s: f64| {
+        let area = [r[2] - r[0] - 2.0 * margin, r[3] - r[1] - 2.0 * margin];
         if has_ortho {
             (rw + fw.max(tw)) * s + gx <= area[0] - reserve && (fh.max(rh) + th) * s + gy <= area[1]
         } else {
-            iw * s <= area[0] + gap - 2.0 * room && ih * s <= area[1] + gap - 8.0 - 2.0 * room
+            iw * s <= area[0] + margin - 2.0 * room && ih * s <= area[1] + margin - 8.0 - 2.0 * room
         }
     };
-    let auto = SCALES.iter().find(|(s, _)| fits(*s)).copied().unwrap_or(SCALES[SCALES.len() - 1]);
+    let best_in = |r: [f64; 4]| SCALES.iter().find(|(s, _)| fits_in(r, *s)).copied().unwrap_or(SCALES[SCALES.len() - 1]);
+    let mut region = if list_h > 0.0 && best_in(regions[1]).0 > best_in(regions[0]).0 { regions[1] } else { regions[0] };
+    // The views may reach up past the revision table's bottom when they then
+    // come out larger and still keep clear of it (it sits in the corner).
+    if rev_h > 0.0 {
+        let tall = [region[0], region[1], region[2], fy1];
+        let k = best_in(tall).0;
+        if k > best_in(region).0 && has_ortho {
+            let area = [tall[2] - tall[0] - 2.0 * margin, tall[3] - tall[1] - 2.0 * margin];
+            let (w_all, h_all) = ((rw + fw.max(tw)) * k + gx, (fh.max(rh) + th) * k + gy);
+            let x0 = tall[0] + margin + (area[0] - w_all).max(0.0) / 2.0;
+            let y0 = tall[1] + margin + (area[1] - h_all).max(0.0) / 2.0;
+            let r = [x0 - 20.0, y0 - 20.0, x0 + w_all + 20.0, y0 + h_all + 20.0];
+            if !(r[0] < rev_rect[2] && rev_rect[0] < r[2] && r[1] < rev_rect[3] && rev_rect[1] < r[3]) {
+                region = tall;
+            }
+        }
+    }
+    let area = [region[2] - region[0] - 2.0 * margin, region[3] - region[1] - 2.0 * margin];
+    let fits = |s: f64| fits_in(region, s);
+    let auto = best_in(region);
     let (scale, scale_text) = match options.scale {
         None => auto,
         Some(want) => {
@@ -540,17 +824,17 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
     let column = if !has_i {
         None
     } else if has_ortho {
-        iso_fit(area[0] - main_w - gap, area[1])
+        iso_fit(area[0] - main_w - gap, (fy1 - rev_h).min(region[3]) - region[1] - 2.0 * margin)
     } else {
-        iso_fit(area[0] + gap, area[1] + gap)
+        iso_fit(area[0] + margin, area[1] + margin)
     };
     let in_corner = match (corner, column) {
         (Some(a), Some(b)) => a.0 >= b.0,
         (a, _) => a.is_some(),
     };
-    // Centred across the sheet when nothing stands beside them.
-    let x0 = if in_corner || !has_i { fx0 + gap + (area[0] - main_w).max(0.0) / 2.0 } else { fx0 + gap };
-    let y0 = fy0 + block[1] + list_h + gap + (area[1] - total_h).max(0.0) / 2.0;
+    // Centred across the region when nothing stands beside them.
+    let x0 = if in_corner || !has_i { region[0] + margin + (area[0] - main_w).max(0.0) / 2.0 } else { region[0] + margin };
+    let y0 = region[1] + margin + (area[1] - total_h).max(0.0) / 2.0;
     let (col_side, col_main) = match options.projection {
         Projection::First => (x0, x0 + rw * s + gx),
         Projection::Third => (x0 + mid_w + gx, x0),
@@ -559,8 +843,9 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
         Projection::First => (y0, y0 + th * s + gy),
         Projection::Third => (y0 + row_front + gy, y0),
     };
-    let column_x = if has_ortho { x0 + main_w + gap } else { fx0 + gap };
-    let (iso_cell, iso_scale) = if in_corner { ([col_side, row_top, col_side + rw * s, row_top + th * s], corner) } else { ([column_x, fy0 + block[1] + list_h + gap, fx1 - gap, fy1 - gap], column) };
+    let column_x = if has_ortho { x0 + main_w + gap } else { region[0] + margin };
+    let column_top = if has_ortho { (fy1 - rev_h).min(region[3]) - margin } else { region[3] - margin };
+    let (iso_cell, iso_scale) = if in_corner { ([col_side, row_top, col_side + rw * s, row_top + th * s], corner) } else { ([column_x, region[1] + margin, region[2] - margin, column_top], column) };
     // Where each view's lower left lands (sheet mm), the views centred in their cells.
     let place = |v: &View, cell: [f64; 2], cw: f64, ch: f64, k: f64| [cell[0] + (cw - v.size()[0] * k) / 2.0 - v.min[0] * k, cell[1] + (ch - v.size()[1] * k) / 2.0 - v.min[1] * k];
     let at_front = place(&front, [col_main, row_main], mid_w, row_front, s);
@@ -596,7 +881,7 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
         }
     }
     let hole_views: Vec<([f64; 2], usize)> = [(at_front, 1, has_f), (at_top, 2, has_t), (at_right, 0, has_r)].into_iter().filter(|v| v.2).map(|v| (v.0, v.1)).collect();
-    holes(&mut d, arena, shape, deflection, s, hole_views, &options.hole_fits);
+    holes(&mut d, arena, shape, deflection, s, hole_views);
     let geometry_end = d.strokes.len();
     if let Some((k, k_text)) = iso_scale {
         let at = place(&iso, [iso_cell[0] + room, iso_cell[1] + 8.0 + room], iso_cell[2] - iso_cell[0] - 2.0 * room, iso_cell[3] - iso_cell[1] - 8.0 - 2.0 * room, k);
@@ -608,14 +893,48 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
         d.iso = Some(IsoFrame { at, scale: k, bounds: outline });
         let mut label_y = outline[1] - 6.0;
         if ballooned {
-            balloons(&mut d, arena, parts, &title.parts, deflection, &iso, at, k, outline);
+            balloons(&mut d, arena, exploded.as_deref().unwrap_or(parts), &title.parts, deflection, &iso, at, k, outline);
             // Under the ring of balloons.
             label_y = label_y.min(outline[1] - BALLOON_GAP - BALLOON_R - 6.0);
         }
-        let text = if k == s { "ISOMETRIC".to_string() } else { format!("ISOMETRIC {k_text}") };
+        let name = if exploded.is_some() { "EXPLODED VIEW" } else { "ISOMETRIC" };
+        let text = if k == s { name.to_string() } else { format!("{name} {k_text}") };
         d.texts.push(Text { at: [(outline[0] + outline[2]) / 2.0, label_y], size: 2.5, text, anchor: Anchor::Middle, angle: 0.0, bold: false });
     }
-    // Overall dimensions: width over the front view, height beside it, depth beside the top view.
+    // What the sheet keeps for its title block and parts list, notes and revisions.
+    let reserved = vec![[fx1 - block[0] - 2.0, fy0, fx1, fy0 + stack_h], [fx0, fy0, fx0 + notes_w + 6.0, fy0 + notes_h], [fx1 - sheet::REV_W - 2.0, fy1 - rev_h - 2.0, fx1, fy1]];
+    // The drawing's own dimensions of the part's features, clear of everything drawn so far.
+    let mut done = autodim::Done::default();
+    if let Some(f) = feats.as_ref().filter(|_| dimensioned) {
+        let mut ink = annotate::Grid::new(d.width, d.height);
+        let mut words = annotate::Grid::new(d.width, d.height);
+        for st in &d.strokes {
+            for w in st.points.windows(2) {
+                ink.mark_line(w[0], w[1], 0.4);
+            }
+        }
+        for t in &d.texts {
+            ink.mark(text_box(t));
+            words.mark(text_box(t));
+        }
+        // The title block, parts list, notes and revisions to come.
+        for r in &reserved {
+            ink.mark(*r);
+        }
+        let frame_inside = [fx0, fy0, fx1, fy1];
+        let views: Vec<autodim::ViewIn> = ortho
+            .iter()
+            .filter(|o| o.3)
+            .map(|(name, v, at, _)| {
+                let fr = d.views.iter().find(|f| f.view == *name).map(|f| f.bounds).unwrap_or([0.0; 4]);
+                autodim::ViewIn { name: *name, lines: &v.lines, at: *at, bounds: fr, section: if *name == ViewName::Front { cut } else { None } }
+            })
+            .collect();
+        let cx = autodim::Ctx { views, s, bounds: b, feats: f, options, frame: frame_inside };
+        done = autodim::dimension(&mut d, &mut ink, &mut words, &cx);
+    }
+    // Overall dimensions: width over the front view, height beside it, depth
+    // beside the top view (those the ordinates do not already give).
     let box_of = |v: &View, at: [f64; 2]| ([at[0] + v.min[0] * s, at[1] + v.min[1] * s], [at[0] + v.max[0] * s, at[1] + v.max[1] * s]);
     let (f0, f1) = box_of(&front, at_front);
     let (t0, t1) = box_of(&top, at_top);
@@ -624,27 +943,34 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
         Projection::Third => false, // the top view is above: dimension below instead
     };
     let (r0, r1) = box_of(&right, at_right);
+    let [want_x, want_y, want_z] = [!done.axes[0], !done.axes[1], !done.axes[2]];
     if has_f {
-        if above_front {
-            dim_h(&mut d, f0[0], f1[0], f1[1], f1[1] + 9.0, size3[0]);
-        } else {
-            dim_h(&mut d, f0[0], f1[0], f0[1], f0[1] - 9.0, size3[0]);
+        if want_x {
+            if above_front {
+                dim_h(&mut d, f0[0], f1[0], f1[1], f1[1] + 9.0, size3[0]);
+            } else {
+                dim_h(&mut d, f0[0], f1[0], f0[1], f0[1] - 9.0, size3[0]);
+            }
         }
-        dim_v(&mut d, f0[1], f1[1], f1[0], f1[0] + 9.0, size3[2]);
+        if want_z {
+            dim_v(&mut d, f0[1], f1[1], f1[0], f1[0] + 9.0, size3[2]);
+        }
     } else {
         // Without the front view: the width over the top view, the height beside the side view.
-        if has_t {
+        if has_t && want_x {
             dim_h(&mut d, t0[0], t1[0], t1[1], t1[1] + 9.0, size3[0]);
         }
-        if has_r {
+        if has_r && want_z {
             dim_v(&mut d, r0[1], r1[1], r1[0], r1[0] + 9.0, size3[2]);
         }
     }
-    if has_t {
-        // Clear of the cutting-plane arrows when there is a section.
-        dim_v(&mut d, t0[1], t1[1], t1[0], t1[0] + if cut.is_some() { 23.0 } else { 9.0 }, size3[1]);
-    } else if has_r {
-        dim_h(&mut d, r0[0], r1[0], r1[1], r1[1] + 9.0, size3[1]);
+    if want_y {
+        if has_t {
+            // Clear of the cutting-plane arrows when there is a section.
+            dim_v(&mut d, t0[1], t1[1], t1[0], t1[0] + if cut.is_some() { 23.0 } else { 9.0 }, size3[1]);
+        } else if has_r {
+            dim_h(&mut d, r0[0], r1[0], r1[1], r1[1] + 9.0, size3[1]);
+        }
     }
     if cut.is_some() {
         let y = if above_front { f0[1] - 7.0 } else { f0[1] - 16.0 };
@@ -663,20 +989,20 @@ pub fn layout(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], option
         user_dim(&mut d, index, dim, on_sheet(dim.a), on_sheet(dim.b));
     }
 
-    title_block(&mut d, [fx1 - block[0], fy0], block, title, options.projection);
+    sheet::title_block(&mut d, [fx1 - block[0], fy0], block, title, options);
     if list_h > 0.0 {
         parts_list(&mut d, [fx1 - block[0], fy0 + block[1]], block[0], &title.parts);
     }
-    d.texts.push(Text {
-        at: [fx1 - block[0], fy0 + block[1] + list_h + 3.0],
-        size: 2.5,
-        text: "Dimensions in mm · General tolerances ISO 2768-m · Do not scale the drawing".into(),
-        anchor: Anchor::Start,
-        angle: 0.0,
-        bold: false,
-    });
-    let reserved = vec![[fx1 - block[0] - 2.0, fy0, fx1, fy0 + block[1] + list_h + 7.0]];
+    sheet::general_line(&mut d, [fx1 - block[0], fy0 + block[1] + list_h + 2.6], block[0], options);
+    if rev_beside {
+        sheet::revisions(&mut d, [fx0 + 5.0 + sheet::REV_W, fy0 + notes_h], &options.revisions);
+        sheet::notes(&mut d, [fx0 + 5.0, fy0 + notes_h - table_h - 4.0], notes_w, &options.notes);
+    } else {
+        sheet::notes(&mut d, [fx0 + 5.0, fy0 + notes_h], notes_w, &options.notes);
+        sheet::revisions(&mut d, [fx1, fy1], &options.revisions);
+    }
     annotate::annotate(&mut d, options, &annotate::Geometry { strokes: geometry_start..geometry_end, section: section_segments, frame: [fx0, fy0, fx1, fy1], reserved });
+    d.quality = check::inspect(&d, [fx0, fy0, fx1, fy1]);
     Ok(d)
 }
 
@@ -699,9 +1025,46 @@ fn user_dim(d: &mut Drawing, index: usize, dim: &DimSpec, pa: [f64; 2], pb: [f64
     d.marks.push(DimMark { dimension: index, bounds: b });
 }
 
+/// How far each part slides along axis `k` in an exploded view: the long
+/// parts through the middle (shafts, frames) stay; the others move out from
+/// the middle, each clear of the parts already placed that it would pass
+/// through (overlapping across the axis), `gap` apart. Parts on a shaft
+/// slide along it, so the parts that stay do not push anything.
+pub fn explode_shifts(boxes: &[[f64; 6]], k: usize, gap: f64) -> Vec<f64> {
+    let n = boxes.len();
+    let (lo, hi) = boxes.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), x| (a.min(x[k]), b.max(x[k + 3])));
+    let mid = (lo + hi) / 2.0;
+    let centre = |i: usize| (boxes[i][k] + boxes[i][k + 3]) / 2.0;
+    let across = |i: usize, j: usize| (0..3).filter(|&a| a != k).all(|a| boxes[i][a] < boxes[j][a + 3] - 1e-6 && boxes[j][a] < boxes[i][a + 3] - 1e-6);
+    let stays: Vec<bool> = (0..n).map(|i| boxes[i][k] <= mid + 1e-6 && boxes[i][k + 3] >= mid - 1e-6 && boxes[i][k + 3] - boxes[i][k] >= 0.5 * (hi - lo)).collect();
+    let mut shift = vec![0.0; n];
+    let mut placed: Vec<usize> = (0..n).filter(|&i| stays[i]).collect();
+    // The far side, nearest the middle first, then the near side the same way.
+    for up in [true, false] {
+        let mut order: Vec<usize> = (0..n).filter(|&i| !stays[i] && (centre(i) >= mid) == up).collect();
+        order.sort_by(|&a, &b| if up { centre(a).total_cmp(&centre(b)) } else { centre(b).total_cmp(&centre(a)) });
+        for j in order {
+            let mut s = 0.0f64;
+            for &i in placed.iter().filter(|&&i| !stays[i] && across(i, j)) {
+                if up && centre(i) <= centre(j) + 1e-9 {
+                    s = s.max(boxes[i][k + 3] + shift[i] + gap - boxes[j][k]);
+                } else if !up && centre(i) >= centre(j) - 1e-9 {
+                    s = s.min(boxes[i][k] + shift[i] - gap - boxes[j][k + 3]);
+                }
+            }
+            shift[j] = if up { s.max(0.0) } else { s.min(0.0) };
+            placed.push(j);
+        }
+    }
+    shift
+}
+
 /// Balloon radius and how far balloon centres stand off the view (sheet mm).
 const BALLOON_R: f64 = 4.0;
 const BALLOON_GAP: f64 = 10.0;
+
+/// The title block's height (ISO 7200 fields in four rows).
+const TITLE_H: f64 = 36.0;
 
 /// Item balloons round the isometric view, one per row of the parts list:
 /// each leader ends on the part where it shows widest, the balloons ring
@@ -713,7 +1076,7 @@ fn balloons(d: &mut Drawing, arena: &mut Arena, parts: &[(String, Shape)], rows:
     let seen = visible_points(arena, &shapes, deflection, dir, up, iso.min, iso.max);
     let mut items: Vec<(usize, [f64; 2])> = vec![];
     for (i, row) in rows.iter().enumerate() {
-        let copies: Vec<usize> = (0..parts.len()).filter(|&j| parts[j].0 == row.name).collect();
+        let copies: Vec<usize> = (0..parts.len()).filter(|&j| parts[j].0 == row.name || row.members.contains(&parts[j].0)).collect();
         // The copy that shows most; one hidden behind the others gets its middle.
         let best = copies.iter().filter_map(|&j| seen[j]).max_by(|a, b| a.1.total_cmp(&b.1)).map(|v| v.0);
         let point = best.or_else(|| {
@@ -946,10 +1309,10 @@ pub fn segments_cross(p: [f64; 2], q: [f64; 2], r: [f64; 2], s: [f64; 2]) -> boo
     d1 * d2 < 0.0 && d3 * d4 < 0.0
 }
 
-/// Holes and round bosses facing a view: centre marks in that view, and one
-/// ⌀ callout per size (in the plan view if they show there).
+/// Holes and round bosses facing a view: centre marks in that view, centre
+/// lines along them in the others (their callouts are the auto dimensions').
 /// `views` are each view's placement and the axis it looks along (0 x, 1 y, 2 z).
-fn holes(d: &mut Drawing, arena: &mut Arena, shape: Shape, deflection: f64, s: f64, views: Vec<([f64; 2], usize)>, fits: &[HoleFit]) {
+fn holes(d: &mut Drawing, arena: &mut Arena, shape: Shape, deflection: f64, s: f64, views: Vec<([f64; 2], usize)>) {
     let Ok(edges) = arena.edges(shape, deflection) else { return };
     // Full circles only (an arc is a rounded edge, not a hole).
     let circles: Vec<([f64; 3], [f64; 3], f64)> = edges
@@ -970,25 +1333,22 @@ fn holes(d: &mut Drawing, arena: &mut Arena, shape: Shape, deflection: f64, s: f
             _ => [p[1], p[2]], // right: y right, z up
         }
     };
-    let mut called: Vec<f64> = vec![];
-    // The plan view first, so callouts land there when they can.
-    let mut order = views;
-    order.sort_by_key(|(_, axis)| if *axis == 2 { 0 } else { 1 });
-    for (at, axis) in order {
+    for (at, axis) in views {
         let mut seen: Vec<([f64; 2], f64)> = vec![];
         for (c, ax, r) in &circles {
             if ax[axis].abs() < 0.999 {
                 continue;
             }
             let p = project(*c, axis);
-            if seen.iter().any(|(q, rq)| (q[0] - p[0]).hypot(q[1] - p[1]) < 1e-4 && (rq - r).abs() < 1e-4) {
-                continue;
-            }
             // Too small to read at this scale (a chamfer's sliver): left out.
             if r * s < 1.0 {
                 continue;
             }
-            seen.push((p, *r));
+            // One mark per centre, as wide as its widest circle (a counterbore's).
+            match seen.iter_mut().find(|(q, _)| (q[0] - p[0]).hypot(q[1] - p[1]) < 1e-4) {
+                Some(m) => m.1 = m.1.max(*r),
+                None => seen.push((p, *r)),
+            }
         }
         for (p, r) in &seen {
             let c = [at[0] + p[0] * s, at[1] + p[1] * s];
@@ -1024,50 +1384,6 @@ fn holes(d: &mut Drawing, arena: &mut Arena, shape: Shape, deflection: f64, s: f
             let dir = if horizontal { [1.0, 0.0] } else { [0.0, 1.0] };
             d.strokes.push(Stroke { pen: Pen::Center, points: vec![[a[0] - dir[0] * 2.5, a[1] - dir[1] * 2.5], [b[0] + dir[0] * 2.5, b[1] + dir[1] * 2.5]] });
         }
-        // One callout per size not yet called out, on its first hole.
-        let mut sizes: Vec<f64> = seen.iter().map(|(_, r)| (r * 1000.0).round() / 1000.0).collect();
-        sizes.sort_by(|a, b| b.total_cmp(a));
-        sizes.dedup();
-        for r in sizes.into_iter().take(6) {
-            if called.iter().any(|q| (q - r).abs() < 1e-3) {
-                continue;
-            }
-            called.push(r);
-            let same: Vec<&([f64; 2], f64)> = seen.iter().filter(|(_, q)| (q - r).abs() < 1e-3).collect();
-            let fit = fits.iter().find(|f| (f.diameter - 2.0 * r).abs() < 1e-3).map(|f| Tolerance::Fit { fit: f.fit.clone() });
-            let mut label = annotate::label(2.0 * r, true, fit.as_ref());
-            if same.len() > 1 {
-                label.main = format!("{}× {}", same.len(), label.main);
-            }
-            let tall = if fit.is_some() { 7.0 } else { 5.0 };
-            // Try each hole of this size, leaders at several angles and lengths;
-            // take the first spot whose label overlaps no other text.
-            let mut placed = false;
-            'spot: for (p, _) in &same {
-                let c = [at[0] + p[0] * s, at[1] + p[1] * s];
-                for reach in [7.0, 12.0, 18.0] {
-                    for deg in [45.0f64, 135.0, -45.0, -135.0, 60.0, 120.0, -60.0, -120.0] {
-                        let (sn, cs) = deg.to_radians().sin_cos();
-                        let tip = [c[0] + r * s * cs, c[1] + r * s * sn];
-                        let knee = [tip[0] + reach * cs, tip[1] + reach * sn];
-                        let right = cs >= 0.0;
-                        let width = annotate::label_width(&label, 3.5);
-                        let end = [knee[0] + if right { width + 2.0 } else { -(width + 2.0) }, knee[1]];
-                        let bx = [knee[0].min(end[0]) - 0.5, knee[1] - 0.5, knee[0].max(end[0]) + 0.5, knee[1] + tall];
-                        if bx[0] < 0.0 || bx[2] > d.width || bx[1] < 0.0 || bx[3] > d.height || d.texts.iter().any(|o| overlaps(bx, text_box(o))) {
-                            continue;
-                        }
-                        d.strokes.push(Stroke { pen: Pen::Thin, points: vec![tip, knee, end] });
-                        arrow(d, tip, [-cs, -sn]);
-                        annotate::place_label(d, &label, [knee[0] + if right { 1.0 } else { -1.0 }, knee[1] + 1.0], if right { Anchor::Start } else { Anchor::End }, 0.0, 3.5);
-                        d.annotations.push(AnnotationMark { kind: MarkKind::Hole, index: 0, diameter: Some((2.0 * r * 1000.0).round() / 1000.0), bounds: bx, origin: None, anchor: Some(c) });
-                        placed = true;
-                        break 'spot;
-                    }
-                }
-            }
-            let _ = placed;
-        }
     }
 }
 
@@ -1085,10 +1401,6 @@ fn text_box(t: &Text) -> [f64; 4] {
         return [cx - t.size * 1.2, cy - (cx - x0), cx + 0.2, cy + (x1 - cx)];
     }
     [x0, t.at[1] - t.size * 0.25, x1, t.at[1] + t.size * 1.2]
-}
-
-fn overlaps(a: [f64; 4], b: [f64; 4]) -> bool {
-    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
 }
 
 fn arrow(d: &mut Drawing, tip: [f64; 2], dir: [f64; 2]) {
@@ -1244,65 +1556,42 @@ fn parts_list(d: &mut Drawing, at: [f64; 2], width: f64, rows: &[PartRow]) {
     let row_h = 6.0;
     let h = row_h * (rows.len() + 1) as f64;
     d.strokes.push(Stroke { pen: Pen::Frame, points: vec![[x, y], [x + width, y], [x + width, y + h], [x, y + h], [x, y]] });
-    let cols = [0.0, 0.08, 0.52, 0.62, 0.84].map(|c| x + c * width);
-    for c in &cols[1..] {
+    let edges = [0.0, 0.07, 0.45, 0.52, 0.74, 0.87, 1.0].map(|c| x + c * width);
+    for c in &edges[1..6] {
         d.strokes.push(Stroke { pen: Pen::Thin, points: vec![[*c, y], [*c, y + h]] });
     }
     for r in 1..=rows.len() {
         let ry = y + r as f64 * row_h;
         d.strokes.push(Stroke { pen: Pen::Thin, points: vec![[x, ry], [x + width, ry]] });
     }
-    let cell = |d: &mut Drawing, r: usize, values: [&str; 5], bold: bool| {
+    let process = |p: &str| match p {
+        "" => "—".to_string(),
+        "buy" => "Bought".to_string(),
+        "3d_print" => "3D print".to_string(),
+        "cnc_mill" => "CNC mill".to_string(),
+        "cnc_router" => "CNC router".to_string(),
+        other => {
+            let t = other.replace('_', " ");
+            t[..1].to_uppercase() + &t[1..]
+        }
+    };
+    let cell = |d: &mut Drawing, r: usize, values: [&str; 6], bold: bool| {
         let ry = y + r as f64 * row_h + 1.9;
         for (k, v) in values.iter().enumerate() {
-            let (cx, anchor) = if k == 0 || k == 2 { ((cols[k] + if k + 1 < 5 { cols[k + 1] } else { x + width }) / 2.0, Anchor::Middle) } else { (cols[k] + 1.5, Anchor::Start) };
-            d.texts.push(Text { at: [cx, ry], size: if bold { 2.0 } else { 2.5 }, text: v.to_string(), anchor, angle: 0.0, bold });
+            let room = edges[k + 1] - edges[k] - 2.4;
+            let base = if bold { 2.0 } else { 2.5 };
+            let t = Text { at: [0.0; 2], size: base, text: v.to_string(), anchor: Anchor::Start, angle: 0.0, bold };
+            let size = if text_width(&t) > room { (base * room / text_width(&t)).max(1.8) } else { base };
+            let centred = k == 0 || k == 2;
+            let (cx, anchor) = if centred { ((edges[k] + edges[k + 1]) / 2.0, Anchor::Middle) } else { (edges[k] + 1.2, Anchor::Start) };
+            d.texts.push(Text { at: [cx, ry], size, text: v.to_string(), anchor, angle: 0.0, bold });
         }
     };
     // The header is the top row.
-    cell(d, rows.len(), ["ITEM", "NAME", "QTY", "MATERIAL", "MASS EACH"], true);
+    cell(d, rows.len(), ["ITEM", "NAME", "QTY", "MATERIAL", "PROCESS", "MASS EACH"], true);
     for (i, row) in rows.iter().enumerate() {
-        cell(d, i, [&(i + 1).to_string(), &row.name, &row.quantity.to_string(), &row.material, &row.mass], false);
+        cell(d, i, [&(i + 1).to_string(), &row.name, &row.quantity.to_string(), &row.material, &process(&row.process), &row.mass], false);
     }
-}
-
-fn title_block(d: &mut Drawing, at: [f64; 2], size: [f64; 2], t: &Title, projection: Projection) {
-    let [x, y] = at;
-    let [w, h] = size;
-    let line = |d: &mut Drawing, a: [f64; 2], b: [f64; 2], pen: Pen| d.strokes.push(Stroke { pen, points: vec![a, b] });
-    d.strokes.push(Stroke { pen: Pen::Frame, points: vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]] });
-    // Rows from the bottom: the title, then material/mass/scale/projection, then who/when.
-    let r1 = y + 14.0;
-    let r2 = y + 23.0;
-    line(d, [x, r1], [x + w, r1], Pen::Thin);
-    line(d, [x, r2], [x + w, r2], Pen::Thin);
-    let cell = |d: &mut Drawing, x0: f64, y0: f64, label: &str, value: &str, size: f64, bold: bool| {
-        d.texts.push(Text { at: [x0 + 1.5, y0 + if size > 4.0 { 9.0 } else { 6.2 }], size: 1.8, text: label.to_uppercase(), anchor: Anchor::Start, angle: 0.0, bold: false });
-        d.texts.push(Text { at: [x0 + 1.5, y0 + 1.8], size, text: value.to_string(), anchor: Anchor::Start, angle: 0.0, bold });
-    };
-    // Bottom row: title (wide) and drawing number.
-    let split = x + w * 0.66;
-    line(d, [split, y], [split, r1], Pen::Thin);
-    cell(d, x, y, "Title", &t.title, 5.0, true);
-    cell(d, split, y, "Drawing no.", &t.number, 3.0, false);
-    // Middle row: material, mass, scale, projection.
-    let cols = [x, x + w * 0.38, x + w * 0.58, x + w * 0.76];
-    for c in &cols[1..] {
-        line(d, [*c, r1], [*c, r2], Pen::Thin);
-    }
-    cell(d, cols[0], r1, "Material", &t.material, 2.5, false);
-    cell(d, cols[1], r1, "Mass", &t.mass, 2.5, false);
-    cell(d, cols[2], r1, "Scale", &d.scale_text.clone(), 2.5, false);
-    projection_symbol(d, [cols[3] + (x + w - cols[3]) / 2.0, r1 + 4.5], projection);
-    // Top row: drawn by, date, sheet.
-    let tops = [x, x + w * 0.38, x + w * 0.66];
-    for c in &tops[1..] {
-        line(d, [*c, r2], [*c, y + h], Pen::Thin);
-    }
-    cell(d, tops[0], r2, "Drawn by", &t.drawn_by, 2.5, false);
-    cell(d, tops[1], r2, "Date", &t.date, 2.5, false);
-    let sheet = format!("{:?} · {} of {}", sheet_name(d.width), d.page.max(1), d.pages.max(d.page).max(1));
-    cell(d, tops[2], r2, "Sheet", &sheet, 2.5, false);
 }
 
 fn sheet_name(width: f64) -> Sheet {
@@ -1350,6 +1639,8 @@ fn pdf_text(s: &str) -> String {
             '“' => 0x93,
             '”' => 0x94,
             '’' => 0x92,
+            '…' => 0x85,
+            '‰' => 0x89,
             c if (c as u32) < 0x80 => {
                 out.push(c);
                 continue;
@@ -1383,7 +1674,9 @@ fn text_width(t: &Text) -> f64 {
             '×' | '±' => 584,
             'Ø' | '⌀' => 778,
             '–' | '−' => 556,
-            '—' => 1000,
+            '—' | '…' => 1000,
+            // Drawn callout symbols (counterbore, countersink, depth).
+            c if annotate::GLYPHS.contains(&c) => (annotate::glyph_width(0.718) * 1000.0) as u32,
             _ => 556,
         })
         .sum();

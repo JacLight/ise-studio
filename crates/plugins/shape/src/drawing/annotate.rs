@@ -130,6 +130,10 @@ pub enum MarkKind {
     Datum,
     /// A hole callout (carries the hole's diameter).
     Hole,
+    /// A surface texture symbol.
+    Finish,
+    /// A weld symbol.
+    Weld,
 }
 
 /// Where an annotation landed: its index in the options' list and its box on the sheet.
@@ -285,6 +289,61 @@ pub(super) fn label(value: f64, diameter: bool, tol: Option<&Tolerance>) -> Labe
     }
 }
 
+/// Drawing symbols in lettering that no standard font has (ISO 129-1 hole
+/// callouts): counterbore, countersink and depth.
+pub(super) const GLYPHS: [char; 3] = ['⌴', '⌵', '↧'];
+
+/// Writes text, drawing the callout symbols in it as strokes (the rest as text runs).
+pub(super) fn push_text(d: &mut Drawing, t: Text) {
+    if !t.text.contains(GLYPHS) {
+        d.texts.push(t);
+        return;
+    }
+    let total = text_width(&t);
+    let x0 = match t.anchor {
+        Anchor::Start => 0.0,
+        Anchor::Middle => -total / 2.0,
+        Anchor::End => -total,
+    };
+    let (sn, cs) = t.angle.to_radians().sin_cos();
+    let p = |x: f64, y: f64| [t.at[0] + x * cs - y * sn, t.at[1] + x * sn + y * cs];
+    let h = t.size;
+    let gw = glyph_width(h);
+    let mut x = x0;
+    let mut run = String::new();
+    let flush = |d: &mut Drawing, run: &mut String, x: &mut f64| {
+        if run.is_empty() {
+            return;
+        }
+        let piece = Text { at: p(*x, 0.0), size: h, text: std::mem::take(run), anchor: Anchor::Start, angle: t.angle, bold: t.bold };
+        *x += text_width(&piece);
+        d.texts.push(piece);
+    };
+    for ch in t.text.chars() {
+        if !GLYPHS.contains(&ch) {
+            run.push(ch);
+            continue;
+        }
+        flush(d, &mut run, &mut x);
+        let g = |u: f64, v: f64| p(x + u * gw, v * h);
+        let lines: Vec<Vec<[f64; 2]>> = match ch {
+            '⌴' => vec![vec![g(0.12, 0.95), g(0.12, 0.0), g(0.88, 0.0), g(0.88, 0.95)]],
+            '⌵' => vec![vec![g(0.08, 0.95), g(0.5, 0.0), g(0.92, 0.95)]],
+            _ => vec![vec![g(0.5, 1.0), g(0.5, 0.0)], vec![g(0.26, 0.4), g(0.5, 0.0), g(0.74, 0.4)], vec![g(0.15, 0.0), g(0.85, 0.0)]],
+        };
+        for points in lines {
+            d.strokes.push(Stroke { pen: Pen::Thin, points });
+        }
+        x += gw;
+    }
+    flush(d, &mut run, &mut x);
+}
+
+/// How wide a callout symbol is at cap height `h` (mm).
+pub(super) fn glyph_width(h: f64) -> f64 {
+    h * 1.05
+}
+
 const DEV_GAP: f64 = 1.0; // nominal to deviations
 const SAG: f64 = 0.6; // how far a drawn parenthesis bows
 
@@ -306,7 +365,7 @@ pub(super) fn label_width(l: &Label, size: f64) -> f64 {
 /// Writes a label with its baseline through `at` (anchored there), turned `angle`°.
 pub(super) fn place_label(d: &mut Drawing, l: &Label, at: [f64; 2], anchor: Anchor, angle: f64, size: f64) {
     if l.devs.is_none() {
-        d.texts.push(Text { at, size, text: l.main.clone(), anchor, angle, bold: false });
+        push_text(d, Text { at, size, text: l.main.clone(), anchor, angle, bold: false });
         return;
     }
     let (sn, cs) = angle.to_radians().sin_cos();
@@ -317,7 +376,7 @@ pub(super) fn place_label(d: &mut Drawing, l: &Label, at: [f64; 2], anchor: Anch
         Anchor::Middle => -w / 2.0,
         Anchor::End => -w,
     };
-    d.texts.push(Text { at: p(x0, 0.0), size, text: l.main.clone(), anchor: Anchor::Start, angle, bold: false });
+    push_text(d, Text { at: p(x0, 0.0), size, text: l.main.clone(), anchor: Anchor::Start, angle, bold: false });
     let ds = dev_size(size);
     let Some([upper, lower]) = &l.devs else { return };
     let tw = |s: &str| text_width(&Text { at: [0.0; 2], size: ds, text: s.into(), anchor: Anchor::Start, angle: 0.0, bold: false });
@@ -355,7 +414,7 @@ pub(super) fn place_label(d: &mut Drawing, l: &Label, at: [f64; 2], anchor: Anch
 
 /// The sheet in 1 mm cells, set where something is drawn.
 #[derive(Clone)]
-struct Grid {
+pub(super) struct Grid {
     cols: usize,
     rows: usize,
     occ: Vec<u8>,
@@ -364,18 +423,18 @@ struct Grid {
 }
 
 impl Grid {
-    fn new(w: f64, h: f64) -> Grid {
+    pub(super) fn new(w: f64, h: f64) -> Grid {
         let (cols, rows) = (w.ceil() as usize + 1, h.ceil() as usize + 1);
         Grid { cols, rows, occ: vec![0; cols * rows], sat: vec![], fresh: false }
     }
-    fn range(&self, r: [f64; 4]) -> Option<(usize, usize, usize, usize)> {
+    pub(super) fn range(&self, r: [f64; 4]) -> Option<(usize, usize, usize, usize)> {
         let x0 = r[0].floor().max(0.0) as usize;
         let y0 = r[1].floor().max(0.0) as usize;
         let x1 = (r[2].ceil().max(0.0) as usize).min(self.cols);
         let y1 = (r[3].ceil().max(0.0) as usize).min(self.rows);
         (x0 < x1 && y0 < y1).then_some((x0, y0, x1, y1))
     }
-    fn mark(&mut self, r: [f64; 4]) {
+    pub(super) fn mark(&mut self, r: [f64; 4]) {
         if let Some((x0, y0, x1, y1)) = self.range(r) {
             for y in y0..y1 {
                 self.occ[y * self.cols + x0..y * self.cols + x1].fill(1);
@@ -383,7 +442,7 @@ impl Grid {
             self.fresh = false;
         }
     }
-    fn mark_line(&mut self, a: [f64; 2], b: [f64; 2], pad: f64) {
+    pub(super) fn mark_line(&mut self, a: [f64; 2], b: [f64; 2], pad: f64) {
         let n = ((b[0] - a[0]).hypot(b[1] - a[1]) / 0.5).ceil() as usize + 1;
         for i in 0..=n {
             let t = i as f64 / n as f64;
@@ -391,7 +450,7 @@ impl Grid {
             self.mark([p[0] - pad, p[1] - pad, p[0] + pad, p[1] + pad]);
         }
     }
-    fn mark_drawn(&mut self, d: &Drawing, strokes: std::ops::Range<usize>, texts: std::ops::Range<usize>) {
+    pub(super) fn mark_drawn(&mut self, d: &Drawing, strokes: std::ops::Range<usize>, texts: std::ops::Range<usize>) {
         for s in &d.strokes[strokes] {
             for w in s.points.windows(2) {
                 self.mark_line(w[0], w[1], 0.4);
@@ -402,7 +461,7 @@ impl Grid {
         }
     }
     /// Nothing drawn along the line from a to b, leaving out `skip_a` and `skip_b` mm at its ends.
-    fn line_free(&mut self, a: [f64; 2], b: [f64; 2], skip_a: f64, skip_b: f64) -> bool {
+    pub(super) fn line_free(&mut self, a: [f64; 2], b: [f64; 2], skip_a: f64, skip_b: f64) -> bool {
         let l = (b[0] - a[0]).hypot(b[1] - a[1]);
         if l <= skip_a + skip_b {
             return true;
@@ -414,8 +473,41 @@ impl Grid {
             self.free([p[0] - 0.2, p[1] - 0.2, p[0] + 0.2, p[1] + 0.2])
         })
     }
+    /// The grid as a PGM picture (debugging).
+    pub(super) fn dump(&self, path: &str) {
+        let mut out = format!("P5 {} {} 255\n", self.cols, self.rows).into_bytes();
+        for y in (0..self.rows).rev() {
+            out.extend(self.occ[y * self.cols..(y + 1) * self.cols].iter().map(|v| if *v > 0 { 0u8 } else { 255 }));
+        }
+        let _ = std::fs::write(path, out);
+    }
+    /// How many cells in the box have something drawn (cells off the sheet count as drawn).
+    pub(super) fn used(&mut self, r: [f64; 4]) -> usize {
+        let off = r[0] < 0.0 || r[1] < 0.0 || r[2] > (self.cols - 1) as f64 || r[3] > (self.rows - 1) as f64;
+        if self.free(r) {
+            return if off { usize::MAX / 2 } else { 0 };
+        }
+        let Some((x0, y0, x1, y1)) = self.range(r) else { return 0 };
+        let w = self.cols + 1;
+        (self.sat[y1 * w + x1] + self.sat[y0 * w + x0] - self.sat[y0 * w + x1] - self.sat[y1 * w + x0]) as usize + if off { usize::MAX / 2 } else { 0 }
+    }
+    /// How many drawn cells the line from a to b passes over, leaving out `skip_a` and `skip_b` mm at its ends.
+    pub(super) fn hits(&mut self, a: [f64; 2], b: [f64; 2], skip_a: f64, skip_b: f64) -> usize {
+        let l = (b[0] - a[0]).hypot(b[1] - a[1]);
+        if l <= skip_a + skip_b {
+            return 0;
+        }
+        let n = ((l - skip_a - skip_b) / 0.7).ceil() as usize;
+        (0..=n)
+            .filter(|i| {
+                let t = (skip_a + (l - skip_a - skip_b) * *i as f64 / n.max(1) as f64) / l;
+                let p = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+                !self.free([p[0] - 0.2, p[1] - 0.2, p[0] + 0.2, p[1] + 0.2])
+            })
+            .count()
+    }
     /// Nothing drawn in the box (and it is on the sheet).
-    fn free(&mut self, r: [f64; 4]) -> bool {
+    pub(super) fn free(&mut self, r: [f64; 4]) -> bool {
         if r[0] < 0.0 || r[1] < 0.0 || r[2] > (self.cols - 1) as f64 || r[3] > (self.rows - 1) as f64 {
             return false;
         }
@@ -950,6 +1042,18 @@ pub(super) fn annotate(d: &mut Drawing, options: &Options, g: &Geometry) {
             d.warnings.push(if d.views.iter().any(|v| v.view == f.view) { format!("no room for the {symbol} frame beside the {view} view") } else { format!("the {symbol} frame is on the {view} view, which this sheet leaves out") });
         }
     }
+    for f in &options.finishes {
+        if !place_finish(d, &mut grid, &mut words, g, f) {
+            let view = format!("{:?}", f.view).to_lowercase();
+            d.warnings.push(if d.views.iter().any(|v| v.view == f.view) { format!("no room for the Ra {} symbol beside the {view} view", length_text(f.roughness.ra)) } else { format!("a surface texture symbol is on the {view} view, which this sheet leaves out") });
+        }
+    }
+    for w in &options.welds {
+        if !place_weld(d, &mut grid, &mut words, g, w) {
+            let view = format!("{:?}", w.view).to_lowercase();
+            d.warnings.push(if d.views.iter().any(|v| v.view == w.view) { format!("no room for a weld symbol beside the {view} view") } else { format!("a weld symbol is on the {view} view, which this sheet leaves out") });
+        }
+    }
     // Then the other details, each at the largest scale that finds room.
     for src in &free {
         if !place_detail(d, &mut grid, g, options, src) {
@@ -1079,4 +1183,160 @@ fn place_detail(d: &mut Drawing, grid: &mut Grid, g: &Geometry, options: &Option
         return true;
     }
     false
+}
+
+// ---- Surface texture and weld symbols ---------------------------------------------
+
+/// A leader from a point on a view out to a horizontal shoulder where a
+/// symbol `w` × `h` sits (its lower left at the shoulder's start): the spot
+/// clear of everything with the shortest leader, out from the side of the
+/// view the point is on. Returns the shoulder's start and which way it runs.
+fn leader_spot(grid: &mut Grid, words: &mut Grid, g: &Geometry, p: [f64; 2], bounds: [f64; 4], w: f64, h: f64) -> Option<([f64; 2], bool)> {
+    let around = sides(p, bounds);
+    let on_outline = around.iter().any(|(_, on)| *on);
+    let mut best: Option<(f64, [f64; 2], bool)> = None;
+    for (rank, (o, on)) in around.into_iter().enumerate() {
+        let penalty = if on_outline && !on { 60.0 } else { rank as f64 * 6.0 };
+        let base = o[1].atan2(o[0]).to_degrees();
+        for turn in [0.0f64, 30.0, -30.0, 50.0, -50.0] {
+            let a = (base + turn).to_radians();
+            for reach in [6.0, 10.0, 15.0, 21.0, 28.0] {
+                let knee = [p[0] + reach * a.cos(), p[1] + reach * a.sin()];
+                let right = a.cos() >= -1e-9;
+                let r = if right { [knee[0], knee[1], knee[0] + w, knee[1] + h] } else { [knee[0] - w, knee[1], knee[0], knee[1] + h] };
+                if !within(grow(r, 1.0), g.frame) || !grid.free(grow(r, 0.8)) || !words.line_free(p, knee, 1.0, 0.5) {
+                    continue;
+                }
+                let score = reach + penalty + turn.abs() / 10.0 + 4.0 * grid.hits(p, knee, 1.5, 0.8) as f64;
+                if best.is_none_or(|b| score < b.0) {
+                    best = Some((score, knee, right));
+                }
+            }
+        }
+    }
+    best.map(|b| (b.1, b.2))
+}
+
+/// A surface texture symbol on a leader (ISO 1302): the arrow on the surface,
+/// the symbol on the leader's shoulder with its requirement over it.
+fn place_finish(d: &mut Drawing, grid: &mut Grid, words: &mut Grid, g: &Geometry, f: &FinishSpec) -> bool {
+    let Some(v) = d.views.iter().find(|v| v.view == f.view).cloned() else { return false };
+    let p = [v.at[0] + f.at[0] * v.scale, v.at[1] + f.at[1] * v.scale];
+    let text = super::sheet::roughness_text(&f.roughness);
+    let tw = plain_width(&text, 3.5);
+    let pw = f.roughness.process.as_ref().map_or(0.0, |s| plain_width(s, 2.5));
+    let t60 = 60f64.to_radians().tan();
+    let (h1, h2) = (5.0, 10.5);
+    let w = h1 / t60 + h2 / t60 + tw.max(pw) + 3.0;
+    let Some((knee, right)) = leader_spot(grid, words, g, p, v.bounds, w + 2.0, h2 + 4.0) else { return false };
+    let (s0, t0, f0) = (d.strokes.len(), d.texts.len(), d.fills.len());
+    let start = if right { knee[0] } else { knee[0] - w - 2.0 };
+    let apex = [start + 2.0 + h1 / t60, knee[1]];
+    let l = (knee[0] - p[0]).hypot(knee[1] - p[1]).max(1e-9);
+    d.strokes.push(Stroke { pen: Pen::Thin, points: vec![p, knee] });
+    super::arrow(d, p, [(p[0] - knee[0]) / l, (p[1] - knee[1]) / l]);
+    // The shoulder runs from the leader to the symbol's point.
+    d.strokes.push(Stroke { pen: Pen::Thin, points: vec![knee, apex] });
+    let top = super::sheet::symbol_shape(d, apex, 3.5, !f.roughness.no_removal, Some(tw.max(pw) + 1.5));
+    if f.roughness.no_removal {
+        // No material removed: a circle in the V.
+        d.strokes.push(Stroke { pen: Pen::Thin, points: circle([apex[0], apex[1] + h1 * 0.55], h1 * 0.33) });
+    }
+    let x = apex[0] + h1 / t60 + 0.8;
+    d.texts.push(Text { at: [x, top[1] - 4.6], size: 3.5, text, anchor: Anchor::Start, angle: 0.0, bold: false });
+    if let Some(proc) = &f.roughness.process {
+        d.texts.push(Text { at: [x, top[1] + 0.8], size: 2.5, text: proc.clone(), anchor: Anchor::Start, angle: 0.0, bold: false });
+    }
+    if let Some(lay) = &f.roughness.lay {
+        d.texts.push(Text { at: [apex[0] + h2 / t60 * 0.55 + 1.2, apex[1] + 0.4], size: 2.5, text: lay.clone(), anchor: Anchor::Start, angle: 0.0, bold: false });
+    }
+    grid.mark_drawn(d, s0..d.strokes.len(), t0..d.texts.len());
+    words.mark_drawn(d, s0..s0, t0..d.texts.len());
+    let bounds = bounds_of(d, s0..d.strokes.len(), t0..d.texts.len(), f0..d.fills.len());
+    d.annotations.push(AnnotationMark { kind: MarkKind::Finish, index: 0, diameter: None, bounds, origin: Some(knee), anchor: Some(p) });
+    true
+}
+
+/// A weld symbol (ISO 2553, system A): the arrow on the joint, a reference
+/// line with its dashed identification line under it, the weld's symbol on
+/// the arrow side (over the line) or the other side (under the dashed line),
+/// its size before and length after; a circle for all round, a flag for a
+/// site weld.
+fn place_weld(d: &mut Drawing, grid: &mut Grid, words: &mut Grid, g: &Geometry, w: &WeldSpec) -> bool {
+    let Some(v) = d.views.iter().find(|v| v.view == w.view).cloned() else { return false };
+    let p = [v.at[0] + w.at[0] * v.scale, v.at[1] + w.at[1] * v.scale];
+    let prefix = match w.kind {
+        WeldKind::Fillet => "a",
+        WeldKind::Spot | WeldKind::Plug => "d",
+        _ => "s",
+    };
+    let size_text = w.size.map(|s| format!("{prefix}{}", length_text(s)));
+    let len_text = w.length.map(length_text);
+    let sw = size_text.as_ref().map_or(0.0, |t| plain_width(t, 3.5) + 1.5);
+    let lw = len_text.as_ref().map_or(0.0, |t| plain_width(t, 3.5) + 1.5);
+    let sym = 5.0;
+    let line_w = 6.0 + sw + sym + lw + 6.0;
+    // Room under and over the line for symbols on either side, and the flag.
+    let (below, above) = (6.5, if w.field { 8.0 } else { 6.0 });
+    let Some((spot, right)) = leader_spot(grid, words, g, p, v.bounds, line_w, below + above) else { return false };
+    let knee = [spot[0], spot[1] + below];
+    let (s0, t0, f0) = (d.strokes.len(), d.texts.len(), d.fills.len());
+    let l = (knee[0] - p[0]).hypot(knee[1] - p[1]).max(1e-9);
+    d.strokes.push(Stroke { pen: Pen::Thin, points: vec![p, knee] });
+    super::arrow(d, p, [(p[0] - knee[0]) / l, (p[1] - knee[1]) / l]);
+    let (x0, x1) = if right { (knee[0], knee[0] + line_w) } else { (knee[0] - line_w, knee[0]) };
+    d.strokes.push(Stroke { pen: Pen::Thin, points: vec![[x0, knee[1]], [x1, knee[1]]] });
+    let dash = knee[1] - 1.2;
+    if !w.both_sides {
+        d.strokes.push(Stroke { pen: Pen::Hidden, points: vec![[x0, dash], [x1, dash]] });
+    }
+    // The symbol's slot along the line.
+    let sx = x0 + 6.0 + sw;
+    let draw = |d: &mut Drawing, base: f64, up: f64| {
+        let q = |x: f64, y: f64| [sx + x, base + up * y];
+        let lines: Vec<Vec<[f64; 2]>> = match w.kind {
+            WeldKind::Fillet => vec![vec![q(0.6, 0.0), q(0.6, 4.0), q(4.6, 0.0)]],
+            WeldKind::SquareButt => vec![vec![q(1.6, 0.0), q(1.6, 3.6)], vec![q(3.4, 0.0), q(3.4, 3.6)]],
+            WeldKind::VButt => vec![vec![q(0.4, 3.6), q(2.5, 0.0), q(4.6, 3.6)]],
+            WeldKind::BevelButt => vec![vec![q(1.0, 3.6), q(1.0, 0.0), q(4.4, 3.6)]],
+            WeldKind::Plug => vec![vec![q(0.6, 0.0), q(0.6, 2.6), q(4.4, 2.6), q(4.4, 0.0)]],
+            WeldKind::Spot => vec![],
+        };
+        for points in lines {
+            d.strokes.push(Stroke { pen: Pen::Visible, points });
+        }
+    };
+    if w.kind == WeldKind::Spot {
+        // A spot weld's circle sits on the line, whichever side.
+        d.strokes.push(Stroke { pen: Pen::Visible, points: circle([sx + 2.5, knee[1]], 2.0) });
+    } else if w.both_sides {
+        draw(d, knee[1], 1.0);
+        draw(d, knee[1], -1.0);
+    } else if w.other_side {
+        draw(d, dash, -1.0);
+    } else {
+        draw(d, knee[1], 1.0);
+    }
+    let ty = if w.other_side && !w.both_sides { dash - 4.6 } else { knee[1] + 1.0 };
+    if let Some(t) = size_text {
+        d.texts.push(Text { at: [sx - 1.0, ty], size: 3.5, text: t, anchor: Anchor::End, angle: 0.0, bold: false });
+    }
+    if let Some(t) = len_text {
+        d.texts.push(Text { at: [sx + sym + 1.0, ty], size: 3.5, text: t, anchor: Anchor::Start, angle: 0.0, bold: false });
+    }
+    if w.all_around {
+        d.strokes.push(Stroke { pen: Pen::Thin, points: circle(knee, 1.8) });
+    }
+    if w.field {
+        // A flag on a staff from the junction.
+        let top = [knee[0], knee[1] + 7.0];
+        d.strokes.push(Stroke { pen: Pen::Thin, points: vec![knee, top] });
+        let dir = if right { 1.0 } else { -1.0 };
+        d.fills.push(vec![top, [top[0] + dir * 3.5, top[1] - 1.2], [top[0], top[1] - 2.4]]);
+    }
+    grid.mark_drawn(d, s0..d.strokes.len(), t0..d.texts.len());
+    words.mark_drawn(d, s0..s0, t0..d.texts.len());
+    let bounds = bounds_of(d, s0..d.strokes.len(), t0..d.texts.len(), f0..d.fills.len());
+    d.annotations.push(AnnotationMark { kind: MarkKind::Weld, index: 0, diameter: None, bounds, origin: Some(knee), anchor: Some(p) });
+    true
 }

@@ -753,7 +753,7 @@ fn a_drawing_sections_dimensions_and_lists_parts() {
     assert!((t.angle - 20f64.atan2(100.0).to_degrees()).abs() < 0.01, "it runs along the diagonal: {}°", t.angle);
 
     // A parts list for an assembly.
-    let rows = vec![PartRow { name: "Base".into(), quantity: 1, material: "Steel".into(), mass: "1.2 kg".into() }, PartRow { name: "Bolt".into(), quantity: 4, material: "Steel".into(), mass: "12 g".into() }];
+    let rows = vec![PartRow { name: "Base".into(), quantity: 1, material: "Steel".into(), mass: "1.2 kg".into(), ..Default::default() }, PartRow { name: "Bolt".into(), quantity: 4, material: "Steel".into(), mass: "12 g".into(), ..Default::default() }];
     let listed = de_shape::drawing::drawing(&program, &Options { sheet: Sheet::A4, ..Default::default() }, &title(rows)).unwrap();
     for v in ["ITEM", "QTY", "Base", "Bolt", "4", "12 g"] {
         assert!(listed.texts.iter().any(|t| t.text == v), "parts list shows {v}");
@@ -1463,7 +1463,7 @@ fn an_assembly_drawing_balloons_every_listed_part() {
     // off the horizontal, so the 120 × 80 base spans (120 + 80)·√(2/3)·cos 30° across.
     assert!(((hi[0] - lo[0]) - 200.0 * (2.0f64 / 3.0).sqrt() * 30f64.to_radians().cos()).abs() < 1e-6, "{} across", hi[0] - lo[0]);
 
-    let row = |name: &str, quantity| PartRow { name: name.into(), quantity, material: "Steel".into(), mass: "—".into() };
+    let row = |name: &str, quantity| PartRow { name: name.into(), quantity, material: "Steel".into(), mass: "—".into(), ..Default::default() };
     let rows = vec![row("Base", 1), row("Housing", 1), row("Bolt 1", 1), row("Bolt 2", 1), row("Pin", 1)];
     let title = Title { title: "Bracket".into(), number: "B-1".into(), material: "Steel".into(), mass: "1 kg".into(), drawn_by: "F".into(), date: "2026-10-11".into(), parts: rows.clone(), ..Default::default() };
     for sheet in [Sheet::A3, Sheet::A4] {
@@ -1969,7 +1969,7 @@ fn a_drawing_has_several_sheets() {
     assert_eq!(serde_json::from_value::<de_shape::DrawingSpec>(json).unwrap(), spec, "kept as it was set");
     let sheets = spec.sheet_options(&de_shape::drawing::Options { sheet: Sheet::A3, ..Default::default() });
     assert_eq!(sheets.len(), 4);
-    let rows = vec![PartRow { name: "Base".into(), quantity: 1, material: "Steel".into(), mass: "—".into() }, PartRow { name: "Pin".into(), quantity: 1, material: "Steel".into(), mass: "—".into() }];
+    let rows = vec![PartRow { name: "Base".into(), quantity: 1, material: "Steel".into(), mass: "—".into(), ..Default::default() }, PartRow { name: "Pin".into(), quantity: 1, material: "Steel".into(), mass: "—".into(), ..Default::default() }];
     let n = sheets.len();
     let with_titles: Vec<_> = sheets
         .into_iter()
@@ -2725,7 +2725,7 @@ fn a_configuration_leaving_parts_out_is_what_exports_and_drawings_get() {
     let e = de_shape::evaluated_at(&program, 0.05).unwrap();
     assert!((e.volume - (60000.0 + 24000.0)).abs() < 1e-6);
     // The drawing balloons the two parts its parts list has.
-    let row = |name: &str| PartRow { name: name.into(), quantity: 1, material: "Steel".into(), mass: "—".into() };
+    let row = |name: &str| PartRow { name: name.into(), quantity: 1, material: "Steel".into(), mass: "—".into(), ..Default::default() };
     let title = Title { title: "Enclosure".into(), parts: vec![row("Base"), row("Lid")], ..Default::default() };
     let d = de_shape::drawing::drawing(&program, &Options { sheet: Sheet::A3, ..Default::default() }, &title).unwrap();
     let mut items: Vec<usize> = d.balloons.iter().map(|b| b.item).collect();

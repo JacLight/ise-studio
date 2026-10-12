@@ -40,6 +40,7 @@ unsafe extern "C" {
     fn occ_edges(a: *mut c_void, h: c_int, deflection: f64, data: *mut *const f64, len: *mut c_int) -> c_int;
     fn occ_blend(a: *mut c_void, h: c_int, kind: c_int, size: f64, idx: *const c_int, n: c_int) -> c_int;
     fn occ_faces(a: *mut c_void, h: c_int, data: *mut *const f64, len: *mut c_int) -> c_int;
+    fn occ_face_info(a: *mut c_void, h: c_int, data: *mut *const f64, len: *mut c_int) -> c_int;
     fn occ_push_face(a: *mut c_void, h: c_int, index: c_int, distance: f64) -> c_int;
     fn occ_face_near(a: *mut c_void, h: c_int, x: f64, y: f64, z: f64) -> c_int;
     fn occ_shell(a: *mut c_void, h: c_int, thickness: f64, idx: *const c_int, n: c_int) -> c_int;
@@ -108,6 +109,40 @@ pub struct Face {
     pub normal: Option<[f64; 3]>,
     pub center: [f64; 3],
     pub area: f64,
+}
+
+/// What kind of surface a face lies on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SurfaceKind {
+    Plane,
+    Cylinder,
+    Cone,
+    Torus,
+    Sphere,
+    Other,
+}
+
+/// A face as feature recognition reads it (drawings: holes, diameters, steps).
+#[derive(Clone, Debug)]
+pub struct FaceInfo {
+    pub kind: SurfaceKind,
+    /// A plane's centre of area; else a point on the axis (a sphere's centre).
+    pub point: [f64; 3],
+    /// A plane's outward normal; else the axis.
+    pub dir: [f64; 3],
+    /// The radius at the low and high end along the axis (equal on a
+    /// cylinder; a torus: its major and minor radius).
+    pub radius: [f64; 2],
+    /// The material is outside the surface (a hole's wall, an inside corner).
+    pub concave: bool,
+    /// How far along the axis from `point` the face reaches (a plane: its
+    /// distance from the origin along its normal, twice).
+    pub along: [f64; 2],
+    /// The angle it sweeps round its axis (radians; 2π for a whole one).
+    pub sweep: f64,
+    pub area: f64,
+    /// [x0, y0, z0, x1, y1, z1].
+    pub bounds: [f64; 6],
 }
 
 pub enum Blend {
@@ -342,6 +377,35 @@ impl Arena {
         }
         let d = unsafe { std::slice::from_raw_parts(data, len as usize) };
         Ok(d.chunks_exact(8).map(|f| Face { normal: (f[0] > 0.5).then_some([f[1], f[2], f[3]]), center: [f[4], f[5], f[6]], area: f[7] }).collect())
+    }
+    /// Every face's surface, axis and extent, numbered as [`Arena::faces`] numbers them.
+    pub fn face_info(&mut self, s: Shape) -> Result<Vec<FaceInfo>, String> {
+        let (mut data, mut len) = (std::ptr::null(), 0);
+        let n = unsafe { occ_face_info(self.0, s.0, &mut data, &mut len) };
+        if n < 0 {
+            return Err(self.error());
+        }
+        let d = unsafe { std::slice::from_raw_parts(data, len as usize) };
+        Ok(d.chunks_exact(20)
+            .map(|f| FaceInfo {
+                kind: match f[0] as i32 {
+                    0 => SurfaceKind::Plane,
+                    1 => SurfaceKind::Cylinder,
+                    2 => SurfaceKind::Cone,
+                    3 => SurfaceKind::Torus,
+                    4 => SurfaceKind::Sphere,
+                    _ => SurfaceKind::Other,
+                },
+                point: [f[1], f[2], f[3]],
+                dir: [f[4], f[5], f[6]],
+                radius: [f[7], f[8]],
+                concave: f[9] > 0.5,
+                along: [f[10], f[11]],
+                sweep: f[12],
+                area: f[13],
+                bounds: [f[14], f[15], f[16], f[17], f[18], f[19]],
+            })
+            .collect())
     }
     /// The face nearest a point, numbered as [`Arena::faces`] numbers them.
     pub fn face_near(&mut self, s: Shape, p: [f64; 3]) -> Result<usize, String> {

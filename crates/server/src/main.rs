@@ -1831,16 +1831,37 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
                     None => masses.iter().copied().sum::<Option<f64>>(),
                     Some(n) => stats.iter().position(|p| &p.name == n).and_then(|i| masses.get(i).copied().flatten()),
                 };
-                // The parts list: one row per distinct part, with how many there are.
+                // The parts list: one row per distinct part, with how many there
+                // are; numbered copies of one part ("Spacer 1" … "Spacer 4": same
+                // material, process and volume) are one row, as the BOM has them.
                 let mut parts: Vec<de_shape::drawing::PartRow> = vec![];
+                let mut volumes: Vec<f64> = vec![];
                 if part.is_none() {
                     for (i, p) in stats.iter().enumerate() {
-                        if let Some(row) = parts.iter_mut().find(|r| r.name == p.name) {
+                        let base = de_sourcing::bom::base_name(&p.name).to_string();
+                        let same = |r: &de_shape::drawing::PartRow, v: f64| (r.name == p.name || de_sourcing::bom::base_name(&r.name) == base) && r.material == p.material.clone().unwrap_or_else(|| "—".into()) && r.process == p.process.clone().unwrap_or_default() && (v - p.volume_mm3).abs() <= 1e-6 * v.abs().max(1.0);
+                        if let Some(j) = parts.iter().zip(&volumes).position(|(r, v)| same(r, *v)) {
+                            let row = &mut parts[j];
                             row.quantity += 1;
+                            if !row.members.contains(&p.name) {
+                                row.members.push(p.name.clone());
+                            }
+                            // Two copies under one name: the row takes the shared name.
+                            if row.name != base && row.members.iter().all(|m| de_sourcing::bom::base_name(m) == base) {
+                                row.name = base.clone();
+                            }
                             continue;
                         }
                         let kg = masses.get(i).copied().flatten();
-                        parts.push(de_shape::drawing::PartRow { name: p.name.clone(), quantity: 1, material: p.material.clone().unwrap_or_else(|| "—".into()), mass: kg.map(kg_text).unwrap_or_else(|| "—".into()) });
+                        parts.push(de_shape::drawing::PartRow {
+                            name: p.name.clone(),
+                            quantity: 1,
+                            material: p.material.clone().unwrap_or_else(|| "—".into()),
+                            mass: kg.map(kg_text).unwrap_or_else(|| "—".into()),
+                            process: p.process.clone().unwrap_or_default(),
+                            members: vec![p.name.clone()],
+                        });
+                        volumes.push(p.volume_mm3);
                     }
                 }
                 (material, mass, parts)
