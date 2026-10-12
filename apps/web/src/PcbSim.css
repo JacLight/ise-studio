@@ -251,3 +251,11 @@
 .pcb-sim-models .muted {
   color: #8a8496;
 }
+
+.pcb-glayers input,
+.pcb-sim-signals input {
+  width: auto;
+  height: auto;
+  flex: none;
+  margin: 0;
+}

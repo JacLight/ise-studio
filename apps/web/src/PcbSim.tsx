@@ -301,7 +301,7 @@ export function SimulateTab(props: { boardId: string; revision: number }) {
 
   if (schematic === undefined) return <div className="pcb-spinner" />;
   if (schematic === null) return <p className="pcb-note">Simulation runs on the board's schematic; this board has none (pcb.schematic.from_board draws one).</p>;
-  const units = Array.from(new Set(result?.signals.map((s) => s.unit) ?? []));
+  const units = Array.from(new Set(result?.signals.filter((s) => shown.includes(s.name)).map((s) => s.unit) ?? []));
   return (
     <div className="pcb-sim">
       <div className="pcb-sim-form">
