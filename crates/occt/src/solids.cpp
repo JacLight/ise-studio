@@ -439,7 +439,7 @@ std::vector<std::pair<bool, TopoDS_Wire>> profile_wires(const TopoDS_Shape& s) {
 /// Stops a long OpenCascade algorithm once its time is up (it asks between steps).
 class Deadline : public Message_ProgressIndicator {
  public:
-  explicit Deadline(double seconds) : end(std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds)) {}
+  explicit Deadline(double seconds) : end(std::chrono::steady_clock::now() + std::chrono::milliseconds((long long)(seconds * 1000))) {}
   Standard_Boolean UserBreak() override { return std::chrono::steady_clock::now() > end; }
   void Show(const Message_ProgressScope&, const Standard_Boolean) override {}
 

@@ -1282,7 +1282,8 @@ Solid.prototype.paint = function (colour, which, { name = "" } = {}) {
 
 /**
  * The exact kernel's check of this solid (as FreeCAD's Check geometry):
- * { valid, boolean_ready, solids, faces, edges, free_edges, volume,
+ * { valid, boolean_ready, complete (false when the self-intersection pass
+ *   ran out of its 20 s), solids, faces, edges, free_edges, volume,
  *   max_tolerance: { vertex, edge, face }, problems: [{ shape, status }],
  *   faults: [{ check, shapes }] }.
  */
