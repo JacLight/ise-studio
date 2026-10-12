@@ -129,6 +129,7 @@ Build like a designer: smallest components first, then assemblies of them.
 - To customise one instance only, `assembly.instance.make_unique` first; it returns the new `definition` to edit.
 - `assembly.instance.update` moves, rotates, swaps `of`, renames, or sets `properties` (a value "" removes one). Properties carry facts like `use`, `status` (Available, Reserved, Sold), `owner`, `unit`.
 - `assembly.instance.delete` removes an instance (and the joints that name it; what they held stays where it is).
+- Repeated parts are instances of one definition, never copies of a program: a thousand screws of one size are one mesh sent once and one draw call (the view draws instances of a geometry as GPU instances, simplified when small on screen), so projects of 10,000 parts stay smooth. A big array (a rack, a facade) goes in one `core.batch` of `assembly.instance.create` steps, or as an assembly of a module placed many times.
 
 Joining components at their connectors (programs declare them with `connector(name, { at, axis, x })`: a shaft's end, a hole, a mounting face; axes point outward):
 
