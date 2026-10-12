@@ -11,6 +11,7 @@ de-solid.workspace = true
 de-intent.workspace = true
 de-shape.workspace = true
 de-assembly.workspace = true
+de-draft.workspace = true
 de-sourcing.workspace = true
 de-pcb.workspace = true
 de-occt.workspace = true

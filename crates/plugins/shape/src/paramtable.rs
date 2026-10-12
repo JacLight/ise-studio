@@ -138,9 +138,98 @@ pub fn parameter_rows(world: &World, set: &ParameterSet, resolved: Option<&Resol
     rows
 }
 
+/// A configuration table as rows: configuration, one column per parameter
+/// (by key), description, suppress and parts_off (lists joined by "; ").
+pub fn config_rows(table: &crate::ShapeConfigurations) -> Vec<Vec<String>> {
+    let mut head = vec!["configuration".to_string()];
+    head.extend(table.params.iter().cloned());
+    head.extend(["description", "suppress", "parts_off"].map(String::from));
+    let mut rows = vec![head];
+    for r in &table.rows {
+        let mut row = vec![r.name.clone()];
+        row.extend(table.params.iter().map(|k| r.values.get(k).map(|v| format!("{}", (v * 1e9).round() / 1e9)).unwrap_or_default()));
+        row.extend([r.description.clone(), r.suppress.join("; "), r.parts_off.join("; ")]);
+        rows.push(row);
+    }
+    rows
+}
+
+/// Rows (with a header) as a configuration table for a shape whose
+/// parameters are `params`: columns are matched to parameters by key or label.
+pub fn config_from_rows(rows: &[Vec<String>], params: &[Param]) -> Result<(Vec<String>, Vec<crate::ConfigRow>), String> {
+    let rows: Vec<&Vec<String>> = rows.iter().filter(|r| r.iter().any(|c| !c.trim().is_empty())).collect();
+    let head = rows.first().ok_or("the table is empty")?;
+    let mut name_col = None;
+    let (mut desc, mut supp, mut off) = (None, None, None);
+    let mut cols: Vec<(usize, &Param)> = Vec::new();
+    for (i, h) in head.iter().enumerate() {
+        let h = h.trim();
+        let l = h.to_lowercase();
+        match l.as_str() {
+            "configuration" | "name" | "config" | "size" if name_col.is_none() => name_col = Some(i),
+            "description" => desc = Some(i),
+            "suppress" => supp = Some(i),
+            "parts_off" | "parts off" => off = Some(i),
+            "" => {}
+            _ => match params.iter().find(|p| p.key == h).or_else(|| params.iter().find(|p| p.label.eq_ignore_ascii_case(h))) {
+                Some(p) => cols.push((i, p)),
+                None if name_col.is_none() && i == 0 => name_col = Some(0),
+                None => return Err(format!("column “{h}” is not a parameter of the shape (it has {})", params.iter().map(|p| p.key.as_str()).collect::<Vec<_>>().join(", "))),
+            },
+        }
+    }
+    let name_col = name_col.ok_or("the first column must name the configurations (head it “configuration”)")?;
+    if cols.is_empty() {
+        return Err("no column names a parameter of the shape".into());
+    }
+    let list = |s: Option<&String>| s.map(|x| x.split(';').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()).unwrap_or_default();
+    let mut out = Vec::new();
+    for (n, r) in rows.iter().enumerate().skip(1) {
+        let name = r.get(name_col).map(|s| s.trim().to_string()).unwrap_or_default();
+        if name.is_empty() {
+            continue;
+        }
+        let mut values = std::collections::BTreeMap::new();
+        for (i, p) in &cols {
+            let t = r.get(*i).map(|s| s.trim()).unwrap_or("");
+            let unit = match p.unit.as_str() {
+                "mm" => Some("mm"),
+                "deg" => Some("deg"),
+                _ => None,
+            };
+            let (v, _) = sheet::number(t, unit).ok_or_else(|| format!("row {} ({name}): {} “{t}” is not a number", n + 1, p.key))?;
+            values.insert(p.key.clone(), v);
+        }
+        out.push(crate::ConfigRow { name, values, description: desc.and_then(|i| r.get(i)).map(|s| s.trim().to_string()).unwrap_or_default(), suppress: list(supp.and_then(|i| r.get(i))), parts_off: list(off.and_then(|i| r.get(i))) });
+    }
+    if out.is_empty() {
+        return Err("the table has no configurations".into());
+    }
+    Ok((cols.iter().map(|(_, p)| p.key.clone()).collect(), out))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_tables() {
+        let ps: Vec<Param> = serde_json::from_value(serde_json::json!([
+            { "key": "d", "label": "Diameter", "value": 6, "unit": "mm", "min": null, "max": null, "step": null },
+            { "key": "len", "label": "Length", "value": 20, "unit": "mm", "min": null, "max": null, "step": null }
+        ]))
+        .unwrap();
+        let rows = table::read_csv("configuration,Diameter,len,parts_off\nM6×20,6,20,\nM8×30,8 mm,1.18in,Washer; Nut\n");
+        let (cols, rs) = config_from_rows(&rows, &ps).unwrap();
+        assert_eq!(cols, ["d", "len"]);
+        assert_eq!(rs[1].values["len"], 1.18 * 25.4);
+        assert_eq!(rs[1].parts_off, ["Washer", "Nut"]);
+        let t = crate::ShapeConfigurations { params: cols, rows: rs, active: None };
+        let back = config_rows(&t);
+        assert_eq!(back[0], ["configuration", "d", "len", "description", "suppress", "parts_off"]);
+        assert_eq!(config_from_rows(&back, &ps).unwrap().1, t.rows);
+        assert!(config_from_rows(&table::read_csv("configuration,width\nA,1\n"), &ps).unwrap_err().contains("width"));
+    }
 
     fn rows(t: &str) -> Vec<Vec<String>> {
         table::read_csv(t)

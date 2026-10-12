@@ -488,6 +488,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "de-draft"
+version = "0.1.0"
+dependencies = [
+ "de-assembly",
+ "de-core",
+ "de-shape",
+ "de-solid",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "de-intent"
 version = "0.1.0"
 dependencies = [
@@ -529,6 +541,7 @@ dependencies = [
  "base64",
  "de-assembly",
  "de-core",
+ "de-draft",
  "de-intent",
  "de-occt",
  "de-pcb",

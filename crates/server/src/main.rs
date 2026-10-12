@@ -2334,7 +2334,7 @@ async fn main() -> std::io::Result<()> {
     let dir = project_path.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
     std::fs::create_dir_all(&dir)?;
     let default = project_path.file_stem().and_then(|s| s.to_str()).unwrap_or("default").to_string();
-    let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
+    let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &de_draft::DraftPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
     let claude = ai::AiConfig::find_claude();
     match &claude {
         Some(p) => println!("Forma AI: Claude Code at {}", p.display()),
@@ -2474,7 +2474,7 @@ mod tests {
     }
 
     fn server_in(dir: &std::path::Path) -> Arc<Server> {
-        let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
+        let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &de_draft::DraftPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let ai = Arc::new(ai::AiConfig { repo: root.clone(), port: 0, claude: None, model: None });
         let web = dir.join("web");
