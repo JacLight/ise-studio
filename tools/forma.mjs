@@ -223,7 +223,7 @@ if (command === "run") {
     for (const p of r.parts) {
       const c = p.report;
       const t = c.max_tolerance;
-      console.log(`  ${c.valid && c.boolean_ready ? "ok  " : "FAIL"} ${p.name}: ${c.valid ? "valid" : "INVALID"}, ${c.boolean_ready ? "ready for booleans" : "booleans may fail"}; ${c.solids} solid${c.solids === 1 ? "" : "s"}, ${c.faces} faces, ${c.edges} edges${c.free_edges ? `, ${c.free_edges} FREE EDGES (not closed)` : ""}; volume ${+c.volume.toFixed(3)} mm³; largest tolerance ${t.vertex.toExponential(1)} mm (vertex), ${t.edge.toExponential(1)} (edge), ${t.face.toExponential(1)} (face)`);
+      console.log(`  ${c.valid && c.boolean_ready ? "ok  " : "FAIL"} ${p.name}: ${c.valid ? "valid" : "INVALID"}, ${c.boolean_ready ? "ready for booleans" : "booleans may fail"}; ${c.solids} solid${c.solids === 1 ? "" : "s"}, ${c.faces} faces, ${c.edges} edges${c.free_edges ? `, ${c.free_edges} FREE EDGES (not closed)` : ""}; volume ${+c.volume.toFixed(3)} mm³; largest tolerance ${t.vertex.toExponential(1)} mm (vertex), ${t.edge.toExponential(1)} (edge), ${t.face.toExponential(1)} (face)${c.complete === false ? '; the self-intersection check stopped after 20 s (unfinished)' : ''}`);
       for (const x of c.problems) console.log(`       ${x.shape}: ${x.status}`);
       for (const x of c.faults) console.log(`       ${x.check}${x.shapes ? ` (${x.shapes})` : ""}${x.distance ? `, off by ${x.distance} mm` : ""}`);
     }

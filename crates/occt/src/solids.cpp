@@ -31,6 +31,9 @@
 #include <XCAFDoc_ColorTool.hxx>
 #include <gp_Ax3.hxx>
 
+#include <Message_ProgressIndicator.hxx>
+
+#include <chrono>
 #include <sstream>
 
 namespace {
@@ -433,6 +436,17 @@ std::vector<std::pair<bool, TopoDS_Wire>> profile_wires(const TopoDS_Shape& s) {
   return out;
 }
 
+/// Stops a long OpenCascade algorithm once its time is up (it asks between steps).
+class Deadline : public Message_ProgressIndicator {
+ public:
+  explicit Deadline(double seconds) : end(std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds)) {}
+  Standard_Boolean UserBreak() override { return std::chrono::steady_clock::now() > end; }
+  void Show(const Message_ProgressScope&, const Standard_Boolean) override {}
+
+ private:
+  std::chrono::steady_clock::time_point end;
+};
+
 int count_solids(const TopoDS_Shape& s) {
   int n = 0;
   for (TopExp_Explorer e(s, TopAbs_SOLID); e.More(); e.Next()) n++;
@@ -586,8 +600,9 @@ int occ_loft(void* p, const int* hs, const double* mats, int n, int ruled, int c
       auto wires = profile_wires(*s);
       int outers = 0;
       for (auto& [outer, w] : wires) {
-        if (outer) ws.insert(ws.begin(), transformed(w, t)), outers++;
-        else inner.push_back(transformed(w, t));
+        TopoDS_Wire placed = TopoDS::Wire(transformed(w, t));
+        if (outer) ws.insert(ws.begin(), placed), outers++;
+        else inner.push_back(placed);
       }
       if (outers != 1) throw Standard_Failure("each loft section must be one outline (holes allowed)");
       ws.insert(ws.end(), inner.begin(), inner.end());
@@ -664,6 +679,9 @@ int occ_thicken(void* p, int h, double t, const int* idx, int n, int join) {
       mk.MakeThickSolidByJoin(*s, open, -t, 1e-6, BRepOffset_Skin, Standard_False, Standard_False, j);
       if (!mk.IsDone()) throw Standard_Failure("could not hollow the solid with walls that thick");
       r = as_solid(mk.Shape());
+      // The algorithm can hand the part back untouched rather than fail.
+      if (std::fabs(volume_of(r) - volume_of(*s)) <= 1e-9 * std::fabs(volume_of(*s)))
+        throw Standard_Failure("could not hollow this solid (its faces do not offset cleanly: loft an inner skin and subtract it instead)");
     } else {
       BRepOffset_MakeOffset mo;
       mo.Initialize(*s, t, 1e-6, BRepOffset_Skin, Standard_False, Standard_False, j, Standard_True);
@@ -890,6 +908,7 @@ const char* occ_check(void* p, int h) {
     }
     // What booleans would trip on.
     std::vector<std::string> faults;
+    bool stopped = false;
     {
       BOPAlgo_ArgumentAnalyzer ba;
       ba.SetShape1(*s);
@@ -900,7 +919,10 @@ const char* occ_check(void* p, int h) {
       ba.ContinuityMode() = Standard_True;
       ba.CurveOnSurfaceMode() = Standard_True;
       ba.StopOnFirstFaulty() = Standard_False;
-      ba.Perform();
+      // Self-intersection of many curved faces can take minutes: it gets 20 s.
+      Handle(Deadline) clock = new Deadline(20);
+      ba.Perform(clock->Start());
+      stopped = clock->UserBreak();
       if (ba.HasFaulty()) {
         static const char* names[] = {"unknown",
                                       "bad type",
@@ -917,6 +939,7 @@ const char* occ_check(void* p, int h) {
         for (BOPAlgo_ListIteratorOfListOfCheckResult it(ba.GetCheckResult()); it.More() && faults.size() < 50; it.Next()) {
           const BOPAlgo_CheckResult& r = it.Value();
           int st = (int)r.GetCheckStatus();
+          if (r.GetCheckStatus() == BOPAlgo_OperationAborted) continue;
           std::string shapes;
           for (TopTools_ListIteratorOfListOfShape f(r.GetFaultyShapes1()); f.More(); f.Next()) shapes += std::string(shapes.empty() ? "" : ", ") + kind(f.Value().ShapeType());
           std::ostringstream fo;
@@ -937,7 +960,7 @@ const char* occ_check(void* p, int h) {
     for (int i = 1; i <= ef.Extent(); i++)
       if (!BRep_Tool::Degenerated(TopoDS::Edge(ef.FindKey(i))) && ef(i).Extent() == 1) free++;
     double vol = counts[0] ? volume_of(*s) : 0;
-    o << "{\"valid\":" << (valid ? "true" : "false") << ",\"boolean_ready\":" << (faults.empty() ? "true" : "false") << ",\"kind\":\"" << kind(s->ShapeType())
+    o << "{\"valid\":" << (valid ? "true" : "false") << ",\"boolean_ready\":" << (faults.empty() ? "true" : "false") << ",\"complete\":" << (stopped ? "false" : "true") << ",\"kind\":\"" << kind(s->ShapeType())
       << "\",\"solids\":" << counts[0] << ",\"shells\":" << counts[1] << ",\"faces\":" << counts[2] << ",\"wires\":" << counts[3] << ",\"edges\":" << counts[4]
       << ",\"vertices\":" << counts[5] << ",\"free_edges\":" << free << ",\"volume\":" << vol << ",\"max_tolerance\":{\"vertex\":" << tv << ",\"edge\":" << te
       << ",\"face\":" << tf << "},\"problems\":[";
