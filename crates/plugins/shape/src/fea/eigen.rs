@@ -112,7 +112,7 @@ fn subspace(model: &Model, count: usize, b: &(dyn Fn(&[f64]) -> Vec<f64> + Sync)
     let mut last = vec![0.0; p];
     let mut mu = vec![0.0; p];
     let mut settled = false;
-    for round in 0..60 {
+    for round in 0..30 {
         // Loose solves while the subspace is still far off, tight once it settles.
         let tol = if round < 3 { 1e-4 } else { 1e-7 };
         z = (0..p)
