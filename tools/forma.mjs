@@ -46,6 +46,7 @@
 
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { request as httpRequest } from "node:http";
 
 const args = process.argv.slice(2);
 const urlFlag = args.indexOf("--url");
@@ -232,11 +233,23 @@ if (command === "run") {
   const q = new URLSearchParams({ ...(project ? { project } : {}), ...(part ? { part } : {}) });
   const n = (v, d = 2) => (v == null || !Number.isFinite(v) ? String(v) : Number(v.toFixed(d)).toString());
   const v3 = (v) => `[${v.map((x) => n(x, 2)).join(", ")}]`;
-  const get = async (path, init) => {
-    const res = await fetch(`${http}${path}`, init);
-    if (!res.ok) throw new Error(await res.text());
-    return res;
-  };
+  // A study can take minutes: plain node:http, which (unlike fetch) never gives up waiting for the answer.
+  const get = (path, init = {}) =>
+    new Promise((done, fail) => {
+      const req = httpRequest(`${http}${path}`, { method: init.method ?? "GET", headers: init.headers ?? {} }, (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const body = Buffer.concat(chunks);
+          if (res.statusCode >= 400) return fail(new Error(body.toString() || `HTTP ${res.statusCode}`));
+          done({ text: async () => body.toString(), json: async () => JSON.parse(body.toString()), arrayBuffer: async () => body });
+        });
+      });
+      req.on("error", fail);
+      req.setTimeout(0);
+      if (init.body) req.write(init.body);
+      req.end();
+    });
   try {
     if (command === "study") {
       // forma study <shape id> study.json [--part X]: save a study (faces as { normal, near: [x, y, z] }).

@@ -54,6 +54,38 @@ pub(super) fn geometric(model: &Model, tensors: &[[f64; 6]]) -> Vec<[f64; 64]> {
         .collect()
 }
 
+/// K_G·x over every cube, in parallel (each cube's 8 × 8 acts alike on x, y and z).
+pub(super) fn geo_apply(corners: &[[usize; 8]], geo: &[[f64; 64]], x: &[f64]) -> Vec<f64> {
+    let n = x.len();
+    corners
+        .par_chunks(4096)
+        .zip(geo.par_chunks(4096))
+        .fold(
+            || vec![0.0; n],
+            |mut y, (cs, gs)| {
+                for (c, g) in cs.iter().zip(gs) {
+                    for (a, &na) in c.iter().enumerate() {
+                        let mut s = [0.0; 3];
+                        for (b, &nb) in c.iter().enumerate() {
+                            let k = g[8 * a + b];
+                            for d in 0..3 {
+                                s[d] += k * x[3 * nb + d];
+                            }
+                        }
+                        for d in 0..3 {
+                            y[3 * na + d] += s[d];
+                        }
+                    }
+                }
+                y
+            },
+        )
+        .reduce(|| vec![0.0; n], |mut a, b| {
+            a.iter_mut().zip(&b).for_each(|(p, q)| *p += q);
+            a
+        })
+}
+
 /// The `count` largest μ of B·φ = μ·K·φ (the smallest λ = 1/μ of K·φ = λ·B·φ),
 /// with their vectors, by subspace iteration on K⁻¹·B. `b` applies B
 /// (masked to the free directions). Returns them largest μ first, and
@@ -82,7 +114,7 @@ fn subspace(model: &Model, count: usize, b: &(dyn Fn(&[f64]) -> Vec<f64> + Sync)
     let mut settled = false;
     for round in 0..60 {
         // Loose solves while the subspace is still far off, tight once it settles.
-        let tol = if round < 3 { 1e-4 } else { 1e-8 };
+        let tol = if round < 3 { 1e-4 } else { 1e-7 };
         z = (0..p)
             .into_par_iter()
             .map(|i| {
@@ -140,7 +172,9 @@ fn subspace(model: &Model, count: usize, b: &(dyn Fn(&[f64]) -> Vec<f64> + Sync)
         }
         // The next solves' answers are close to μ·x: start there.
         z = x.iter().zip(&mu).map(|(xi, m)| xi.iter().map(|v| v * m).collect()).collect();
-        let done = (0..count).all(|i| (mu[i] - last[i]).abs() <= 1e-6 * mu[i].abs().max(1e-300));
+        // Measured against the largest: a μ near zero (no buckling that way) never settles relatively.
+        let top = mu[..count].iter().fold(0.0f64, |a, m| a.max(m.abs())).max(1e-300);
+        let done = (0..count).all(|i| (mu[i] - last[i]).abs() <= 1e-5 * mu[i].abs().max(1e-3 * top));
         last = mu.clone();
         if done && round > 1 {
             settled = true;
@@ -282,19 +316,7 @@ pub fn buckling(body: &Body, study: &Study, count: usize) -> Result<Buckling, St
     let count = count.clamp(1, 6);
     // B = −K_G.
     let b = |x: &[f64]| -> Vec<f64> {
-        let mut y = vec![0.0; x.len()];
-        for (c, g) in model.corners.iter().zip(&geo) {
-            for (a, &na) in c.iter().enumerate() {
-                for (bb, &nb) in c.iter().enumerate() {
-                    let k = g[8 * a + bb];
-                    if k != 0.0 {
-                        for d in 0..3 {
-                            y[3 * na + d] -= k * x[3 * nb + d];
-                        }
-                    }
-                }
-            }
-        }
+        let mut y: Vec<f64> = geo_apply(&model.corners, &geo, x).into_iter().map(|v| -v).collect();
         model.mask(&mut y);
         y
     };

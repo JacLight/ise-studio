@@ -1499,18 +1499,8 @@ impl Model {
                 a
             });
         if let Some(geo) = &self.geo {
-            for (c, g) in self.corners.iter().zip(geo) {
-                for (a, &na) in c.iter().enumerate() {
-                    for (b, &nb) in c.iter().enumerate() {
-                        let k = g[8 * a + b];
-                        if k != 0.0 {
-                            for d in 0..3 {
-                                y[3 * na + d] += k * x[3 * nb + d];
-                            }
-                        }
-                    }
-                }
-            }
+            let kg = eigen::geo_apply(&self.corners, geo, x);
+            y.iter_mut().zip(&kg).for_each(|(a, b)| *a += b);
         }
         add_springs(&self.springs, x, &mut y);
         y
