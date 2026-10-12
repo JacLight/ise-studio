@@ -46,7 +46,7 @@ fn detail() -> usize {
 }
 
 /// A relief from a stored picture: adaptive within `budget` triangles, or
-/// (`budget` 0) on a plain 128-cell grid for the exact kernel.
+/// (`budget` 0) on a plain 64-cell grid for the exact kernel.
 pub fn relief(sha: &str, options: &str, tolerance: f64, budget: usize) -> Result<Manifold, String> {
     let o: ReliefJson = serde_json::from_str(options).map_err(|e| format!("relief: {e}"))?;
     let mode = match o.mode.as_str() {
@@ -75,7 +75,7 @@ pub fn relief(sha: &str, options: &str, tolerance: f64, budget: usize) -> Result
         detail: o.detail.clamp(16, 4096),
     };
     if budget == 0 {
-        return relief::build_regular(&picture, &spec, 128);
+        return relief::build_regular(&picture, &spec, 64);
     }
     Ok(relief::build(&picture, &spec)?.solid)
 }
