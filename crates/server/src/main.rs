@@ -8,6 +8,7 @@
 //! Clients pick a project with `?project=<name>` on `/ws` and `/export`.
 
 mod ai;
+mod data;
 mod assembly_api;
 mod history;
 mod machines;
@@ -508,6 +509,12 @@ struct EntityView<'a> {
     /// Mass (kg) of each part of an assembly, in the order of `shape.parts`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     part_masses: Vec<Option<f64>>,
+    /// A sheet: what every cell shows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sheet: Option<&'a de_shape::sheet::SheetValues>,
+    /// A draft object where it is now: lines, label, measured value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    draft: Option<&'a de_draft::DraftShape>,
 }
 
 /// A configuration as an instance shows it, its mesh named by content.
@@ -548,6 +555,8 @@ fn view(project: &Project, id: StableId) -> Option<EntityView<'_>> {
             .and_then(|e| de_shape::params::params_of(project.world(), e))
             .map(|(_, ps)| ps.iter().filter_map(|p| p.expr.as_ref().map(|f| (p.key.clone(), de_shape::params::display(project.world(), f)))).collect())
             .unwrap_or_default(),
+        sheet: project.get::<de_shape::sheet::SheetValues>(id),
+        draft: project.get::<de_draft::DraftShape>(id),
         part_masses: match (project.entity(id), project.get::<ShapeSolid>(id)) {
             (Some(e), Some(s)) if !s.stats.parts.is_empty() => de_shape::part_masses(project.world(), e).unwrap_or_default(),
             _ => Vec::new(),
@@ -1223,6 +1232,14 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
         return fail(StatusCode::BAD_REQUEST, "tolerance must be between 0.0001 and 10 mm".into());
     }
     let part = query.get("part").cloned();
+    if ext == "scad" {
+        let project = app.project.lock().unwrap();
+        let made = serde_json::from_value::<StableId>(json!(stem)).map_err(|_| format!("{stem} is not a part")).and_then(|id| data::scad_file(&project, id, tolerance));
+        return match made {
+            Ok((name, bytes)) => (StatusCode::OK, [(header::CONTENT_TYPE, "text/plain; charset=utf-8".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}\""))], bytes).into_response(),
+            Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        };
+    }
     let sources: Vec<Source> = {
         let project = app.project.lock().unwrap();
         if stem == "project" && ext == "zip" {
@@ -2291,8 +2308,14 @@ async fn import(
 ) -> axum::response::Response {
     let fail = |code: StatusCode, message: String| (code, message).into_response();
     let lower = file.to_lowercase();
+    if [".scad", ".csv", ".tsv", ".xlsx", ".xlsm"].iter().any(|x| lower.ends_with(x)) {
+        return match server.project(query.get("project")) {
+            Ok(app) => data::import_data(app, &file, &query, &body).await,
+            Err(e) => fail(StatusCode::BAD_REQUEST, e),
+        };
+    }
     if !(lower.ends_with(".step") || lower.ends_with(".stp")) {
-        return fail(StatusCode::BAD_REQUEST, "Forma imports STEP files (.step, .stp)".into());
+        return fail(StatusCode::BAD_REQUEST, "Forma imports STEP (.step, .stp), OpenSCAD (.scad) and tables (.csv, .xlsx)".into());
     }
     let app = match server.project(query.get("project")) {
         Ok(app) => app,
@@ -2410,7 +2433,7 @@ async fn main() -> std::io::Result<()> {
     let dir = project_path.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
     std::fs::create_dir_all(&dir)?;
     let default = project_path.file_stem().and_then(|s| s.to_str()).unwrap_or("default").to_string();
-    let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
+    let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &de_draft::DraftPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
     let claude = ai::AiConfig::find_claude();
     match &claude {
         Some(p) => println!("Forma AI: Claude Code at {}", p.display()),
@@ -2477,6 +2500,9 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/projects/{name}/duplicate", axum::routing::post(project_duplicate))
         .route("/projects/{name}/delete", axum::routing::post(project_delete))
         .route("/projects/trash", get(trash_list))
+        .route("/projects/{name}/bundle", get(data::bundle))
+        .route("/projects/import", axum::routing::post(data::import_bundle).layer(axum::extract::DefaultBodyLimit::max(1024 * 1024 * 1024)))
+        .route("/table/{file}", get(data::table_file))
         .route("/projects/trash/{entry}/restore", axum::routing::post(trash_restore))
         .route("/projects/{name}/thumbnail", get(thumbnail_get).post(thumbnail_put).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024)))
         .route("/slicer/{file}", axum::routing::post(send_to_slicer))
@@ -2598,7 +2624,7 @@ mod tests {
     }
 
     fn server_in(dir: &std::path::Path) -> Arc<Server> {
-        let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
+        let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &de_draft::DraftPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let ai = Arc::new(ai::AiConfig { repo: root.clone(), port: 0, claude: None, model: None });
         let web = dir.join("web");

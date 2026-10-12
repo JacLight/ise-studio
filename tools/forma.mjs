@@ -36,6 +36,13 @@
 //   node tools/forma.mjs measure <part> [other part] [--part name]   volume, area, mass, centre of mass,
 //   node tools/forma.mjs drawing <id> [--sheet A3] [--part Name] [--page N] [--pdf f] [--svg f] [--dxf f] [--zip f]   the engineering drawing: sheets, dimensions, the checker's findings; saves files
 //        moments of inertia (kg·mm² about the centre of mass); with two: centre to centre and the gap per axis
+//   node tools/forma.mjs sheet <sheet>        a spreadsheet as a grid: what each cell shows, aliases, errors
+//   node tools/forma.mjs draft                draft objects, dimensions with their values, layers, working planes, arrays
+//   node tools/forma.mjs import <file> [--as sheet|parameters|configurations] [--target id] [--sheet name]
+//        .step/.stp, .scad (a live parametric shape), .csv/.xlsx (a sheet, a parameter set or a shape's
+//        configurations), .forma (a whole project bundle, as a new project)
+//   node tools/forma.mjs export <id|name> <file.step|stl|3mf|dxf|scad|zip|csv|xlsx>   write a file
+//   node tools/forma.mjs bundle [file.forma]   the whole project (history, assets) as one file
 //
 // steps.json is an array of { "operation": "...", "parameters": { ... } }.
 // Any string "$N.path" in parameters is replaced by step N's output at that
@@ -600,8 +607,42 @@ if (command === "run") {
   const s = await engine.snapshot;
   for (const e of s.entities) {
     const c = e.components;
-    const kind = c["shape.program"] ? `shape “${c["shape.program"].name}”` : c["solid.box"] ? "box" : c["solid.material"] ? `material ${c["solid.material"].name}` : c["intent.requirement"] ? `requirement “${c["intent.requirement"].name}”` : "entity";
-    const extra = e.result ? ` — ${e.result.passed ? "met" : "FAILING"}: ${e.result.summary}` : e.mass ? ` — ${(e.mass.volume_m3 * 1e9).toFixed(1)} mm³` : "";
+    const kind = c["shape.program"]
+      ? `shape “${c["shape.program"].name}”`
+      : c["solid.box"]
+        ? "box"
+        : c["solid.material"]
+          ? `material ${c["solid.material"].name}`
+          : c["intent.requirement"]
+            ? `requirement “${c["intent.requirement"].name}”`
+            : c["shape.sheet"]
+              ? `sheet “${c["shape.sheet"].name}”`
+              : c["draft.array"]
+                ? `array “${c["shape.parameter_set"]?.name}” (${c["draft.array"].kind}, ${c["draft.array"].members.length + 1} copies)`
+                : c["shape.parameter_set"]
+                  ? `parameters “${c["shape.parameter_set"].name}”`
+                  : c["draft.object"]
+                    ? `draft ${c["draft.object"].kind} “${c["draft.object"].name}”`
+                    : c["draft.layer"]
+                      ? `layer “${c["draft.layer"].name}”`
+                      : c["draft.plane"]
+                        ? `working plane “${c["draft.plane"].name}”`
+                        : c["shape.sketch"]
+                          ? `sketch “${c["shape.sketch"].name}”`
+                          : c["assembly.instance"]
+                            ? `instance ${c["assembly.instance"].name}`
+                            : c["assembly.definition"]
+                              ? `assembly “${c["assembly.definition"].name}”`
+                              : "entity";
+    const extra = e.result
+      ? ` — ${e.result.passed ? "met" : "FAILING"}: ${e.result.summary}`
+      : e.draft?.value != null
+        ? ` — ${e.draft.label?.[1] ?? e.draft.value}`
+        : e.sheet
+          ? ` — ${Object.keys(e.sheet.cells).length} cells${e.sheet.errors ? `, ${e.sheet.errors} errors` : ""}`
+          : e.mass
+            ? ` — ${(e.mass.volume_m3 * 1e9).toFixed(1)} mm³`
+            : "";
     console.log(`${e.id}  ${kind}${extra}`);
   }
 } else if (command === "get") {
@@ -704,6 +745,135 @@ if (command === "run") {
       // Gap between bounding boxes along each axis (negative: they overlap that much).
       const gap = [0, 1, 2].map((k) => Math.max(p.bounds_min[k], q.bounds_min[k]) - Math.min(p.bounds_max[k], q.bounds_max[k]));
       console.log(`  box gaps X ${n(gap[0], 2)}, Y ${n(gap[1], 2)}, Z ${n(gap[2], 2)} mm (negative: overlapping); boxes ${gap.some((g) => g > 0) ? `apart by at least ${n(Math.hypot(...gap.map((g) => Math.max(g, 0))), 2)} mm` : "overlap"}`);
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
+} else if (command === "sheet") {
+  // A spreadsheet as a grid, as each cell shows.
+  const s = await engine.snapshot;
+  const want = args.slice(1).join(" ");
+  const sheets = s.entities.filter((e) => e.components["shape.sheet"]);
+  const e = sheets.find((x) => x.id === want) ?? sheets.find((x) => x.components["shape.sheet"].name.toLowerCase() === want.toLowerCase()) ?? (!want && sheets.length === 1 ? sheets[0] : null);
+  if (!e) {
+    console.error(want ? `no sheet “${want}” (sheets: ${sheets.map((x) => x.components["shape.sheet"].name).join(", ") || "none"})` : `say which sheet: ${sheets.map((x) => x.components["shape.sheet"].name).join(", ") || "there are none"}`);
+    failed = true;
+  } else {
+    const sheet = e.components["shape.sheet"];
+    const cells = e.sheet?.cells ?? {};
+    const addr = (a) => {
+      const m = /^([A-Z]+)(\d+)$/.exec(a);
+      let c = 0;
+      for (const ch of m[1]) c = c * 26 + ch.charCodeAt(0) - 64;
+      return [c - 1, Number(m[2]) - 1];
+    };
+    const keys = Object.keys(sheet.cells);
+    const cols = Math.max(0, ...keys.map((a) => addr(a)[0] + 1));
+    const rows = Math.max(0, ...keys.map((a) => addr(a)[1] + 1));
+    const colName = (c) => {
+      let s = "";
+      c += 1;
+      while (c > 0) {
+        const r = (c - 1) % 26;
+        s = String.fromCharCode(65 + r) + s;
+        c = Math.floor((c - 1) / 26);
+      }
+      return s;
+    };
+    const width = Array.from({ length: cols }, (_, c) => Math.min(28, Math.max(4, ...Array.from({ length: rows }, (_, r) => (cells[colName(c) + (r + 1)]?.shown ?? "").length))));
+    console.log(`${sheet.name}  (${e.id})${sheet.description ? `  ${sheet.description}` : ""}`);
+    console.log("     " + width.map((w, c) => colName(c).padEnd(w)).join(" │ "));
+    for (let r = 0; r < rows; r++) {
+      const line = width.map((w, c) => {
+        const v = cells[colName(c) + (r + 1)];
+        const t = (v?.shown ?? "").slice(0, w);
+        return v?.value != null ? t.padStart(w) : t.padEnd(w);
+      });
+      console.log(String(r + 1).padStart(4) + " " + line.join(" │ "));
+    }
+    const aliases = Object.entries(e.sheet?.aliases ?? {});
+    if (aliases.length) console.log(`aliases: ${aliases.map(([a, at]) => `${a}=${at}`).join(", ")}  (read elsewhere as ${sheet.name}.<alias> or ${sheet.name}.<cell>)`);
+    const formulas = Object.entries(cells).filter(([, v]) => v.formula);
+    if (formulas.length) console.log(`formulas: ${formulas.map(([a, v]) => `${a} ${v.formula}`).join("; ")}`);
+    for (const [a, v] of Object.entries(cells)) if (v.error) console.log(`  ✗ ${a}: ${v.error}`);
+  }
+} else if (command === "draft") {
+  // Draft objects (with what dimensions measure), layers, working planes and arrays.
+  const s = await engine.snapshot;
+  const fmt = (p) => `[${p.map((v) => +v.toFixed(3)).join(", ")}]`;
+  for (const e of s.entities) {
+    const c = e.components;
+    if (c["draft.object"]) {
+      const o = c["draft.object"];
+      const d = e.draft;
+      const what = d?.value != null ? ` = ${d.label?.[1]}` : d?.area != null ? ` length ${+d.length.toFixed(3)} mm, area ${+d.area.toFixed(3)} mm²` : d ? ` length ${+d.length.toFixed(3)} mm` : "";
+      console.log(`${e.id}  ${o.kind} “${o.name}”${what}${o.text && o.kind !== "dimension" ? ` “${o.text}”` : ""}${d?.points?.length ? `  points ${d.points.slice(0, 4).map(fmt).join(" ")}${d.points.length > 4 ? " …" : ""}` : ""}${e.status?.state === "failed" ? `  ✗ ${e.status.reason}` : ""}`);
+    } else if (c["draft.layer"]) {
+      const l = c["draft.layer"];
+      console.log(`${e.id}  layer “${l.name}”${l.visible ? "" : " (hidden)"}${l.locked ? " (locked)" : ""}${l.color ? ` ${l.color}` : ""}: ${l.members.length} members`);
+    } else if (c["draft.plane"]) {
+      const p = c["draft.plane"];
+      console.log(`${e.id}  working plane “${p.name}” origin ${fmt(p.origin)} x ${fmt(p.x)} y ${fmt(p.y)}`);
+    } else if (c["draft.array"]) {
+      const a = c["draft.array"];
+      const v = e.params ?? {};
+      console.log(`${e.id}  array “${c["shape.parameter_set"]?.name}”: ${a.kind} ×${a.count}${a.count2 > 1 ? `×${a.count2}` : ""}, spacing ${v.spacing}${a.kind === "polar" ? `, angle ${v.angle}°` : ""}${e.formulas && Object.keys(e.formulas).length ? ` (${Object.entries(e.formulas).map(([k, f]) => `${k} ${f}`).join(", ")})` : ""}`);
+    }
+  }
+} else if (command === "import" || command === "export" || command === "bundle") {
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const { readFileSync: read, writeFileSync: write } = await import("node:fs");
+  const { basename } = await import("node:path");
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const snap = await engine.snapshot;
+  const projectName = project ?? snap.project_id;
+  try {
+    if (command === "import") {
+      const as = flag("--as");
+      const target = flag("--target");
+      const sheet = flag("--sheet");
+      const path = args[1];
+      if (!path) throw new Error("say which file: forma import <file>");
+      const bytes = read(path);
+      const name = basename(path);
+      if (name.toLowerCase().endsWith(".forma")) {
+        const res = await fetch(`${http}/projects/import`, { method: "POST", body: bytes });
+        if (!res.ok) throw new Error(await res.text());
+        const r = await res.json();
+        console.log(`✓ imported as project “${r.name}”${r.assets ? ` (${r.assets} asset files)` : ""}: open it with --project ${r.name}`);
+      } else {
+        const q = new URLSearchParams({ project: projectName, user: "forma-ai", ...(as ? { as } : {}), ...(target ? { target } : {}), ...(sheet ? { sheet } : {}) });
+        const res = await fetch(`${http}/import/${encodeURIComponent(name)}?${q}`, { method: "POST", body: bytes });
+        if (!res.ok) throw new Error(await res.text());
+        const r = await res.json();
+        console.log(`✓ ${r.operation ?? "import"} → ${JSON.stringify(r.output ?? r)}`);
+      }
+    } else if (command === "export") {
+      const [, what, out] = args;
+      if (!what || !out) throw new Error("forma export <id|name> <file.step|stl|3mf|dxf|scad|zip|csv|xlsx>");
+      const name = (e) => {
+        const c = e.components;
+        return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["shape.sheet"]?.name ?? c["shape.parameter_set"]?.name ?? c["assembly.definition"]?.name;
+      };
+      const found = snap.entities.filter((e) => e.id === what || name(e)?.toLowerCase() === what.toLowerCase());
+      if (found.length !== 1) throw new Error(found.length ? `“${what}” matches ${found.length} things: use an id` : `nothing called “${what}”`);
+      const ext = out.split(".").pop().toLowerCase();
+      const route = ext === "csv" || ext === "xlsx" ? "table" : "export";
+      const res = await fetch(`${http}/${route}/${found[0].id}.${ext}?project=${encodeURIComponent(projectName)}`);
+      if (!res.ok) throw new Error(await res.text());
+      write(out, Buffer.from(await res.arrayBuffer()));
+      console.log(`✓ wrote ${out}`);
+    } else {
+      const out = args[1] ?? `${projectName}.forma`;
+      const res = await fetch(`${http}/projects/${encodeURIComponent(projectName)}/bundle`);
+      if (!res.ok) throw new Error(await res.text());
+      const bytes = Buffer.from(await res.arrayBuffer());
+      write(out, bytes);
+      console.log(`✓ wrote ${out} (${(bytes.length / 1024).toFixed(0)} KB): the whole project with its history and assets; import it elsewhere with forma import ${out}`);
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
@@ -854,7 +1024,7 @@ if (command === "run") {
     failed = true;
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | measure <part> [other] | view <action> [what] | image add <file> | image list | look [what] [--view v] | drawing <id> | dof | interference | exploded | study | robot | pcb … | simulate <schematic>  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | measure <part> [other] | sheet <name> | draft | import <file> | export <id> <file> | bundle [file] | view <action> [what] | image add <file> | image list | look [what] [--view v] | drawing <id> | dof | interference | exploded | study | robot | pcb … | simulate <schematic>  [--project name] [--url ws://…]");
   failed = true;
 }
 

@@ -32,10 +32,19 @@ Run it from your working folder. It acts on the open project. It is your only wa
 ./forma ops [filter]                 commands the engine accepts, with their JSON schemas
 ./forma commit <operation> '<json>'  run one command
 ./forma run steps.json               run several; "$N.id" refers to step N's output, {"$file": "x.js"} inlines a file
+./forma sheet <name>                 a spreadsheet as a grid (what each cell shows), its aliases, formulas and errors
+./forma draft                        draft objects (dimensions with their values), layers, working planes, arrays
+./forma import <file> [--as sheet|parameters|configurations] [--target id] [--sheet name]
+                                     .step, .scad (a live parametric shape), .csv/.xlsx (a sheet, a parameter set
+                                     or a shape's configurations), .forma (a whole project, opened as a new one)
+./forma export <id|name> <file.step|stl|3mf|dxf|scad|zip|csv|xlsx>   write a file (tables: sheets, parameter sets, configurations)
+./forma bundle [file.forma]          the whole project (history, versions, imported files) as one file
 ./forma image add <file> …           store a picture (PNG, JPEG) or font (TTF, OTF) for programs; prints its id
 ./forma image list                   the project's pictures and fonts
 ./forma look [what] [--view iso|front|top|…|az,el] [--size 1000x750]   the engine draws the model (or one thing); Read the saved PNG to see it
 ```
+
+The person has the same commands in the app's console (` key), plus JavaScript with a `forma` object (`forma.entities`, `forma.commit(op, params)`, `forma.run(steps)`, `forma.view(...)`) — tell them so when they want to script something themselves.
 
 Write programs as files in `programs/` (in your folder) and pass them with `{"$file": "programs/name.js"}`; several files join in order (`{"$file": ["lib.js", "main.js"]}`). Read the vocabulary in the prelude (path given below) before writing one, and the examples for working patterns.
 
@@ -307,6 +316,46 @@ Any parameter can follow a formula instead of holding its own value, and links a
 - `./forma get <id>` shows `params` (values after formulas) and `formulas` (readable).
 
 Prefer a parameter set plus links whenever several shapes share a dimension, so one change keeps them in step. Do not link things the person wants independent.
+
+## Spreadsheets and tables
+
+A sheet is a grid of cells for the calculations a design runs on (a load table, a clearance budget, a cut list, a building's areas) with intermediate rows that are not parameters of anything. It drives the model only through links you choose: any parameter can follow a cell.
+
+- `sheet.create { name, description?, cells: { "A1": "Span", "B1": "2.4 m", "B2": "=B1 / 3", "B3": "=sum(B1:B2)" }, aliases?: { "B2": "rib_pitch" }, units?: { "B1": "m" } }`; `sheet.set { target, cells?, aliases?, units?, name?, clear? }` ("" or null empties a cell, removes an alias or unit). Both return the cells that show an error and why.
+- Cells hold what is typed: a number with an optional unit (`200`, `200 mm`, `1.2m`, `2in`, `45°`, `50%`; lengths are worked in mm, angles in degrees, and a cell shows its value in the unit it was written in or the cell's `unit`, which is also what a bare number typed there means), text (`'200` keeps a number as text), or a formula starting with `=`. Formulas are the parameter grammar (+ − × ÷ ^, min max abs round floor ceil sqrt sin cos tan asin acos atan atan2 sum average count mod pow hypot exp ln log pi, any case) plus cell references (`B2`, `$B$2`), ranges inside functions (`sum(B2:B9)`; empty and text cells skipped), aliases, and any parameter in the project (`=Desk.width / 2`, `=Other sheet.total`). Formulas work in mm; write units in them (`=B2 + 5mm`). A formula's result shows in the unit of the first length or angle it reads.
+- Link a parameter to a sheet with `shape.link_param { target, key, expr: "=Sizes.rib_pitch" }` or `"=Sizes.B2"` (alias or address); references are stored by id, so renaming the sheet keeps them. A loop (the sheet reading what reads it) is refused. Errors stay in their cell (`#ERROR`, with the reason in the sheet's values); a parameter following a cell in error fails with that reason.
+- In: `sheet.import { name | target, format: "csv" | "xlsx", text | base64, sheet?, at?: "C3", replace? }`. CSV fields come in as typed; Excel workbooks bring values, formulas Forma reads (arithmetic, SUM, AVERAGE, MIN, MAX, ROUND…, filled shared formulas) and the workbook's names for single cells as aliases; formulas it cannot read (IF, text functions, other sheets) come in as their last value and are listed in `notes`. `parameters.import { name | target, format, text | base64 }` fills a parameter set from a table (header row key/name, value, unit, min, max, step, formula, label — or plain key, value, unit rows; values may carry units). `shape.config.import { target: shape, format, text | base64, active? }` makes a configuration table (first column the configuration names, then parameters by key or label, optional description, suppress, parts_off lists separated by `;`).
+- Out: GET `/table/<id>.csv` or `.xlsx` for a sheet (CSV as each cell shows; the workbook keeps formulas that only read the sheet, aliases as defined names, numbers in mm and degrees), a parameter set, or a shape's configuration table. `./forma export Sizes sizes.xlsx` does it for you.
+- The person has all of this in Data (T): sheets with a formula bar, aliases and units, import/export, parameter sets and configuration tables in and out.
+
+## OpenSCAD files
+
+`shape.import_scad { source, file?, name?, material?, process?, definition? }` (or `./forma import part.scad`, or the person drops the file on the view) makes a live shape: its program runs the file through Forma's OpenSCAD reader with the file's top-level number values as the shape's parameters (`width = 40; // [20:100]` becomes parameter `width` from 20 to 100, the comment above it its label), so it scrubs, links and configures like any shape. The reader covers the language (modules and functions with defaults, recursion, children(), the last-assignment-wins scoping, $fn/$fa/$fs passed down, if/for/intersection_for/let, list comprehensions, function literals, vectors and matrices, echo, assert) and geometry (cube, sphere, cylinder, polyhedron, square, circle, polygon with holes, translate, rotate including axis-angle, scale, resize, mirror, multmatrix, color, offset, hull, minkowski, union, difference, intersection, linear_extrude with twist and scale, rotate_extrude). Cubes, cylinders, spheres and extrusions stay exact in STEP; `$fn` from 3 to 16 makes true polygons (a hex nut trap stays six-sided), otherwise curves are round to Forma's tolerance; coloured top-level pieces become parts with the colour as their material's look. `text()` uses Forma's lettering (Inter); `include`/`use` of other files, `import()`, `surface()` and `projection()` are refused with the reason (paste a library's modules into the file). In your own programs: `openscad(source, { width: p.width })`.
+
+Export: `/export/<id>.scad` gives an imported file back with the parameters' current values appended (OpenSCAD's last assignment wins); any other shape exports as a polyhedron per part (its mesh at the export tolerance).
+
+The prelude also has `solid.minkowski(other)` (a solid swept over every point of another — rounded offsets of any shape; faceted in STEP) and `solid.transform([[a, b, c, tx], [d, e, f, ty], [g, h, i, tz]])` (any affine map; exact unless it shears).
+
+## Drafting in 3D
+
+Draft geometry and annotation live in model space around the parts (not inside a sketch): `draft.create { kind, name?, … , layer? }` returns the id and its `length`, `area` (closed, flat) or `value` (dimensions); `draft.update { target, … }` changes any field; delete with `core.entity.delete`. Coordinates are project mm `[x, y, z]`, or `[u, v]` on a working plane given as `plane: <id>` (its normal and x then apply).
+
+- `point { points: [p] }`, `line { points: [a, b] }`, `wire { points, closed? }`, `rectangle { points: [corner, opposite], normal?, x_dir? }`, `polygon { center, radius, sides, start?, normal? }`, `circle { center, radius, normal? }` or three `points`, `arc { center, radius, start, end (degrees, counter-clockwise from x_dir about normal) }` or three `points` (start, through, end), `ellipse { center, radius, radius2, x_dir?, normal?, start?, end? }`, `bspline { points, fit?: true (through them; false: control points), closed?, degree? }`.
+- `text { points: [at], text, size? }`; `label { points: [text place, point it points at], text }` (a leader with an arrow); `dimension { points: [a, b], measure: "aligned" | "x" | "y" | "z", offset: [dx, dy, dz] }` (the dimension line sits `offset` from the points), `{ measure: "angle", points: [vertex, a, b] }`, `{ measure: "radius" | "diameter", points: [centre, point on the curve] }`; `text` overrides the shown value, with `<>` standing for it (`"<> bore"`).
+- Follow parts: `on: <instance or placed shape>` puts the whole object in that part's own coordinates; `anchors: [idA, idB]` per point (a dimension between two parts follows both). Then the dimension's value is what it measures now: use it to report clearances the person can see in the view.
+- `hatch: { pattern: "lines" | "cross", angle, spacing }` on closed flat outlines (null removes); `color: "#hex"`.
+- `draft.plane.create { name, origin, normal, x? }` / `draft.plane.update`: named working planes; they store `{ origin, x, y }` exactly like a sketch's `plane`, so pass one to `sketch.create { plane: { origin, x, y } }`.
+- `draft.layer.create { name, color?, visible?, locked?, members? }` / `draft.layer.update { target, name?, color? ("" none), visible?, locked?, add?, remove? }`: a layer holds anything (instances, shapes, draft objects, sketches); something is in one layer at a time. Hidden layers hide their members in the view; a layer's colour paints them. Exports, BOMs and checks are unaffected.
+- `draft.to_sketch { targets, name?, delete? }`: flat draft geometry becomes a sketch on its plane (lines, arcs and circles as they are; ellipses and B-splines as exact cubic Béziers; joined where they meet, so outlines close into profiles to extrude). Text, labels and dimensions are left out (listed in `skipped`).
+- The person drafts by hand with G: pick a tool, click on the working plane (XY/XZ/YZ at an offset, or a saved plane); points snap to the grid and to draft points on the plane.
+
+Arrays of parts: `draft.array.create { source: <instance>, kind: "linear", count, spacing, direction?, count2?, spacing2?, direction2? }` (a row or grid), `{ kind: "polar", count, center?, axis?, angle? (360 = evenly round; less = from the original to the last), rotate? }` or `{ kind: "path", count, path: <draft object>, align? }`. Every copy is a real instance of the same definition (named "Peg 2", "Peg 3"…), so the BOM counts them, exports and clash checks see them and an edit to the definition changes them all; the array places them, and moving the original moves the copies. The array is also a parameter set named for it (`spacing`, `spacing2`, `angle`): link them (`shape.link_param { target: array, key: "spacing", expr: "=Rack.pitch" }`). `draft.array.update { target, count?, count2?, spacing?, angle?, kind?, direction?, center?, axis?, path?, align?, rotate? }` adds or removes copies; `draft.array.delete { target, keep?: true }` ends it (copies stay where they are, or go with `keep: false`). The person makes and edits arrays in an instance's properties.
+
+## Project files and units
+
+`GET /projects/<name>/bundle` (`./forma bundle`, or Download project file in the project menu) is the whole project as one `.forma` file: its log (so history, versions and every change), its thumbnail and the files it imported. `POST /projects/import` (`./forma import x.forma`, Open a project file, or dropping it on the view) opens one as a new project. Use it to hand a design to someone outside the team; teammates sync instead.
+
+The person chooses the unit lengths show and are typed in (Preferences, ⌘ ,): fields, dimensions and measurements follow it, and a bare number they type is in it. The engine always works in mm; you always give mm.
 
 ## Measuring
 

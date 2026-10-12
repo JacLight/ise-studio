@@ -25,11 +25,15 @@ pub mod params;
 pub mod pathfinder;
 pub mod pattern;
 pub mod project;
+pub mod paramtable;
 pub mod relief;
 pub mod render;
 pub mod runtime;
+pub mod scad;
+pub mod sheet;
 pub mod sketch;
 pub mod stock;
+pub mod table;
 pub mod text;
 pub mod trace;
 pub mod trim;
@@ -80,6 +84,12 @@ impl Plugin for ShapePlugin {
             .command::<CreateParameterSet>()
             .command::<SetParameters>()
             .command::<LinkParam>()
+            .command::<paramtable::ImportParameters>()
+            .component::<sheet::Sheet>()
+            .command::<sheet::CreateSheet>()
+            .command::<sheet::SetSheet>()
+            .command::<sheet::ImportSheet>()
+            .command::<scad::ImportScad>()
             .command::<CreateShape>()
             .command::<SetShapeParams>()
             .command::<UpdateShape>()
@@ -91,9 +101,16 @@ impl Plugin for ShapePlugin {
             // re-evaluated when anything a formula reads changes.
             .derived(Derived {
                 name: "shape.params",
-                inputs: &[ShapeProgram::KIND, ParameterSet::KIND, sketch::Sketch::KIND],
+                inputs: &[ShapeProgram::KIND, ParameterSet::KIND, sketch::Sketch::KIND, sheet::Sheet::KIND],
                 reads_dependencies: true,
                 compute: params::resolved_params,
+            })
+            // What each cell of a sheet shows (its numbers are in shape.params above).
+            .derived(Derived {
+                name: "sheet.values",
+                inputs: &[sheet::Sheet::KIND],
+                reads_dependencies: true,
+                compute: sheet::sheet_values,
             })
             // Sketches solve from their worked-out dimensions, before the shapes that read them.
             .derived(Derived {
@@ -1769,7 +1786,7 @@ impl Command for SetParameters {
 
 /// Stores a parameter list on whatever holds it, checking that it still works
 /// out (and, for shapes and sketches, that the geometry still solves).
-fn store_params(tx: &mut Tx, id: StableId, list: Vec<Param>) -> Result<(), CommandError> {
+pub(crate) fn store_params(tx: &mut Tx, id: StableId, list: Vec<Param>) -> Result<(), CommandError> {
     let invalid = |e: String| CommandError::new(ErrorCode::InvalidParameters, e);
     if let Some(mut set) = tx.get::<ParameterSet>(id).cloned() {
         params::resolve(tx.world(), &list).map_err(invalid)?;

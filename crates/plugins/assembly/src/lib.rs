@@ -92,6 +92,7 @@ impl Plugin for AssemblyPlugin {
             .command::<views::DeleteStudy>()
             .command::<robot::MoveTo>()
             .command::<configs::SetConfigTable>()
+            .command::<configs::ImportConfigTable>()
             .component::<fit::FitProfile>()
             .command::<fit::SetFitProfile>()
             .component::<CommentThread>()
