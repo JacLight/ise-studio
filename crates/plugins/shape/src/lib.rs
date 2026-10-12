@@ -36,12 +36,9 @@ pub mod sketch;
 pub mod sketch_tools;
 pub mod solver;
 pub mod stock;
-<<<<<<< HEAD
 pub mod studies;
-=======
 pub mod sweep;
 pub mod table;
->>>>>>> main
 pub mod text;
 pub mod trace;
 pub mod trim;
