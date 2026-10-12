@@ -172,13 +172,35 @@ fn as_circle(ring: &[[f64; 2]]) -> Option<([f64; 2], f64)> {
     if ring.len() < 12 {
         return None;
     }
+    // Least-squares circle (Kåsa): x² + y² + D·x + E·y + F = 0, about the mean for conditioning.
     let n = ring.len() as f64;
-    let c = [ring.iter().map(|p| p[0]).sum::<f64>() / n, ring.iter().map(|p| p[1]).sum::<f64>() / n];
+    let m = [ring.iter().map(|p| p[0]).sum::<f64>() / n, ring.iter().map(|p| p[1]).sum::<f64>() / n];
+    let (mut sxx, mut sxy, mut syy, mut sxz, mut syz) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for p in ring {
+        let (x, y) = (p[0] - m[0], p[1] - m[1]);
+        let z = x * x + y * y;
+        sxx += x * x;
+        sxy += x * y;
+        syy += y * y;
+        sxz += x * z;
+        syz += y * z;
+    }
+    let det = sxx * syy - sxy * sxy;
+    if det.abs() < 1e-12 {
+        return None;
+    }
+    // Centre offset (a, b) from the mean solves [sxx sxy; sxy syy]·(2a, 2b) = (sxz, syz).
+    let a = (sxz * syy - syz * sxy) / det / 2.0;
+    let b = (syz * sxx - sxz * sxy) / det / 2.0;
+    let c = [m[0] + a, m[1] + b];
     let radii: Vec<f64> = ring.iter().map(|p| dist(*p, c)).collect();
-    let (lo, hi) = radii.iter().fold((f64::INFINITY, 0.0f64), |(lo, hi), r| (lo.min(*r), hi.max(*r)));
-    // Evenly spread too: no long chord (a rounded slot's ends are arcs, not a circle).
+    let r = radii.iter().sum::<f64>() / n;
+    let worst = radii.iter().map(|q| (q - r).abs()).fold(0.0, f64::max);
+    // Facets within the export tolerance, and no long chord (a rounded slot's ends are arcs, not a circle).
     let longest = (0..ring.len()).map(|i| dist(ring[i], ring[(i + 1) % ring.len()])).fold(0.0, f64::max);
-    (hi - lo <= 1e-3 * hi.max(1.0) && longest < hi * 0.8).then_some((c, (hi + lo) / 2.0))
+    // The facets' corners lie on the true circle, chords inside it: its radius is the largest.
+    let outer = radii.iter().fold(0.0, |a: f64, q| a.max(*q));
+    (worst <= 0.01 + 1e-3 * r && longest < r * 0.8).then_some((c, outer))
 }
 
 fn fmt_num(v: f64) -> String {
@@ -424,6 +446,7 @@ mod tests {
         let p = program(
             r#"const s = sheet({ width: 60, depth: 100 }, { thickness: 1, material: "Aluminium 5052-H32" });
                s.flange("-x", { length: 20 }); s.flange("+x", { length: 20 });
+               s.hole(30, 50, 5);
                return [s.part("Channel")];"#,
         );
         let f = flat_pattern(&p, Some("Channel"), 0.01).unwrap();
@@ -441,6 +464,9 @@ mod tests {
         assert!((b.length - 100.0).abs() < 1e-6);
         let dxf = dxf(&f);
         assert!(dxf.contains("BEND_UP") && dxf.contains("CUT"));
+        // The hole leaves as a true circle for the laser.
+        assert!(dxf.contains("CIRCLE\n8\nCUT\n10\n"), "{dxf}");
+        assert!(dxf.contains("\n40\n2.5\n"), "radius 2.5");
     }
 
     #[test]
