@@ -8,6 +8,7 @@
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
+import { FabCheck, SimulateTab } from "./PcbSim";
 import { SchematicPane } from "./Schematic";
 
 type P = [number, number];
@@ -127,7 +128,7 @@ type BomLine = {
 type Detail = { board: BoardView; size: P; errors: number; fabs: FabReport[]; bom: BomLine[]; totals: Record<string, number>; unpriced: number; files: string[] };
 type BoardEntry = { id: string; name: string; layers: number; model: string | null; errors: number | null; components: number | null };
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
-type Tab = "parts" | "nets" | "checks" | "fab" | "shop";
+type Tab = "parts" | "nets" | "checks" | "fab" | "bom" | "sim";
 type Selection = { kind: "component" | "track" | "via" | "zone"; id: string } | null;
 type LayerKey = "top" | "bottom" | "inner" | "silk" | "courtyard" | "ratsnest" | "zones" | "drc";
 
@@ -176,6 +177,10 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
   const [net, setNet] = useState<string | null>(null);
   const [focusViolation, setFocusViolation] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // Parts and nets hidden from the board drawing (view only, not saved).
+  const [hiddenParts, setHiddenParts] = useState<string[]>([]);
+  const [hiddenNets, setHiddenNets] = useState<string[]>([]);
+  const toggle = (list: string[], x: string) => (list.includes(x) ? list.filter((y) => y !== x) : [...list, x]);
   // Schematic, board, or both side by side; keys go to the pane last clicked.
   const [pane, setPane] = useState<"schematic" | "split" | "board">(() => {
     try {
@@ -234,6 +239,23 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
   }, [boardId, props.revision]);
 
   const b = detail?.board ?? null;
+  // What the board view draws: everything but the hidden parts and nets.
+  const shown = useMemo(() => {
+    if (!b || (!hiddenParts.length && !hiddenNets.length)) return b;
+    const parts = new Set(hiddenParts);
+    const nets = new Set(hiddenNets);
+    const netOk = (n: string | null) => !n || !nets.has(n);
+    return {
+      ...b,
+      components: b.components.filter((c) => !parts.has(c.id)),
+      pads: b.pads.filter((p) => !parts.has(p.component) && netOk(p.net)),
+      tracks: b.tracks.filter((t) => netOk(t.net)),
+      vias: b.vias.filter((v) => netOk(v.net)),
+      zones: b.zones.filter((z) => netOk(z.net)),
+      ratsnest: b.ratsnest.filter((r) => netOk(r.net)),
+      holes: b.holes.filter((h) => !b.components.some((c) => parts.has(c.id) && (h.owner === c.reference || h.owner.startsWith(`${c.reference}.`)))),
+    };
+  }, [b, hiddenParts, hiddenNets]);
   const commit = useCallback(
     async (operation: string, parameters: Record<string, unknown>, done?: string) => {
       const out = await run(operation, parameters);
@@ -311,6 +333,52 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
     await commit("pcb.zone.create", { board: b.id, net: gnd.name, layer }, `Poured ${gnd.name} on the ${layer}`);
   };
 
+  // The side panel (parts, nets, checks, fab, BOM, simulation): beside the board, the schematic, or both.
+  const side = b ? (
+          <aside className="pcb-side">
+            <nav className="pcb-tabs" role="tablist">
+              {(
+                [
+                  ["parts", "Parts", b.components.length],
+                  ["nets", "Nets", b.nets.length],
+                  ["checks", "Checks", detail!.errors || null],
+                  ["fab", "Fab", null],
+                  ["bom", "BOM", null],
+                  ["sim", "Simulate", null],
+                ] as [Tab, string, number | null][]
+              ).map(([k, label, n]) => (
+                <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>
+                  {label}
+                  {n !== null && <span className={`pcb-count ${k === "checks" ? "bad" : ""}`}>{n}</span>}
+                </button>
+              ))}
+            </nav>
+            <div className="pcb-side-body">
+              {tab === "parts" && <PartsTab b={b} sel={sel} onSelect={(id) => setSel({ kind: "component", id })} commit={commit} hidden={hiddenParts} onHide={(id) => setHiddenParts((h) => toggle(h, id))} />}
+              {tab === "nets" && <NetsTab b={b} net={net} onNet={(n) => setNet((x) => (x === n ? null : n))} hidden={hiddenNets} onHide={(n) => setHiddenNets((h) => toggle(h, n))} />}
+              {tab === "checks" && (
+                <ChecksTab
+                  b={b}
+                  focus={focusViolation}
+                  onFocus={(i) => {
+                    setFocusViolation(i);
+                    const v = b.violations[i];
+                    const c = v.objects.find((o) => b.components.some((x) => x.id === o));
+                    if (c) setSel({ kind: "component", id: c });
+                  }}
+                  onAutoroute={autoroute}
+                  onPour={groundPour}
+                  busy={busy}
+                  canEdit={props.canEdit}
+                />
+              )}
+              {tab === "fab" && <FabTab d={detail!} commit={commit} boardId={b.id} revision={props.revision} />}
+              {tab === "bom" && <ShopTab d={detail!} commit={commit} />}
+              {tab === "sim" && <SimulateTab boardId={b.id} revision={props.revision} />}
+            </div>
+          </aside>
+  ) : null;
+
   if (boards === null) {
     return (
       <section className="pcb floating" aria-label="Electronics">
@@ -382,6 +450,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
         <div className="pcb-empty">{error ? <p className="pcb-error">{error}</p> : <div className="pcb-spinner" />}</div>
       ) : pane !== "board" ? (
         <div className={`pcb-body ${pane === "split" ? "split" : ""}`}>
+          {side}
           <div className="pcb-sch-host" onPointerDownCapture={() => (keyPane.current = "schematic")}>
             <SchematicPane
               boardId={b.id}
@@ -403,7 +472,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
           {pane === "split" && (
             <div className="pcb-split-board" onPointerDownCapture={() => (keyPane.current = "board")}>
               <BoardCanvas
-                b={b}
+                b={shown!}
                 layers={layers}
                 onLayers={setLayers}
                 fromBelow={fromBelow}
@@ -425,48 +494,9 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
         </div>
       ) : (
         <div className="pcb-body">
-          <aside className="pcb-side">
-            <nav className="pcb-tabs" role="tablist">
-              {(
-                [
-                  ["parts", "Parts", b.components.length],
-                  ["nets", "Nets", b.nets.length],
-                  ["checks", "Checks", detail!.errors || null],
-                  ["fab", "Fab", null],
-                  ["shop", "Shop", null],
-                ] as [Tab, string, number | null][]
-              ).map(([k, label, n]) => (
-                <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>
-                  {label}
-                  {n !== null && <span className={`pcb-count ${k === "checks" ? "bad" : ""}`}>{n}</span>}
-                </button>
-              ))}
-            </nav>
-            <div className="pcb-side-body">
-              {tab === "parts" && <PartsTab b={b} sel={sel} onSelect={(id) => setSel({ kind: "component", id })} commit={commit} />}
-              {tab === "nets" && <NetsTab b={b} net={net} onNet={(n) => setNet((x) => (x === n ? null : n))} />}
-              {tab === "checks" && (
-                <ChecksTab
-                  b={b}
-                  focus={focusViolation}
-                  onFocus={(i) => {
-                    setFocusViolation(i);
-                    const v = b.violations[i];
-                    const c = v.objects.find((o) => b.components.some((x) => x.id === o));
-                    if (c) setSel({ kind: "component", id: c });
-                  }}
-                  onAutoroute={autoroute}
-                  onPour={groundPour}
-                  busy={busy}
-                  canEdit={props.canEdit}
-                />
-              )}
-              {tab === "fab" && <FabTab d={detail!} commit={commit} />}
-              {tab === "shop" && <ShopTab d={detail!} commit={commit} />}
-            </div>
-          </aside>
+          {side}
           <BoardCanvas
-            b={b}
+            b={shown!}
             layers={layers}
             onLayers={setLayers}
             fromBelow={fromBelow}
@@ -1055,7 +1085,33 @@ function BoardCanvas(props: {
 
 // ---- Side panels -------------------------------------------------------------------
 
-function PartsTab(props: { b: BoardView; sel: Selection; onSelect: (id: string) => void; commit: (op: string, p: Record<string, unknown>, done?: string) => Promise<unknown> }) {
+/** Show or hide one part or net on the board (inside a row button, so not a button itself). */
+function EyeToggle(props: { hidden: boolean; label: string; onToggle: () => void }) {
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      className={`pcb-eye ${props.hidden ? "off" : ""}`}
+      title={props.hidden ? `Show ${props.label} on the board` : `Hide ${props.label} on the board`}
+      aria-pressed={props.hidden}
+      onClick={(e) => {
+        e.stopPropagation();
+        props.onToggle();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          props.onToggle();
+        }
+      }}
+    >
+      <Icon name="eye" />
+    </span>
+  );
+}
+
+function PartsTab(props: { b: BoardView; sel: Selection; onSelect: (id: string) => void; commit: (op: string, p: Record<string, unknown>, done?: string) => Promise<unknown>; hidden: string[]; onHide: (id: string) => void }) {
   const { b } = props;
   const [q, setQ] = useState("");
   const chosen = props.sel?.kind === "component" ? b.components.find((c) => c.id === props.sel!.id) : null;
@@ -1080,6 +1136,7 @@ function PartsTab(props: { b: BoardView; sel: Selection; onSelect: (id: string) 
             </span>
             {c.side === "bottom" && <span className="tag">B</span>}
             {!c.known && <span className="tag bad">?</span>}
+            <EyeToggle hidden={props.hidden.includes(c.id)} label={c.reference} onToggle={() => props.onHide(c.id)} />
           </button>
         ))}
       </div>
@@ -1166,7 +1223,7 @@ function PartCard(props: { c: Comp; b: BoardView; commit: (op: string, p: Record
   );
 }
 
-function NetsTab(props: { b: BoardView; net: string | null; onNet: (n: string) => void }) {
+function NetsTab(props: { b: BoardView; net: string | null; onNet: (n: string) => void; hidden: string[]; onHide: (n: string) => void }) {
   const { b } = props;
   const routed = b.nets.filter((n) => n.routed && n.pins.length > 1).length;
   const multi = b.nets.filter((n) => n.pins.length > 1).length;
@@ -1192,6 +1249,7 @@ function NetsTab(props: { b: BoardView; net: string | null; onNet: (n: string) =
               </small>
             </span>
             {n.class !== "Default" && <span className="tag">{n.class}</span>}
+            <EyeToggle hidden={props.hidden.includes(n.name)} label={n.name} onToggle={() => props.onHide(n.name)} />
           </button>
         ))}
       </div>
@@ -1267,7 +1325,7 @@ function ChecksTab(props: { b: BoardView; focus: number | null; onFocus: (i: num
   );
 }
 
-function FabTab(props: { d: Detail; commit: (op: string, p: Record<string, unknown>, done?: string) => Promise<unknown> }) {
+function FabTab(props: { d: Detail; commit: (op: string, p: Record<string, unknown>, done?: string) => Promise<unknown>; boardId: string; revision: number }) {
   const { d } = props;
   const b = d.board;
   const set = (patch: Record<string, unknown>) => props.commit("pcb.board.update", { target: b.id, ...patch });
@@ -1357,6 +1415,7 @@ function FabTab(props: { d: Detail; commit: (op: string, p: Record<string, unkno
       <a className="button secondary pcb-all" href={projectUrl(`/pcb/${b.id}/fab.zip`)} download>
         <Icon name="download" /> Everything (generic package)
       </a>
+      <FabCheck boardId={props.boardId} revision={props.revision} />
     </>
   );
 }
