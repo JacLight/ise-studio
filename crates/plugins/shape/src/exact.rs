@@ -231,6 +231,8 @@ pub(crate) fn affine_parts(r: &[f64]) -> Option<(bool, [f64; 3], [f64; 3], [f64;
     let clean = |v: f64| if v.abs() < 1e-12 { 0.0 } else { v };
     let scale = s.map(|v| if (v - 1.0).abs() < 1e-12 { 1.0 } else { v });
     Some((mirror, scale, [clean(rx.to_degrees()), clean(ry.to_degrees()), clean(rz.to_degrees())], [r[3], r[7], r[11]]))
+}
+
 /// The outlines of a flat face's triangles (edges only one triangle has),
 /// counter-clockwise around the area and clockwise around holes.
 fn boundary_loops(positions: &[f64], triangles: &[u32]) -> Vec<Vec<[f64; 2]>> {

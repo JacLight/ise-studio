@@ -219,10 +219,10 @@ mod tests {
             { "key": "len", "label": "Length", "value": 20, "unit": "mm", "min": null, "max": null, "step": null }
         ]))
         .unwrap();
-        let rows = table::read_csv("configuration,Diameter,len,parts_off\nM6×20,6,20,\nM8×30,8 mm,1.18in,Washer; Nut\n");
+        let rows = table::read_csv("configuration,Diameter,len,parts_off\nM6×20,6,20,\nM8×30,8 mm,1.25in,Washer; Nut\n");
         let (cols, rs) = config_from_rows(&rows, &ps).unwrap();
         assert_eq!(cols, ["d", "len"]);
-        assert_eq!(rs[1].values["len"], 1.18 * 25.4);
+        assert_eq!(rs[1].values["len"], 31.75);
         assert_eq!(rs[1].parts_off, ["Washer", "Nut"]);
         let t = crate::ShapeConfigurations { params: cols, rows: rs, active: None };
         let back = config_rows(&t);

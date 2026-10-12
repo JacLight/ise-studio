@@ -95,6 +95,7 @@ class Solid {
   transform(m) {
     const rows = m.length === 12 ? [m.slice(0, 4), m.slice(4, 8), m.slice(8, 12)] : m;
     return new Solid(__n.sop("transform", this.h, [0, 1, 2].flatMap((i) => [0, 1, 2, 3].map((j) => rows[i]?.[j] ?? (i === j ? 1 : 0)))));
+  }
   /**
    * Bends a solid built flat around the Z axis, as a label goes round a
    * bottle: x runs around the circle (x = 0 lands on +X, +x turning
