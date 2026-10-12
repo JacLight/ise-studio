@@ -29,7 +29,7 @@ pub mod project;
 pub mod relief;
 pub mod render;
 pub mod runtime;
-pub mod sheet;
+pub mod sheet_metal;
 pub mod sketch;
 pub mod stock;
 pub mod text;

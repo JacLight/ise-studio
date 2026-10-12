@@ -15,7 +15,7 @@ use std::{
 };
 
 /// The vocabulary: the prelude, then the sheet-metal tools built on it.
-const PRELUDE: &str = concat!(include_str!("prelude.js"), "\n", include_str!("sheet.js"));
+const PRELUDE: &str = concat!(include_str!("prelude.js"), "\n", include_str!("sheet_metal.js"));
 const MEMORY_LIMIT: usize = 512 * 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(10);
 /// Exact booleans on curved geometry are slower than meshes; exports get longer.
@@ -54,13 +54,13 @@ pub struct Evaluated {
     pub left_out: LeftOut,
     /// Stock items and connectors the program declared.
     pub declared: crate::stock::Declared,
-    /// Sheet-metal parts' flat patterns and bend tables (see sheet.js).
+    /// Sheet-metal parts' flat patterns and bend tables (see sheet_metal.js).
     pub sheets: Vec<SheetPattern>,
 }
 
 /// A sheet-metal part as the shop cuts it: the flat blank (T thick, its
 /// corner at the origin, bend allowances included) and its bend table,
-/// flat size and checks as sheet.js worked them out.
+/// flat size and checks as sheet_metal.js worked them out.
 pub struct SheetPattern {
     /// The part it unfolds (empty for a program returning one solid).
     pub part: String,

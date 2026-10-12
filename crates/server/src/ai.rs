@@ -301,7 +301,7 @@ impl Ai {
             p = self.project,
             folder = self.folder.display(),
             prelude = repo.join("crates/plugins/shape/src/prelude.js").display(),
-            sheet = repo.join("crates/plugins/shape/src/sheet.js").display(),
+            sheet = repo.join("crates/plugins/shape/src/sheet_metal.js").display(),
             examples = repo.join("examples").display(),
             library = repo.join("library/stock").display(),
         )
@@ -325,7 +325,7 @@ impl Ai {
                 format!("Read({}/**)", abs(&repo.join("examples"))),
                 format!("Read({}/**)", abs(&repo.join("library/stock"))),
                 format!("Read({})", abs(&repo.join("crates/plugins/shape/src/prelude.js"))),
-                format!("Read({})", abs(&repo.join("crates/plugins/shape/src/sheet.js"))),
+                format!("Read({})", abs(&repo.join("crates/plugins/shape/src/sheet_metal.js"))),
             ])
             .args(["--setting-sources", "project", "--strict-mcp-config", "--mcp-config", r#"{"mcpServers":{}}"#])
             .arg("--settings")

@@ -10,7 +10,7 @@
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs render [--width 1920] [--height 1080] [--samples 256] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open)
-//   node tools/forma.mjs sheet [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
+//   node tools/forma.mjs flat [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
 //   node tools/forma.mjs simulate <schematic> [--tran 30ms] [--expect "min(V(3V3), burst) > 3.0"] [--save name]   ngspice on a schematic
 //   node tools/forma.mjs list                 every entity, one line each
@@ -270,7 +270,7 @@ if (command === "run") {
     console.log(`✓ ${out}: ${width} × ${height} px, ${samples} samples, ${(png.length / 1024).toFixed(0)} KB${chrome ? " (rendered headless)" : ""}`);
   }
   chrome?.kill();
-} else if (command === "sheet") {
+} else if (command === "flat") {
   // Sheet-metal flat patterns: every sheet part, or one with its bend table and checks; files on request.
   const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
   const files = {};
@@ -280,7 +280,7 @@ if (command === "run") {
   }
   const [, id = "project", part] = args;
   const q = new URLSearchParams({ ...(project ? { project } : {}), ...(part ? { part } : {}) });
-  const res = await fetch(`${http}/sheet/${id}?${q}`);
+  const res = await fetch(`${http}/sheet-metal/${id}?${q}`);
   if (!res.ok) {
     console.error(`✗ ${await res.text()}`);
     failed = true;
@@ -300,7 +300,7 @@ if (command === "run") {
     if (f.bends.some((b) => b.hem)) console.log("  (* hem)");
     for (const c of f.checks) console.log(`  ${c.severity.padEnd(7)} ${c.code}: ${c.message}`);
     for (const [ext, path] of Object.entries(files)) {
-      const r = await fetch(`${http}/sheet/${id}?${new URLSearchParams({ ...Object.fromEntries(q), format: ext })}`);
+      const r = await fetch(`${http}/sheet-metal/${id}?${new URLSearchParams({ ...Object.fromEntries(q), format: ext })}`);
       if (!r.ok) {
         console.error(`✗ ${ext}: ${await r.text()}`);
         failed = true;
@@ -862,7 +862,7 @@ if (command === "run") {
     }
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | sheet [id] [part] | render [--width] | get <id> | tree | list | check | ops | measure <part> [other] | view <action> [what] | import <file> [--name N] | export <id> --format <fmt> [--part P] [--out path] | image add <file> | image list | look [what] [--view v]  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | flat [id] [part] | render [--width] | get <id> | tree | list | check | ops | measure <part> [other] | view <action> [what] | import <file> [--name N] | export <id> --format <fmt> [--part P] [--out path] | image add <file> | image list | look [what] [--view v]  [--project name] [--url ws://…]");
   failed = true;
 }
 

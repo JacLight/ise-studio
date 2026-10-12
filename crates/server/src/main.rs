@@ -19,7 +19,7 @@ mod peers;
 mod pictures;
 mod share;
 mod render;
-mod sheet;
+mod sheet_metal;
 mod sourcing;
 mod stock;
 
@@ -2385,7 +2385,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/touching/{id}", get(touching))
         .route("/motion-stress/{id}", get(motion_stress))
         .route("/thermal/{id}", axum::routing::post(thermal))
-        .route("/sheet/{id}", get(sheet::pattern))
+        .route("/sheet-metal/{id}", get(sheet_metal::pattern))
         .route("/render", axum::routing::post(render::request))
         .route("/render/{job}", axum::routing::post(render::deliver).layer(axum::extract::DefaultBodyLimit::max(256 * 1024 * 1024)))
         .route("/bom/{id}", get(sourcing::bom))

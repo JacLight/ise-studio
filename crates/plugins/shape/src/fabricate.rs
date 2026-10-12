@@ -107,7 +107,7 @@ pub struct Item {
     /// STEP can be made from the same program. Empty for plain boxes.
     pub key: String,
     /// A sheet-metal part's flat pattern (built with sheet()).
-    pub flat: Option<crate::sheet::FlatPattern>,
+    pub flat: Option<crate::sheet_metal::FlatPattern>,
 }
 
 impl Item {
@@ -115,7 +115,7 @@ impl Item {
     /// sheet-metal part, else the part laid flat in depth layers.
     pub fn cut_file(&self) -> String {
         match &self.flat {
-            Some(f) => crate::sheet::dxf(f),
+            Some(f) => crate::sheet_metal::dxf(f),
             None => dxf(&self.name, &self.solid),
         }
     }
@@ -138,8 +138,8 @@ pub fn program_key(program: &ShapeProgram) -> String {
 pub fn items(program: &ShapeProgram, tolerance: f64) -> Result<Vec<Item>, String> {
     let e = evaluated_at(program, tolerance)?;
     let key = program_key(program);
-    let flat = |part: &str, name: &str| -> Result<Option<crate::sheet::FlatPattern>, String> {
-        e.sheets.iter().find(|s| s.part == part).map(|s| crate::sheet::FlatPattern::from_parts(name, &s.flat, &s.data)).transpose()
+    let flat = |part: &str, name: &str| -> Result<Option<crate::sheet_metal::FlatPattern>, String> {
+        e.sheets.iter().find(|s| s.part == part).map(|s| crate::sheet_metal::FlatPattern::from_parts(name, &s.flat, &s.data)).transpose()
     };
     if e.parts.is_empty() {
         let flat = flat("", &program.name)?;
@@ -364,7 +364,7 @@ pub fn package(
         }
         if let Some(f) = &item.flat {
             let path = format!("{base} bends.csv");
-            files.push((path.clone(), crate::sheet::bend_table_csv(f).into_bytes()));
+            files.push((path.clone(), crate::sheet_metal::bend_table_csv(f).into_bytes()));
             line.files.push(path);
             for c in f.checks.iter().filter(|c| c.severity != "info") {
                 notes.push(format!("{}: {} {}: {}", item.name, c.severity, c.code, c.message));

@@ -1,8 +1,8 @@
 //! Sheet-metal flat patterns over HTTP.
 //!
-//! - `GET /sheet/project`: every sheet-metal part in the project (shape or
+//! - `GET /sheet-metal/project`: every sheet-metal part in the project (shape or
 //!   definition id, part, material, thickness, flat size, bends, findings).
-//! - `GET /sheet/<shape or instance id>?part=<name>&format=json|dxf|svg|csv`:
+//! - `GET /sheet-metal/<shape or instance id>?part=<name>&format=json|dxf|svg|csv`:
 //!   one part's flat pattern: the bend table, flat size, cut length and checks
 //!   (JSON; `loops=1` adds the blank's outlines), the laser's DXF with bend
 //!   lines, an SVG to look at, or the bend table as CSV.
@@ -14,7 +14,7 @@ use axum::{
     response::IntoResponse,
 };
 use de_core::{StableId, json};
-use de_shape::{ShapeProgram, ShapeSolid, sheet};
+use de_shape::{ShapeProgram, ShapeSolid, sheet_metal as sheet};
 use std::collections::HashMap;
 use std::sync::Arc;
 

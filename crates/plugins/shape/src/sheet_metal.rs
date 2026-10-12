@@ -1,6 +1,6 @@
 //! Sheet-metal flat patterns: what the laser cuts and the press brake bends.
 //!
-//! sheet.js works a sheet-metal part out twice from one description, bent and
+//! sheet_metal.js works a sheet-metal part out twice from one description, bent and
 //! flat (each bend's allowance from its angle, inside radius and K-factor).
 //! Here the flat blank becomes the shop's files: a DXF with the cut outline
 //! (true circles where a hole is round) and the bend lines on their own
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Write as _;
 
-/// One bend, as sheet.js reports it (mm and degrees, flat-pattern coordinates).
+/// One bend, as sheet_metal.js reports it (mm and degrees, flat-pattern coordinates).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Bend {
     /// "B1", "B2", … in the order the flanges were made.
@@ -91,7 +91,7 @@ pub struct FlatPattern {
     pub bends: Vec<Bend>,
     pub forms: Vec<Form>,
     pub checks: Vec<SheetCheck>,
-    /// Everything sheet.js reported (shop, V-die, minimum flange, faces).
+    /// Everything sheet_metal.js reported (shop, V-die, minimum flange, faces).
     pub data: Value,
 }
 

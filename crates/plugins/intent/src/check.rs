@@ -101,7 +101,7 @@ pub fn check(project: &Project) -> CheckReport {
                 findings.push(Finding { code: "PART_NOT_CURRENT", severity: Severity::Error, entities: vec![id], message: reason.clone(), fix: None });
             }
         }
-        // Sheet-metal design rules (sheet.js), on placed shapes and definitions alike.
+        // Sheet-metal design rules (sheet_metal.js), on placed shapes and definitions alike.
         if let (Some(program), Some(solid)) = (project.get::<de_shape::ShapeProgram>(id), project.get::<de_shape::ShapeSolid>(id)) {
             for (part, data) in &solid.stats.sheet_metal {
                 for c in data["checks"].as_array().into_iter().flatten() {
