@@ -91,6 +91,7 @@
 #include <TopoDS_Solid.hxx>
 #include <TopoDS_Wire.hxx>
 #include <XCAFApp_Application.hxx>
+#include <XCAFDoc_ColorTool.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <gp_Ax1.hxx>
@@ -106,6 +107,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <tuple>
 #include <string>
 #include <vector>
 
@@ -120,6 +122,8 @@ struct Arena {
   std::vector<double> edge_data;
   std::vector<double> loop_data;
   std::vector<double> view_data;
+  // Faces or whole shapes given a colour (r g b, 0–1; r < 0 for none) and a name, for STEP (solids.cpp).
+  std::vector<std::tuple<TopoDS_Shape, std::array<double, 3>, std::string>> painted;
 };
 
 int push(Arena* a, const TopoDS_Shape& s) {
@@ -215,6 +219,9 @@ TopoDS_Wire section(const TopoDS_Wire& w, double z, double twist_deg, double sx,
   t.SetTranslation(gp_Vec(0, 0, z));
   return TopoDS::Wire(transformed(transformed(s, r), t));
 }
+
+/// Paint (colours, face names) onto a part's STEP label (solids.cpp).
+void apply_paint(Arena* a, const Handle(XCAFDoc_ShapeTool) & tool, const Handle(XCAFDoc_ColorTool) & colours, const TDF_Label& label, const TopoDS_Shape& part);
 
 }  // namespace
 
@@ -851,6 +858,7 @@ int occ_write_step(void* p, const int* hs, const char* const* names, int n, cons
       if (solids == 1) part = only;
       TDF_Label l = tool->AddShape(part, false, false);
       TDataStd_Name::Set(l, TCollection_ExtendedString(names[i], true));
+      apply_paint(a, tool, XCAFDoc_DocumentTool::ColorTool(doc->Main()), l, part);
     }
     Interface_Static::SetCVal("write.step.unit", "MM");
     Interface_Static::SetCVal("write.step.schema", "AP214IS");
@@ -1377,3 +1385,6 @@ int occ_draft(void* p, int h, const int* idx, int n, double degrees, double dx, 
 }
 
 }  // extern "C"
+
+// Sweeps, lofts, offsets, defeaturing, paint, checks and BREP files.
+#include "solids.cpp"
