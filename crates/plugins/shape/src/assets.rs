@@ -81,22 +81,9 @@ pub fn dir() -> Option<PathBuf> {
     DIR.get().cloned()
 }
 
-<<<<<<< HEAD
-/// Every imported file a program reads (`importStep("<sha>")`,
-/// `importIfc("<sha>")`; an IFC file is a STEP physical file too, stored the same way).
-pub fn referenced(source: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for call in ["importStep(", "importIfc("] {
-        let mut rest = source;
-        while let Some(i) = rest.find(call) {
-            rest = &rest[i + call.len()..];
-            let r = rest.trim_start().trim_start_matches(['"', '\'', '`']);
-            let sha: String = r.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
-            if sha.len() == 64 && !out.contains(&sha) {
-                out.push(sha);
-=======
 /// Every stored file a program reads: each quoted content hash in its source
-/// (`importStep("<sha>")`, `image("<sha>")`, `relief("<sha>", …)`).
+/// (`importStep("<sha>")`, `importIfc("<sha>")`, `image("<sha>")`, `relief("<sha>", …)`;
+/// an IFC file is a STEP physical file too, stored the same way).
 pub fn referenced(source: &str) -> Vec<String> {
     let mut out = Vec::new();
     let bytes = source.as_bytes();
@@ -112,7 +99,6 @@ pub fn referenced(source: &str) -> Vec<String> {
                 }
                 i += 66;
                 continue;
->>>>>>> main
             }
         }
         i += 1;
