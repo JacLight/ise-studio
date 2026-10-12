@@ -1094,7 +1094,15 @@ impl Node {
         let skip = |r: Ref| !pick(r) || at_start.contains(&r) || at_end.contains(&r);
         let ok = |c: &[P]| self.path_clear(c, s.width, s.layer, s.net, &skip);
         let strict = |c: &[P]| self.path_clear(c, s.width, s.layer, s.net, &|r: Ref| !pick(r) || at_start.contains(&r));
-        let done = |p: Vec<P>| if at_end.is_empty() { (p, true) } else { (trim(&p, &strict), false) };
+        // Stopped within 10 µm of the end (the end was itself where an earlier leg stopped): reached.
+        let done = |p: Vec<P>| {
+            if at_end.is_empty() {
+                return (p, true);
+            }
+            let cut = trim(&p, &strict);
+            let near = cut.last().is_some_and(|e| geom::dist(*e, s.to) < 0.01);
+            (cut, near)
+        };
         let start = connect(s.from, s.to, s.angle, s.first);
         if ok(&start) {
             return Ok(done(if s.optimize { smooth(&start, s.angle, &ok) } else { start }));

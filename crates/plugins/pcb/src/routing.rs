@@ -326,10 +326,8 @@ pub fn plan_route(b: &Board, v: &BoardView, r: &RouteInteractive) -> Result<Plan
         cur = *laid.points.last().unwrap_or(&cur);
         node.lines.push(pns::Line { id: None, net: net.clone(), layer, width, points: laid.points.clone(), locked: true, arcs: false, moved: false });
         legs.push((layer, laid.points));
-        if !laid.reached {
-            plan.reached = false;
-            break;
-        }
+        // A leg that stopped short: the next goes on from where it stopped.
+        plan.reached = laid.reached;
     }
     // Runs: legs on one layer joined.
     for (l, pts) in legs {

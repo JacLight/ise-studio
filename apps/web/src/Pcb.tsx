@@ -915,6 +915,12 @@ function BoardCanvas(props: {
 
   const finishRoute = async (all: RouteStep[]) => {
     const from = start;
+    // Walkaround and shove never place copper that breaks a clearance (a via dropped too close, an end on another net).
+    if (plan && !plan.ok && routerMode !== "highlight") {
+      const c = plan.collisions[0];
+      props.notify(`Not placed: ${c ? `too close to ${c.with}` : "it would break a clearance"} — move it, Backspace, or use Highlight mode to place it anyway`);
+      return;
+    }
     resetRoute();
     if (!from || !all.length) return;
     const out = (await props.commit("pcb.route.interactive", routeSpec(from, all))) as { output?: { tracks: string[]; vias: string[]; ok: boolean; reached: boolean; pushed_tracks: number; pushed_vias: number; collisions: Collision[] } } | null;
