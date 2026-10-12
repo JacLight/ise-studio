@@ -12,7 +12,7 @@
 // Stands on its end: the profile in XY, centred on the origin, the length
 // along +Z from z = 0. A 4080 is 40 wide in X and 80 deep in Y.
 
-const S40 = { M: 40, slot: 8.2, lip: 4.3, tHalf: 10, tDepth: 8.3, depth: 12.3, tipHalf: 4.8, bore: 6.8, corner: [11.4, 18.2] };
+const S40 = TSLOT_SERIES[40];
 const cells = Math.min(2, Math.max(1, Math.round(p.cells)));
 const L = p.length;
 const { section, centres, W, D } = tslotSection(S40, cells);

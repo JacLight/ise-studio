@@ -1,11 +1,24 @@
 // T-slot extrusion section helpers shared by tslot_30 and tslot_40 (8 mm
-// slot B-type profiles), and the T-slot fittings that go with them.
+// slot B-type profiles), and the T-slot fittings that go with them
+// (tslot_nut, tslot_bracket).
 //
 // A section is a column of `cells` square cells of module M along Y (3030:
 // one 30 mm cell, 3060: two), centred on the origin: on each cell a slot on
 // ±X, a slot on each end face ±Y, the two cavities between neighbouring
 // cells joined into one closed void, a core bore per cell and a hollow
 // in each corner of each cell (the corner tubes of the real section).
+
+/**
+ * The slot of each series: module M, opening, lip thickness, T cavity half
+ * width and the depth where it turns to its tapered bottom, full depth,
+ * half width at the bottom, core bore, corner hollows. The 20 series is
+ * the section of tslot_20.js (6 mm slot); 30 and 40 are the 8 mm slot ones.
+ */
+const TSLOT_SERIES = {
+  20: { M: 20, slot: 6.2, lip: 1.8, tHalf: 5.2, tDepth: 3.6, depth: 6.1, tipHalf: 2.6, bore: 4.2 },
+  30: { M: 30, slot: 8.2, lip: 2.2, tHalf: 8.2, tDepth: 5.5, depth: 9.0, tipHalf: 4.2, bore: 6.8, corner: [9.6, 13.4] },
+  40: { M: 40, slot: 8.2, lip: 4.3, tHalf: 10, tDepth: 8.3, depth: 12.3, tipHalf: 4.8, bore: 6.8, corner: [11.4, 18.2] },
+};
 
 /** One slot cavity opening on the +Y face of a cell centred on the origin. */
 function tslotCavity(s) {

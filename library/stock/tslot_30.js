@@ -11,7 +11,7 @@
 // Stands on its end: the profile in XY, centred on the origin, the length
 // along +Z from z = 0. A 3060 is 30 wide in X and 60 deep in Y.
 
-const S30 = { M: 30, slot: 8.2, lip: 2.2, tHalf: 8.2, tDepth: 5.5, depth: 9.0, tipHalf: 4.2, bore: 6.8, corner: [9.6, 13.4] };
+const S30 = TSLOT_SERIES[30];
 const cells = Math.min(2, Math.max(1, Math.round(p.cells)));
 const L = p.length;
 const { section, centres, W, D } = tslotSection(S30, cells);
