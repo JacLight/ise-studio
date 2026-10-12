@@ -1,0 +1,146 @@
+{
+ "id": "gt2_belt_loop",
+ "name": "GT2 closed-loop belt",
+ "standard": "GT2 2 mm",
+ "category": "Bearings & motion",
+ "summary": "GT2 (2 mm pitch) closed-loop timing belt, 6 mm wide, by pitch length, wrapped round two 20T pulleys (pitch Ø12.73) at x = 0 and x = C, in the XY plane from z = 0 to 6",
+ "keywords": [
+  "GT2",
+  "2GT",
+  "closed loop belt",
+  "timing belt",
+  "endless belt",
+  "belt loop",
+  "200mm belt",
+  "6mm belt",
+  "3D printer"
+ ],
+ "source": [
+  "common.js",
+  "gt2.js",
+  "gt2_belt_loop.js"
+ ],
+ "display_tolerance": 0.02,
+ "material": "Neoprene, glass-fibre cords",
+ "materials": {
+  "Neoprene, glass-fibre cords": 1350
+ },
+ "params": [
+  {
+   "key": "length",
+   "label": "Pitch length",
+   "value": 200,
+   "unit": "mm",
+   "min": 60,
+   "max": 2000,
+   "step": 2
+  }
+ ],
+ "columns": [
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "110 mm loop",
+   "values": {
+    "length": 110
+   },
+   "description": "55 teeth"
+  },
+  {
+   "name": "122 mm loop",
+   "values": {
+    "length": 122
+   },
+   "description": "61 teeth"
+  },
+  {
+   "name": "158 mm loop",
+   "values": {
+    "length": 158
+   },
+   "description": "79 teeth"
+  },
+  {
+   "name": "200 mm loop",
+   "values": {
+    "length": 200
+   },
+   "description": "100 teeth"
+  },
+  {
+   "name": "232 mm loop",
+   "values": {
+    "length": 232
+   },
+   "description": "116 teeth"
+  },
+  {
+   "name": "280 mm loop",
+   "values": {
+    "length": 280
+   },
+   "description": "140 teeth"
+  },
+  {
+   "name": "300 mm loop",
+   "values": {
+    "length": 300
+   },
+   "description": "150 teeth"
+  },
+  {
+   "name": "400 mm loop",
+   "values": {
+    "length": 400
+   },
+   "description": "200 teeth"
+  },
+  {
+   "name": "610 mm loop",
+   "values": {
+    "length": 610
+   },
+   "description": "305 teeth"
+  },
+  {
+   "name": "852 mm loop",
+   "values": {
+    "length": 852
+   },
+   "description": "426 teeth"
+  }
+ ],
+ "default": "200 mm loop",
+ "checks": {
+  "200 mm loop": {
+   "size": [
+    93.48,
+    13.484,
+    6
+   ],
+   "tolerance": 0.1,
+   "connectors": [
+    "Pulley A",
+    "Pulley B"
+   ],
+   "connector_at": {
+    "Pulley B": [
+     80,
+     0,
+     3
+    ]
+   },
+   "metrics": {
+    "Teeth": 100,
+    "Centre distance on 20T": 80
+   },
+   "partNumber": "GT2-200-6"
+  },
+  "852 mm loop": {
+   "metrics": {
+    "Teeth": 426
+   }
+  }
+ }
+}

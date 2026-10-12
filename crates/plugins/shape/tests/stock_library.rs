@@ -215,3 +215,63 @@ fn true_helical_threads_evaluate_when_asked_for() {
         assert!(e.is_ok(), "{id} {size}: exact with the helix: {:?}", e.err().map(|x| x.1));
     }
 }
+
+/// Whether a triangle range of a mesh is a closed, consistently oriented
+/// surface: once vertices at the same position are welded (the view splits
+/// them at sharp edges), every edge a→b is matched by exactly one b→a.
+fn closed_manifold(positions: &[f32], indices: &[u32]) -> Result<(), String> {
+    use std::collections::HashMap;
+    let mut weld: HashMap<[u32; 3], u32> = HashMap::new();
+    let mut id = |i: u32| {
+        let i = i as usize * 3;
+        let k = [positions[i].to_bits(), positions[i + 1].to_bits(), positions[i + 2].to_bits()];
+        let n = weld.len() as u32;
+        *weld.entry(k).or_insert(n)
+    };
+    let mut edges: HashMap<(u32, u32), i32> = HashMap::new();
+    for t in indices.chunks(3) {
+        let [a, b, c] = [id(t[0]), id(t[1]), id(t[2])];
+        if a == b || b == c || c == a {
+            continue; // a degenerate sliver: no area, no edges of its own
+        }
+        for (x, y) in [(a, b), (b, c), (c, a)] {
+            *edges.entry((x, y)).or_default() += 1;
+        }
+    }
+    for (&(x, y), &n) in &edges {
+        let back = edges.get(&(y, x)).copied().unwrap_or(0);
+        if n != back {
+            return Err(format!("edge {x}→{y} used {n}× but {y}→{x} {back}× (open or non-manifold)"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn every_size_is_watertight() {
+    let mut failures = Vec::new();
+    for f in families() {
+        let source = f.program_source();
+        let tol = f.display_tolerance.unwrap_or(runtime::DISPLAY_TOLERANCE);
+        let results: Vec<Result<(), String>> = f
+            .rows
+            .par_iter()
+            .map(|row| {
+                let tag = format!("{} {}", f.id, row.name);
+                let e = runtime::evaluate_in(&source, &f.values_for(row), tol, &f.inputs_for(row)).map_err(|e| format!("{tag}: {e}"))?;
+                if e.volume <= 0.0 || e.indices.is_empty() {
+                    return Err(format!("{tag}: no volume"));
+                }
+                if e.parts.is_empty() {
+                    return closed_manifold(&e.positions, &e.indices).map_err(|x| format!("{tag}: {x}"));
+                }
+                for p in &e.parts {
+                    closed_manifold(&e.positions, &e.indices[p.index_start..p.index_start + p.index_count]).map_err(|x| format!("{tag} part {}: {x}", p.name))?;
+                }
+                Ok(())
+            })
+            .collect();
+        failures.extend(results.into_iter().filter_map(Result::err));
+    }
+    assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+}

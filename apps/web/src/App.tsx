@@ -13,7 +13,7 @@ import { type ConfigRow, type EdgeFinish, type Frac, type LiveEdit, type Shape, 
 import { GroupList, HistoryBody, ObjectsBody, ProjectBody, PropertiesBody, ToolPanel, ViewsBody } from "./Panels";
 import { useEdgeEditor } from "./EdgeEditor";
 import { type FaceToolKind, useFaceTool } from "./FaceTool";
-import type { MotionGrab, ProgramFace, StressView, TurnBody, TurnOptions } from "./Viewport";
+import type { AssemblyOverlay, GeometryHit, MotionGrab, ProgramFace, StressView, TurnBody, TurnOptions } from "./Viewport";
 import { useExplode } from "./Explode";
 import type { FaceDriver } from "./engine";
 import { SyncBanner, TeamDialog, TeamPill, useTeam } from "./Team";
@@ -105,7 +105,19 @@ export function App({ engine }: { engine: Engine }) {
   // Joints: connectors offered for picking in the view, and instances drawn where a scrubbed joint puts them.
   const [connectorPick, setConnectorPick] = useState<ConnectorPick | null>(null);
   const [posePreview, setPosePreview] = useState<Map<string, Transform> | null>(null);
-  const jointView = useMemo<JointView>(() => ({ pick: setConnectorPick, poses: setPosePreview }), []);
+  // Assembly tools: lines and dots drawn over the model, and clicks picking geometry for a mate.
+  const [assemblyOverlay, setAssemblyOverlay] = useState<AssemblyOverlay | null>(null);
+  const [geometryPick, setGeometryPick] = useState<((hit: GeometryHit) => void) | null>(null);
+  const jointView = useMemo<JointView>(
+    () => ({
+      pick: setConnectorPick,
+      poses: setPosePreview,
+      overlay: setAssemblyOverlay,
+      geometry: (f) => setGeometryPick(() => f),
+      snapshot: () => viewport.current?.snapshot() ?? null,
+    }),
+    [],
+  );
   const [live, setLiveState] = useState<LiveEdit | null>(null);
   const [lockRatio, setLockRatio] = useState(false);
   const [report, setReport] = useState<CheckReport | null>(null);
@@ -1503,6 +1515,8 @@ export function App({ engine }: { engine: Engine }) {
           connectors={connectorPick?.picture ?? null}
           onConnectorPick={(key) => connectorPick?.onPick(key)}
           poses={posePreview}
+          overlay={assemblyOverlay}
+          onGeometryPick={geometryPick}
           onTurnInstance={async (id, at, rotation) => (await run("assembly.instance.update", { target: id, at, rotation })) !== null}
         />
         <div className="view-caption">

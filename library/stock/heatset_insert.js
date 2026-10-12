@@ -2,8 +2,9 @@
 // Kitchen sizes).
 //
 // Source: the makers' dimension tables (as published with the Ruthex RX-M2x4,
-// RX-M3x5.7, RX-M4x8.1, RX-M5x9.5 and CNC Kitchen M2.5×4, M3×3 "short",
-// M3×4 "Voron" listings, e.g. 3djake.com): D1 knurled outside diameter,
+// RX-M3x5.7, RX-M4x8.1, RX-M5x9.5, RX-M6x12.7 and CNC Kitchen M2×3, M2.5×4,
+// M3×3, M4×4 and M5×5.8 "short", M3×4 "Voron" listings, e.g. 3djake.com;
+// the short inserts share their long sibling's diameters): D1 knurled outside diameter,
 // D2 lead-in (tip) diameter, D3 recommended printed hole diameter, L length,
 // W minimum wall around the hole. Recommended hole depth: L + 1 mm, so the
 // plastic the insert displaces has room below it.
@@ -17,13 +18,17 @@
 
 const INSERTS = {
   // key "d×L":  D1    D2    D3    W   maker            part number      price (USD, each in packs of 100)
+  "2×3": [3.6, 3.1, 3.2, 1.3, "CNC Kitchen", "M2x3", 0.05],
   "2×4": [3.6, 3.1, 3.2, 1.3, "Ruthex", "RX-M2x4", 0.05],
   "2.5×4": [4.6, 3.9, 4.0, 1.6, "CNC Kitchen", "M2.5x4", 0.06],
   "3×3": [4.6, 3.9, 4.0, 1.6, "CNC Kitchen", "M3x3 short", 0.05],
   "3×4": [5.0, 4.25, 4.4, 1.3, "CNC Kitchen", "M3x5x4 Voron", 0.06],
   "3×5.7": [4.6, 3.9, 4.0, 1.6, "Ruthex", "RX-M3x5.7", 0.06],
+  "4×4": [6.3, 5.5, 5.6, 2.1, "CNC Kitchen", "M4x4 short", 0.08],
   "4×8.1": [6.3, 5.5, 5.6, 2.1, "Ruthex", "RX-M4x8.1", 0.09],
+  "5×5.8": [7.1, 6.3, 6.4, 2.6, "CNC Kitchen", "M5x5.8 short", 0.1],
   "5×9.5": [7.1, 6.3, 6.4, 2.6, "Ruthex", "RX-M5x9.5", 0.12],
+  "6×12.7": [8.7, 7.9, 8.0, 3.0, "Ruthex", "RX-M6x12.7", 0.2],
 };
 
 const d = p.d;

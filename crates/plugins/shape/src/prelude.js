@@ -585,16 +585,24 @@ function __stockInfo(where, s) {
     if (!supplier) throw new TypeError(`${w} needs a supplier`);
     return { supplier, sku: __optText(w, "sku", x.sku), url: __optText(w, "url", x.url), unit_price: __optNum(w, "unitPrice", x.unitPrice), currency: __optText(w, "currency", x.currency) };
   });
+  // Cut to length: one piece of `cutLength` mm at `pricePerM`; the piece's
+  // price follows from them when no unitPrice is given.
+  const cutLength = __optNum(where, "cutLength", s.cutLength);
+  const pricePerM = __optNum(where, "pricePerM", s.pricePerM);
+  let unitPrice = __optNum(where, "unitPrice", s.unitPrice);
+  if (unitPrice === undefined && cutLength !== undefined && pricePerM !== undefined) unitPrice = Math.round((pricePerM * cutLength) / 10) / 100;
   return {
     standard: __optText(where, "standard", s.standard),
     part_number: partNumber,
     description: __optText(where, "description", s.description),
     manufacturer: __optText(where, "manufacturer", s.manufacturer),
     mpn: __optText(where, "mpn", s.mpn),
-    unit_price: __optNum(where, "unitPrice", s.unitPrice),
+    unit_price: unitPrice,
     currency: __optText(where, "currency", s.currency),
     pack,
     mass_g: __optNum(where, "massG", s.massG),
+    cut_length_mm: cutLength,
+    price_per_m: pricePerM,
     sources,
   };
 }
@@ -605,6 +613,9 @@ function __stockInfo(where, s) {
  *   stock({ standard: "ISO 4762", partNumber: `ISO 4762 M3×${p.length} A2`,
  *           description: "Socket head cap screw", unitPrice: 0.04, pack: 100,
  *           sources: [{ supplier: "McMaster-Carr", sku: "91292A113" }] })
+ * A cut-to-length item (beam, tube, bar) gives its piece length and price per
+ * metre; the piece's unitPrice follows from them when left out:
+ *   stock({ partNumber: `IPE 200 × ${p.length} S235JR`, cutLength: p.length, pricePerM: 38.1 })
  * In a multi-part program, give a bought part `stock` instead:
  *   part("Servo", body, { material: "Servo", stock: { partNumber: "MG996R" } })
  */

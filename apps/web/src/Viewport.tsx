@@ -20,6 +20,7 @@ import { pcbLooks } from "./pcb3d";
 import { type DisplayMode, type SectionPlane, type ViewName, ViewTools } from "./viewTools";
 import { ViewToolbar } from "./ViewToolbar";
 import type { EntityView, MeshData } from "./engine";
+import { BatchLayer } from "./batchLayer";
 import {
   AXIS_NAMES,
   ACCENT,
@@ -394,9 +395,22 @@ type Props = {
   poses?: ReadonlyMap<string, Transform> | null;
   /** An instance turned with the gizmo's rings: its new position and rotation (false: refused, put it back). */
   onTurnInstance?: (id: string, at: V3, rotation: V3) => Promise<boolean>;
+  /** Lines and dots drawn over the model (project mm): exploded trails, a robot's reach and path, picked geometry. */
+  overlay?: AssemblyOverlay | null;
+  /** Picking geometry for a mate: a click on a part reports where and which face (project mm), instead of selecting. */
+  onGeometryPick?: ((hit: GeometryHit) => void) | null;
   /** A selection box closed on these items (add: Shift held, adding to what is selected). */
   onSelectMany?: (ids: string[], add: boolean) => void;
 };
+
+/** What an assembly tool draws over the model, in project millimetres. */
+export type AssemblyOverlay = {
+  lines?: { points: V3[]; color?: string; dashed?: boolean }[];
+  points?: { at: V3[]; color?: string; size?: number }[];
+};
+
+/** A click on a part while picking geometry: the instance path, the point and the face's normal there (project mm). */
+export type GeometryHit = { path: string[]; shape: string | null; point: V3; normal: V3 };
 
 /** A flat face of a part made by a program, and which part of an assembly it is on. */
 export type ProgramFace = FlatFace & { id: string; part: string | null };
@@ -534,6 +548,13 @@ function enclosing(t: Scene, eye: THREE.Vector3): THREE.Mesh[] {
     for (const m of part.meshes) {
       if (!m.visible) continue;
       const g = m.geometry;
+      // Most parts are nowhere near the eye: a sphere says so before a box is placed.
+      if (!g.boundingSphere) g.computeBoundingSphere();
+      const s = g.boundingSphere!;
+      const e = m.matrixWorld.elements;
+      const dx = e[12] - eye.x, dy = e[13] - eye.y, dz = e[14] - eye.z;
+      const reach = (s.radius + s.center.length()) * m.matrixWorld.getMaxScaleOnAxis();
+      if (dx * dx + dy * dy + dz * dz > reach * reach * 1.01) continue;
       if (!g.boundingBox) g.computeBoundingBox();
       box.copy(g.boundingBox!).applyMatrix4(m.matrixWorld);
       // Inside by more than a hair: grazing a face from outside does not hide it.
@@ -590,11 +611,13 @@ function surface(look: Look, wireframe: boolean) {
 /** Scene geometry (mm) from an engine mesh (m). */
 function makeGeometry(mesh: MeshData): THREE.BufferGeometry {
   const indexed = new THREE.BufferGeometry();
-  indexed.setAttribute("position", new THREE.Float32BufferAttribute(mesh.positions.map((v) => v * MM), 3));
-  indexed.setIndex(mesh.indices);
+  const positions = Float32Array.from(mesh.positions);
+  for (let i = 0; i < positions.length; i++) positions[i] *= MM;
+  indexed.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  indexed.setIndex(new THREE.BufferAttribute(mesh.indices instanceof Uint32Array ? mesh.indices : Uint32Array.from(mesh.indices), 1));
   if (mesh.normals?.length) {
     // Smooth on curves, crisp at sharp edges: the engine already split the normals.
-    indexed.setAttribute("normal", new THREE.Float32BufferAttribute(mesh.normals, 3));
+    indexed.setAttribute("normal", new THREE.BufferAttribute(mesh.normals instanceof Float32Array ? mesh.normals : Float32Array.from(mesh.normals), 3));
     return indexed;
   }
   const geometry = indexed.toNonIndexed();
@@ -660,6 +683,8 @@ function buildInstance(e: EntityView, entities: ReadonlyMap<string, EntityView>,
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData = { id: e.id, path: o.path, shape: o.shape };
+    // Drawn as a GPU instance with every other mesh of its geometry and look (see batchLayer).
+    BatchLayer.adopt(mesh);
     group.add(mesh);
     meshes.push(mesh);
   }
@@ -916,6 +941,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     el.prepend(renderer.domElement);
 
     const scene = new THREE.Scene();
+    // World matrices are brought up to date once per frame, before the instance layer reads them.
+    scene.matrixWorldAutoUpdate = false;
     scene.fog = new THREE.Fog(0xf5f6f8, 2000, 6000);
     const camera = new THREE.PerspectiveCamera(36, 1, 1, 400000);
     camera.up.set(0, 0, 1);
@@ -961,6 +988,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     const hoverFaceTint = new FaceTint(ACCENT, 0.1, 0.55);
     const ghost = new Ghost();
     const guide = new AxisGuide();
+    const batch = new BatchLayer();
+    scene.add(batch.root);
     scene.add(overlayRoot, hoverFaceTint.root, selectedFaceTint.root, ghost.root, guide.root, gizmo.root, push.root);
 
     // Pivot mode: 27 pickable points on the selected part, drawn as flat
@@ -1492,6 +1521,13 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       }
       if (!dirty) return;
       dirty = false;
+      draw();
+    };
+    const frameStats = { aside: 0, matrices: 0, batch: 0, render: 0 };
+    function* instanceMeshes() {
+      for (const part of three.current?.parts.values() ?? []) if (part.shared && part.group.visible) yield* part.meshes;
+    }
+    const draw = () => {
       const distance = camera.position.distanceTo(controls.target);
       // The haze starts past the model, however close in the camera is.
       const extent = three.current?.extent;
@@ -1505,15 +1541,46 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       // A part the camera is inside (a case, a room's shell, a floor passed
       // through) steps aside, as if the camera had walked in: what it holds
       // shows instead of the inside of its walls.
+      const t0 = performance.now();
+      scene.updateMatrixWorld();
       const aside = three.current ? enclosing(three.current, camera.position) : [];
       for (const m of aside) m.visible = false;
+      const t1 = performance.now();
       const view = tools.beforeRender();
+      // Instances of shared geometry go to the GPU as instances, culled and simplified by size.
+      const t2 = performance.now();
+      batch.update(instanceMeshes(), view, renderer.domElement.clientHeight || 800, three.current?.wireframe ?? false);
+      const t3 = performance.now();
       renderer.render(scene, view);
       tools.afterRender(renderer, view);
+      frameStats.aside = t1 - t0;
+      frameStats.matrices = t2 - t1;
+      frameStats.batch = t3 - t2;
+      frameStats.render = performance.now() - t3;
       for (const m of aside) m.visible = true;
       if (callbacks.current.comments?.pins.length) scheduleOcclusion();
     };
     raf = requestAnimationFrame(frame);
+    // `?perf`: a handle for measuring the view (tools and benchmarks drive it
+    // over the DevTools protocol): one frame drawn and waited for, in ms.
+    if (new URLSearchParams(location.search).has("perf")) {
+      const px = new Uint8Array(4);
+      (window as unknown as { formaPerf: unknown }).formaPerf = {
+        renderer,
+        camera,
+        controls,
+        parts: () => three.current?.parts.size ?? 0,
+        batch,
+        frameStats,
+        frame: () => {
+          const t0 = performance.now();
+          draw();
+          const gl = renderer.getContext();
+          gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+          return performance.now() - t0;
+        },
+      };
+    }
 
     const resize = () => {
       const { clientWidth: w, clientHeight: h } = el;
@@ -1700,6 +1767,18 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
           callbacks.current.onConnectorPick?.(key);
           dirty = true;
         }
+        return;
+      }
+      // Picking geometry for a mate: a click on a part reports the face under it; anywhere else orbits.
+      const geometryPick = callbacks.current.onGeometryPick;
+      if (geometryPick && e.button === 0) {
+        const hit = rayAt(e.clientX, e.clientY).intersectObjects(visibleBodies(), false)[0];
+        if (!hit) return;
+        e.stopPropagation();
+        e.preventDefault();
+        const n = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : new THREE.Vector3(0, 0, 1);
+        geometryPick({ path: (hit.object.userData.path as string[] | undefined) ?? [], shape: (hit.object.userData.shape as string | undefined) ?? null, point: hit.point.toArray() as V3, normal: n.toArray() as V3 });
+        dirty = true;
         return;
       }
       const cm = callbacks.current.comments;
@@ -2365,6 +2444,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       toolsRef.current = null;
       window.removeEventListener("keydown", onKey, true);
       for (const part of three.current?.parts.values() ?? []) disposePart(part);
+      batch.dispose();
       scene.traverse((o) => {
         if (o instanceof THREE.Mesh || o instanceof THREE.Line) {
           o.geometry.dispose();
@@ -2567,6 +2647,48 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     }
     t.invalidate();
   }, [props.poses, entities]);
+
+  // Lines and dots an assembly tool draws over the model (never picked: clicks reach the parts).
+  const assemblyOverlay = useRef<THREE.Group | null>(null);
+  useEffect(() => {
+    const t = three.current;
+    if (!t) return;
+    let g = assemblyOverlay.current;
+    if (!g) {
+      g = new THREE.Group();
+      g.renderOrder = 3;
+      assemblyOverlay.current = g;
+      t.scene.add(g);
+    }
+    for (const o of [...g.children]) {
+      g.remove(o);
+      const m = o as THREE.Line | THREE.Points;
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    }
+    const ov = props.overlay;
+    for (const l of ov?.lines ?? []) {
+      if (l.points.length < 2) continue;
+      const geometry = new THREE.BufferGeometry().setFromPoints(l.points.map((p) => new THREE.Vector3(...p)));
+      const material = l.dashed
+        ? new THREE.LineDashedMaterial({ color: l.color ?? "#6d4ae0", dashSize: 3, gapSize: 2, depthTest: false, transparent: true, opacity: 0.9 })
+        : new THREE.LineBasicMaterial({ color: l.color ?? "#6d4ae0", depthTest: false, transparent: true, opacity: 0.9 });
+      const line = new THREE.Line(geometry, material);
+      if (l.dashed) line.computeLineDistances();
+      line.raycast = () => {};
+      line.renderOrder = 3;
+      g.add(line);
+    }
+    for (const set of ov?.points ?? []) {
+      if (!set.at.length) continue;
+      const geometry = new THREE.BufferGeometry().setFromPoints(set.at.map((p) => new THREE.Vector3(...p)));
+      const dots = new THREE.Points(geometry, new THREE.PointsMaterial({ color: set.color ?? "#6d4ae0", size: set.size ?? 3, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.85 }));
+      dots.raycast = () => {};
+      dots.renderOrder = 3;
+      g.add(dots);
+    }
+    t.invalidate();
+  }, [props.overlay]);
 
   // Comment pins and the open card: laid out again when they change, and when the card grows (a reply posted).
   useEffect(() => void three.current?.invalidate(), [props.comments]);
@@ -2969,6 +3091,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       const shown = [t.gizmo.root.visible, t.push.root.visible];
       t.gizmo.root.visible = false;
       t.push.root.visible = false;
+      t.scene.updateMatrixWorld();
       t.renderer.render(t.scene, t.camera);
       const url = t.renderer.domElement.toDataURL("image/png");
       [t.gizmo.root.visible, t.push.root.visible] = shown;

@@ -10566,6 +10566,11 @@ button.download.drawing-open small {
   text-overflow: ellipsis;
 }
 
+.c-name small.cut {
+  color: #6b6578;
+  font-variant-numeric: tabular-nums;
+}
+
 .pn {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 11px;
@@ -13928,6 +13933,361 @@ a.button .icon {
 .fit-checks li { display: grid; grid-template-columns: 10px 1fr; gap: 6px; font-size: 10.5px; line-height: 1.45; align-items: baseline; }
 .fit-checks b { font-weight: 650; }
 .fit-checks small { color: var(--muted); }
+
+/* The drawing's sheet size picker. */
+.drawing-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted, #6b6b76);
+}
+.drawing-select select {
+  font: inherit;
+  color: var(--text, #1d1d22);
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--line, #d9d9e0);
+  background: var(--surface, #fff);
+}
+
+/* ---- Assembly tools: mates, degrees of freedom, couplings, patterns, studio ---- */
+
+.aj-adds {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.joint-glyph.at-glyph {
+  display: inline-grid;
+  place-items: center;
+}
+
+.joint-glyph.at-glyph .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.aj-kinds.at-mates {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.at-dof {
+  margin: 0 0 8px;
+  border: 1px solid #eeebf3;
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.at-dof-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: #343743;
+  text-align: left;
+}
+
+.at-dof-head small {
+  font-weight: 500;
+  color: #8a8398;
+}
+
+.at-dof-head > span:nth-child(2) {
+  flex: 1;
+}
+
+.at-dof-head .icon {
+  width: 12px;
+  color: #a7a1b4;
+  transition: transform 160ms ease;
+}
+
+.at-dof-head[aria-expanded="true"] .icon {
+  transform: rotate(180deg);
+}
+
+.at-dof-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2f9e6e;
+  box-shadow: 0 0 0 3px #e3f4ec;
+}
+
+.at-dof.free .at-dof-dot {
+  background: #e0a03a;
+  box-shadow: 0 0 0 3px #fbf0dc;
+}
+
+.at-dof.bad .at-dof-dot {
+  background: #d6455d;
+  box-shadow: 0 0 0 3px #fae3e7;
+}
+
+.at-dof-body {
+  padding: 0 10px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #5e6070;
+}
+
+.at-dof-group > p {
+  margin: 0 0 6px;
+}
+
+.at-dof-inst {
+  margin: 0 0 6px;
+}
+
+.at-dof-inst ul {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  color: #737985;
+}
+
+.at-couplings,
+.at-pattern {
+  margin-top: 10px;
+}
+
+.at-sub {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 10px 0 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8a8398;
+}
+
+.at-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border: 1px solid #eeebf3;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.at-row.on {
+  border-color: #cdbff3;
+  background: #f8f5fe;
+}
+
+.at-row > .icon {
+  width: 15px;
+  color: #7352d6;
+  flex: none;
+}
+
+.at-row-main {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 1px;
+  text-align: left;
+}
+
+.at-row-main strong {
+  font-size: 11.5px;
+  font-weight: 650;
+  color: #343743;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.at-row-main small {
+  font-size: 10.5px;
+  color: #8a8398;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.at-link:hover strong {
+  color: #5b3fc4;
+}
+
+.at-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: #a7a1b4;
+  flex: none;
+}
+
+.at-icon:hover {
+  background: #f3effa;
+  color: #5b3fc4;
+}
+
+.at-icon .icon {
+  width: 13px;
+}
+
+.secondary.at-small {
+  height: 24px;
+  padding: 0 9px;
+  font-size: 10.5px;
+}
+
+.at-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.at-seg-label {
+  align-self: center;
+  padding: 0 6px 0 4px;
+  font-size: 10.5px;
+  color: #8a8398;
+}
+
+.at-studio .at-tabs {
+  display: flex;
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.at-studio .at-tabs button {
+  flex: 1;
+  padding-inline: 4px;
+  font-size: 10.5px;
+}
+
+.at-tab {
+  display: grid;
+  gap: 6px;
+}
+
+.at-inline {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.at-inline > input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid #e6e2ee;
+  border-radius: 8px;
+  font-size: 11.5px;
+}
+
+.at-inline .primary {
+  white-space: nowrap;
+}
+
+.at-spread {
+  display: grid;
+  gap: 3px;
+  width: 84px;
+  font-size: 10px;
+  color: #8a8398;
+}
+
+.at-spread input {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #e6e2ee;
+  border-radius: 8px;
+  font-size: 11.5px;
+}
+
+.at-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.at-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid #e6e2ee;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 11px;
+  color: #5e6070;
+}
+
+.at-chip.on {
+  border-color: #cdbff3;
+  background: #f3effa;
+  color: #5b3fc4;
+}
+
+.at-chip em {
+  font-style: normal;
+  font-weight: 700;
+  font-size: 10px;
+}
+
+.at-axes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 5px;
+}
+
+.at-axis {
+  display: grid;
+  gap: 1px;
+  padding: 6px 8px;
+  border: 1px solid #eeebf3;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.at-axis > span {
+  font-size: 10px;
+  color: #8a8398;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.at-axis strong {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: #343743;
+}
+
+.at-axis strong small,
+.at-axis > small {
+  font-size: 10px;
+  font-weight: 500;
+  color: #a7a1b4;
+}
+
+.aj-fields.at-xyz {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.at-player .row-buttons {
+  flex-wrap: wrap;
+}
+
+.at-row-main.at-link {
+  justify-items: start;
+  text-align: left;
+}
 
 /* ---- View tools: view cube, projection, display modes, section, measure, box select ---- */
 

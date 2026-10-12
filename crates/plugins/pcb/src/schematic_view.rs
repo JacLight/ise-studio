@@ -320,7 +320,10 @@ pub(crate) fn symbol_view(id: StableId, s: &schematic::SchSymbol) -> SymbolView 
             let v = dir.v();
             let inner = [at[0] - v[0] * p.length, at[1] - v[1] * p.length];
             if p.length > 1e-6 {
-                draw.push(Draw::Line { p: vec![at, inner], w: W_PIN, ink: "pin" });
+                // A pin style (bubble, clock, …) takes the body end of the line.
+                let cut = crate::libedit::pin_cut(p.shape).min(p.length);
+                draw.push(Draw::Line { p: vec![at, [inner[0] + v[0] * cut, inner[1] + v[1] * cut]], w: W_PIN, ink: "pin" });
+                draw.extend(crate::libedit::pin_decoration(p.shape, at, inner, v));
             }
             // Numbers sit nearer the body, clear of a no-connect flag on the end.
             let mid = [at[0] + (inner[0] - at[0]) * 0.62, at[1] + (inner[1] - at[1]) * 0.62];

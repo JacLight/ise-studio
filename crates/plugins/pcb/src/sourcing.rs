@@ -142,7 +142,7 @@ pub fn key(mpn: Option<&str>, value: &str, footprint: &str) -> String {
 pub fn bom_lines(view: &BoardView, board: &Board) -> Vec<BomLine> {
     let mut by: BTreeMap<String, BomLine> = BTreeMap::new();
     for c in &view.components {
-        if c.kind == "hole" {
+        if c.kind == "hole" || c.kind == "logo" {
             continue;
         }
         let k = key(c.mpn.as_deref(), &c.value, &c.footprint);
@@ -290,6 +290,8 @@ fn stock_of(l: &BomLine) -> de_shape::stock::Stock {
         currency: l.choice.as_ref().and_then(|c| c.currency.clone()),
         pack: None,
         mass_g: None,
+        cut_length_mm: None,
+        price_per_m: None,
         sources: lcsc.chain(chosen).collect(),
     }
 }

@@ -1,0 +1,73 @@
+{
+ "id": "stepper_28byj48",
+ "name": "Geared stepper 28BYJ-48",
+ "category": "Motors",
+ "summary": "28BYJ-48 geared unipolar stepper (5 V / 12 V), Ø28 can, ears 35 mm apart, Ø5 double-flat shaft 8 mm off-centre. Top face on z = 0, shaft up +Z.",
+ "keywords": [
+  "28BYJ-48",
+  "28BYJ",
+  "geared stepper",
+  "stepper",
+  "ULN2003",
+  "unipolar",
+  "small stepper",
+  "Arduino stepper"
+ ],
+ "source": [
+  "common.js",
+  "stepper_28byj48.js"
+ ],
+ "display_tolerance": 0.02,
+ "materials": {
+  "28BYJ-48 can, gears and windings (lumped)": 2200.0,
+  "Steel": 7850,
+  "ABS (blue)": 1050,
+  "Hook-up wire (PVC, copper)": 2200
+ },
+ "params": [
+  {
+   "key": "volts",
+   "label": "Voltage",
+   "value": 5,
+   "unit": "V",
+   "min": 5,
+   "max": 12
+  }
+ ],
+ "columns": [
+  "volts"
+ ],
+ "rows": [
+  {
+   "name": "5V",
+   "values": {
+    "volts": 5
+   }
+  },
+  {
+   "name": "12V",
+   "values": {
+    "volts": 12
+   }
+  }
+ ],
+ "default": "5V",
+ "checks": {
+  "5V": {
+   "massG": 30,
+   "partNumber": "28BYJ-48-5V",
+   "connector_at": {
+    "Shaft": [
+     0,
+     8,
+     0
+    ],
+    "Hole 2": [
+     17.5,
+     0,
+     0
+    ]
+   }
+  }
+ }
+}
