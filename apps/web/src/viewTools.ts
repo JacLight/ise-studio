@@ -39,6 +39,8 @@ export type ViewHost = {
   /** Frames everything (or one item) looking along `direction`, gliding. */
   fit: (only?: string, direction?: THREE.Vector3, up?: THREE.Vector3) => void;
   selected: () => string | null;
+  /** An item's name, for labels. */
+  nameOf?: (id: string) => string;
   /** Rubber-band selection result. */
   onSelectMany: (ids: string[], add: boolean) => void;
 };
@@ -188,7 +190,8 @@ export class ViewTools {
       const topo = new Topology({ positions, index });
       const triangles = topo.tris.map((_, i) => i);
       const c = new THREE.Box3().setFromArray(positions).getCenter(new THREE.Vector3());
-      await this.measure.pick({ feature: { kind: "part", id, name: id, triangles, centroid: [c.x, c.y, c.z] }, topo, id, name: id });
+      const name = this.host.nameOf?.(id) ?? id;
+      await this.measure.pick({ feature: { kind: "part", id, name, triangles, centroid: [c.x, c.y, c.z] }, topo, id, name });
     }
   }
 
@@ -205,10 +208,12 @@ export class ViewTools {
   /** Before a draw: materials to the display mode and section; returns the camera to draw with. */
   beforeRender(): THREE.Camera {
     const bodies = this.host.bodies();
+    const camera = this.camera();
+    camera.updateMatrixWorld();
     this.display.clipping = this.section.active ? this.section.clipping : null;
-    this.display.apply(bodies, this.host.materialsOf);
+    this.display.apply(bodies, this.host.materialsOf, camera);
     this.section.clip(bodies, this.host.materialsOf);
-    return this.camera();
+    return camera;
   }
 
   /** The camera to draw and pick with. */

@@ -13797,8 +13797,8 @@ a.button .icon {
 
 .view-cube {
   position: absolute;
-  top: 74px;
-  right: 34px;
+  top: 96px;
+  right: 40px;
   width: 74px;
   height: 74px;
   z-index: 4;
@@ -13820,11 +13820,11 @@ a.button .icon {
   display: grid;
   grid-template-columns: 20% 60% 20%;
   grid-template-rows: 20% 60% 20%;
-  border: 1px solid #b9bfcc;
-  border-radius: 5px;
+  border: 1px solid #9aa1b2;
+  border-radius: 4px;
   /* Faces turned towards the eye read lighter. */
-  background: color-mix(in srgb, #ffffff calc(var(--facing, 1) * 100%), #dfe3ea);
-  opacity: 0.94;
+  background: color-mix(in srgb, #ffffff calc(var(--facing, 1) * 100%), #cfd4de);
+  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.55);
   transform-origin: 50% 50%;
 }
 
@@ -13837,10 +13837,10 @@ a.button .icon {
   inset: 0;
   display: grid;
   place-items: center;
-  font-size: 10.5px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 700;
   letter-spacing: 0.02em;
-  color: #4b5160;
+  color: #3d4250;
   pointer-events: none;
 }
 
@@ -13880,7 +13880,7 @@ a.button .icon {
 
 .view-tools {
   position: absolute;
-  top: 168px;
+  top: 196px;
   right: 16px;
   z-index: 5;
   display: flex;
@@ -13899,8 +13899,7 @@ a.button .icon {
   background: rgba(255, 255, 255, 0.95);
   border: 1px solid #e6e7ee;
   box-shadow: 0 6px 18px #2d214a12;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  flex-wrap: nowrap;
 }
 
 .vt-sep {
@@ -14204,6 +14203,6 @@ a.button .icon {
     transform-origin: top right;
   }
   .view-tools {
-    top: 136px;
+    top: 168px;
   }
 }

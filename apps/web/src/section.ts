@@ -115,6 +115,7 @@ export class Section {
       for (const m of materialsOf(body)) {
         if (m.clippingPlanes === want) continue;
         m.clippingPlanes = want;
+        m.clipShadows = !!want; // what is cut away casts no shadow
         m.needsUpdate = true;
         if (want) this.touched.add(m);
       }
@@ -202,7 +203,9 @@ export class Section {
       const cap = this.caps[i];
       const material = cap.material as THREE.MeshBasicMaterial;
       material.clippingPlanes = others;
-      material.map!.repeat.set(size / Math.max(extent.radius / 10, 1), size / Math.max(extent.radius / 10, 1));
+      // Hatch lines a few millimetres apart on a part, wider on a building.
+      const tile = Math.max(extent.radius / 40, 1.5);
+      material.map!.repeat.set(size / tile, size / tile);
       const centre = plane.projectPoint(extent.center, new THREE.Vector3());
       const q = new THREE.Quaternion().setFromUnitVectors(z, plane.normal);
       cap.matrixWorld.compose(centre, q, new THREE.Vector3(size, size, 1));

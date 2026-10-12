@@ -30,7 +30,8 @@ export type MeasureCard = { title: string; rows: MeasureRow[] }[];
 
 const ACCENT = "#e5572f";
 const PICK_PX = 9;
-const f = (n: number, digits = 2) => n.toLocaleString("en-US", { maximumFractionDigits: digits });
+// Rounded to −0 shows as 0.
+const f = (n: number, digits = 2) => (Math.abs(n) < 0.5 * 10 ** -digits ? 0 : n).toLocaleString("en-US", { maximumFractionDigits: digits });
 const mm = (n: number) => `${f(n)} mm`;
 
 /** A part's own triangles: its mesh, or the group of a multi-part mesh the triangle is in. */
@@ -48,6 +49,9 @@ export class MeasureTool {
   private hover: THREE.Object3D | null = null;
   private topologies = new WeakMap<THREE.Mesh, Map<string, Topology>>();
   private tags: { el: HTMLDivElement; at: THREE.Vector3 }[] = [];
+
+  /** An item's name, for the card. */
+  nameOf: (id: string) => string = (id) => id;
 
   constructor(
     host: HTMLElement,
@@ -77,7 +81,7 @@ export class MeasureTool {
     }
     const path = mesh.userData.path as string[] | undefined;
     const id = (path?.length ? path[path.length - 1] : (mesh.userData.id as string)) ?? "";
-    const name = (mesh.userData.name as string | undefined) ?? id;
+    const name = this.nameOf(id);
     if (wholePart) {
       const all = topo.tris.map((_, i) => i);
       const c = all.reduce((s, t) => s.add(new THREE.Vector3(...topo!.points[topo!.tris[t][0]])), new THREE.Vector3()).divideScalar(Math.max(all.length, 1));

@@ -896,6 +896,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x000000, 0);
     renderer.shadowMap.enabled = true;
+    renderer.localClippingEnabled = true; // section planes cut the parts, not the ground
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.45;
@@ -1011,8 +1012,18 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       fit: (only, direction, up) => three.current && fitView(three.current, only, true, direction, up),
       selected: () => callbacks.current.selected,
       onSelectMany: (ids, add) => callbacks.current.onSelectMany?.(ids, add),
+      nameOf: (id) => {
+        const e = callbacks.current.entities.get(id);
+        return e ? partName(e) : id;
+      },
     });
+    tools.measure.nameOf = (id) => {
+      const e = callbacks.current.entities.get(id);
+      return e ? partName(e) : id;
+    };
     toolsRef.current = tools;
+    // Reachable from the element for automated checks (headless browser tests).
+    (el as HTMLElement & { viewTools?: ViewTools }).viewTools = tools;
     setViewTools(tools);
 
     let dirty = true;
