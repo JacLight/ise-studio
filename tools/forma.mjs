@@ -17,8 +17,13 @@
 //   node tools/forma.mjs ops [filter]         the commands the engine accepts, with schemas
 //   node tools/forma.mjs view <action> [what] show something in the person's view (not saved):
 //        select L26 · frame L26 · isolate L26 · show_all · hide L19 · show L19
-//        color status|material · camera top|front|bottom|perspective
+//        color status|material · camera iso|front|back|left|right|top|bottom
 //        explode Bracket [spread] · explode Bracket off
+//        projection ortho|perspective · display shaded|edges|wireframe|hidden|xray
+//        section x 25 [flip] · section box x0 y0 z0 x1 y1 z1 · section off
+//        measure Bracket [Plate]   (part, or part to part, measured in their view)
+//   node tools/forma.mjs measure <part> [other part] [--part name]   volume, area, mass, centre of mass,
+//        moments of inertia (kg·mm² about the centre of mass); with two: centre to centre and the gap per axis
 //
 // steps.json is an array of { "operation": "...", "parameters": { ... } }.
 // Any string "$N.path" in parameters is replaced by step N's output at that
@@ -324,6 +329,53 @@ if (command === "run") {
     console.log("\nDefinitions (components and assemblies):");
     for (const d of defs) console.log(`  ${d.components["assembly.definition"]?.name ?? d.components["shape.program"].name}  (${d.id})`);
   }
+} else if (command === "measure") {
+  // Mass properties from the engine (exact on flat-faced solids), and between two items their centres and gaps.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const partFlag = args.indexOf("--part");
+  const part = partFlag >= 0 ? args.splice(partFlag, 2)[1] : null;
+  const [, a, b] = args;
+  if (!a) {
+    console.error("✗ say what: forma measure <part or instance> [other] [--part name]");
+    process.exit(1);
+  }
+  const get = async (id) => {
+    const q = new URLSearchParams({ ...(project ? { project } : {}), ...(part ? { part } : {}) });
+    const res = await fetch(`${http}/measure/${encodeURIComponent(id)}?${q}`);
+    if (!res.ok) throw new Error(`${id}: ${await res.text()}`);
+    return res.json();
+  };
+  const n = (x, d = 3) => Number(x.toFixed(d)).toString();
+  const v3 = (v, d = 3) => v.map((x) => n(x, d)).join(", ");
+  try {
+    const list = [await get(a), ...(b ? [await get(b)] : [])];
+    list.forEach((m, i) => {
+      const name = i ? b : a;
+      console.log(`${name}${part ? ` (${part})` : ""}:`);
+      console.log(`  volume ${n(m.volume_mm3, 2)} mm³, surface area ${n(m.area_mm2, 2)} mm²`);
+      console.log(`  bounds ${v3(m.bounds_min, 2)} … ${v3(m.bounds_max, 2)} mm (size ${v3(m.bounds_max.map((x, k) => x - m.bounds_min[k]), 2)})`);
+      console.log(`  mass ${m.mass_kg == null ? "— (no material)" : `${n(m.mass_kg, 6)} kg`}; centre of mass ${v3(m.center_of_mass)} mm`);
+      if (m.inertia_kg_mm2) {
+        const I = m.inertia_kg_mm2;
+        console.log(`  inertia about the centre of mass (kg·mm²): Ixx ${n(I[0][0], 4)}, Iyy ${n(I[1][1], 4)}, Izz ${n(I[2][2], 4)}; Ixy ${n(I[0][1], 4)}, Ixz ${n(I[0][2], 4)}, Iyz ${n(I[1][2], 4)}`);
+        console.log(`  principal moments ${v3(m.principal_kg_mm2, 4)} kg·mm²`);
+      } else {
+        const J = m.inertia_mm5;
+        console.log(`  second moments of volume (mm⁵, inertia at unit density): ${n(J[0][0], 1)}, ${n(J[1][1], 1)}, ${n(J[2][2], 1)}`);
+      }
+    });
+    if (list.length === 2) {
+      const [p, q] = list;
+      const d = q.center_of_mass.map((x, k) => x - p.center_of_mass[k]);
+      console.log(`between: centre to centre ${n(Math.hypot(...d))} mm (Δ ${v3(d)})`);
+      // Gap between bounding boxes along each axis (negative: they overlap that much).
+      const gap = [0, 1, 2].map((k) => Math.max(p.bounds_min[k], q.bounds_min[k]) - Math.min(p.bounds_max[k], q.bounds_max[k]));
+      console.log(`  box gaps X ${n(gap[0], 2)}, Y ${n(gap[1], 2)}, Z ${n(gap[2], 2)} mm (negative: overlapping); boxes ${gap.some((g) => g > 0) ? `apart by at least ${n(Math.hypot(...gap.map((g) => Math.max(g, 0))), 2)} mm` : "overlap"}`);
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
 } else if (command === "view") {
   const action = file;
   let arg = args.slice(2).join(" ").trim();
@@ -335,8 +387,26 @@ if (command === "run") {
     value = how[1];
     arg = arg.slice(0, how.index).trim();
   }
-  if (action === "color" || action === "camera") value = arg;
-  else if (arg) {
+  if (["color", "camera", "projection", "display", "section"].includes(action)) value = arg;
+  else if (action === "measure" && arg) {
+    // One or two items: their ids (names resolved below, one at a time).
+    const s = await engine.snapshot;
+    const name = (e) => e.components["assembly.instance"]?.name ?? e.components["shape.program"]?.name;
+    const find = (x) => s.entities.find((e) => e.id === x) ?? s.entities.find((e) => name(e)?.toLowerCase() === x.toLowerCase() && (e.components["assembly.instance"] || e.components["solid.placement"]));
+    const words = arg.split(/\s+/);
+    // Names can have spaces: try every split into two.
+    let found = null;
+    for (let i = words.length; i >= 1 && !found; i--) {
+      const x = find(words.slice(0, i).join(" "));
+      const rest = words.slice(i).join(" ");
+      const y = rest ? find(rest) : null;
+      if (x && (!rest || y)) found = [x.id, y?.id ?? null];
+    }
+    if (!found) {
+      console.error(`✗ cannot find what to measure in “${arg}”`);
+      failed = true;
+    } else [target, value] = found;
+  } else if (arg) {
     // An id, or a name: an instance (L26), a shape, an assembly or a parameter set.
     const s = await engine.snapshot;
     const name = (e) => {
@@ -362,7 +432,7 @@ if (command === "run") {
     }
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | check-geometry <id> [part] | stock [search] | get <id> | tree | list | check | ops | view <action> [what]  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | check-geometry <id> [part] | stock [search] | get <id> | tree | list | check | ops | measure <part> [other] | view <action> [what]  [--project name] [--url ws://…]");
   failed = true;
 }
 

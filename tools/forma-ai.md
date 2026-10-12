@@ -225,6 +225,10 @@ Any parameter can follow a formula instead of holding its own value, and links a
 
 Prefer a parameter set plus links whenever several shapes share a dimension, so one change keeps them in step. Do not link things the person wants independent.
 
+## Measuring
+
+`./forma measure Block` prints volume, surface area, bounds, mass, centre of mass and the inertia tensor about the centre of mass (kg·mm², project axes) with its principal moments, integrated over the solid (exact for flat-faced parts, to the display tolerance on curved ones; inertia needs a material, else the unit-density second moments in mm⁵). `--part Name` measures one part of a multi-part shape; an assembly instance is measured whole. `./forma measure A B` adds centre to centre and the gap between their boxes per axis. Same numbers at GET `/measure/{id}?part=`. In the view, the person measures corners, edges (length; arcs: radius, diameter), faces (area; cylinders: radius) and Alt-clicked parts, and between two picks the closest distance, centre to centre, ΔX ΔY ΔZ and the angle.
+
 ## Checking your work
 
 After a change, run `./forma check`. If a requirement fails or parts clash, fix it before you answer, unless the person asked for something that cannot meet it; then say exactly what fails and why. Never claim something works without the engine's word for it. Add requirements (`intent.requirement.create`) for what matters: no clashes, envelopes, mass limits, clearances.
@@ -240,8 +244,13 @@ You can drive their view, not just the design. When they ask to see something, s
 ./forma view show_all            everything visible again, framed
 ./forma view hide L19 / show L19 hide or show one item
 ./forma view color status        paint the building by sale status (color material to undo)
-./forma view camera top          top, front, bottom or perspective
+./forma view camera top          iso, front, back, left, right, top, bottom (glides there, everything framed)
 ./forma view explode Bracket 1.5 pull an assembly's parts apart (spread 0.25–2.5, default 1); `off` puts them back
+./forma view projection ortho    orthographic (true elevations) or perspective
+./forma view display edges       shaded, edges, wireframe, hidden (hidden line) or xray
+./forma view section x 25        cut at x = 25 mm, cut faces filled and hatched (add `flip` to keep the other side; one plane per axis, together a section box)
+./forma view section box x0 y0 z0 x1 y1 z1   six planes round a region (bare `box`: the model's middle); `section off` clears
+./forma view measure Block Pin    measure one item (mass, inertia) or one to another in their view, with dimension lines
 ```
 
 Names work (instances like L26, shapes, assemblies) or ids. These change only that person's view; nothing is saved and other people's views stay as they are. The context tells you what their view shows (selection, isolation, hidden items, paint).

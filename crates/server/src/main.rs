@@ -893,7 +893,7 @@ async fn session(app: Arc<App>, socket: WebSocket, user_id: String) {
                         reply(request_id, Ok(json!({ "stopped": true })))
                     }
                     AiMessage::View { request_id, action, target, value, to } => {
-                        const ACTIONS: &[&str] = &["select", "frame", "isolate", "show_all", "hide", "show", "color", "camera", "explode"];
+                        const ACTIONS: &[&str] = &["select", "frame", "isolate", "show_all", "hide", "show", "color", "camera", "explode", "projection", "display", "section", "measure"];
                         let known = target.is_none_or(|id| app.project.lock().unwrap().entity(id).is_some());
                         if !ACTIONS.contains(&action.as_str()) {
                             reply(request_id, Err(CommandError::new(ErrorCode::InvalidParameters, format!("unknown view action {action} (use {})", ACTIONS.join(", ")))))
@@ -1482,6 +1482,96 @@ async fn fit_report(State(server): State<Arc<Server>>, Path(id): Path<String>, Q
         Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
         Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
+}
+
+/// Volume, area, mass, centre of mass and moments of inertia of a part, an
+/// instance (an assembly's taken whole) or one named part of an assembly
+/// shape (`?part=`), in project coordinates (mm, kg, kg·mm²).
+async fn measure_report(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let fail = |code: StatusCode, message: String| (code, message).into_response();
+    let app = match server.project(query.get("project")) {
+        Ok(app) => app,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let app = app.clone();
+    let part = query.get("part").cloned();
+    let result = tokio::task::spawn_blocking(move || -> Result<Value, String> {
+        let project = app.project.lock().unwrap();
+        let sid = serde_json::from_value::<StableId>(json!(id)).ok().filter(|s| project.entity(*s).is_some()).or_else(|| {
+            project.entity_ids().into_iter().find(|e| {
+                project.get::<de_assembly::Instance>(*e).is_some_and(|i| i.name == id) || project.get::<ShapeProgram>(*e).is_some_and(|p| p.name == id && project.get::<de_solid::Placement>(*e).is_some())
+            })
+        });
+        let sid = sid.ok_or_else(|| format!("nothing called {id}"))?;
+        let m = measure_entity(&project, sid, part.as_deref())?;
+        let mut v = serde_json::to_value(&m).map_err(|e| e.to_string())?;
+        v["id"] = json!(sid);
+        Ok(v)
+    })
+    .await;
+    match result {
+        Ok(Ok(r)) => axum::Json(r).into_response(),
+        Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// An item measured where it is in the project.
+fn measure_entity(project: &Project, sid: StableId, part: Option<&str>) -> Result<de_shape::measure::Measured, String> {
+    use de_shape::measure::placed;
+    let world = project.world();
+    if let Some(inst) = project.get::<de_assembly::Instance>(sid) {
+        // Into project coordinates: through every instance up to the top.
+        let mut t = de_assembly::Transform::IDENTITY;
+        let mut cur = Some(sid);
+        while let Some(c) = cur {
+            let Some(i) = project.get::<de_assembly::Instance>(c) else { break };
+            let place = project.entity(c).and_then(|e| de_assembly::placement(world, e)).unwrap_or_else(|| i.transform());
+            t = place.then(&t);
+            cur = i.parent.and_then(|a| project.entity_ids().into_iter().find(|e| project.get::<de_assembly::Instance>(*e).is_some_and(|x| x.of == a)));
+        }
+        let local = measure_definition(project, inst.of, part, 0)?;
+        return Ok(placed(&local, t.rot, t.at));
+    }
+    let local = measure_definition(project, sid, part, 0)?;
+    let p = project.get::<de_solid::Placement>(sid).copied().unwrap_or_default();
+    let at = [p.x, p.y, p.z].map(|l| l.canonical() * 1000.0);
+    Ok(placed(&local, de_assembly::Transform::IDENTITY.rot, at))
+}
+
+/// A definition (shape, box or assembly) measured in its own coordinates.
+fn measure_definition(project: &Project, sid: StableId, part: Option<&str>, depth: usize) -> Result<de_shape::measure::Measured, String> {
+    use de_shape::measure::{combine, measure, measure_mesh, placed};
+    if depth > 32 {
+        return Err("assemblies nest too deep to measure".into());
+    }
+    let world = project.world();
+    let e = project.entity(sid).ok_or("no such item")?;
+    if project.get::<de_assembly::AssemblyDef>(sid).is_some() {
+        let mut list = vec![];
+        for c in project.entity_ids() {
+            let Some(i) = project.get::<de_assembly::Instance>(c) else { continue };
+            if i.parent != Some(sid) {
+                continue;
+            }
+            let t = project.entity(c).and_then(|ce| de_assembly::placement(world, ce)).unwrap_or_else(|| i.transform());
+            list.push(placed(&measure_definition(project, i.of, None, depth + 1)?, t.rot, t.at));
+        }
+        if list.is_empty() {
+            return Err("this assembly is empty".into());
+        }
+        return Ok(combine(&list));
+    }
+    if let Some(r) = measure(world, e, part) {
+        return r;
+    }
+    if let Some(mesh) = project.get::<DisplayMesh>(sid) {
+        // Meters to millimeters.
+        let positions: Vec<f32> = mesh.positions.iter().map(|v| v * 1000.0).collect();
+        let density = project.get::<de_solid::MaterialRef>(sid).and_then(|m| project.get::<de_solid::Material>(m.0)).map(|m| m.density.canonical());
+        return Ok(measure_mesh(&positions, &mesh.indices, density));
+    }
+    Err("this item has no solid to measure (yet)".into())
 }
 
 #[derive(serde::Deserialize)]
@@ -2325,6 +2415,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/connectors/{id}", get(connectors))
         .route("/fit/{id}", get(fit_report))
         .route("/check-geometry/{id}", get(exact_files::check))
+        .route("/measure/{id}", get(measure_report))
         .route("/stress/{id}", axum::routing::post(stress))
         .route("/modes/{id}", axum::routing::post(modes))
         .route("/study/{id}", get(study))
