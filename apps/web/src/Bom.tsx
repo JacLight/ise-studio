@@ -21,6 +21,9 @@ export type Stock = {
   currency?: string;
   pack?: number;
   mass_g?: number;
+  /** Cut to length: one piece's length (mm) and the price per metre. */
+  cut_length_mm?: number;
+  price_per_m?: number;
   sources?: { supplier: string; sku?: string; url?: string; unit_price?: number; currency?: string }[];
 };
 export type MakeLine = {
@@ -57,6 +60,8 @@ export type BuyLine = {
   qty: number;
   mass_kg: number | null;
   order_qty: number;
+  /** Cut-to-length items: metres the order comes to. */
+  length_m?: number;
   unit_price: number | null;
   extended: number | null;
   award?: AwardView;
@@ -741,6 +746,11 @@ function BuyTable(props: { bom: Bom; qty: number; open: string | null; onOpen: (
                     {s?.description ?? l.name}
                     {l.origin !== "stock" ? ` · from ${l.origin}` : ""}
                   </small>
+                  {s?.cut_length_mm != null && (
+                    <small className="cut">
+                      Cut to {s.cut_length_mm.toLocaleString()} mm{s.price_per_m != null ? ` · ${money(s.price_per_m, s.currency ?? cur)}/m` : ""}
+                    </small>
+                  )}
                 </td>
                 <td>{s?.standard ?? <span className="none">—</span>}</td>
                 <td>{s?.manufacturer ? `${s.manufacturer}${s.mpn ? ` · ${s.mpn}` : ""}` : <span className="none">—</span>}</td>
@@ -751,6 +761,7 @@ function BuyTable(props: { bom: Bom; qty: number; open: string | null; onOpen: (
                 <td className="num">
                   {l.order_qty.toLocaleString()}
                   {s?.pack && s.pack > 1 && <small className="pack">packs of {s.pack}</small>}
+                  {l.length_m != null && <small className="pack">{l.length_m.toLocaleString(undefined, { maximumFractionDigits: 3 })} m</small>}
                 </td>
                 <td className="num cost">
                   {money(l.unit_price, cur)}
@@ -809,7 +820,16 @@ function BuyTable(props: { bom: Bom; qty: number; open: string | null; onOpen: (
                           {s?.unit_price != null && (
                             <>
                               <dt>List</dt>
-                              <dd>{money(s.unit_price, s.currency ?? cur)}</dd>
+                              <dd>
+                                {money(s.unit_price, s.currency ?? cur)}
+                                {s.cut_length_mm != null ? ` per ${s.cut_length_mm.toLocaleString()} mm piece` : ""}
+                              </dd>
+                            </>
+                          )}
+                          {s?.price_per_m != null && (
+                            <>
+                              <dt>Per metre</dt>
+                              <dd>{money(s.price_per_m, s.currency ?? cur)}</dd>
                             </>
                           )}
                           {(s?.sources ?? []).map((x, i) => (

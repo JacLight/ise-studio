@@ -29,6 +29,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+pub mod bitmap;
+pub mod blocks;
 pub mod board;
 pub mod bodies;
 pub mod drag;
@@ -36,6 +38,7 @@ pub mod drc;
 pub mod fabs;
 pub mod font;
 pub mod footprints;
+pub mod fpedit;
 pub mod geom;
 pub mod gerber;
 pub mod gerber_check;
@@ -43,6 +46,8 @@ pub mod idf;
 pub mod io;
 pub mod kicad;
 pub mod kicad_lib;
+pub mod libedit;
+pub mod library;
 pub mod model3d;
 pub mod outputs;
 pub mod reader;
@@ -57,7 +62,9 @@ pub mod sexpr;
 pub mod sourcing;
 pub mod spice;
 pub mod symbols;
+pub mod variants;
 pub mod verify;
+pub mod wizards;
 
 pub use board::BoardView;
 pub use footprints::Footprint;
@@ -96,6 +103,9 @@ impl Plugin for PcbPlugin {
         schematic::register(r);
         spice::register(r);
         io::register(r);
+        library::register(r);
+        variants::register(r);
+        blocks::register(r);
     }
 }
 
@@ -558,8 +568,8 @@ fn check_board(b: &Board) -> Result<(), CommandError> {
 }
 
 pub(crate) fn check_footprint(name: &str, f: &Footprint) -> Result<(), CommandError> {
-    if f.pads.is_empty() {
-        return Err(bad(format!("footprint {name} has no pads")));
+    if f.pads.is_empty() && f.silk.is_empty() {
+        return Err(bad(format!("footprint {name} has no pads (a graphic-only footprint has silkscreen)")));
     }
     for p in &f.pads {
         if !(p.size[0] > 0.0 && p.size[1] > 0.0 && p.size[0] < 100.0 && p.size[1] < 100.0) {
@@ -794,8 +804,10 @@ impl Command for DefineFootprint {
         if name.is_empty() {
             return Err(bad("a footprint needs a name"));
         }
-        check_footprint(&name, &self.footprint)?;
-        b.footprints.insert(name.clone(), Footprint { name: name.clone(), ..self.footprint });
+        let mut fp = self.footprint;
+        fp.pads.iter_mut().for_each(|p| p.normalize());
+        check_footprint(&name, &fp)?;
+        b.footprints.insert(name.clone(), Footprint { name: name.clone(), ..fp });
         tx.set(self.board, b)?;
         model3d::sync(tx, self.board)?;
         Ok(json!({ "board": self.board, "footprint": name }))
@@ -863,6 +875,7 @@ impl Command for CreateComponent {
     const NAME: &'static str = "pcb.component.create";
 
     fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        library::ensure_footprint(tx, self.board, self.footprint.trim())?;
         let board = board_of(tx, self.board)?;
         let c = PcbComponent {
             board: self.board,
@@ -917,6 +930,9 @@ impl Command for UpdateComponent {
 
     fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
         let mut c = tx.get::<PcbComponent>(self.target).cloned().ok_or_else(|| CommandError::new(ErrorCode::UnresolvedReference, format!("{} is not a component", self.target)))?;
+        if let Some(f) = &self.footprint {
+            library::ensure_footprint(tx, c.board, f.trim())?;
+        }
         let before = c.clone();
         let board = board_of(tx, c.board)?;
         if let Some(v) = self.reference {

@@ -4,16 +4,16 @@
 // 10 for 60xx, 18 for 67xx/68xx (618), 19 for 69xx (619), 02/03-derived
 // miniature 62x/608/688 as listed by SKF, NSK and NMB catalogues). Ball
 // count and ball size (inch-series balls, ISO 3290) are typical values for
-// the series (SKF/NSK internal-design tables vary slightly by maker). Masses
+// the series (SKF/NSK internal-design tables vary slightly by maker). 62xx
+// (dimension series 02) and 603–609 boundary dimensions from ISO 15 / SKF;
+// MR63–MR128 from the MinebeaMitsumi (NMB) miniature catalogue. Masses
 // are catalogue values for steel sealed bearings (SKF, NSK, Fersa: 608 12 g,
-// 6000 19 g, 6704 5 g …); the 67xx ultra-thin series masses not published
-// by every maker are estimated from the 6704 figure by section area.
+// 6000 19 g, 6704 5 g, 6200 32 g, 6204 106 g, MR105 1.1 g …); the 67xx
+// ultra-thin series masses not published by every maker are estimated from
+// the 6704 figure by section area.
 //
-// Stands with its axis along +Z, face A on z = 0 and face B on z = B.
-// Raceways are true circular grooves (radius 0.52·Dw, the usual
-// osculation), lands at dm ∓ 0.66·Dw, seals sit 0.15 mm in from each face
-// in a recess of the outer ring, and a pressed-steel ribbon cage holds
-// the balls apart.
+// Stands with its axis along +Z, face A on z = 0 and face B on z = B. The
+// rings, balls, cage and seals are drawn by radialBallBearing (bearing.js).
 
 //          d   D   B  balls   Dw     mass g  USD
 const DGBB = {
@@ -49,6 +49,23 @@ const DGBB = {
   "17x30x7": ["6903", 12, 3.969, 18, 1.9],
   "20x37x9": ["6904", 12, 4.762, 37, 2.5],
   "25x42x9": ["6905", 14, 4.762, 42, 2.9],
+  // 60x miniature (dimension series 10, extended) and 62xx (series 02).
+  "3x9x5": ["603", 6, 1.5875, 1.5, 0.7],
+  "5x14x5": ["605", 7, 2.381, 3.5, 0.7],
+  "7x19x6": ["607", 7, 3.175, 8, 0.7],
+  "9x24x7": ["609", 7, 3.969, 15, 0.9],
+  "10x30x9": ["6200", 8, 4.762, 32, 1.3],
+  "12x32x10": ["6201", 7, 5.953, 37, 1.5],
+  "15x35x11": ["6202", 8, 5.953, 45, 1.7],
+  "17x40x12": ["6203", 8, 6.747, 65, 2.0],
+  "20x47x14": ["6204", 8, 7.938, 106, 2.6],
+  "25x52x15": ["6205", 9, 7.938, 128, 3.0],
+  // MR miniature series (ISO 15 dimension series 18/19 below 10 mm bore).
+  "3x6x2.5": ["MR63", 8, 0.794, 0.27, 0.9],
+  "5x8x2.5": ["MR85", 11, 0.794, 0.4, 0.9],
+  "5x10x4": ["MR105", 8, 1.5875, 1.1, 0.8],
+  "5x11x4": ["MR115", 8, 1.5875, 1.5, 0.9],
+  "8x12x3.5": ["MR128", 12, 1.0, 1.1, 1.0],
 };
 
 const d = p.d;
@@ -58,71 +75,7 @@ const key = `${num(d)}x${num(D)}x${num(B)}`;
 const [series, Z, Dw, catalogueMass, price] = lookup(DGBB, key, "deep groove ball bearing");
 const name = `${series}-2RS`;
 
-const dm = (d + D) / 2; // pitch diameter
-const rp = dm / 2;
-const rg = 0.52 * Dw; // groove radius (osculation 52 %)
-const ri = rp - 0.33 * Dw; // inner ring land
-const ro = rp + 0.33 * Dw; // outer ring land
-const zg = Math.sqrt(rg * rg - (0.33 * Dw) ** 2); // where the groove meets the land
-const c = Math.min(0.3, 0.06 * (D - d)); // corner chamfers
-const ts = Math.min(1, Math.max(0.3, 0.09 * B)); // seal thickness
-const rs = ro + 0.4 * (D / 2 - ro); // seal recess in the outer ring
-const zs = 0.15 + ts; // seal recess depth from each face
-
-/** Groove arc points about the ball centre, on the inner (-1) or outer (+1) side, from z low to high. */
-function groove(side) {
-  const a = Math.asin(zg / rg);
-  const n = Math.max(6, Math.ceil(segmentsFor(rg) * (2 * a) / (2 * Math.PI)));
-  const pts = [];
-  for (let i = 0; i <= n; i++) {
-    const t = -a + (2 * a * i) / n;
-    pts.push([rp + side * rg * Math.cos(t), B / 2 + rg * Math.sin(t)]);
-  }
-  return pts;
-}
-
-const inner = polygon([
-  [d / 2 + c, 0],
-  [ri, 0],
-  ...groove(-1),
-  [ri, B],
-  [d / 2 + c, B],
-  [d / 2, B - c],
-  [d / 2, c],
-]).revolve(360);
-
-const outer = polygon([
-  [rs, 0],
-  [D / 2 - c, 0],
-  [D / 2, c],
-  [D / 2, B - c],
-  [D / 2 - c, B],
-  [rs, B],
-  [rs, B - zs],
-  [ro, B - zs],
-  ...groove(1).reverse(),
-  [ro, zs],
-  [rs, zs],
-]).revolve(360);
-
-const balls = [];
-for (let i = 0; i < Z; i++) {
-  const a = (2 * Math.PI * i) / Z;
-  balls.push(sphere(Dw / 2).translate(rp * Math.cos(a), rp * Math.sin(a), B / 2));
-}
-
-// Seals: rubber-faced discs from just over the inner land out into the recess.
-const seal = polygon([[ri + 0.08, 0], [rs, 0], [rs, ts], [ri + 0.08, ts]]).revolve(360);
-const seals = seal.translate(0, 0, 0.15).add(seal.translate(0, 0, B - zs));
-
-// Cage: a pressed-steel ribbon band round the pitch circle with a pocket per ball.
-const band = polygon([[rp - 0.18 * Dw, B / 2 - 0.35 * Dw], [rp + 0.18 * Dw, B / 2 - 0.35 * Dw], [rp + 0.18 * Dw, B / 2 + 0.35 * Dw], [rp - 0.18 * Dw, B / 2 + 0.35 * Dw]]).revolve(360);
-const pockets = [];
-for (let i = 0; i < Z; i++) {
-  const a = (2 * Math.PI * i) / Z;
-  pockets.push(sphere(Dw / 2 + 0.03).translate(rp * Math.cos(a), rp * Math.sin(a), B / 2));
-}
-const cage = band.subtract(union(pockets));
+const { inner, outer, balls, cage, closures } = radialBallBearing({ d, D, B, Z, Dw, closure: "2RS" });
 
 stock({
   standard: "ISO 15",
@@ -146,15 +99,12 @@ metric("Outside diameter", D, "mm");
 metric("Width", B, "mm");
 metric("Balls", Z);
 
-connector("Bore", { at: [0, 0, B / 2], axis: [0, 0, 1] });
-connector("Outer seat", { at: [D / 2, 0, B / 2], axis: [1, 0, 0], x: [0, 0, 1] });
-connector("Face A", { at: [0, 0, 0], axis: [0, 0, -1] });
-connector("Face B", { at: [0, 0, B], axis: [0, 0, 1] });
+bearingConnectors(D, B);
 
 return [
   part("Inner ring", inner, { material: "Bearing steel 52100" }),
   part("Outer ring", outer, { material: "Bearing steel 52100" }),
-  part("Balls", union(balls), { material: "Bearing steel 52100" }),
+  part("Balls", balls, { material: "Bearing steel 52100" }),
   part("Cage", cage, { material: "Steel (cage)" }),
-  part("Seals", seals, { material: "Nitrile rubber (NBR)" }),
+  part("Seals", closures, { material: "Nitrile rubber (NBR)" }),
 ];

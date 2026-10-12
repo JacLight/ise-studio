@@ -1,9 +1,15 @@
-// Hobby RC servos, TowerPro: SG90 (9 g micro, nylon gears), MG90S (micro,
-// metal gears), MG996R (standard size, metal gears).
+// Hobby RC servos: TowerPro SG90 (9 g micro, nylon gears), MG90S (micro,
+// metal gears), MG996R and MG995 (standard size, metal gears); DSSERVO
+// DS3218 (20 kg·cm) and DS3225 (25 kg·cm) digital standard servos, metal
+// gears, aluminium middle case.
 //
 // Sources: TowerPro datasheets — SG90 "22.2 × 11.8 × 31 mm, 9 g"; MG90S
 // "22.8 × 12.2 × 28.5 mm, 13.4 g"; MG996R "40.7 × 19.7 × 42.9 mm, 55 g",
-// 25-tooth Ø5.9 mm output spline (servodatabase.com: shaft 5.9 mm, 25T).
+// 25-tooth Ø5.9 mm output spline (servodatabase.com: shaft 5.9 mm, 25T);
+// MG995 "40.7 × 19.7 × 42.9 mm, 55 g" (the MG996R's case and spline).
+// DSSERVO datasheets — DS3218 "40 × 20 × 40.5 mm, 60 g", DS3225
+// "40 × 20 × 40.5 mm, 60 g", both 25T output spline, the standard-size
+// 49.5 × 10 mm mounting pattern.
 // Tab, hole and shaft positions follow the common dimensioned drawings of
 // these servos (standard-size mounting pattern 49.5 × 10 mm with Ø4.4 holes;
 // micro servos one Ø2 hole per tab at 27.8 mm): makers' clones differ by a
@@ -21,8 +27,11 @@ const SERVOS = {
   SG90: { L: 22.5, W: 11.8, H: 22.7, boss: [11.8, 26.7], nub: [5.0, 25.5], spline: [4.8, 31.0, 21, 1.6], off: 5.9, tab: [32.3, 2.5, 15.9], holes: [27.8, 0, 2.0], mass: 9, price: 1.95, gears: "nylon" },
   MG90S: { L: 22.8, W: 12.2, H: 21.6, boss: [12.2, 25.4], nub: [5.0, 24.4], spline: [4.8, 28.5, 20, 1.6], off: 6.0, tab: [32.5, 2.5, 15.6], holes: [27.8, 0, 2.0], mass: 13.4, price: 3.6, gears: "metal" },
   MG996R: { L: 40.7, W: 19.7, H: 36.0, boss: [13.6, 39.5], nub: [9.0, 38.2], spline: [5.9, 42.9, 25, 2.5], off: 10.0, tab: [54.5, 2.5, 26.6], holes: [49.5, 10.0, 4.4], mass: 55, price: 6.5, gears: "metal" },
+  MG995: { L: 40.7, W: 19.7, H: 36.0, boss: [13.6, 39.5], nub: [9.0, 38.2], spline: [5.9, 42.9, 25, 2.5], off: 10.0, tab: [54.5, 2.5, 26.6], holes: [49.5, 10.0, 4.4], mass: 55, price: 5.6, gears: "metal" },
+  DS3218: { L: 40.0, W: 20.0, H: 34.0, boss: [13.0, 37.0], nub: [8.0, 35.6], spline: [5.9, 40.5, 25, 3.0], off: 10.0, tab: [54.5, 2.5, 25.8], holes: [49.5, 10.0, 4.4], mass: 60, price: 13.5, gears: "metal", maker: "DSSERVO", torque: 20 },
+  DS3225: { L: 40.0, W: 20.0, H: 34.0, boss: [13.0, 37.0], nub: [8.0, 35.6], spline: [5.9, 40.5, 25, 3.0], off: 10.0, tab: [54.5, 2.5, 25.8], holes: [49.5, 10.0, 4.4], mass: 60, price: 18.9, gears: "metal", maker: "DSSERVO", torque: 25 },
 };
-const model = config && SERVOS[config] ? config : ["SG90", "MG90S", "MG996R"][Math.round(p.model)];
+const model = config && SERVOS[config] ? config : ["SG90", "MG90S", "MG996R", "MG995", "DS3218", "DS3225"][Math.round(p.model)];
 const s = SERVOS[model];
 if (!s) throw new Error(`no servo ${model}`);
 const xc = s.L / 2 - s.off; // case centre along X
@@ -71,18 +80,20 @@ const spline = polygon(pts).extrude(splineH + 0.6).translate(0, 0, s.boss[1] - 0
 const wire = (y) => cylinder(30, 0.5).rotate(0, 90, 0).translate(s.L - s.off + 1.9, y, 2.5);
 const cable = union(wire(-1.0), wire(0), wire(1.0));
 
+const maker = s.maker ?? "TowerPro";
+const kind = s.L > 30 ? (s.torque ? `${s.torque} kg·cm digital standard` : "standard") : "micro";
 stock({
   partNumber: model,
-  description: `TowerPro ${model} ${model === "MG996R" ? "standard" : "micro"} servo, ${s.gears} gears, ${teeth}T output spline`,
-  manufacturer: "TowerPro",
+  description: `${maker} ${model} ${kind} servo, ${s.gears} gears, ${teeth}T output spline`,
+  manufacturer: maker,
   mpn: model,
   unitPrice: s.price,
   currency: "USD",
   pack: 1,
   massG: s.mass,
   sources: [
-    supplierSearch("Amazon", `TowerPro ${model} servo`),
-    supplierSearch("AliExpress", `TowerPro ${model} servo`),
+    supplierSearch("Amazon", `${maker} ${model} servo`),
+    supplierSearch("AliExpress", `${maker} ${model} servo`),
   ],
 });
 metric("Spline teeth", teeth);

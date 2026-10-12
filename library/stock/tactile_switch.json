@@ -1,0 +1,123 @@
+{
+ "id": "tactile_switch",
+ "name": "Tactile switch",
+ "category": "Electronics",
+ "summary": "Through-hole tactile push switches: 6 × 6 mm at 4.3 / 5 / 7 / 9.5 mm high, and 12 × 12 × 7.3 mm. Centred, board top on z = 0, plunger up +Z.",
+ "keywords": [
+  "tactile switch",
+  "tact switch",
+  "push button",
+  "momentary",
+  "B3F",
+  "6x6",
+  "12x12",
+  "reset button",
+  "button"
+ ],
+ "source": [
+  "common.js",
+  "elec.js",
+  "tactile_switch.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "PBT (black)": 1310,
+  "Steel, nickel-plated": 7850,
+  "Polyamide (black)": 1140,
+  "Phosphor bronze, tin-plated": 8800
+ },
+ "params": [
+  {
+   "key": "body",
+   "label": "Body",
+   "value": 6,
+   "unit": "mm",
+   "min": 6,
+   "max": 12,
+   "step": 6
+  },
+  {
+   "key": "height",
+   "label": "Height",
+   "value": 4.3,
+   "unit": "mm",
+   "min": 4.3,
+   "max": 13
+  }
+ ],
+ "columns": [
+  "body",
+  "height"
+ ],
+ "rows": [
+  {
+   "name": "6×6×4.3",
+   "values": {
+    "body": 6,
+    "height": 4.3
+   }
+  },
+  {
+   "name": "6×6×5",
+   "values": {
+    "body": 6,
+    "height": 5
+   }
+  },
+  {
+   "name": "6×6×7",
+   "values": {
+    "body": 6,
+    "height": 7
+   }
+  },
+  {
+   "name": "6×6×9.5",
+   "values": {
+    "body": 6,
+    "height": 9.5
+   }
+  },
+  {
+   "name": "12×12×7.3",
+   "values": {
+    "body": 12,
+    "height": 7.3
+   }
+  }
+ ],
+ "default": "6×6×5",
+ "checks": {
+  "6×6×4.3": {
+   "partNumber": "Tactile switch 6×6×4.3",
+   "metrics": {
+    "Height": 4.3
+   },
+   "connectors": [
+    "Board",
+    "Plunger",
+    "Pin 1",
+    "Pin 2",
+    "Pin 3",
+    "Pin 4"
+   ],
+   "connector_at": {
+    "Plunger": [
+     0,
+     0,
+     4.3
+    ],
+    "Pin 2": [
+     3.25,
+     2.25,
+     0
+    ]
+   }
+  },
+  "12×12×7.3": {
+   "metrics": {
+    "Leg pattern X": 12.5
+   }
+  }
+ }
+}

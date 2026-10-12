@@ -1,0 +1,181 @@
+{
+ "id": "upe",
+ "name": "Parallel flange channel",
+ "standard": "EN 10365",
+ "category": "Structural sections",
+ "summary": "UPE channels 80–400 (EN 10365, parallel flanges), S235JR, cut to length. Back of the web on x = 0, flanges toward +X, length along +Z from z = 0.",
+ "keywords": [
+  "UPE",
+  "PFC",
+  "parallel flange channel",
+  "U channel",
+  "C channel",
+  "steel channel",
+  "EN 10365"
+ ],
+ "source": [
+  "common.js",
+  "sections.js",
+  "upe.js"
+ ],
+ "display_tolerance": 0.05,
+ "material": "Structural steel S235JR",
+ "materials": {
+  "Structural steel S235JR": 7850
+ },
+ "params": [
+  {
+   "key": "size",
+   "label": "UPE size",
+   "value": 100,
+   "unit": "",
+   "min": 80,
+   "max": 400
+  },
+  {
+   "key": "length",
+   "label": "Length (cut)",
+   "value": 1000,
+   "unit": "mm",
+   "min": 10,
+   "max": 12000
+  }
+ ],
+ "columns": [
+  "size"
+ ],
+ "rows": [
+  {
+   "name": "UPE 80",
+   "values": {
+    "size": 80
+   }
+  },
+  {
+   "name": "UPE 100",
+   "values": {
+    "size": 100
+   }
+  },
+  {
+   "name": "UPE 120",
+   "values": {
+    "size": 120
+   }
+  },
+  {
+   "name": "UPE 140",
+   "values": {
+    "size": 140
+   }
+  },
+  {
+   "name": "UPE 160",
+   "values": {
+    "size": 160
+   }
+  },
+  {
+   "name": "UPE 180",
+   "values": {
+    "size": 180
+   }
+  },
+  {
+   "name": "UPE 200",
+   "values": {
+    "size": 200
+   }
+  },
+  {
+   "name": "UPE 220",
+   "values": {
+    "size": 220
+   }
+  },
+  {
+   "name": "UPE 240",
+   "values": {
+    "size": 240
+   }
+  },
+  {
+   "name": "UPE 270",
+   "values": {
+    "size": 270
+   }
+  },
+  {
+   "name": "UPE 300",
+   "values": {
+    "size": 300
+   }
+  },
+  {
+   "name": "UPE 330",
+   "values": {
+    "size": 330
+   }
+  },
+  {
+   "name": "UPE 360",
+   "values": {
+    "size": 360
+   }
+  },
+  {
+   "name": "UPE 400",
+   "values": {
+    "size": 400
+   }
+  }
+ ],
+ "default": "UPE 100",
+ "checks": {
+  "UPE 100": {
+   "size": [
+    55,
+    100,
+    1000
+   ],
+   "partNumber": "UPE 100 × 1000 S235JR",
+   "massG": 9820.0,
+   "connectors": [
+    "End A",
+    "End B",
+    "Axis",
+    "Web back",
+    "Web inside",
+    "Top flange",
+    "Bottom flange"
+   ],
+   "connector_at": {
+    "Web back": [
+     0,
+     0,
+     500.0
+    ],
+    "Web inside": [
+     4.5,
+     0,
+     500.0
+    ],
+    "Top flange": [
+     27.5,
+     50.0,
+     500.0
+    ]
+   },
+   "metrics": {
+    "Mass per metre": 9.82
+   }
+  },
+  "UPE 400": {
+   "size": [
+    115,
+    400,
+    1000
+   ]
+  }
+ }
+}

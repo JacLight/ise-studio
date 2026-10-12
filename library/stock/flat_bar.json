@@ -1,0 +1,310 @@
+{
+ "id": "flat_bar",
+ "name": "Flat bar",
+ "standard": "EN 10058",
+ "category": "Structural sections",
+ "summary": "Hot-rolled steel flat bar 20×3 to 200×20 (EN 10058), S235JR, cut to length. Width along X, thickness along Y, centred; length along +Z.",
+ "keywords": [
+  "flat bar",
+  "flat",
+  "strip",
+  "plate strip",
+  "EN 10058",
+  "steel flat",
+  "FL"
+ ],
+ "source": [
+  "common.js",
+  "sections.js",
+  "flat_bar.js"
+ ],
+ "display_tolerance": 0.05,
+ "material": "Structural steel S235JR",
+ "materials": {
+  "Structural steel S235JR": 7850
+ },
+ "params": [
+  {
+   "key": "b",
+   "label": "Width",
+   "value": 50,
+   "unit": "mm",
+   "min": 10,
+   "max": 200
+  },
+  {
+   "key": "t",
+   "label": "Thickness",
+   "value": 5,
+   "unit": "mm",
+   "min": 2,
+   "max": 40
+  },
+  {
+   "key": "length",
+   "label": "Length (cut)",
+   "value": 1000,
+   "unit": "mm",
+   "min": 10,
+   "max": 12000
+  }
+ ],
+ "columns": [
+  "b",
+  "t"
+ ],
+ "rows": [
+  {
+   "name": "FL 20×3",
+   "values": {
+    "b": 20,
+    "t": 3
+   }
+  },
+  {
+   "name": "FL 20×5",
+   "values": {
+    "b": 20,
+    "t": 5
+   }
+  },
+  {
+   "name": "FL 25×3",
+   "values": {
+    "b": 25,
+    "t": 3
+   }
+  },
+  {
+   "name": "FL 25×5",
+   "values": {
+    "b": 25,
+    "t": 5
+   }
+  },
+  {
+   "name": "FL 30×3",
+   "values": {
+    "b": 30,
+    "t": 3
+   }
+  },
+  {
+   "name": "FL 30×5",
+   "values": {
+    "b": 30,
+    "t": 5
+   }
+  },
+  {
+   "name": "FL 30×8",
+   "values": {
+    "b": 30,
+    "t": 8
+   }
+  },
+  {
+   "name": "FL 40×4",
+   "values": {
+    "b": 40,
+    "t": 4
+   }
+  },
+  {
+   "name": "FL 40×5",
+   "values": {
+    "b": 40,
+    "t": 5
+   }
+  },
+  {
+   "name": "FL 40×8",
+   "values": {
+    "b": 40,
+    "t": 8
+   }
+  },
+  {
+   "name": "FL 40×10",
+   "values": {
+    "b": 40,
+    "t": 10
+   }
+  },
+  {
+   "name": "FL 50×5",
+   "values": {
+    "b": 50,
+    "t": 5
+   }
+  },
+  {
+   "name": "FL 50×6",
+   "values": {
+    "b": 50,
+    "t": 6
+   }
+  },
+  {
+   "name": "FL 50×8",
+   "values": {
+    "b": 50,
+    "t": 8
+   }
+  },
+  {
+   "name": "FL 50×10",
+   "values": {
+    "b": 50,
+    "t": 10
+   }
+  },
+  {
+   "name": "FL 60×6",
+   "values": {
+    "b": 60,
+    "t": 6
+   }
+  },
+  {
+   "name": "FL 60×8",
+   "values": {
+    "b": 60,
+    "t": 8
+   }
+  },
+  {
+   "name": "FL 60×10",
+   "values": {
+    "b": 60,
+    "t": 10
+   }
+  },
+  {
+   "name": "FL 80×8",
+   "values": {
+    "b": 80,
+    "t": 8
+   }
+  },
+  {
+   "name": "FL 80×10",
+   "values": {
+    "b": 80,
+    "t": 10
+   }
+  },
+  {
+   "name": "FL 80×12",
+   "values": {
+    "b": 80,
+    "t": 12
+   }
+  },
+  {
+   "name": "FL 100×8",
+   "values": {
+    "b": 100,
+    "t": 8
+   }
+  },
+  {
+   "name": "FL 100×10",
+   "values": {
+    "b": 100,
+    "t": 10
+   }
+  },
+  {
+   "name": "FL 100×12",
+   "values": {
+    "b": 100,
+    "t": 12
+   }
+  },
+  {
+   "name": "FL 100×15",
+   "values": {
+    "b": 100,
+    "t": 15
+   }
+  },
+  {
+   "name": "FL 120×10",
+   "values": {
+    "b": 120,
+    "t": 10
+   }
+  },
+  {
+   "name": "FL 120×12",
+   "values": {
+    "b": 120,
+    "t": 12
+   }
+  },
+  {
+   "name": "FL 150×10",
+   "values": {
+    "b": 150,
+    "t": 10
+   }
+  },
+  {
+   "name": "FL 150×15",
+   "values": {
+    "b": 150,
+    "t": 15
+   }
+  },
+  {
+   "name": "FL 200×10",
+   "values": {
+    "b": 200,
+    "t": 10
+   }
+  },
+  {
+   "name": "FL 200×20",
+   "values": {
+    "b": 200,
+    "t": 20
+   }
+  }
+ ],
+ "default": "FL 50×5",
+ "checks": {
+  "FL 50×5": {
+   "size": [
+    50,
+    5,
+    1000
+   ],
+   "partNumber": "FL 50×5 × 1000 S235JR",
+   "massG": 1962.5,
+   "connectors": [
+    "End A",
+    "End B",
+    "Axis",
+    "Face +Y",
+    "Face -Y",
+    "Edge +X",
+    "Edge -X"
+   ],
+   "connector_at": {
+    "Face +Y": [
+     0,
+     2.5,
+     500.0
+    ]
+   }
+  },
+  "FL 200×20": {
+   "size": [
+    200,
+    20,
+    1000
+   ]
+  }
+ }
+}

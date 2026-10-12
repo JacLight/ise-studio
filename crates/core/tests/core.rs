@@ -202,6 +202,25 @@ fn preview_reports_ops_without_changing_anything() {
 }
 
 #[test]
+fn a_component_written_many_times_in_one_change_journals_once() {
+    let mut p = Project::new("p", registry());
+    let deps: Vec<StableId> = (0..5).map(|v| set(&mut p, json!({ "value": v }))).collect();
+    let c = set(&mut p, json!({ "value": 1 }));
+    // Five dependencies added one by one: one op with the whole list, not five.
+    let preview = p.preview(&env(&p, "test.set", json!({ "target": c, "value": 2, "depends_on": deps }))).unwrap();
+    assert_eq!(preview.ops.len(), 2, "{:?}", preview.ops);
+    p.commit(env(&p, "test.set", json!({ "target": c, "value": 2, "depends_on": deps }))).unwrap();
+    assert_eq!(total_of(&p, c), Some(2 + 10));
+    // Undo goes back to before the first write; redo to after the last.
+    p.undo(&alice()).unwrap();
+    assert_eq!(total_of(&p, c), Some(1));
+    assert!(p.get::<DependsOn>(c).is_none());
+    p.redo(&alice()).unwrap();
+    assert_eq!(p.get::<DependsOn>(c).unwrap().0, deps);
+    assert_eq!(total_of(&p, c), Some(12));
+}
+
+#[test]
 fn undo_redo_and_undo_conflict() {
     let mut p = Project::new("p", registry());
     let a = set(&mut p, json!({ "value": 1 }));

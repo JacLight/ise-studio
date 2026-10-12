@@ -1,0 +1,146 @@
+{
+ "id": "din471",
+ "name": "Retaining ring for shafts",
+ "standard": "DIN 471",
+ "category": "Inserts & pins",
+ "summary": "Circlip for shafts (external, lugs outside), spring steel, free state. Bottom face on z = 0, axis +Z.",
+ "keywords": [
+  "circlip",
+  "retaining ring",
+  "snap ring",
+  "Seeger",
+  "external circlip",
+  "DIN 471",
+  "shaft ring",
+  "groove"
+ ],
+ "source": [
+  "common.js",
+  "din471.js",
+  "retaining_ring.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Spring steel C75S",
+ "materials": {
+  "Spring steel C75S": 7850
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Shaft diameter",
+   "value": 10,
+   "unit": "mm",
+   "min": 4,
+   "max": 30,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "d"
+ ],
+ "rows": [
+  {
+   "name": "Ø4",
+   "values": {
+    "d": 4
+   }
+  },
+  {
+   "name": "Ø5",
+   "values": {
+    "d": 5
+   }
+  },
+  {
+   "name": "Ø6",
+   "values": {
+    "d": 6
+   }
+  },
+  {
+   "name": "Ø8",
+   "values": {
+    "d": 8
+   }
+  },
+  {
+   "name": "Ø10",
+   "values": {
+    "d": 10
+   }
+  },
+  {
+   "name": "Ø12",
+   "values": {
+    "d": 12
+   }
+  },
+  {
+   "name": "Ø15",
+   "values": {
+    "d": 15
+   }
+  },
+  {
+   "name": "Ø16",
+   "values": {
+    "d": 16
+   }
+  },
+  {
+   "name": "Ø17",
+   "values": {
+    "d": 17
+   }
+  },
+  {
+   "name": "Ø20",
+   "values": {
+    "d": 20
+   }
+  },
+  {
+   "name": "Ø22",
+   "values": {
+    "d": 22
+   }
+  },
+  {
+   "name": "Ø25",
+   "values": {
+    "d": 25
+   }
+  },
+  {
+   "name": "Ø30",
+   "values": {
+    "d": 30
+   }
+  }
+ ],
+ "default": "Ø10",
+ "checks": {
+  "Ø10": {
+   "metrics": {
+    "Shaft Ø": 10,
+    "Groove Ø": 9.6,
+    "Groove width": 1.1,
+    "Thickness": 1,
+    "Pliers hole Ø": 1.5
+   },
+   "connectors": [
+    "Bottom face",
+    "Top face",
+    "Axis"
+   ],
+   "connector_at": {
+    "Top face": [
+     0,
+     0,
+     1
+    ]
+   },
+   "partNumber": "DIN 471 10×1"
+  }
+ }
+}

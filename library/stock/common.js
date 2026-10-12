@@ -170,6 +170,12 @@ function supplierSearch(supplier, query) {
     "CNC Kitchen": `https://cnckitchen.store/search?q=${q}`,
     "Ruthex": `https://www.ruthex.de/search?sSearch=${q}`,
     "StepperOnline": `https://www.omc-stepperonline.com/search?keyword=${q}`,
+    "Digi-Key": `https://www.digikey.com/en/products/result?keywords=${q}`,
+    Mouser: `https://www.mouser.com/c/?q=${q}`,
+    Pololu: `https://www.pololu.com/search/compare/1?query=${q}`,
+    Adafruit: `https://www.adafruit.com/search?q=${q}`,
+    SparkFun: `https://www.sparkfun.com/search/results?term=${q}`,
+    "Metal Supermarkets": `https://www.metalsupermarkets.com/?s=${q}`,
   }[supplier];
   if (!url) throw new Error(`no search link for ${supplier}`);
   return { supplier, url };
