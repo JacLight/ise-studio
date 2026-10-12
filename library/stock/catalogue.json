@@ -35,6 +35,16 @@
     "tslot_20",
     "spring_compression",
     "spring_extension",
-    "spring_torsion"
+    "spring_torsion",
+    "jst_xh",
+    "jst_ph",
+    "dupont_housing",
+    "pin_header",
+    "usb_c_receptacle",
+    "dc_barrel_jack",
+    "tactile_switch",
+    "rocker_switch",
+    "toggle_switch",
+    "led_tht"
   ]
 }
