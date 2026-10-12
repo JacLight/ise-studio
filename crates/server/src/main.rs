@@ -2253,6 +2253,8 @@ async fn main() -> std::io::Result<()> {
     let ai = Arc::new(ai::AiConfig { repo: root.canonicalize().unwrap_or(root.clone()), port, claude, model: std::env::var("FORMA_AI_MODEL").ok() });
     // Imported files, stored by content, shared by every project in the folder.
     de_shape::assets::set_dir(dir.join("assets"));
+    // Slow results (motion sweeps) kept between runs, by what they came from.
+    de_shape::cache::set_dir(dir.join(".cache"));
     let engine = engine_id(&dir)?;
     println!("engine {engine}");
     let machines = machines::MachineQueries::new(&root);

@@ -1444,6 +1444,9 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       }
       if (!dirty) return;
       dirty = false;
+      draw();
+    };
+    const draw = () => {
       const distance = camera.position.distanceTo(controls.target);
       // The haze starts past the model, however close in the camera is.
       const extent = three.current?.extent;
@@ -1463,6 +1466,24 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       if (callbacks.current.comments?.pins.length) scheduleOcclusion();
     };
     raf = requestAnimationFrame(frame);
+    // `?perf`: a handle for measuring the view (tools and benchmarks drive it
+    // over the DevTools protocol): one frame drawn and waited for, in ms.
+    if (new URLSearchParams(location.search).has("perf")) {
+      const px = new Uint8Array(4);
+      (window as unknown as { formaPerf: unknown }).formaPerf = {
+        renderer,
+        camera,
+        controls,
+        parts: () => three.current?.parts.size ?? 0,
+        frame: () => {
+          const t0 = performance.now();
+          draw();
+          const gl = renderer.getContext();
+          gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+          return performance.now() - t0;
+        },
+      };
+    }
 
     const resize = () => {
       const { clientWidth: w, clientHeight: h } = el;

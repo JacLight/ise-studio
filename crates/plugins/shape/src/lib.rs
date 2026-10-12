@@ -7,6 +7,7 @@
 //! writes and rewrites programs. Nothing about the shape is predefined.
 
 pub mod assets;
+pub mod cache;
 pub mod cam;
 pub mod configs;
 pub mod drawing;

@@ -9,11 +9,11 @@ use crate::{Instance, placement};
 use de_core::{IdIndex, StableId, bevy_ecs::world::World};
 use de_shape::{ShapeSolid, params::ParameterSet};
 use manifold_csg::Manifold;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SweptInstance {
     pub id: StableId,
     pub name: String,
@@ -21,7 +21,7 @@ pub struct SweptInstance {
     pub moves: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SweepFrame {
     /// The swept value (degrees or mm).
     pub value: f64,
@@ -33,7 +33,7 @@ pub struct SweepFrame {
 }
 
 /// Two instances' closest approach through the sweep.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PairGap {
     pub a: String,
     pub b: String,
@@ -56,7 +56,7 @@ pub struct PairGap {
     pub turning: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AssemblySweep {
     pub assembly: Option<StableId>,
     pub joint: StableId,
@@ -141,6 +141,82 @@ fn default_range(kind: JointKind, key: &str, set: &ParameterSet, value: f64) -> 
 /// `to` (default its limits) in `steps` steps, other joints held at their
 /// values or at `set` (joint id → values) when given.
 pub fn sweep(world: &World, joint: StableId, key: Option<&str>, from: Option<f64>, to: Option<f64>, steps: usize, set: &HashMap<StableId, Vec<f64>>, gaps_too: bool) -> Result<AssemblySweep, String> {
+    use std::sync::{Mutex, OnceLock};
+    // Sweeps are kept by what they were worked out from: the same sweep asked
+    // again (a requirement re-checked, the motion panel, the project opened
+    // again) is read back, not measured again.
+    static RECENT: OnceLock<Mutex<Vec<(u64, Arc<AssemblySweep>)>>> = OnceLock::new();
+    let fingerprint = sweep_key(world, joint, key, from, to, steps, set, gaps_too);
+    let recent = RECENT.get_or_init(|| Mutex::new(Vec::new()));
+    if let Some(k) = fingerprint {
+        if let Some((_, s)) = recent.lock().unwrap().iter().find(|(x, _)| *x == k) {
+            return Ok((**s).clone());
+        }
+        if let Some(s) = de_shape::cache::load::<AssemblySweep>("sweep", k) {
+            remember(recent, k, &s);
+            return Ok(s);
+        }
+    }
+    let s = sweep_now(world, joint, key, from, to, steps, set, gaps_too)?;
+    if let Some(k) = fingerprint {
+        de_shape::cache::store("sweep", k, &s);
+        remember(recent, k, &s);
+    }
+    Ok(s)
+}
+
+fn remember(recent: &std::sync::Mutex<Vec<(u64, Arc<AssemblySweep>)>>, key: u64, s: &AssemblySweep) {
+    let mut r = recent.lock().unwrap();
+    if r.len() >= 16 {
+        r.remove(0);
+    }
+    r.push((key, Arc::new(s.clone())));
+}
+
+/// Everything a sweep is worked out from, hashed: its arguments, every joint
+/// of the assembly with its values, and every instance in it with where it
+/// is and the programs (sizes, finishes) of every shape it holds. None when
+/// something is missing (the sweep then reports it).
+#[allow(clippy::too_many_arguments)]
+fn sweep_key(world: &World, joint: StableId, key: Option<&str>, from: Option<f64>, to: Option<f64>, steps: usize, set: &HashMap<StableId, Vec<f64>>, gaps_too: bool) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let bits = |v: Option<f64>| v.map(f64::to_bits);
+    (joint, key, bits(from), bits(to), steps, gaps_too).hash(&mut h);
+    let mut set: Vec<_> = set.iter().map(|(k, v)| (*k, v.iter().map(|x| x.to_bits()).collect::<Vec<_>>())).collect();
+    set.sort();
+    set.hash(&mut h);
+    let je = entity(world, joint)?;
+    let scope = world.get::<Joint>(je)?.assembly;
+    for (id, j) in joints::joints_in(world, scope) {
+        let e = entity(world, id)?;
+        (id, serde_json::to_string(&j).ok()?, serde_json::to_string(world.get::<ParameterSet>(e)?).ok()?).hash(&mut h);
+        // Values may follow other parameters through formulas.
+        format!("{:?}", joints::link(world, id, None).ok().map(|l| l.values)).hash(&mut h);
+    }
+    let mut ids: Vec<StableId> = world.resource::<IdIndex>().iter().filter_map(|(id, e)| world.get::<Instance>(e).filter(|i| i.parent == scope).map(|_| id)).collect();
+    ids.sort();
+    for id in ids {
+        let e = entity(world, id)?;
+        id.hash(&mut h);
+        serde_json::to_string(world.get::<Instance>(e)?).ok()?.hash(&mut h);
+        let t = placement(world, e).unwrap_or(Transform::IDENTITY);
+        format!("{:?}", (t.at, t.rot)).hash(&mut h);
+        for o in crate::occurrences(world, id) {
+            let se = entity(world, o.shape)?;
+            let program = match &o.config {
+                Some(c) => de_shape::configs::configured_program(world, se, c).ok()?,
+                None => de_shape::resolved_program(world, se)?,
+            };
+            de_shape::cache::program_key(&program, &mut h);
+            format!("{:?}", (o.transform.at, o.transform.rot, &o.path)).hash(&mut h);
+        }
+    }
+    Some(h.finish())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sweep_now(world: &World, joint: StableId, key: Option<&str>, from: Option<f64>, to: Option<f64>, steps: usize, set: &HashMap<StableId, Vec<f64>>, gaps_too: bool) -> Result<AssemblySweep, String> {
     let je = entity(world, joint).ok_or_else(|| format!("joint {joint} does not exist"))?;
     let j: Joint = world.get::<Joint>(je).cloned().ok_or_else(|| format!("{joint} is not a joint"))?;
     let params = world.get::<ParameterSet>(je).cloned().ok_or("the joint has no values")?;
