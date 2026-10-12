@@ -389,9 +389,22 @@ type Props = {
   poses?: ReadonlyMap<string, Transform> | null;
   /** An instance turned with the gizmo's rings: its new position and rotation (false: refused, put it back). */
   onTurnInstance?: (id: string, at: V3, rotation: V3) => Promise<boolean>;
+  /** Lines and dots drawn over the model (project mm): exploded trails, a robot's reach and path, picked geometry. */
+  overlay?: AssemblyOverlay | null;
+  /** Picking geometry for a mate: a click on a part reports where and which face (project mm), instead of selecting. */
+  onGeometryPick?: ((hit: GeometryHit) => void) | null;
   /** A selection box closed on these items (add: Shift held, adding to what is selected). */
   onSelectMany?: (ids: string[], add: boolean) => void;
 };
+
+/** What an assembly tool draws over the model, in project millimetres. */
+export type AssemblyOverlay = {
+  lines?: { points: V3[]; color?: string; dashed?: boolean }[];
+  points?: { at: V3[]; color?: string; size?: number }[];
+};
+
+/** A click on a part while picking geometry: the instance path, the point and the face's normal there (project mm). */
+export type GeometryHit = { path: string[]; shape: string | null; point: V3; normal: V3 };
 
 /** A flat face of a part made by a program, and which part of an assembly it is on. */
 export type ProgramFace = FlatFace & { id: string; part: string | null };
@@ -1743,6 +1756,18 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         }
         return;
       }
+      // Picking geometry for a mate: a click on a part reports the face under it; anywhere else orbits.
+      const geometryPick = callbacks.current.onGeometryPick;
+      if (geometryPick && e.button === 0) {
+        const hit = rayAt(e.clientX, e.clientY).intersectObjects(visibleBodies(), false)[0];
+        if (!hit) return;
+        e.stopPropagation();
+        e.preventDefault();
+        const n = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : new THREE.Vector3(0, 0, 1);
+        geometryPick({ path: (hit.object.userData.path as string[] | undefined) ?? [], shape: (hit.object.userData.shape as string | undefined) ?? null, point: hit.point.toArray() as V3, normal: n.toArray() as V3 });
+        dirty = true;
+        return;
+      }
       const cm = callbacks.current.comments;
       if (cm?.tool && e.button === 0) {
         e.stopPropagation();
@@ -2599,6 +2624,48 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     }
     t.invalidate();
   }, [props.poses, entities]);
+
+  // Lines and dots an assembly tool draws over the model (never picked: clicks reach the parts).
+  const assemblyOverlay = useRef<THREE.Group | null>(null);
+  useEffect(() => {
+    const t = three.current;
+    if (!t) return;
+    let g = assemblyOverlay.current;
+    if (!g) {
+      g = new THREE.Group();
+      g.renderOrder = 3;
+      assemblyOverlay.current = g;
+      t.scene.add(g);
+    }
+    for (const o of [...g.children]) {
+      g.remove(o);
+      const m = o as THREE.Line | THREE.Points;
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    }
+    const ov = props.overlay;
+    for (const l of ov?.lines ?? []) {
+      if (l.points.length < 2) continue;
+      const geometry = new THREE.BufferGeometry().setFromPoints(l.points.map((p) => new THREE.Vector3(...p)));
+      const material = l.dashed
+        ? new THREE.LineDashedMaterial({ color: l.color ?? "#6d4ae0", dashSize: 3, gapSize: 2, depthTest: false, transparent: true, opacity: 0.9 })
+        : new THREE.LineBasicMaterial({ color: l.color ?? "#6d4ae0", depthTest: false, transparent: true, opacity: 0.9 });
+      const line = new THREE.Line(geometry, material);
+      if (l.dashed) line.computeLineDistances();
+      line.raycast = () => {};
+      line.renderOrder = 3;
+      g.add(line);
+    }
+    for (const set of ov?.points ?? []) {
+      if (!set.at.length) continue;
+      const geometry = new THREE.BufferGeometry().setFromPoints(set.at.map((p) => new THREE.Vector3(...p)));
+      const dots = new THREE.Points(geometry, new THREE.PointsMaterial({ color: set.color ?? "#6d4ae0", size: set.size ?? 3, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.85 }));
+      dots.raycast = () => {};
+      dots.renderOrder = 3;
+      g.add(dots);
+    }
+    t.invalidate();
+  }, [props.overlay]);
 
   // Comment pins and the open card: laid out again when they change, and when the card grows (a reply posted).
   useEffect(() => void three.current?.invalidate(), [props.comments]);

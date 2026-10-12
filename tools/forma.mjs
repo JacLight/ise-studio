@@ -8,6 +8,11 @@
 //   node tools/forma.mjs motion <joint id> [steps] [--set '{"Elbow":40}']   sweep a joint through its limits: what moves, closest approaches, clashes, where it binds
 //   node tools/forma.mjs fit <assembly or instance id | project> [--motion]   do screws, inserts, nuts, bearings and joined parts fit (and, with --motion, every joint's sweep)
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
+//   node tools/forma.mjs dof <assembly | top>   what can still move (and how), mobility, redundant and conflicting joints
+//   node tools/forma.mjs interference <assembly | instance | top> [clearance mm]   parts that overlap (volume, where), touch, or come close
+//   node tools/forma.mjs exploded <view>      a saved exploded view's steps and trails
+//   node tools/forma.mjs study <study> [fps] [--out frames.json]   play a motion study: what moves, clashes, binding; frames to a file
+//   node tools/forma.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]'] [--tool connector]
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
 //   node tools/forma.mjs simulate <schematic> [--tran 30ms] [--expect "min(V(3V3), burst) > 3.0"] [--save name]   ngspice on a schematic
@@ -755,8 +760,97 @@ if (command === "run") {
       failed = true;
     }
   }
+} else if (["dof", "interference", "exploded", "study", "robot"].includes(command)) {
+  // Assembly analyses (GET, nothing changes).
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const tool = flag("--tool");
+  const axis = flag("--axis");
+  const fps = flag("--fps");
+  const out = flag("--out");
+  const [, id, sub, extra] = args;
+  const q = new URLSearchParams(project ? { project } : {});
+  const get = async (path) => {
+    const res = await fetch(`${http}/${path}${path.includes("?") ? "&" : "?"}${q}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  };
+  const vec = (s) => `[${String(s).split(/[,\s]+/).filter(Boolean).map(Number).join(",")}]`;
+  const r1 = (v) => Math.round(v * 10) / 10;
+  try {
+    if (!id) throw new Error(`say which: forma ${command} <${command === "robot" ? "tip instance" : command === "study" || command === "exploded" ? "id or name" : "assembly | top"}>`);
+    if (command === "dof") {
+      const r = await get(`assembly-dof/${encodeURIComponent(id)}`);
+      console.log(`${r.groups.some((g) => !g.solved) ? "✗" : "✓"} ${r.summary}`);
+      for (const g of r.groups) {
+        console.log(`  ${g.solved ? "·" : "✗"} ${g.joints.map((j) => `${j.name} (${j.kind})`).join(", ")}\n      ${g.summary}`);
+        for (const i of g.instances) if (i.free) console.log(`      ${i.name}: ${i.free} free — ${i.motions.join("; ")}`);
+        if (g.error) console.log(`      ! ${g.error}`);
+      }
+      if (r.unjoined.length) console.log(`  joined to nothing: ${r.unjoined.map((u) => u.name).join(", ")}`);
+      failed = r.groups.some((g) => !g.solved);
+    } else if (command === "interference") {
+      const r = await get(`interference/${encodeURIComponent(id)}${sub ? `?clearance=${sub}` : ""}`);
+      const bad = r.overlaps.filter((o) => !o.joined && !o.fastener);
+      console.log(`${bad.length ? "✗" : "✓"} ${r.name}: ${r.parts} parts, ${r.checked} close pairs checked; ${r.overlaps.length} overlap, ${r.touching.length} touch${r.clearance ? `, ${r.near.length} within ${r.clearance} mm` : ""}`);
+      for (const o of [...bad, ...r.overlaps.filter((x) => !bad.includes(x))]) console.log(`  overlap ${o.a} ↔ ${o.b}: ${o.volume} mm³ (${o.size?.join(" × ")} mm at ${o.at?.join(", ")})${o.fastener ? " [fastener]" : o.joined ? " [joined]" : ""}`);
+      for (const o of r.near) console.log(`  near    ${o.a} ↔ ${o.b}: ${o.gap} mm`);
+      if (sub === "all" || r.touching.length <= 12) for (const o of r.touching) console.log(`  touch   ${o.a} ↔ ${o.b}${o.joined ? " [joined]" : ""}`);
+      failed = bad.length > 0;
+    } else if (command === "exploded") {
+      const r = await get(`explode/${encodeURIComponent(id)}`);
+      console.log(`✓ ${r.name}: ${r.steps.length - 1} steps, ${r.trails.length} parts move`);
+      for (const t of r.trails) {
+        const name = r.instances.find((i) => i.id === t.instance)?.name;
+        console.log(`  ${name}: ${t.points.map((p) => `(${p.map(r1).join(", ")})`).join(" → ")}`);
+      }
+    } else if (command === "study") {
+      const r = await get(`motion-study/${encodeURIComponent(id)}?fps=${fps ?? sub ?? 24}`);
+      const moving = r.instances.filter((i) => i.moves).length;
+      console.log(`${r.clashes.length || r.binds_at != null ? "✗" : "✓"} ${r.frames.length} frames over ${r.frames.at(-1).value} s; ${moving} of ${r.instances.length} instances move`);
+      for (const c of r.clashes) console.log(`  clash  ${c.a} ↔ ${c.b} from ${c.range?.[0] ?? c.at} s to ${c.range?.[1] ?? c.at} s`);
+      for (const n of r.notes) console.log(`  ! ${n}`);
+      if (out) {
+        (await import("node:fs")).writeFileSync(out, JSON.stringify(r));
+        console.log(`  frames written to ${out} (every instance's position and quaternion per frame)`);
+      }
+      failed = r.clashes.length > 0 || r.binds_at != null;
+    } else if (command === "robot") {
+      const t = encodeURIComponent(id);
+      const toolQ = `${tool ? `tool=${encodeURIComponent(tool)}&` : ""}`;
+      if (!sub) {
+        const r = await get(`robot/${t}?${toolQ}`);
+        console.log(`✓ ${r.tip_name}: ${r.axes.length} moving joints from the ground; tool at (${r.tool.at.map(r1).join(", ")}) pointing (${r.tool.axis.map((v) => Math.round(v * 1000) / 1000).join(", ")})`);
+        for (const a of r.axes) console.log(`  ${a.name.padEnd(16)} ${String(r.values[a.name]).padStart(8)} ${a.unit}   limits ${a.min}…${a.max}`);
+      } else if (sub === "fk") {
+        const r = await get(`robot/${t}/fk?${toolQ}values=${encodeURIComponent(extra ?? "{}")}`);
+        console.log(`✓ tool at (${r.at.map(r1).join(", ")}) pointing (${r.axis.map((v) => Math.round(v * 1000) / 1000).join(", ")})`);
+      } else if (sub === "ik") {
+        const r = await get(`robot/${t}/ik?${toolQ}to=${vec(extra)}${axis ? `&axis=${vec(axis)}` : ""}`);
+        console.log(`${r.reached ? "✓ reaches" : `✗ out of reach: ${r.error_mm} mm short`}${r.error_deg ? `, axis ${r.error_deg}° off` : ""}: ${Object.entries(r.values).map(([k, v]) => `${k} ${v}`).join(", ")}`);
+        if (r.reached) console.log(`  set them: forma commit assembly.robot.move_to '{"tip":"${id}","to":${vec(extra)}${axis ? `,"axis":${vec(axis)}` : ""}${tool ? `,"tool":"${tool}"` : ""}}'`);
+        failed = !r.reached;
+      } else if (sub === "reach") {
+        const r = await get(`robot/${t}/reach?${toolQ}samples=${extra ?? 2000}`);
+        console.log(`✓ ${r.samples} poses: the tool reaches ${r.min_reach}–${r.max_reach} mm from (${r.base.map(r1).join(", ")}); box (${r.bounds_min.map(r1).join(", ")}) to (${r.bounds_max.map(r1).join(", ")})`);
+      } else if (sub === "path") {
+        const r = await get(`robot/${t}/trajectory?${toolQ}fps=${fps ?? 12}&through=${encodeURIComponent(extra ?? "[]")}`);
+        console.log(`${r.clashes.length || r.binds_at != null || r.waypoints.some((w) => !w.reached) ? "✗" : "✓"} ${r.waypoints.length} waypoints in ${r.frames.at(-1).value} s (${r.frames.length} frames)`);
+        r.waypoints.forEach((w, i) => console.log(`  ${i + 1}. ${w.reached ? "reached" : `missed by ${w.error_mm} mm`}: ${Object.entries(w.values).map(([k, v]) => `${k} ${v}`).join(", ")}`));
+        for (const c of r.clashes) console.log(`  clash  ${c.a} ↔ ${c.b} from ${c.range?.[0] ?? c.at} s to ${c.range?.[1] ?? c.at} s`);
+        if (out) (await import("node:fs")).writeFileSync(out, JSON.stringify(r));
+        failed = r.clashes.length > 0 || r.binds_at != null || r.waypoints.some((w) => !w.reached);
+      } else throw new Error("forma robot <tip> [fk '{json}' | ik x,y,z [--axis x,y,z] | reach [samples] | path '<waypoints json>'] [--tool connector]");
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | measure <part> [other] | view <action> [what] | image add <file> | image list | look [what] [--view v]  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | measure <part> [other] | view <action> [what] | image add <file> | image list | look [what] [--view v] | drawing <id> | dof | interference | exploded | study | robot | pcb … | simulate <schematic>  [--project name] [--url ws://…]");
   failed = true;
 }
 
