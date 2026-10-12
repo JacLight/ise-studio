@@ -35,6 +35,8 @@
     "servo_hobby",
     "servo_horn",
     "nema17",
-    "tslot_20"
+    "tslot_20",
+    "tslot_30",
+    "tslot_40"
   ]
 }
