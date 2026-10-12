@@ -18,6 +18,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { attachTumble, attachWalk, type Tumble } from "./tumble";
 import { pcbLooks } from "./pcb3d";
 import type { EntityView, MeshData } from "./engine";
+import { BatchLayer } from "./batchLayer";
 import {
   AXIS_NAMES,
   ACCENT,
@@ -522,6 +523,13 @@ function enclosing(t: Scene, eye: THREE.Vector3): THREE.Mesh[] {
     for (const m of part.meshes) {
       if (!m.visible) continue;
       const g = m.geometry;
+      // Most parts are nowhere near the eye: a sphere says so before a box is placed.
+      if (!g.boundingSphere) g.computeBoundingSphere();
+      const s = g.boundingSphere!;
+      const e = m.matrixWorld.elements;
+      const dx = e[12] - eye.x, dy = e[13] - eye.y, dz = e[14] - eye.z;
+      const reach = (s.radius + s.center.length()) * m.matrixWorld.getMaxScaleOnAxis();
+      if (dx * dx + dy * dy + dz * dz > reach * reach * 1.01) continue;
       if (!g.boundingBox) g.computeBoundingBox();
       box.copy(g.boundingBox!).applyMatrix4(m.matrixWorld);
       // Inside by more than a hair: grazing a face from outside does not hide it.
@@ -650,6 +658,8 @@ function buildInstance(e: EntityView, entities: ReadonlyMap<string, EntityView>,
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData = { id: e.id, path: o.path, shape: o.shape };
+    // Drawn as a GPU instance with every other mesh of its geometry and look (see batchLayer).
+    BatchLayer.adopt(mesh);
     group.add(mesh);
     meshes.push(mesh);
   }
@@ -897,6 +907,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     el.prepend(renderer.domElement);
 
     const scene = new THREE.Scene();
+    // World matrices are brought up to date once per frame, before the instance layer reads them.
+    scene.matrixWorldAutoUpdate = false;
     scene.fog = new THREE.Fog(0xf5f6f8, 2000, 6000);
     const camera = new THREE.PerspectiveCamera(36, 1, 1, 400000);
     camera.up.set(0, 0, 1);
@@ -942,6 +954,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     const hoverFaceTint = new FaceTint(ACCENT, 0.1, 0.55);
     const ghost = new Ghost();
     const guide = new AxisGuide();
+    const batch = new BatchLayer();
+    scene.add(batch.root);
     scene.add(overlayRoot, hoverFaceTint.root, selectedFaceTint.root, ghost.root, guide.root, gizmo.root, push.root);
 
     // Pivot mode: 27 pickable points on the selected part, drawn as flat
@@ -1448,6 +1462,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       dirty = false;
       draw();
     };
+    const frameStats = { aside: 0, matrices: 0, batch: 0, render: 0 };
+    function* instanceMeshes() {
+      for (const part of three.current?.parts.values() ?? []) if (part.shared && part.group.visible) yield* part.meshes;
+    }
     const draw = () => {
       const distance = camera.position.distanceTo(controls.target);
       // The haze starts past the model, however close in the camera is.
@@ -1461,9 +1479,20 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       // A part the camera is inside (a case, a room's shell, a floor passed
       // through) steps aside, as if the camera had walked in: what it holds
       // shows instead of the inside of its walls.
+      const t0 = performance.now();
+      scene.updateMatrixWorld();
       const aside = three.current ? enclosing(three.current, camera.position) : [];
       for (const m of aside) m.visible = false;
+      const t1 = performance.now();
+      // Instances of shared geometry go to the GPU as instances, culled and simplified by size.
+      const t2 = performance.now();
+      batch.update(instanceMeshes(), camera, renderer.domElement.clientHeight || 800, three.current?.wireframe ?? false);
+      const t3 = performance.now();
       renderer.render(scene, camera);
+      frameStats.aside = t1 - t0;
+      frameStats.matrices = t2 - t1;
+      frameStats.batch = t3 - t2;
+      frameStats.render = performance.now() - t3;
       for (const m of aside) m.visible = true;
       if (callbacks.current.comments?.pins.length) scheduleOcclusion();
     };
@@ -1477,6 +1506,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         camera,
         controls,
         parts: () => three.current?.parts.size ?? 0,
+        batch,
+        frameStats,
         frame: () => {
           const t0 = performance.now();
           draw();
@@ -2325,6 +2356,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       unwalk();
       window.removeEventListener("keydown", onKey, true);
       for (const part of three.current?.parts.values() ?? []) disposePart(part);
+      batch.dispose();
       scene.traverse((o) => {
         if (o instanceof THREE.Mesh || o instanceof THREE.Line) {
           o.geometry.dispose();
@@ -2926,6 +2958,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       const shown = [t.gizmo.root.visible, t.push.root.visible];
       t.gizmo.root.visible = false;
       t.push.root.visible = false;
+      t.scene.updateMatrixWorld();
       t.renderer.render(t.scene, t.camera);
       const url = t.renderer.domElement.toDataURL("image/png");
       [t.gizmo.root.visible, t.push.root.visible] = shown;
