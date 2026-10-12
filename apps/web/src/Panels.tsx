@@ -1019,7 +1019,7 @@ export function ViewsBody(props: {
 }) {
   return (
     <>
-      {(["perspective", "front", "top", "bottom"] as ViewName[]).map((v) => (
+      {(["iso", "front", "back", "left", "right", "top", "bottom"] as ViewName[]).map((v) => (
         <button type="button" key={v} className={`list-row ${props.view === v ? "active" : ""}`} onClick={() => props.onView(v)}>
           <Icon name="cube" />
           <span>{v[0].toUpperCase() + v.slice(1)}</span>

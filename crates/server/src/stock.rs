@@ -98,6 +98,31 @@ mod tests {
     }
 
     #[test]
+    fn beams_cut_to_many_lengths_share_one_definition_and_cost_by_length() {
+        let mut p = project();
+        let a = commit(&mut p, "stock.insert", json!({ "family": "ipe", "size": "IPE 200", "length": 2350 })).unwrap();
+        assert_eq!(a["size"], "IPE 200 × 2350");
+        let b = commit(&mut p, "stock.insert", json!({ "family": "ipe", "size": "IPE 200", "length": 4000 })).unwrap();
+        assert_eq!(id(&a["definition"]), id(&b["definition"]));
+        // A plain size later keeps the cut lengths already in the table.
+        commit(&mut p, "stock.insert", json!({ "family": "ipe", "size": "IPE 100" })).unwrap();
+        let w = p.world();
+        let def = p.entity(id(&a["definition"])).unwrap();
+        let table = w.get::<de_shape::ShapeConfigurations>(def).unwrap();
+        assert!(table.params.contains(&"length".to_string()));
+        assert!(table.row("IPE 200 × 2350").is_some() && table.row("IPE 200 × 4000").is_some() && table.row("IPE 100").is_some());
+        let short = de_shape::configs::evaluate(w, def, "IPE 200 × 2350").unwrap();
+        let long = de_shape::configs::evaluate(w, def, "IPE 200 × 4000").unwrap();
+        let (s, l) = (short.stats.declared.stock.clone().unwrap(), long.stats.declared.stock.clone().unwrap());
+        assert_ne!(s.part_number, l.part_number);
+        let ratio = l.unit_price.unwrap() / s.unit_price.unwrap();
+        assert!((ratio - 4000.0 / 2350.0).abs() < 0.01, "price follows the length: {ratio}");
+        // Something sold by the piece has no length to cut.
+        let e = commit(&mut p, "stock.insert", json!({ "family": "iso4762", "size": "M3×12", "length": 50 })).unwrap_err();
+        assert!(e.contains("not cut to length"), "{e}");
+    }
+
+    #[test]
     fn inserting_an_unknown_family_or_size_says_what_there_is() {
         let mut p = project();
         let e = commit(&mut p, "stock.insert", json!({ "family": "iso9999" })).unwrap_err();

@@ -1,0 +1,121 @@
+{
+ "id": "nema23",
+ "name": "Stepper motor",
+ "standard": "NEMA 23",
+ "category": "Motors",
+ "summary": "NEMA 23 hybrid stepper, 1.8°, 56.4 mm square, Ø38.1 pilot, Ø5.1 through holes on 47.14 mm, Ø6.35 or Ø8 D-shaft, flying leads. Shaft up +Z, mounting face on z = 0.",
+ "keywords": [
+  "stepper",
+  "NEMA23",
+  "NEMA 23",
+  "57mm",
+  "56mm",
+  "23HS22-2804S",
+  "23HS30-2804S",
+  "motor",
+  "1.8 degree",
+  "CNC motor"
+ ],
+ "source": [
+  "common.js",
+  "stepper.js",
+  "nema23.js"
+ ],
+ "display_tolerance": 0.02,
+ "materials": {
+  "Aluminium": 2700,
+  "Steel": 7850,
+  "Lead wire and relief (PVC, copper)": 2200,
+  "NEMA 23 stator, rotor and windings (lumped)": 5550.0
+ },
+ "params": [
+  {
+   "key": "length",
+   "label": "Body length",
+   "value": 56,
+   "unit": "mm",
+   "min": 30,
+   "max": 120
+  },
+  {
+   "key": "shaft",
+   "label": "Shaft diameter",
+   "value": 6.35,
+   "unit": "mm",
+   "min": 6.35,
+   "max": 8
+  }
+ ],
+ "columns": [
+  "length",
+  "shaft"
+ ],
+ "rows": [
+  {
+   "name": "56×41",
+   "values": {
+    "length": 41,
+    "shaft": 6.35
+   }
+  },
+  {
+   "name": "56×56",
+   "values": {
+    "length": 56,
+    "shaft": 6.35
+   }
+  },
+  {
+   "name": "56×76",
+   "values": {
+    "length": 76,
+    "shaft": 6.35
+   }
+  },
+  {
+   "name": "56×76 Ø8",
+   "values": {
+    "length": 76,
+    "shaft": 8
+   }
+  }
+ ],
+ "default": "56×56",
+ "checks": {
+  "56×56": {
+   "massG": 700,
+   "partNumber": "NEMA23-56x56-1.8-6.35",
+   "connectors": [
+    "Shaft",
+    "Pilot",
+    "Face",
+    "Hole 1",
+    "Hole 2",
+    "Hole 3",
+    "Hole 4"
+   ],
+   "connector_at": {
+    "Hole 1": [
+     23.57,
+     23.57,
+     0
+    ],
+    "Pilot": [
+     0,
+     0,
+     1.6
+    ]
+   },
+   "metrics": {
+    "Hole pattern": 47.14,
+    "Pilot diameter": 38.1,
+    "Shaft diameter": 6.35
+   }
+  },
+  "56×76 Ø8": {
+   "metrics": {
+    "Shaft diameter": 8
+   }
+  }
+ }
+}

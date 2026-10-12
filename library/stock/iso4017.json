@@ -1,0 +1,493 @@
+{
+ "id": "iso4017",
+ "name": "Hex head screw, full thread",
+ "standard": "ISO 4017",
+ "category": "Fasteners",
+ "summary": "Hexagon head screw threaded to the head, grade A, stainless A2-70. Washer face on z = 0, shank down −Z.",
+ "keywords": [
+  "hex bolt",
+  "hex head",
+  "hex screw",
+  "hex cap screw",
+  "bolt",
+  "DIN 933",
+  "spanner",
+  "wrench",
+  "fully threaded",
+  "full thread",
+  "set screw (UK)"
+ ],
+ "source": [
+  "common.js",
+  "iso4017.js",
+  "hex_bolt.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Stainless steel A2",
+ "materials": {
+  "Stainless steel A2": 7900
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Thread diameter",
+   "value": 6,
+   "unit": "mm",
+   "min": 3,
+   "max": 12,
+   "step": 1
+  },
+  {
+   "key": "length",
+   "label": "Length",
+   "value": 20.0,
+   "unit": "mm",
+   "min": 5,
+   "max": 150
+  },
+  {
+   "key": "threads",
+   "label": "True helical thread (1 = on)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "d",
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "M3×6",
+   "values": {
+    "d": 3,
+    "length": 6
+   }
+  },
+  {
+   "name": "M3×8",
+   "values": {
+    "d": 3,
+    "length": 8
+   }
+  },
+  {
+   "name": "M3×10",
+   "values": {
+    "d": 3,
+    "length": 10
+   }
+  },
+  {
+   "name": "M3×12",
+   "values": {
+    "d": 3,
+    "length": 12
+   }
+  },
+  {
+   "name": "M3×16",
+   "values": {
+    "d": 3,
+    "length": 16
+   }
+  },
+  {
+   "name": "M3×20",
+   "values": {
+    "d": 3,
+    "length": 20
+   }
+  },
+  {
+   "name": "M3×25",
+   "values": {
+    "d": 3,
+    "length": 25
+   }
+  },
+  {
+   "name": "M3×30",
+   "values": {
+    "d": 3,
+    "length": 30
+   }
+  },
+  {
+   "name": "M4×8",
+   "values": {
+    "d": 4,
+    "length": 8
+   }
+  },
+  {
+   "name": "M4×10",
+   "values": {
+    "d": 4,
+    "length": 10
+   }
+  },
+  {
+   "name": "M4×12",
+   "values": {
+    "d": 4,
+    "length": 12
+   }
+  },
+  {
+   "name": "M4×16",
+   "values": {
+    "d": 4,
+    "length": 16
+   }
+  },
+  {
+   "name": "M4×20",
+   "values": {
+    "d": 4,
+    "length": 20
+   }
+  },
+  {
+   "name": "M4×25",
+   "values": {
+    "d": 4,
+    "length": 25
+   }
+  },
+  {
+   "name": "M4×30",
+   "values": {
+    "d": 4,
+    "length": 30
+   }
+  },
+  {
+   "name": "M4×40",
+   "values": {
+    "d": 4,
+    "length": 40
+   }
+  },
+  {
+   "name": "M5×10",
+   "values": {
+    "d": 5,
+    "length": 10
+   }
+  },
+  {
+   "name": "M5×12",
+   "values": {
+    "d": 5,
+    "length": 12
+   }
+  },
+  {
+   "name": "M5×16",
+   "values": {
+    "d": 5,
+    "length": 16
+   }
+  },
+  {
+   "name": "M5×20",
+   "values": {
+    "d": 5,
+    "length": 20
+   }
+  },
+  {
+   "name": "M5×25",
+   "values": {
+    "d": 5,
+    "length": 25
+   }
+  },
+  {
+   "name": "M5×30",
+   "values": {
+    "d": 5,
+    "length": 30
+   }
+  },
+  {
+   "name": "M5×40",
+   "values": {
+    "d": 5,
+    "length": 40
+   }
+  },
+  {
+   "name": "M5×50",
+   "values": {
+    "d": 5,
+    "length": 50
+   }
+  },
+  {
+   "name": "M6×10",
+   "values": {
+    "d": 6,
+    "length": 10
+   }
+  },
+  {
+   "name": "M6×12",
+   "values": {
+    "d": 6,
+    "length": 12
+   }
+  },
+  {
+   "name": "M6×16",
+   "values": {
+    "d": 6,
+    "length": 16
+   }
+  },
+  {
+   "name": "M6×20",
+   "values": {
+    "d": 6,
+    "length": 20
+   }
+  },
+  {
+   "name": "M6×25",
+   "values": {
+    "d": 6,
+    "length": 25
+   }
+  },
+  {
+   "name": "M6×30",
+   "values": {
+    "d": 6,
+    "length": 30
+   }
+  },
+  {
+   "name": "M6×40",
+   "values": {
+    "d": 6,
+    "length": 40
+   }
+  },
+  {
+   "name": "M6×50",
+   "values": {
+    "d": 6,
+    "length": 50
+   }
+  },
+  {
+   "name": "M6×60",
+   "values": {
+    "d": 6,
+    "length": 60
+   }
+  },
+  {
+   "name": "M8×16",
+   "values": {
+    "d": 8,
+    "length": 16
+   }
+  },
+  {
+   "name": "M8×20",
+   "values": {
+    "d": 8,
+    "length": 20
+   }
+  },
+  {
+   "name": "M8×25",
+   "values": {
+    "d": 8,
+    "length": 25
+   }
+  },
+  {
+   "name": "M8×30",
+   "values": {
+    "d": 8,
+    "length": 30
+   }
+  },
+  {
+   "name": "M8×40",
+   "values": {
+    "d": 8,
+    "length": 40
+   }
+  },
+  {
+   "name": "M8×50",
+   "values": {
+    "d": 8,
+    "length": 50
+   }
+  },
+  {
+   "name": "M8×60",
+   "values": {
+    "d": 8,
+    "length": 60
+   }
+  },
+  {
+   "name": "M8×80",
+   "values": {
+    "d": 8,
+    "length": 80
+   }
+  },
+  {
+   "name": "M10×20",
+   "values": {
+    "d": 10,
+    "length": 20
+   }
+  },
+  {
+   "name": "M10×25",
+   "values": {
+    "d": 10,
+    "length": 25
+   }
+  },
+  {
+   "name": "M10×30",
+   "values": {
+    "d": 10,
+    "length": 30
+   }
+  },
+  {
+   "name": "M10×40",
+   "values": {
+    "d": 10,
+    "length": 40
+   }
+  },
+  {
+   "name": "M10×50",
+   "values": {
+    "d": 10,
+    "length": 50
+   }
+  },
+  {
+   "name": "M10×60",
+   "values": {
+    "d": 10,
+    "length": 60
+   }
+  },
+  {
+   "name": "M10×80",
+   "values": {
+    "d": 10,
+    "length": 80
+   }
+  },
+  {
+   "name": "M12×25",
+   "values": {
+    "d": 12,
+    "length": 25
+   }
+  },
+  {
+   "name": "M12×30",
+   "values": {
+    "d": 12,
+    "length": 30
+   }
+  },
+  {
+   "name": "M12×40",
+   "values": {
+    "d": 12,
+    "length": 40
+   }
+  },
+  {
+   "name": "M12×50",
+   "values": {
+    "d": 12,
+    "length": 50
+   }
+  },
+  {
+   "name": "M12×60",
+   "values": {
+    "d": 12,
+    "length": 60
+   }
+  },
+  {
+   "name": "M12×80",
+   "values": {
+    "d": 12,
+    "length": 80
+   }
+  },
+  {
+   "name": "M12×100",
+   "values": {
+    "d": 12,
+    "length": 100
+   }
+  }
+ ],
+ "default": "M6×20",
+ "checks": {
+  "M6×20": {
+   "size": [
+    10,
+    11.547005383792516,
+    24.0
+   ],
+   "tolerance": 0.06,
+   "connectors": [
+    "Head seat",
+    "Axis",
+    "Head top"
+   ],
+   "connector_at": {
+    "Head top": [
+     0,
+     0,
+     4
+    ],
+    "Axis": [
+     0,
+     0,
+     -20.0
+    ]
+   },
+   "metrics": {
+    "Across flats": 10
+   },
+   "partNumber": "ISO 4017 M6×20 A2-70"
+  },
+  "M12×50": {
+   "size": [
+    18,
+    20.784609690826528,
+    57.5
+   ],
+   "tolerance": 0.06,
+   "metrics": {
+    "Across flats": 18,
+    "Head height": 7.5
+   }
+  }
+ }
+}

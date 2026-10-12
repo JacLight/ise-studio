@@ -888,11 +888,9 @@ async fn run(
                 };
                 if let Some(bytes) = done {
                     // Content-addressed: only the right bytes are kept.
-                    if hash_bytes(&bytes) == sha
-                        && de_shape::assets::dir().is_some()
-                    {
-                        // Kept under its format (read from its bytes), as an import keeps it.
-                        if de_shape::assets::store(&sha, &bytes, None).is_ok() {
+                    if hash_bytes(&bytes) == sha {
+                        // Kept as what it is (a STEP file, a picture, a font).
+                        if de_shape::assets::store_as(&sha, &bytes).is_ok() {
                             app.asset_arrived(&sha);
                         }
                     } else {

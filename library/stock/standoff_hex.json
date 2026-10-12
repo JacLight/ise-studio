@@ -1,0 +1,536 @@
+{
+ "id": "standoff_hex",
+ "name": "Hex standoff",
+ "category": "Fasteners",
+ "summary": "Brass hex standoff (PCB spacer), female–female or male–female, M2 / M2.5 / M3. Bottom face on z = 0, body up +Z, a stud down −Z.",
+ "keywords": [
+  "standoff",
+  "stand-off",
+  "spacer",
+  "PCB spacer",
+  "hex spacer",
+  "pillar",
+  "brass standoff",
+  "female female",
+  "male female",
+  "M-F",
+  "F-F",
+  "Raspberry Pi"
+ ],
+ "source": [
+  "common.js",
+  "standoff_hex.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Brass CuZn39Pb3",
+ "materials": {
+  "Brass CuZn39Pb3": 8470
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Thread",
+   "value": 3,
+   "unit": "mm",
+   "min": 2,
+   "max": 3,
+   "step": 0.5
+  },
+  {
+   "key": "length",
+   "label": "Body length",
+   "value": 10,
+   "unit": "mm",
+   "min": 3,
+   "max": 40
+  },
+  {
+   "key": "male",
+   "label": "Male stud (1 = M-F)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  },
+  {
+   "key": "threads",
+   "label": "True helical thread (1 = on)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "d",
+  "length",
+  "male"
+ ],
+ "rows": [
+  {
+   "name": "M2×5 F-F",
+   "values": {
+    "d": 2,
+    "length": 5,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2×6 F-F",
+   "values": {
+    "d": 2,
+    "length": 6,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2×8 F-F",
+   "values": {
+    "d": 2,
+    "length": 8,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2×10 F-F",
+   "values": {
+    "d": 2,
+    "length": 10,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2×12 F-F",
+   "values": {
+    "d": 2,
+    "length": 12,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2×15 F-F",
+   "values": {
+    "d": 2,
+    "length": 15,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2×20 F-F",
+   "values": {
+    "d": 2,
+    "length": 20,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2×5+3.5 M-F",
+   "values": {
+    "d": 2,
+    "length": 5,
+    "male": 1
+   }
+  },
+  {
+   "name": "M2×6+3.5 M-F",
+   "values": {
+    "d": 2,
+    "length": 6,
+    "male": 1
+   }
+  },
+  {
+   "name": "M2×8+3.5 M-F",
+   "values": {
+    "d": 2,
+    "length": 8,
+    "male": 1
+   }
+  },
+  {
+   "name": "M2×10+3.5 M-F",
+   "values": {
+    "d": 2,
+    "length": 10,
+    "male": 1
+   }
+  },
+  {
+   "name": "M2×12+3.5 M-F",
+   "values": {
+    "d": 2,
+    "length": 12,
+    "male": 1
+   }
+  },
+  {
+   "name": "M2×15+3.5 M-F",
+   "values": {
+    "d": 2,
+    "length": 15,
+    "male": 1
+   }
+  },
+  {
+   "name": "M2×20+3.5 M-F",
+   "values": {
+    "d": 2,
+    "length": 20,
+    "male": 1
+   }
+  },
+  {
+   "name": "M2.5×5 F-F",
+   "values": {
+    "d": 2.5,
+    "length": 5,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2.5×6 F-F",
+   "values": {
+    "d": 2.5,
+    "length": 6,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2.5×8 F-F",
+   "values": {
+    "d": 2.5,
+    "length": 8,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2.5×10 F-F",
+   "values": {
+    "d": 2.5,
+    "length": 10,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2.5×12 F-F",
+   "values": {
+    "d": 2.5,
+    "length": 12,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2.5×15 F-F",
+   "values": {
+    "d": 2.5,
+    "length": 15,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2.5×20 F-F",
+   "values": {
+    "d": 2.5,
+    "length": 20,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2.5×25 F-F",
+   "values": {
+    "d": 2.5,
+    "length": 25,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2.5×30 F-F",
+   "values": {
+    "d": 2.5,
+    "length": 30,
+    "male": 0
+   }
+  },
+  {
+   "name": "M2.5×5+5 M-F",
+   "values": {
+    "d": 2.5,
+    "length": 5,
+    "male": 1
+   }
+  },
+  {
+   "name": "M2.5×6+5 M-F",
+   "values": {
+    "d": 2.5,
+    "length": 6,
+    "male": 1
+   }
+  },
+  {
+   "name": "M2.5×8+5 M-F",
+   "values": {
+    "d": 2.5,
+    "length": 8,
+    "male": 1
+   }
+  },
+  {
+   "name": "M2.5×10+5 M-F",
+   "values": {
+    "d": 2.5,
+    "length": 10,
+    "male": 1
+   }
+  },
+  {
+   "name": "M2.5×12+5 M-F",
+   "values": {
+    "d": 2.5,
+    "length": 12,
+    "male": 1
+   }
+  },
+  {
+   "name": "M2.5×15+5 M-F",
+   "values": {
+    "d": 2.5,
+    "length": 15,
+    "male": 1
+   }
+  },
+  {
+   "name": "M2.5×20+5 M-F",
+   "values": {
+    "d": 2.5,
+    "length": 20,
+    "male": 1
+   }
+  },
+  {
+   "name": "M2.5×25+5 M-F",
+   "values": {
+    "d": 2.5,
+    "length": 25,
+    "male": 1
+   }
+  },
+  {
+   "name": "M2.5×30+5 M-F",
+   "values": {
+    "d": 2.5,
+    "length": 30,
+    "male": 1
+   }
+  },
+  {
+   "name": "M3×5 F-F",
+   "values": {
+    "d": 3,
+    "length": 5,
+    "male": 0
+   }
+  },
+  {
+   "name": "M3×6 F-F",
+   "values": {
+    "d": 3,
+    "length": 6,
+    "male": 0
+   }
+  },
+  {
+   "name": "M3×8 F-F",
+   "values": {
+    "d": 3,
+    "length": 8,
+    "male": 0
+   }
+  },
+  {
+   "name": "M3×10 F-F",
+   "values": {
+    "d": 3,
+    "length": 10,
+    "male": 0
+   }
+  },
+  {
+   "name": "M3×12 F-F",
+   "values": {
+    "d": 3,
+    "length": 12,
+    "male": 0
+   }
+  },
+  {
+   "name": "M3×15 F-F",
+   "values": {
+    "d": 3,
+    "length": 15,
+    "male": 0
+   }
+  },
+  {
+   "name": "M3×20 F-F",
+   "values": {
+    "d": 3,
+    "length": 20,
+    "male": 0
+   }
+  },
+  {
+   "name": "M3×25 F-F",
+   "values": {
+    "d": 3,
+    "length": 25,
+    "male": 0
+   }
+  },
+  {
+   "name": "M3×30 F-F",
+   "values": {
+    "d": 3,
+    "length": 30,
+    "male": 0
+   }
+  },
+  {
+   "name": "M3×5+6 M-F",
+   "values": {
+    "d": 3,
+    "length": 5,
+    "male": 1
+   }
+  },
+  {
+   "name": "M3×6+6 M-F",
+   "values": {
+    "d": 3,
+    "length": 6,
+    "male": 1
+   }
+  },
+  {
+   "name": "M3×8+6 M-F",
+   "values": {
+    "d": 3,
+    "length": 8,
+    "male": 1
+   }
+  },
+  {
+   "name": "M3×10+6 M-F",
+   "values": {
+    "d": 3,
+    "length": 10,
+    "male": 1
+   }
+  },
+  {
+   "name": "M3×12+6 M-F",
+   "values": {
+    "d": 3,
+    "length": 12,
+    "male": 1
+   }
+  },
+  {
+   "name": "M3×15+6 M-F",
+   "values": {
+    "d": 3,
+    "length": 15,
+    "male": 1
+   }
+  },
+  {
+   "name": "M3×20+6 M-F",
+   "values": {
+    "d": 3,
+    "length": 20,
+    "male": 1
+   }
+  },
+  {
+   "name": "M3×25+6 M-F",
+   "values": {
+    "d": 3,
+    "length": 25,
+    "male": 1
+   }
+  },
+  {
+   "name": "M3×30+6 M-F",
+   "values": {
+    "d": 3,
+    "length": 30,
+    "male": 1
+   }
+  }
+ ],
+ "default": "M3×10 F-F",
+ "checks": {
+  "M3×10 F-F": {
+   "size": [
+    5,
+    5.773502691896258,
+    10
+   ],
+   "tolerance": 0.06,
+   "connectors": [
+    "Bottom face",
+    "Top face",
+    "Axis"
+   ],
+   "connector_at": {
+    "Top face": [
+     0,
+     0,
+     10
+    ]
+   },
+   "metrics": {
+    "Across flats": 5,
+    "Tapped thread": 3,
+    "Tapped depth": 10
+   },
+   "partNumber": "Standoff F-F M3×10 brass"
+  },
+  "M3×10+6 M-F": {
+   "size": [
+    5,
+    5.773502691896258,
+    16
+   ],
+   "tolerance": 0.06,
+   "connectors": [
+    "Bottom face",
+    "Top face",
+    "Axis",
+    "Stud tip"
+   ],
+   "connector_at": {
+    "Stud tip": [
+     0,
+     0,
+     -6
+    ]
+   },
+   "metrics": {
+    "Tapped depth": 9,
+    "Stud length": 6
+   },
+   "partNumber": "Standoff M-F M3×10+6 brass"
+  },
+  "M2×5 F-F": {
+   "size": [
+    3.5,
+    4.041451884327381,
+    5
+   ],
+   "tolerance": 0.06
+  }
+ }
+}

@@ -266,7 +266,7 @@ fn stored(bytes: &[u8], hint: Kind) -> String {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut h);
     let sha = format!("{:016x}", h.finish()).repeat(4);
-    crate::assets::store(&sha, bytes, Some(hint)).unwrap();
+    crate::assets::store_import(&sha, bytes, Some(hint)).unwrap();
     sha
 }
 

@@ -1,7 +1,8 @@
-//! Imported files (STEP, IGES, mesh files, drawings), stored by content: a
-//! program refers to a file by its SHA-256, so the same bytes always give
-//! the same part and a project never depends on where a file once was.
-//! Each is kept as `<sha>.<format>` (the format read from its bytes).
+//! Files a program reads, stored by content: imported STEP, IGES, mesh
+//! files and drawings, and images and fonts. A program refers to a file by
+//! its SHA-256, so the same bytes always give the same part and a project
+//! never depends on where a file once was. Each is kept as `<sha>.<format>`
+//! (the format read from its bytes).
 
 use crate::formats::{Kind, Look};
 use manifold_csg::Manifold;
@@ -10,17 +11,37 @@ use std::sync::{Mutex, OnceLock};
 
 static DIR: OnceLock<PathBuf> = OnceLock::new();
 
-/// Where imported files live (set once by the server at startup).
+/// Where stored files live (set once by the server at startup).
 pub fn set_dir(dir: PathBuf) {
     let _ = DIR.set(dir);
 }
 
-/// The folder imported files live in, if set.
-pub fn dir() -> Option<PathBuf> {
-    DIR.get().cloned()
+/// Images and fonts kept besides the imported formats (`Kind`), by extension.
+const PICTURES: [&str; 4] = ["png", "jpg", "ttf", "otf"];
+
+/// What these bytes are, by how they start: "png", "jpg", "ttf", "otf", or
+/// "step" for anything else (STEP files are text).
+pub fn sniff(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "png"
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        "jpg"
+    } else if bytes.starts_with(&[0, 1, 0, 0]) || bytes.starts_with(b"true") {
+        "ttf"
+    } else if bytes.starts_with(b"OTTO") {
+        "otf"
+    } else {
+        "step"
+    }
 }
 
-fn check(sha: &str) -> Result<(), String> {
+/// The content hash of some bytes, as stored files are named.
+pub fn sha256(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn valid(sha: &str) -> Result<(), String> {
     if sha.len() != 64 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(format!("“{sha}” is not a file hash"));
     }
@@ -29,13 +50,46 @@ fn check(sha: &str) -> Result<(), String> {
 
 /// The stored file for a content hash, if it exists.
 pub fn path(sha: &str) -> Result<PathBuf, String> {
-    check(sha)?;
-    let dir = DIR.get().ok_or("imported files are not available here")?;
+    valid(sha)?;
+    let dir = DIR.get().ok_or("stored files are not available here")?;
     Kind::ALL
         .iter()
-        .map(|k| dir.join(format!("{sha}.{}", k.ext())))
+        .map(|k| k.ext())
+        .chain(PICTURES)
+        .map(|k| dir.join(format!("{sha}.{k}")))
         .find(|p| p.is_file())
-        .ok_or_else(|| format!("the imported file {} is not on this computer yet: it comes from a teammate who has it, as soon as one is online", &sha[..12]))
+        .ok_or_else(|| format!("the file {} is not on this computer yet: it comes from a teammate who has it, as soon as one is online", &sha[..12]))
+}
+
+/// Keeps these bytes (once) and returns their hash.
+pub fn store(bytes: &[u8]) -> Result<String, String> {
+    let sha = sha256(bytes);
+    store_as(&sha, bytes)?;
+    Ok(sha)
+}
+
+/// Keeps bytes that arrived under a hash, if they really have it.
+pub fn store_as(sha: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    valid(sha)?;
+    if sha256(bytes) != sha {
+        return Err("the bytes do not match their hash".into());
+    }
+    let dir = DIR.get().ok_or("stored files are not available here")?;
+    // A picture or font by its signature, else the imported format its bytes show.
+    let ext = match sniff(bytes) {
+        "step" => Kind::sniff(bytes).map(Kind::ext).unwrap_or("step"),
+        picture => picture,
+    };
+    let p = dir.join(format!("{sha}.{ext}"));
+    if !p.is_file() {
+        std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&p, bytes)).map_err(|e| format!("could not store the file: {e}"))?;
+    }
+    Ok(p)
+}
+
+/// The folder stored files live in, if set.
+pub fn dir() -> Option<PathBuf> {
+    DIR.get().cloned()
 }
 
 /// The format of a stored file.
@@ -46,8 +100,8 @@ pub fn kind(sha: &str) -> Result<Kind, String> {
 
 /// Keeps a file by its hash (once), named by its format: what its bytes say,
 /// else `hint` (the name it came with). Returns where it is.
-pub fn store(sha: &str, bytes: &[u8], hint: Option<Kind>) -> Result<PathBuf, String> {
-    check(sha)?;
+pub fn store_import(sha: &str, bytes: &[u8], hint: Option<Kind>) -> Result<PathBuf, String> {
+    valid(sha)?;
     if let Ok(p) = path(sha) {
         return Ok(p);
     }
@@ -58,19 +112,26 @@ pub fn store(sha: &str, bytes: &[u8], hint: Option<Kind>) -> Result<PathBuf, Str
     Ok(p)
 }
 
-/// Every imported file a program reads (`importStep("<sha>")`, `importIges`, `importMesh`).
+/// Every stored file a program reads: each quoted content hash in its source
+/// (`importStep("<sha>")`, `image("<sha>")`, `relief("<sha>", …)`).
 pub fn referenced(source: &str) -> Vec<String> {
     let mut out = Vec::new();
-    for call in ["importStep(", "importIges(", "importMesh("] {
-        let mut rest = source;
-        while let Some(i) = rest.find(call) {
-            rest = &rest[i + call.len()..];
-            let r = rest.trim_start().trim_start_matches(['"', '\'', '`']);
-            let sha: String = r.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
-            if sha.len() == 64 && !out.contains(&sha) {
-                out.push(sha);
+    let bytes = source.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if matches!(bytes[i], b'"' | b'\'' | b'`') {
+            let run = bytes[i + 1..].iter().take_while(|c| c.is_ascii_hexdigit()).count();
+            let close = bytes.get(i + 1 + run).copied();
+            if run == 64 && close == Some(bytes[i]) {
+                let sha = source[i + 1..i + 65].to_ascii_lowercase();
+                if !out.contains(&sha) {
+                    out.push(sha);
+                }
+                i += 66;
+                continue;
             }
         }
+        i += 1;
     }
     out
 }
@@ -145,4 +206,24 @@ pub fn mesh_bodies(sha: &str) -> Result<Vec<Body>, String> {
 /// "#rrggbb" for a colour, as the view reads it in a material name.
 pub fn hex(c: [f64; 3]) -> String {
     Look::color(c).hex()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_quoted_hash_is_a_reference() {
+        let a = "a".repeat(64);
+        let b = "0123456789abcdef".repeat(4);
+        let src = format!("const m = importStep(\"{a}\");\nconst r = relief('{b}', {{ width: 80 }});\nimage(`{a}`); // \"{}\" is too short", "f".repeat(63));
+        assert_eq!(referenced(&src), vec![a, b]);
+    }
+
+    #[test]
+    fn files_are_told_apart_by_how_they_start() {
+        assert_eq!(sniff(b"\x89PNG\r\n\x1a\nrest"), "png");
+        assert_eq!(sniff(&[0xff, 0xd8, 0xff, 0xe0]), "jpg");
+        assert_eq!(sniff(b"ISO-10303-21;"), "step");
+    }
 }

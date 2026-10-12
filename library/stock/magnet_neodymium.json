@@ -1,0 +1,426 @@
+{
+ "id": "magnet_neodymium",
+ "name": "Neodymium magnet",
+ "category": "Magnets",
+ "summary": "NdFeB N52 permanent magnet, nickel plated, magnetised through its thickness: disc, ring or countersunk. Back face on z = 0, north face at z = T.",
+ "keywords": [
+  "magnet",
+  "neodymium",
+  "NdFeB",
+  "rare earth",
+  "N52",
+  "disc magnet",
+  "ring magnet",
+  "countersunk magnet",
+  "button magnet",
+  "fridge magnet"
+ ],
+ "source": [
+  "common.js",
+  "magnet_neodymium.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "NdFeB N52 (NiCuNi plated)",
+ "materials": {
+  "NdFeB N52 (NiCuNi plated)": 7500
+ },
+ "params": [
+  {
+   "key": "kind",
+   "label": "Shape (1 disc, 2 ring, 3 countersunk)",
+   "value": 1,
+   "unit": "",
+   "min": 1,
+   "max": 3,
+   "step": 1
+  },
+  {
+   "key": "D",
+   "label": "Diameter",
+   "value": 10,
+   "unit": "mm",
+   "min": 2,
+   "max": 50
+  },
+  {
+   "key": "T",
+   "label": "Thickness",
+   "value": 3,
+   "unit": "mm",
+   "min": 0.5,
+   "max": 25
+  },
+  {
+   "key": "hole",
+   "label": "Ring bore / countersunk screw M",
+   "value": 0,
+   "unit": "mm",
+   "min": 0,
+   "max": 20
+  }
+ ],
+ "columns": [
+  "kind",
+  "D",
+  "T",
+  "hole"
+ ],
+ "rows": [
+  {
+   "name": "Ø3×1",
+   "values": {
+    "kind": 1,
+    "D": 3,
+    "T": 1,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø3×2",
+   "values": {
+    "kind": 1,
+    "D": 3,
+    "T": 2,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø4×2",
+   "values": {
+    "kind": 1,
+    "D": 4,
+    "T": 2,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø5×1",
+   "values": {
+    "kind": 1,
+    "D": 5,
+    "T": 1,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø5×2",
+   "values": {
+    "kind": 1,
+    "D": 5,
+    "T": 2,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø5×3",
+   "values": {
+    "kind": 1,
+    "D": 5,
+    "T": 3,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø6×2",
+   "values": {
+    "kind": 1,
+    "D": 6,
+    "T": 2,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø6×3",
+   "values": {
+    "kind": 1,
+    "D": 6,
+    "T": 3,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø8×2",
+   "values": {
+    "kind": 1,
+    "D": 8,
+    "T": 2,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø8×3",
+   "values": {
+    "kind": 1,
+    "D": 8,
+    "T": 3,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø8×4",
+   "values": {
+    "kind": 1,
+    "D": 8,
+    "T": 4,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø10×2",
+   "values": {
+    "kind": 1,
+    "D": 10,
+    "T": 2,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø10×3",
+   "values": {
+    "kind": 1,
+    "D": 10,
+    "T": 3,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø10×5",
+   "values": {
+    "kind": 1,
+    "D": 10,
+    "T": 5,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø12×3",
+   "values": {
+    "kind": 1,
+    "D": 12,
+    "T": 3,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø12×5",
+   "values": {
+    "kind": 1,
+    "D": 12,
+    "T": 5,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø15×3",
+   "values": {
+    "kind": 1,
+    "D": 15,
+    "T": 3,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø15×5",
+   "values": {
+    "kind": 1,
+    "D": 15,
+    "T": 5,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø20×3",
+   "values": {
+    "kind": 1,
+    "D": 20,
+    "T": 3,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø20×5",
+   "values": {
+    "kind": 1,
+    "D": 20,
+    "T": 5,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ø20×10",
+   "values": {
+    "kind": 1,
+    "D": 20,
+    "T": 10,
+    "hole": 0
+   }
+  },
+  {
+   "name": "Ring 6×2×3",
+   "values": {
+    "kind": 2,
+    "D": 6,
+    "T": 3,
+    "hole": 2
+   }
+  },
+  {
+   "name": "Ring 8×3×3",
+   "values": {
+    "kind": 2,
+    "D": 8,
+    "T": 3,
+    "hole": 3
+   }
+  },
+  {
+   "name": "Ring 10×4×3",
+   "values": {
+    "kind": 2,
+    "D": 10,
+    "T": 3,
+    "hole": 4
+   }
+  },
+  {
+   "name": "Ring 10×5×5",
+   "values": {
+    "kind": 2,
+    "D": 10,
+    "T": 5,
+    "hole": 5
+   }
+  },
+  {
+   "name": "Ring 12×6×3",
+   "values": {
+    "kind": 2,
+    "D": 12,
+    "T": 3,
+    "hole": 6
+   }
+  },
+  {
+   "name": "Ring 15×6×3",
+   "values": {
+    "kind": 2,
+    "D": 15,
+    "T": 3,
+    "hole": 6
+   }
+  },
+  {
+   "name": "Ring 20×10×5",
+   "values": {
+    "kind": 2,
+    "D": 20,
+    "T": 5,
+    "hole": 10
+   }
+  },
+  {
+   "name": "CS Ø10×3 M3",
+   "values": {
+    "kind": 3,
+    "D": 10,
+    "T": 3,
+    "hole": 3
+   }
+  },
+  {
+   "name": "CS Ø12×3 M3",
+   "values": {
+    "kind": 3,
+    "D": 12,
+    "T": 3,
+    "hole": 3
+   }
+  },
+  {
+   "name": "CS Ø12×4 M3",
+   "values": {
+    "kind": 3,
+    "D": 12,
+    "T": 4,
+    "hole": 3
+   }
+  },
+  {
+   "name": "CS Ø15×4 M4",
+   "values": {
+    "kind": 3,
+    "D": 15,
+    "T": 4,
+    "hole": 4
+   }
+  },
+  {
+   "name": "CS Ø20×4 M4",
+   "values": {
+    "kind": 3,
+    "D": 20,
+    "T": 4,
+    "hole": 4
+   }
+  },
+  {
+   "name": "CS Ø25×5 M5",
+   "values": {
+    "kind": 3,
+    "D": 25,
+    "T": 5,
+    "hole": 5
+   }
+  }
+ ],
+ "default": "Ø10×3",
+ "checks": {
+  "Ø10×3": {
+   "size": [
+    10,
+    10,
+    3
+   ],
+   "connectors": [
+    "Face",
+    "Back face",
+    "Axis"
+   ],
+   "connector_at": {
+    "Face": [
+     0,
+     0,
+     3
+    ]
+   },
+   "metrics": {
+    "Diameter": 10,
+    "Thickness": 3,
+    "Surface field": 368
+   },
+   "partNumber": "NdFeB N52 Ø10×3 NiCuNi"
+  },
+  "Ring 10×4×3": {
+   "size": [
+    10,
+    10,
+    3
+   ],
+   "metrics": {
+    "Bore Ø": 4
+   },
+   "partNumber": "NdFeB N52 ring 10×4×3 NiCuNi"
+  },
+  "CS Ø12×4 M3": {
+   "size": [
+    12,
+    12,
+    4
+   ],
+   "metrics": {
+    "Bore Ø": 3.4
+   },
+   "partNumber": "NdFeB N52 CS Ø12×4 M3 NiCuNi"
+  }
+ }
+}

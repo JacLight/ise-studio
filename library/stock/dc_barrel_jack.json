@@ -1,0 +1,81 @@
+{
+ "id": "dc_barrel_jack",
+ "name": "DC barrel jack",
+ "category": "Electronics",
+ "summary": "DC power jacks for 5.5 × 2.1 mm plugs: DC-005 PCB through-hole (board top on z = 0, socket facing −Y) and DC-022 M8 panel mount (panel's back face on z = 0, opening up +Z).",
+ "keywords": [
+  "DC jack",
+  "barrel jack",
+  "power jack",
+  "DC-005",
+  "DC-022",
+  "5.5x2.1",
+  "2.1mm",
+  "power socket",
+  "PJ-002A"
+ ],
+ "source": [
+  "common.js",
+  "elec.js",
+  "dc_barrel_jack.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "PBT (black)": 1310,
+  "Brass, tin-plated": 8500,
+  "Copper alloy, silver-plated": 8900
+ },
+ "params": [
+  {
+   "key": "model",
+   "label": "Model (0 DC-005 PCB, 1 DC-022 panel)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "model"
+ ],
+ "rows": [
+  {
+   "name": "DC-005 PCB",
+   "values": {
+    "model": 0
+   }
+  },
+  {
+   "name": "DC-022 panel",
+   "values": {
+    "model": 1
+   }
+  }
+ ],
+ "default": "DC-005 PCB",
+ "checks": {
+  "DC-005 PCB": {
+   "partNumber": "DC-005 5.5×2.1",
+   "connectors": [
+    "Board",
+    "Mating face",
+    "Board edge"
+   ],
+   "connector_at": {
+    "Mating face": [
+     0,
+     0,
+     6.5
+    ]
+   }
+  },
+  "DC-022 panel": {
+   "partNumber": "DC-022 5.5×2.1",
+   "connectors": [
+    "Panel",
+    "Mating face"
+   ]
+  }
+ }
+}

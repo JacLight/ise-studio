@@ -279,7 +279,7 @@ pub struct Metric {
 }
 
 /// Positions, normals and indices of a solid, normals split at sharp edges.
-fn mesh_with_normals(solid: &Manifold) -> (Vec<f32>, Vec<f32>, Vec<u32>) {
+pub fn mesh_with_normals(solid: &Manifold) -> (Vec<f32>, Vec<f32>, Vec<u32>) {
     // Normal channel 0 is the first property after x, y, z: vertices export as [x, y, z, nx, ny, nz].
     let with_normals = solid.calculate_normals(0, SHARP_ANGLE);
     let (props, n_props, indices) = with_normals.to_mesh_f32();
@@ -416,6 +416,21 @@ fn centroid(positions: &[f32], indices: &[u32]) -> [f64; 3] {
         }
     }
     if volume.abs() < 1e-12 { [0.0; 3] } else { c.map(|x| x / volume) }
+}
+
+/// Reading pictures' pixels: the same in either kernel.
+pub(crate) fn install_pictures<'js>(ctx: &Ctx<'js>, native: &Object<'js>) -> rquickjs::Result<()> {
+    native.set(
+        "imageInfo",
+        Function::new(ctx.clone(), |ctx: Ctx<'js>, sha: String| -> rquickjs::Result<Vec<f64>> { crate::decor::info(&sha).map_err(|e| throw(&ctx, format!("image: {e}"))) })?,
+    )?;
+    native.set(
+        "imageGrid",
+        Function::new(ctx.clone(), |ctx: Ctx<'js>, sha: String, channel: String, nx: f64, ny: f64| -> rquickjs::Result<Vec<f64>> {
+            crate::decor::grid(&sha, &channel, nx.max(0.0) as usize, ny.max(0.0) as usize).map_err(|e| throw(&ctx, format!("image: {e}")))
+        })?,
+    )?;
+    Ok(())
 }
 
 fn install_native<'js>(ctx: &Ctx<'js>, arena: &Rc<RefCell<Arena>>) -> rquickjs::Result<()> {
@@ -791,6 +806,68 @@ fn install_native<'js>(ctx: &Ctx<'js>, arena: &Rc<RefCell<Arena>>) -> rquickjs::
                 let loops: Vec<crate::sketch::Loop> = serde_json::from_str(&loops).map_err(|e| throw(&ctx, format!("sketch: {e}")))?;
                 let polys: Vec<Vec<[f64; 2]>> = loops.iter().map(|l| crate::sketch::polygon(l, tolerance)).collect();
                 Ok(push_profile(&arena, CrossSection::from_polygons(&polys)))
+            })?,
+        )?;
+    }
+
+    install_pictures(ctx, &native)?;
+
+    {
+        let arena = arena.clone();
+        native.set(
+            "relief",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String, options: String, tolerance: f64| -> rquickjs::Result<u32> {
+                let m = crate::decor::relief(&sha, &options, tolerance, crate::decor::relief_budget(tolerance)).map_err(|e| throw(&ctx, e))?;
+                Ok(push_solid(&arena, m))
+            })?,
+        )?;
+    }
+
+    {
+        let arena = arena.clone();
+        native.set(
+            "trace",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String, options: String, tolerance: f64| -> rquickjs::Result<u32> {
+                let loops = crate::decor::trace(&sha, &options, tolerance).map_err(|e| throw(&ctx, e))?;
+                Ok(push_profile(&arena, crate::decor::profile(&loops)))
+            })?,
+        )?;
+    }
+
+    {
+        let arena = arena.clone();
+        native.set(
+            "text",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, options: String, tolerance: f64| -> rquickjs::Result<u32> {
+                let c = crate::decor::text(&options, tolerance).map_err(|e| throw(&ctx, e))?;
+                Ok(push_profile(&arena, c))
+            })?,
+        )?;
+    }
+
+    {
+        let arena = arena.clone();
+        native.set(
+            "wrap",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, h: u32, radius: f64, tolerance: f64| -> rquickjs::Result<u32> {
+                let m = {
+                    let a = arena.borrow();
+                    let s = a.solids.get(h as usize).ok_or_else(|| throw(&ctx, "unknown solid"))?;
+                    crate::relief::wrap(s, radius, tolerance).map_err(|e| throw(&ctx, e))?
+                };
+                Ok(push_solid(&arena, m))
+            })?,
+        )?;
+    }
+
+    {
+        let arena = arena.clone();
+        native.set(
+            "ppoints",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, h: u32| -> rquickjs::Result<String> {
+                let a = arena.borrow();
+                let p = a.profiles.get(h as usize).ok_or_else(|| throw(&ctx, "unknown profile"))?;
+                Ok(serde_json::to_string(&p.to_polygons()).unwrap())
             })?,
         )?;
     }

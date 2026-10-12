@@ -1,0 +1,75 @@
+{
+ "id": "rocker_switch",
+ "name": "Rocker switch",
+ "category": "Electronics",
+ "summary": "KCD1 snap-in rocker switches (21 × 15 mm bezel, 19 × 13 mm cutout): KCD1-101 SPST black / red, KCD1-102 SPDT. Panel front on z = 0, bezel up +Z, body down.",
+ "keywords": [
+  "rocker switch",
+  "KCD1",
+  "KCD1-101",
+  "boat switch",
+  "power switch",
+  "on off switch",
+  "snap-in switch"
+ ],
+ "source": [
+  "common.js",
+  "elec.js",
+  "rocker_switch.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Polyamide (black)": 1140,
+  "Polycarbonate (red)": 1200,
+  "Brass, tin-plated": 8500
+ },
+ "params": [
+  {
+   "key": "model",
+   "label": "Model (0 KCD1-101 black, 1 KCD1-101 red, 2 KCD1-102 black)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 2,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "model"
+ ],
+ "rows": [
+  {
+   "name": "KCD1-101 black",
+   "values": {
+    "model": 0
+   }
+  },
+  {
+   "name": "KCD1-101 red",
+   "values": {
+    "model": 1
+   }
+  },
+  {
+   "name": "KCD1-102 black",
+   "values": {
+    "model": 2
+   }
+  }
+ ],
+ "default": "KCD1-101 black",
+ "checks": {
+  "KCD1-101 black": {
+   "partNumber": "KCD1-101 black",
+   "connectors": [
+    "Panel",
+    "Rocker",
+    "Terminal 1",
+    "Terminal 2"
+   ],
+   "metrics": {
+    "Cutout width": 19
+   }
+  }
+ }
+}

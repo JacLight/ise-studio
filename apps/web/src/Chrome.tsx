@@ -140,7 +140,7 @@ export function ToolRail(props: {
   );
 }
 
-const VIEW_LABELS: Record<ViewName, string> = { perspective: "Perspective", top: "Top", front: "Front", bottom: "Bottom" };
+const VIEW_LABELS: Record<ViewName, string> = { perspective: "Perspective", iso: "Isometric", front: "Front", back: "Back", left: "Left", right: "Right", top: "Top", bottom: "Bottom" };
 
 export function ViewBar(props: {
   view: ViewName;

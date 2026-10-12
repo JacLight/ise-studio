@@ -1,0 +1,60 @@
+{
+ "id": "dc_motor_130",
+ "name": "130 DC motor",
+ "category": "Motors",
+ "summary": "130-size brushed DC motor (Mabuchi FA-130RA outline), 20.1 × 15.1 × 25.1 mm can, Ø2 shaft. Shaft up +Z, can front on z = 0.",
+ "keywords": [
+  "FA-130",
+  "130 motor",
+  "DC motor",
+  "toy motor",
+  "brushed motor",
+  "Mabuchi",
+  "hobby motor",
+  "RE-140"
+ ],
+ "source": [
+  "common.js",
+  "dc_motor_130.js"
+ ],
+ "display_tolerance": 0.02,
+ "materials": {
+  "FA-130 can, magnets and armature (lumped)": 2900.0,
+  "PBT (white)": 1310,
+  "Brass": 8500,
+  "Steel": 7850
+ },
+ "params": [
+  {
+   "key": "model",
+   "label": "Model (0 FA-130RA)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 0,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "model"
+ ],
+ "rows": [
+  {
+   "name": "FA-130RA",
+   "values": {
+    "model": 0
+   }
+  }
+ ],
+ "default": "FA-130RA",
+ "checks": {
+  "FA-130RA": {
+   "massG": 17,
+   "connectors": [
+    "Shaft",
+    "Boss",
+    "Face"
+   ]
+  }
+ }
+}

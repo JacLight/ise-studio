@@ -1,0 +1,155 @@
+{
+ "id": "spring_extension",
+ "name": "Extension spring",
+ "category": "Springs",
+ "summary": "Helical extension (tension) spring, music wire, close-wound with a full loop at each end (wire × OD × overall length). Axis +Z, bottom loop's outside on z = 0.",
+ "keywords": [
+  "spring",
+  "extension spring",
+  "tension spring",
+  "pull spring",
+  "hook spring",
+  "coil spring",
+  "music wire",
+  "spring assortment"
+ ],
+ "source": [
+  "common.js",
+  "spring.js",
+  "spring_extension.js"
+ ],
+ "display_tolerance": 0.02,
+ "material": "Music wire (EN 10270-1 SH)",
+ "materials": {
+  "Music wire (EN 10270-1 SH)": 7850
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Wire diameter",
+   "value": 0.8,
+   "unit": "mm",
+   "min": 0.2,
+   "max": 5,
+   "step": 0.1
+  },
+  {
+   "key": "od",
+   "label": "Outside diameter",
+   "value": 6,
+   "unit": "mm",
+   "min": 2,
+   "max": 60,
+   "step": 0.5
+  },
+  {
+   "key": "length",
+   "label": "Overall length",
+   "value": 30,
+   "unit": "mm",
+   "min": 10,
+   "max": 300,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "d",
+  "od",
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "0.5×4×20",
+   "values": {
+    "d": 0.5,
+    "od": 4,
+    "length": 20
+   }
+  },
+  {
+   "name": "0.6×5×25",
+   "values": {
+    "d": 0.6,
+    "od": 5,
+    "length": 25
+   }
+  },
+  {
+   "name": "0.8×6×30",
+   "values": {
+    "d": 0.8,
+    "od": 6,
+    "length": 30
+   }
+  },
+  {
+   "name": "0.8×8×40",
+   "values": {
+    "d": 0.8,
+    "od": 8,
+    "length": 40
+   }
+  },
+  {
+   "name": "1×8×40",
+   "values": {
+    "d": 1.0,
+    "od": 8,
+    "length": 40
+   }
+  },
+  {
+   "name": "1×10×50",
+   "values": {
+    "d": 1.0,
+    "od": 10,
+    "length": 50
+   }
+  },
+  {
+   "name": "1.2×10×60",
+   "values": {
+    "d": 1.2,
+    "od": 10,
+    "length": 60
+   }
+  },
+  {
+   "name": "1.5×12×70",
+   "values": {
+    "d": 1.5,
+    "od": 12,
+    "length": 70
+   }
+  }
+ ],
+ "default": "0.8×6×30",
+ "checks": {
+  "0.8×6×30": {
+   "partNumber": "Extension spring 0.8×6×30",
+   "metrics": {
+    "Overall length": 30,
+    "Length inside loops": 28.4
+   },
+   "connectors": [
+    "Bottom end",
+    "Top end",
+    "Bottom loop",
+    "Top loop",
+    "Axis"
+   ],
+   "connector_at": {
+    "Top end": [
+     0,
+     1.2,
+     29.2
+    ],
+    "Bottom end": [
+     0,
+     -1.2,
+     0.8
+    ]
+   }
+  }
+ }
+}

@@ -26,9 +26,9 @@ impl Source {
 
     /// Every part as a mesh where it sits in the design (assemblies: every
     /// part of every member, placed), named, with its material's look.
-    fn meshes(&self, tolerance: f64, normals: bool, out: &mut Vec<MeshBody>) -> Result<(), String> {
+    fn mesh_bodies(&self, tolerance: f64, normals: bool, out: &mut Vec<MeshBody>) -> Result<(), String> {
         for m in &self.members {
-            m.meshes(tolerance, normals, out)?;
+            m.mesh_bodies(tolerance, normals, out)?;
         }
         if self.program.is_none() && self.boxed.is_none() {
             return Ok(());
@@ -55,7 +55,7 @@ pub(crate) fn mesh_file(s: &Source, ext: &str, part: Option<&str>, tolerance: f6
             item.name.clone()
         }
         None => {
-            s.meshes(tolerance, normals, &mut parts)?;
+            s.mesh_bodies(tolerance, normals, &mut parts)?;
             s.name.clone()
         }
     };

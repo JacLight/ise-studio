@@ -61,6 +61,31 @@ pub struct ChatRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
     pub at: u64,
+    /// Pictures (or PDFs) sent with the message.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
+}
+
+/// A picture or PDF pasted, dropped or attached in the panel: kept in the
+/// session's folder (`attachments/<id>.<kind>`), named by its content hash.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Attachment {
+    pub id: String,
+    /// "png", "jpg", "gif", "webp" or "pdf".
+    pub kind: String,
+    /// The file it came from ("photo.jpg", "pasted picture").
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<usize>,
+}
+
+impl Attachment {
+    /// Its file, relative to the session's folder.
+    pub fn file(&self) -> String {
+        format!("attachments/{}.{}", self.id, self.kind)
+    }
 }
 
 fn now_ms() -> u64 {
@@ -137,12 +162,69 @@ impl Ai {
     }
 
     fn record(&self, app: &App, role: &str, text: &str, user: Option<&str>) {
-        let r = ChatRecord { role: role.into(), text: text.into(), user: user.map(str::to_owned), at: now_ms() };
+        self.record_with(app, role, text, user, Vec::new());
+    }
+
+    fn record_with(&self, app: &App, role: &str, text: &str, user: Option<&str>, attachments: Vec<Attachment>) {
+        let r = ChatRecord { role: role.into(), text: text.into(), user: user.map(str::to_owned), at: now_ms(), attachments };
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(self.folder.join("chat.jsonl")) {
             let _ = writeln!(f, "{}", serde_json::to_string(&r).unwrap());
         }
         let _ = app.events.send(json!({ "type": "ai", "event": "message", "record": r }).to_string().into());
         self.chat.lock().unwrap().push(r);
+    }
+
+    /// Keeps a picture or PDF for the conversation (once per content).
+    pub fn keep_attachment(&self, bytes: &[u8], kind: &str, name: &str, size: Option<(usize, usize)>) -> Result<Attachment, String> {
+        let dir = self.folder.join("attachments");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("could not keep the attachment: {e}"))?;
+        let id = de_shape::assets::sha256(bytes);
+        let a = Attachment { id: id.clone(), kind: kind.into(), name: name.trim().chars().take(120).collect(), width: size.map(|s| s.0), height: size.map(|s| s.1) };
+        let path = dir.join(format!("{id}.{kind}"));
+        if !path.exists() {
+            std::fs::write(&path, bytes).map_err(|e| format!("could not keep the attachment: {e}"))?;
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("index.jsonl")) {
+            let _ = writeln!(f, "{}", serde_json::to_string(&a).unwrap());
+        }
+        Ok(a)
+    }
+
+    /// A kept attachment's description, by id (the latest name it was sent under).
+    fn attachment_info(&self, id: &str) -> Option<Attachment> {
+        let text = std::fs::read_to_string(self.folder.join("attachments/index.jsonl")).ok()?;
+        text.lines().rev().filter_map(|l| serde_json::from_str::<Attachment>(l).ok()).find(|a| a.id == id)
+    }
+
+    /// A kept attachment's bytes and kind.
+    pub fn attachment(&self, id: &str) -> Option<(Vec<u8>, String)> {
+        if id.len() != 64 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+            return None;
+        }
+        let a = self.attachment_info(id)?;
+        std::fs::read(self.folder.join(a.file())).ok().map(|b| (b, a.kind))
+    }
+
+    /// The message's content blocks: each attachment (pictures cut down to
+    /// what the model reads), then the text.
+    fn content(&self, prompt: &str, attachments: &[Attachment]) -> Vec<serde_json::Value> {
+        use base64::Engine;
+        let mut blocks = Vec::new();
+        for a in attachments {
+            let Ok(bytes) = std::fs::read(self.folder.join(a.file())) else { continue };
+            let (data, media) = match a.kind.as_str() {
+                // Claude reads pictures up to about 1568 pixels a side; larger ones go smaller.
+                "png" | "jpg" => match de_shape::image::downscale(&bytes, 1568) {
+                    Ok(Some(small)) => (small, "image/png"),
+                    _ => (bytes, crate::pictures::media_type(&a.kind)),
+                },
+                _ => (bytes, crate::pictures::media_type(&a.kind)),
+            };
+            let source = json!({ "type": "base64", "media_type": media, "data": base64::engine::general_purpose::STANDARD.encode(&data) });
+            blocks.push(if a.kind == "pdf" { json!({ "type": "document", "source": source }) } else { json!({ "type": "image", "source": source }) });
+        }
+        blocks.push(json!({ "type": "text", "text": prompt }));
+        blocks
     }
 
     fn broadcast(app: &App, event: serde_json::Value) {
@@ -197,7 +279,10 @@ impl Ai {
             .filter(|r| r.role == "user" || r.role == "assistant")
             .rev()
             .take(20)
-            .map(|r| format!("{}: {}", if r.role == "user" { "Person" } else { "You" }, r.text))
+            .map(|r| {
+                let attached: Vec<String> = r.attachments.iter().map(|a| format!(" [attached {} as {}]", a.name, a.file())).collect();
+                format!("{}: {}{}", if r.role == "user" { "Person" } else { "You" }, r.text, attached.concat())
+            })
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
@@ -428,11 +513,13 @@ impl Ai {
     }
 
     /// A message from the panel.
-    pub async fn ask(self: &Arc<Self>, app: Arc<App>, user: &str, text: &str, view: ViewContext) -> Result<(), String> {
+    pub async fn ask(self: &Arc<Self>, app: Arc<App>, user: &str, text: &str, view: ViewContext, attachments: &[String]) -> Result<(), String> {
         let text = text.trim();
-        if text.is_empty() {
+        let attachments: Vec<Attachment> = attachments.iter().map(|id| self.attachment_info(id).ok_or_else(|| format!("attachment {id} is not here (attach it again)"))).collect::<Result<_, _>>()?;
+        if text.is_empty() && attachments.is_empty() {
             return Err("empty message".into());
         }
+        let text = if text.is_empty() { "(see the attached picture)" } else { text };
         *self.last_user.lock().unwrap() = Some(user.to_string());
         let mut st = self.state.lock().await;
         // Starting a session: resume the saved one if it is still valid, else
@@ -442,12 +529,12 @@ impl Ai {
         let carry = if starting && resume.is_none() { self.continuation() } else { String::new() };
         let prompt = {
             let project = app.project.lock().unwrap();
-            let p = format!("{carry}{}{text}", self.context(&project, &view, if starting { 0 } else { st.seen_revision }));
+            let p = format!("{carry}{}{}{text}", self.context(&project, &view, if starting { 0 } else { st.seen_revision }), attached(&attachments));
             st.seen_revision = project.revision().0;
             p
         };
-        self.record(&app, "user", text, Some(user));
-        let line = json!({ "type": "user", "message": { "role": "user", "content": [{ "type": "text", "text": prompt }] } }).to_string() + "\n";
+        self.record_with(&app, "user", text, Some(user), attachments.clone());
+        let line = json!({ "type": "user", "message": { "role": "user", "content": self.content(&prompt, &attachments) } }).to_string() + "\n";
         if starting {
             drop(st);
             let running = self.spawn(Arc::clone(&app), resume.as_deref())?;
@@ -508,10 +595,35 @@ fn with_prefix(line: &str, prefix: &str) -> String {
         return line.to_string();
     }
     let mut v: serde_json::Value = serde_json::from_str(line.trim()).unwrap_or_default();
-    if let Some(t) = v["message"]["content"][0]["text"].as_str() {
-        v["message"]["content"][0]["text"] = json!(format!("{prefix}{t}"));
+    if let Some(blocks) = v["message"]["content"].as_array_mut()
+        && let Some(b) = blocks.iter_mut().find(|b| b["type"] == "text")
+        && let Some(t) = b["text"].as_str()
+    {
+        b["text"] = json!(format!("{prefix}{t}"));
     }
     v.to_string() + "\n"
+}
+
+/// What the person attached, for the prompt: where each file is, so a part
+/// can use a picture (`./forma image add` puts it in the project).
+fn attached(list: &[Attachment]) -> String {
+    if list.is_empty() {
+        return String::new();
+    }
+    let lines: Vec<String> = list
+        .iter()
+        .map(|a| {
+            let size = match (a.width, a.height) {
+                (Some(w), Some(h)) => format!(", {w} × {h} px"),
+                _ => String::new(),
+            };
+            format!("- {} ({}{size}): {}", a.name, a.kind.to_uppercase(), a.file())
+        })
+        .collect();
+    format!(
+        "<attachments>\nThe person attached (shown to you above; the files are in your folder):\n{}\nFor a part to use a picture (a relief, a trace, measuring it), add it to the project: ./forma image add <file>.\n</attachments>\n\n",
+        lines.join("\n")
+    )
 }
 
 /// A one-line description of an entity, for context.
