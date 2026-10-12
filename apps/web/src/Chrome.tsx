@@ -94,6 +94,15 @@ export function ToolRail(props: {
   /** The Electronics (PCB) workspace open. */
   pcbOpen: boolean;
   onPcb: () => void;
+  /** Drafting on a working plane (lines, arcs, text, dimensions…). */
+  drafting?: boolean;
+  onDraft?: () => void;
+  /** Data: sheets and tables. */
+  dataOpen?: boolean;
+  onData?: () => void;
+  /** The console. */
+  consoleOpen?: boolean;
+  onConsole?: () => void;
 }) {
   const active = (p: PanelKind) => (props.panel === p ? "active" : "");
   return (
@@ -103,6 +112,7 @@ export function ToolRail(props: {
       <IconButton icon="plus" label="Add box part" onClick={props.onAdd} disabled={!props.canEdit} />
       <IconButton icon="package" label="Stock parts: screws, bearings, motors… (I)" className={props.stockOpen ? "active" : ""} onClick={props.onStock} disabled={!props.canEdit} />
       <IconButton icon="pencil" label="Sketch (K)" className={props.sketching ? "active" : ""} onClick={props.onSketch} disabled={!props.canEdit} />
+      {props.onDraft && <IconButton icon="dDim" label="Draft: lines, arcs, splines, text and dimensions in 3D (G)" className={props.drafting ? "active" : ""} onClick={props.onDraft} disabled={!props.canEdit} />}
       <IconButton
         icon="fillet"
         label={props.canEdge || props.edging ? "Round or bevel edges (E)" : "Round or bevel edges (E) · select a part first"}
@@ -134,6 +144,8 @@ export function ToolRail(props: {
       <IconButton icon="chip" label="Electronics: PCB boards (L)" className={props.pcbOpen ? "active" : ""} onClick={props.onPcb} />
       <IconButton icon="list" label="Bill of materials (B)" className={props.bench === "bom" ? "active" : ""} onClick={() => props.onBench("bom")} />
       <IconButton icon="truck" label="Sourcing: suppliers, quotes" className={props.bench === "sourcing" ? "active" : ""} onClick={() => props.onBench("sourcing")} />
+      {props.onData && <IconButton icon="table" label="Data: sheets and tables (T)" className={props.dataOpen ? "active" : ""} onClick={props.onData} />}
+      {props.onConsole && <IconButton icon="terminal" label="Console (`)" className={props.consoleOpen ? "active" : ""} onClick={props.onConsole} />}
       <IconButton icon="spark" label="Open AI chat (A)" className="ai-tool" onClick={props.onAi} />
       <IconButton icon="minus" label="Hide tools" onClick={props.onHide} />
     </nav>

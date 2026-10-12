@@ -125,6 +125,27 @@ export type EntityView = {
   configured?: Configured;
   /** An instance: where it is now (where its joints put it when they hold it). */
   placed?: Placed;
+  /** A spreadsheet: what each cell shows. */
+  sheet?: SheetValues;
+  /** A draft object where it is now: lines to draw, label, measured value. */
+  draft?: DraftShape;
+};
+
+export type CommandInfo = { name: string; plugin: string; schema: unknown };
+export type CellValue = { value?: number; text?: string; unit?: string; shown: string; formula?: string; error?: string };
+export type SheetValues = { cells: Record<string, CellValue>; aliases: Record<string, string>; errors: number };
+type V3 = [number, number, number];
+export type DraftShape = {
+  points: V3[];
+  lines: V3[][];
+  closed: boolean;
+  length: number;
+  area?: number;
+  plane?: [V3, V3, V3];
+  hatch?: [V3, V3][];
+  label?: [V3, string];
+  value?: number;
+  arrows?: [V3, V3][];
 };
 
 /** Where an instance is in its parent: position, rotation (degrees about X, Y, Z) and the same as a quaternion. */
@@ -501,6 +522,14 @@ export class Engine {
   /** Sends a message to Forma AI, with what the person is looking at. */
   private viewListeners = new Set<(v: ViewCommand) => void>();
 
+  /** The commands the engine accepts, with their parameter schemas (from the snapshot). */
+  commands: CommandInfo[] = [];
+
+  /** Shows something in this person's view, as Forma AI's view commands do (the console uses it). */
+  emitView(v: ViewCommand) {
+    for (const l of this.viewListeners) l(v);
+  }
+
   /** Follow view commands addressed to this person. Returns the unsubscribe. */
   onView(listener: (v: ViewCommand) => void) {
     this.viewListeners.add(listener);
@@ -565,6 +594,7 @@ export class Engine {
         this.resolveMeshes(message.entities);
         const entities = new Map<string, EntityView>();
         for (const e of message.entities as EntityView[]) entities.set(e.id, e);
+        if (Array.isArray(message.commands)) this.commands = message.commands as CommandInfo[];
         this.update({
           connection: "online",
           revision: message.revision,

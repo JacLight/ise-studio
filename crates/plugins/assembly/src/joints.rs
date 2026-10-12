@@ -271,6 +271,11 @@ impl Placed {
     pub fn transform(&self) -> Transform {
         Transform { at: self.at, rot: self.rot }
     }
+
+    /// Placed by something other than a joint (an array the instance is a copy in).
+    pub fn at_transform(t: Transform) -> Placed {
+        Placed::new(t, None, None, BTreeMap::new())
+    }
 }
 
 // ---- Solving -------------------------------------------------------------------
