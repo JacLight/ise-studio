@@ -1,7 +1,7 @@
 # Build output
 /target/
 /apps/web/dist/
-node_modules/
+node_modules
 
 # Local project data written by the engine server
 /projects/
