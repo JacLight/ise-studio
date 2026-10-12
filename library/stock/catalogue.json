@@ -16,6 +16,7 @@
     "heatset_insert",
     "iso8734",
     "bearing_deep_groove",
+    "bearing_flanged",
     "linear_bearing_lmuu",
     "linear_rod",
     "shaft_collar",
