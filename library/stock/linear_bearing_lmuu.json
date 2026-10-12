@@ -3,13 +3,23 @@
  "name": "Linear ball bushing",
  "standard": "LM…UU",
  "category": "Bearings & motion",
- "summary": "LM…UU linear ball bushing, sealed both ends: hardened sleeve with retaining-ring grooves, acetal retainer, recirculating balls. Axis +Z, end A on z = 0",
+ "summary": "LM…UU linear ball bushing, sealed both ends: standard, long (LUU), round-flanged (LMF) and square-flanged (LMK). Hardened sleeve (retaining-ring grooves or flange), acetal retainer, recirculating balls. Axis +Z, end A (flange side) on z = 0",
  "keywords": [
   "LM8UU",
+  "LM8LUU",
+  "LMF8UU",
+  "LMK8UU",
+  "LMK8LUU",
+  "LMF8LUU",
+  "LM10UU",
+  "LM12UU",
+  "LM16UU",
   "linear bearing",
   "linear bushing",
   "ball bushing",
+  "flanged linear bearing",
   "LMU",
+  "SC8UU",
   "3D printer"
  ],
  "source": [
@@ -30,34 +40,286 @@
    "unit": "mm",
    "min": 3,
    "max": 50
+  },
+  {
+   "key": "long",
+   "label": "Long (double length, 1) or standard (0)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  },
+  {
+   "key": "flange",
+   "label": "Flange: 0 none, 1 round (LMF), 2 square (LMK)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 2,
+   "step": 1
   }
  ],
  "columns": [
-  "dr"
+  "dr",
+  "long",
+  "flange"
  ],
  "rows": [
   {
    "name": "LM6UU",
    "values": {
-    "dr": 6
+    "dr": 6,
+    "long": 0,
+    "flange": 0
    }
   },
   {
    "name": "LM8UU",
    "values": {
-    "dr": 8
+    "dr": 8,
+    "long": 0,
+    "flange": 0
    }
   },
   {
    "name": "LM10UU",
    "values": {
-    "dr": 10
+    "dr": 10,
+    "long": 0,
+    "flange": 0
    }
   },
   {
    "name": "LM12UU",
    "values": {
-    "dr": 12
+    "dr": 12,
+    "long": 0,
+    "flange": 0
+   }
+  },
+  {
+   "name": "LM16UU",
+   "values": {
+    "dr": 16,
+    "long": 0,
+    "flange": 0
+   }
+  },
+  {
+   "name": "LM20UU",
+   "values": {
+    "dr": 20,
+    "long": 0,
+    "flange": 0
+   }
+  },
+  {
+   "name": "LM6LUU",
+   "values": {
+    "dr": 6,
+    "long": 1,
+    "flange": 0
+   }
+  },
+  {
+   "name": "LM8LUU",
+   "values": {
+    "dr": 8,
+    "long": 1,
+    "flange": 0
+   }
+  },
+  {
+   "name": "LM10LUU",
+   "values": {
+    "dr": 10,
+    "long": 1,
+    "flange": 0
+   }
+  },
+  {
+   "name": "LM12LUU",
+   "values": {
+    "dr": 12,
+    "long": 1,
+    "flange": 0
+   }
+  },
+  {
+   "name": "LM16LUU",
+   "values": {
+    "dr": 16,
+    "long": 1,
+    "flange": 0
+   }
+  },
+  {
+   "name": "LM20LUU",
+   "values": {
+    "dr": 20,
+    "long": 1,
+    "flange": 0
+   }
+  },
+  {
+   "name": "LMF6UU",
+   "values": {
+    "dr": 6,
+    "long": 0,
+    "flange": 1
+   }
+  },
+  {
+   "name": "LMF8UU",
+   "values": {
+    "dr": 8,
+    "long": 0,
+    "flange": 1
+   }
+  },
+  {
+   "name": "LMF10UU",
+   "values": {
+    "dr": 10,
+    "long": 0,
+    "flange": 1
+   }
+  },
+  {
+   "name": "LMF12UU",
+   "values": {
+    "dr": 12,
+    "long": 0,
+    "flange": 1
+   }
+  },
+  {
+   "name": "LMF16UU",
+   "values": {
+    "dr": 16,
+    "long": 0,
+    "flange": 1
+   }
+  },
+  {
+   "name": "LMF20UU",
+   "values": {
+    "dr": 20,
+    "long": 0,
+    "flange": 1
+   }
+  },
+  {
+   "name": "LMF8LUU",
+   "values": {
+    "dr": 8,
+    "long": 1,
+    "flange": 1
+   }
+  },
+  {
+   "name": "LMF10LUU",
+   "values": {
+    "dr": 10,
+    "long": 1,
+    "flange": 1
+   }
+  },
+  {
+   "name": "LMF12LUU",
+   "values": {
+    "dr": 12,
+    "long": 1,
+    "flange": 1
+   }
+  },
+  {
+   "name": "LMF16LUU",
+   "values": {
+    "dr": 16,
+    "long": 1,
+    "flange": 1
+   }
+  },
+  {
+   "name": "LMK6UU",
+   "values": {
+    "dr": 6,
+    "long": 0,
+    "flange": 2
+   }
+  },
+  {
+   "name": "LMK8UU",
+   "values": {
+    "dr": 8,
+    "long": 0,
+    "flange": 2
+   }
+  },
+  {
+   "name": "LMK10UU",
+   "values": {
+    "dr": 10,
+    "long": 0,
+    "flange": 2
+   }
+  },
+  {
+   "name": "LMK12UU",
+   "values": {
+    "dr": 12,
+    "long": 0,
+    "flange": 2
+   }
+  },
+  {
+   "name": "LMK16UU",
+   "values": {
+    "dr": 16,
+    "long": 0,
+    "flange": 2
+   }
+  },
+  {
+   "name": "LMK20UU",
+   "values": {
+    "dr": 20,
+    "long": 0,
+    "flange": 2
+   }
+  },
+  {
+   "name": "LMK8LUU",
+   "values": {
+    "dr": 8,
+    "long": 1,
+    "flange": 2
+   }
+  },
+  {
+   "name": "LMK10LUU",
+   "values": {
+    "dr": 10,
+    "long": 1,
+    "flange": 2
+   }
+  },
+  {
+   "name": "LMK12LUU",
+   "values": {
+    "dr": 12,
+    "long": 1,
+    "flange": 2
+   }
+  },
+  {
+   "name": "LMK16LUU",
+   "values": {
+    "dr": 16,
+    "long": 1,
+    "flange": 2
    }
   }
  ],
@@ -108,6 +370,57 @@
     21,
     30
    ]
+  },
+  "LMK8UU": {
+   "size": [
+    25,
+    25,
+    24
+   ],
+   "connectors": [
+    "Bore",
+    "Flange face",
+    "Hole 1",
+    "Hole 4"
+   ],
+   "connector_at": {
+    "Flange face": [
+     0,
+     0,
+     5
+    ]
+   },
+   "metrics": {
+    "Bolt circle": 24,
+    "Flange diameter": 25
+   },
+   "partNumber": "LMK8UU"
+  },
+  "LMF8LUU": {
+   "size": [
+    32,
+    32,
+    45
+   ],
+   "partNumber": "LMF8LUU"
+  },
+  "LM8LUU": {
+   "size": [
+    15,
+    15,
+    45
+   ],
+   "metrics": {
+    "Retaining ring groove spacing": 35
+   }
+  },
+  "LM16UU": {
+   "size": [
+    28,
+    28,
+    37
+   ],
+   "massG": 69
   }
  }
 }

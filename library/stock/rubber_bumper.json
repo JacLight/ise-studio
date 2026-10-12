@@ -1,0 +1,184 @@
+{
+ "id": "rubber_bumper",
+ "name": "Adhesive bumper",
+ "category": "Seals & feet",
+ "summary": "Self-adhesive clear polyurethane bumper foot, dome or cylinder. Adhesive face on z = 0, bumper down −Z.",
+ "keywords": [
+  "bumper",
+  "bump on",
+  "Bumpon",
+  "rubber feet",
+  "adhesive feet",
+  "self-adhesive",
+  "foot",
+  "pad",
+  "furniture pad",
+  "polyurethane"
+ ],
+ "source": [
+  "common.js",
+  "rubber_bumper.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Polyurethane",
+ "materials": {
+  "Polyurethane": 1100
+ },
+ "params": [
+  {
+   "key": "kind",
+   "label": "Shape (1 dome, 2 cylinder)",
+   "value": 1,
+   "unit": "",
+   "min": 1,
+   "max": 2,
+   "step": 1
+  },
+  {
+   "key": "D",
+   "label": "Diameter",
+   "value": 12.7,
+   "unit": "mm",
+   "min": 4,
+   "max": 40
+  },
+  {
+   "key": "H",
+   "label": "Height",
+   "value": 3.5,
+   "unit": "mm",
+   "min": 1,
+   "max": 20
+  }
+ ],
+ "columns": [
+  "kind",
+  "D",
+  "H"
+ ],
+ "rows": [
+  {
+   "name": "Dome Ø8×2.2",
+   "values": {
+    "kind": 1,
+    "D": 8,
+    "H": 2.2
+   }
+  },
+  {
+   "name": "Dome Ø10×3",
+   "values": {
+    "kind": 1,
+    "D": 10,
+    "H": 3
+   }
+  },
+  {
+   "name": "Dome Ø11.1×5.1",
+   "values": {
+    "kind": 1,
+    "D": 11.1,
+    "H": 5.1
+   }
+  },
+  {
+   "name": "Dome Ø12.7×3.5",
+   "values": {
+    "kind": 1,
+    "D": 12.7,
+    "H": 3.5
+   }
+  },
+  {
+   "name": "Dome Ø16×5",
+   "values": {
+    "kind": 1,
+    "D": 16,
+    "H": 5
+   }
+  },
+  {
+   "name": "Dome Ø20×6",
+   "values": {
+    "kind": 1,
+    "D": 20,
+    "H": 6
+   }
+  },
+  {
+   "name": "Cylinder Ø10×5",
+   "values": {
+    "kind": 2,
+    "D": 10,
+    "H": 5
+   }
+  },
+  {
+   "name": "Cylinder Ø12.7×6.4",
+   "values": {
+    "kind": 2,
+    "D": 12.7,
+    "H": 6.4
+   }
+  },
+  {
+   "name": "Cylinder Ø16×8",
+   "values": {
+    "kind": 2,
+    "D": 16,
+    "H": 8
+   }
+  },
+  {
+   "name": "Cylinder Ø20×10",
+   "values": {
+    "kind": 2,
+    "D": 20,
+    "H": 10
+   }
+  },
+  {
+   "name": "Cylinder Ø22×10",
+   "values": {
+    "kind": 2,
+    "D": 22,
+    "H": 10
+   }
+  }
+ ],
+ "default": "Dome Ø12.7×3.5",
+ "checks": {
+  "Dome Ø12.7×3.5": {
+   "size": [
+    12.7,
+    12.7,
+    3.5
+   ],
+   "connectors": [
+    "Mount face",
+    "Floor contact",
+    "Axis"
+   ],
+   "connector_at": {
+    "Floor contact": [
+     0,
+     0,
+     -3.5
+    ]
+   },
+   "metrics": {
+    "Diameter": 12.7,
+    "Height": 3.5
+   },
+   "partNumber": "Bumper dome Ø12.7×3.5 PU clear"
+  },
+  "Cylinder Ø20×10": {
+   "size": [
+    20,
+    20,
+    10
+   ],
+   "partNumber": "Bumper cylinder Ø20×10 PU clear"
+  }
+ }
+}

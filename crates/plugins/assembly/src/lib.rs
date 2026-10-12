@@ -31,10 +31,18 @@ use std::sync::Arc;
 
 pub mod comments;
 pub mod configs;
+pub mod couplings;
+pub mod dof;
 pub mod fit;
+pub mod geometry;
+pub mod interference;
 pub mod joints;
+pub mod mates;
 pub mod motion;
+pub mod patterns;
+pub mod robot;
 pub mod transform;
+pub mod views;
 pub use comments::{Anchor, CommentReply, CommentThread, Stroke};
 
 pub struct AssemblyPlugin;
@@ -61,6 +69,28 @@ impl Plugin for AssemblyPlugin {
             .command::<joints::CreateJoint>()
             .command::<joints::UpdateJoint>()
             .command::<joints::DeleteJoint>()
+            .component::<couplings::Coupling>()
+            .command::<couplings::CreateCoupling>()
+            .command::<couplings::UpdateCoupling>()
+            .command::<couplings::DeleteCoupling>()
+            .component::<patterns::Pattern>()
+            .command::<patterns::CreatePattern>()
+            .command::<patterns::UpdatePattern>()
+            .command::<patterns::DeletePattern>()
+            .component::<views::Pose>()
+            .command::<views::CreatePose>()
+            .command::<views::UpdatePose>()
+            .command::<views::ApplyPose>()
+            .command::<views::DeletePose>()
+            .component::<views::ExplodedView>()
+            .command::<views::CreateExplode>()
+            .command::<views::UpdateExplode>()
+            .command::<views::DeleteExplode>()
+            .component::<views::MotionStudy>()
+            .command::<views::CreateStudy>()
+            .command::<views::UpdateStudy>()
+            .command::<views::DeleteStudy>()
+            .command::<robot::MoveTo>()
             .command::<configs::SetConfigTable>()
             .component::<fit::FitProfile>()
             .command::<fit::SetFitProfile>()
@@ -554,9 +584,10 @@ impl Command for UpdateInstance {
         }
         // An instance a joint holds goes where the joint puts it.
         let moved = self.at.is_some_and(|a| a != inst.at) || self.rotation.is_some_and(|r| r != inst.rotation);
-        if moved && let Some(why) = joints::held_reason(tx.world(), self.target) {
+        if moved && let Some(why) = joints::held_reason(tx.world(), self.target).or_else(|| patterns::placed_by_pattern(tx.world(), self.target)) {
             return Err(bad(ErrorCode::InvalidParameters, why));
         }
+        let mate_held = moved && !joints::holding(tx.world(), self.target).is_empty();
         if let Some(at) = self.at {
             if !at.iter().all(|v| v.is_finite()) {
                 return Err(bad(ErrorCode::InvalidParameters, "position must be finite"));
@@ -610,6 +641,13 @@ impl Command for UpdateInstance {
         }
         if of_changed || config_changed {
             joints::touch(tx, self.target, parent)?;
+        }
+        if mate_held {
+            joints::remark(tx, parent)?;
+        }
+        // Pattern copies follow their seed's definition and configuration.
+        if of_changed || config_changed {
+            patterns::follow_seed(tx, self.target)?;
         }
         Ok(json!({ "id": self.target }))
     }
@@ -684,6 +722,9 @@ impl Command for MakeUnique {
 
     fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
         let mut inst = tx.get::<Instance>(self.target).cloned().ok_or_else(|| bad(ErrorCode::UnresolvedReference, format!("{} is not an instance", self.target)))?;
+        if let Some(why) = patterns::placed_by_pattern(tx.world(), self.target) {
+            return Err(bad(ErrorCode::InvalidParameters, format!("{} shows its seed's definition: {why}", inst.name)));
+        }
         let copy = copy_definition(tx, inst.of, Some(self.name.unwrap_or_else(|| inst.name.clone())))?;
         tx.remove_dependency(self.target, inst.of)?;
         tx.add_dependency(self.target, copy)?;
@@ -711,6 +752,11 @@ impl Command for DeleteInstance {
 
     fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
         let inst = tx.get::<Instance>(self.target).cloned().ok_or_else(|| bad(ErrorCode::UnresolvedReference, format!("{} is not an instance", self.target)))?;
+        if let Some(why) = patterns::placed_by_pattern(tx.world(), self.target) {
+            return Err(bad(ErrorCode::InvalidParameters, format!("{} cannot be deleted on its own: {why} (lower its count)", inst.name)));
+        }
+        // Patterns of it go, copies and all.
+        patterns::seed_deleted(tx, self.target)?;
         // Its joints go with it; what they held stays where it is.
         joints::delete_joints_of(tx, self.target, inst.parent)?;
         if let Some(parent) = inst.parent {

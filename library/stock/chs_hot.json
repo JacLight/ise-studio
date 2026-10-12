@@ -1,0 +1,253 @@
+{
+ "id": "chs_hot",
+ "name": "Circular hollow section (hot-finished)",
+ "standard": "EN 10210-2",
+ "category": "Structural sections",
+ "summary": "Hot-finished CHS 21.3×2.6 to 406.4×12.5 (EN 10210-2), S355J2H, cut to length. The axis on Z; length along +Z from z = 0.",
+ "keywords": [
+  "CHS",
+  "round tube",
+  "pipe",
+  "circular hollow section",
+  "steel tube",
+  "hot finished",
+  "EN 10210"
+ ],
+ "source": [
+  "common.js",
+  "sections.js",
+  "chs_hot.js"
+ ],
+ "display_tolerance": 0.05,
+ "material": "Structural steel S355J2H",
+ "materials": {
+  "Structural steel S355J2H": 7850
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Outside diameter",
+   "value": 88.9,
+   "unit": "mm",
+   "min": 10,
+   "max": 610
+  },
+  {
+   "key": "t",
+   "label": "Wall",
+   "value": 5,
+   "unit": "mm",
+   "min": 1,
+   "max": 25
+  },
+  {
+   "key": "length",
+   "label": "Length (cut)",
+   "value": 1000,
+   "unit": "mm",
+   "min": 10,
+   "max": 12000
+  }
+ ],
+ "columns": [
+  "d",
+  "t"
+ ],
+ "rows": [
+  {
+   "name": "CHS 21.3×2.6",
+   "values": {
+    "d": 21.3,
+    "t": 2.6
+   }
+  },
+  {
+   "name": "CHS 26.9×3.2",
+   "values": {
+    "d": 26.9,
+    "t": 3.2
+   }
+  },
+  {
+   "name": "CHS 33.7×3.2",
+   "values": {
+    "d": 33.7,
+    "t": 3.2
+   }
+  },
+  {
+   "name": "CHS 42.4×3.2",
+   "values": {
+    "d": 42.4,
+    "t": 3.2
+   }
+  },
+  {
+   "name": "CHS 48.3×3.2",
+   "values": {
+    "d": 48.3,
+    "t": 3.2
+   }
+  },
+  {
+   "name": "CHS 48.3×4",
+   "values": {
+    "d": 48.3,
+    "t": 4
+   }
+  },
+  {
+   "name": "CHS 60.3×4",
+   "values": {
+    "d": 60.3,
+    "t": 4
+   }
+  },
+  {
+   "name": "CHS 60.3×5",
+   "values": {
+    "d": 60.3,
+    "t": 5
+   }
+  },
+  {
+   "name": "CHS 76.1×4",
+   "values": {
+    "d": 76.1,
+    "t": 4
+   }
+  },
+  {
+   "name": "CHS 76.1×5",
+   "values": {
+    "d": 76.1,
+    "t": 5
+   }
+  },
+  {
+   "name": "CHS 88.9×5",
+   "values": {
+    "d": 88.9,
+    "t": 5
+   }
+  },
+  {
+   "name": "CHS 88.9×6.3",
+   "values": {
+    "d": 88.9,
+    "t": 6.3
+   }
+  },
+  {
+   "name": "CHS 114.3×5",
+   "values": {
+    "d": 114.3,
+    "t": 5
+   }
+  },
+  {
+   "name": "CHS 114.3×6.3",
+   "values": {
+    "d": 114.3,
+    "t": 6.3
+   }
+  },
+  {
+   "name": "CHS 139.7×6.3",
+   "values": {
+    "d": 139.7,
+    "t": 6.3
+   }
+  },
+  {
+   "name": "CHS 139.7×8",
+   "values": {
+    "d": 139.7,
+    "t": 8
+   }
+  },
+  {
+   "name": "CHS 168.3×6.3",
+   "values": {
+    "d": 168.3,
+    "t": 6.3
+   }
+  },
+  {
+   "name": "CHS 168.3×8",
+   "values": {
+    "d": 168.3,
+    "t": 8
+   }
+  },
+  {
+   "name": "CHS 219.1×8",
+   "values": {
+    "d": 219.1,
+    "t": 8
+   }
+  },
+  {
+   "name": "CHS 219.1×10",
+   "values": {
+    "d": 219.1,
+    "t": 10
+   }
+  },
+  {
+   "name": "CHS 273×10",
+   "values": {
+    "d": 273,
+    "t": 10
+   }
+  },
+  {
+   "name": "CHS 323.9×10",
+   "values": {
+    "d": 323.9,
+    "t": 10
+   }
+  },
+  {
+   "name": "CHS 355.6×12.5",
+   "values": {
+    "d": 355.6,
+    "t": 12.5
+   }
+  },
+  {
+   "name": "CHS 406.4×12.5",
+   "values": {
+    "d": 406.4,
+    "t": 12.5
+   }
+  }
+ ],
+ "default": "CHS 88.9×5",
+ "checks": {
+  "CHS 88.9×5": {
+   "size": [
+    88.9,
+    88.9,
+    1000
+   ],
+   "partNumber": "HF CHS 88.9×5 × 1000 S355J2H",
+   "massG": 10345.5,
+   "connectors": [
+    "End A",
+    "End B",
+    "Axis",
+    "Surface +X",
+    "Surface +Y"
+   ],
+   "connector_at": {
+    "Surface +X": [
+     44.45,
+     0,
+     500.0
+    ]
+   },
+   "tolerance": 0.1
+  }
+ }
+}

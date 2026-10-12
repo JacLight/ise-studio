@@ -427,6 +427,10 @@ impl Command for UpdateBoardFromSchematic {
     const NAME: &'static str = "pcb.schematic.update_board";
 
     fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        if !self.dry_run {
+            // Footprints from the project libraries go on the board first.
+            crate::library::ensure_schematic_footprints(tx, self.schematic)?;
+        }
         let (mut report, actions) = plan(tx.world(), self.schematic)?;
         if self.dry_run {
             return Ok(serde_json::to_value(&report).unwrap());

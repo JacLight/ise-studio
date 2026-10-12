@@ -40,7 +40,7 @@ pub fn centroid(view: &BoardView, c: &ComponentView) -> P {
 
 /// Parts a machine places: not holes, not DNP.
 pub fn placed(view: &BoardView) -> Vec<&ComponentView> {
-    view.components.iter().filter(|c| c.kind != "hole" && !c.dnp && c.known).collect()
+    view.components.iter().filter(|c| c.kind != "hole" && c.kind != "logo" && !c.dnp && c.known).collect()
 }
 
 fn is_tht(view: &BoardView, c: &ComponentView) -> bool {
