@@ -278,7 +278,11 @@ impl Ctx {
         self.sketch.geometry.constraints.push(Constraint::OnCurve { point: id, curve: on });
         id
     }
-    fn finish(mut self, tx: &mut Tx, target: StableId, changed: u32, made: Vec<u32>) -> Result<Value, CommandError> {
+    fn finish(self, tx: &mut Tx, target: StableId, changed: u32, made: Vec<u32>) -> Result<Value, CommandError> {
+        self.finish_with(tx, target, changed, json!({ "id": target, "curves": made }))
+    }
+    /// Stores a change to curve `changed`, answering `out`.
+    pub(crate) fn finish_with(mut self, tx: &mut Tx, target: StableId, changed: u32, out: Value) -> Result<Value, CommandError> {
         // What changed shape loses the constraints that fixed its old size or
         // ends; points no curve uses any more go, with what referred to them.
         let g = &mut self.sketch.geometry;
@@ -288,7 +292,7 @@ impl Ctx {
                 || matches!(c, Constraint::Midpoint { line, .. } if *line == changed)
                 || matches!(c, Constraint::Equal { a, b } if (*a == changed || *b == changed) && g.curves.iter().any(|k| k.id() == changed && matches!(k, Curve::Line { .. }))))
         });
-        self.save(tx, target, &BTreeSet::new(), false, json!({ "id": target, "curves": made }))
+        self.save(tx, target, &BTreeSet::new(), false, out)
     }
 
     /// A new dimension of the sketch (key d1, d2, … as the editor names

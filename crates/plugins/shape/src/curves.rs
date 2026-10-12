@@ -371,7 +371,7 @@ impl Nurbs {
             let pts = &self.poles[s..=s + self.degree];
             let bend: f64 = pts.windows(3).map(|q| len([q[0][0] - 2.0 * q[1][0] + q[2][0], q[0][1] - 2.0 * q[1][1] + q[2][1]])).fold(0.0, f64::max);
             let wmax = self.weights.iter().fold(1.0f64, |m, w| m.max(*w)) / self.weights.iter().fold(f64::INFINITY, |m, w| m.min(*w)).max(1e-9);
-            let n = ((bend * wmax * self.degree as f64 / tolerance.max(1e-9)).sqrt().ceil() as usize).clamp(2, 512);
+            let n = ((bend * wmax * self.degree as f64 / tolerance.max(1e-9)).sqrt().ceil() as usize).clamp(2, 4096);
             for i in 0..n {
                 out.push(self.point(w[0] + (w[1] - w[0]) * i as f64 / n as f64));
             }

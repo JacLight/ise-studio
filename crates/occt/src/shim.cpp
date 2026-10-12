@@ -20,6 +20,7 @@
 #include <Geom_BezierCurve.hxx>
 #include <TColgp_Array1OfPnt.hxx>
 #include <TColStd_Array1OfReal.hxx>
+#include <BRepBuilderAPI_NurbsConvert.hxx>
 #include <TColStd_Array1OfInteger.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
@@ -762,12 +763,37 @@ int occ_from_mesh(void* p, const double* pos, int npos, const int* tri, int ntri
 
 // ---- Queries -------------------------------------------------------------------
 
+/// Whether any face (or edge) is free-form: not a plane, cylinder, cone,
+/// sphere or torus bounded by lines and circles.
+static bool free_form(const TopoDS_Shape& s) {
+  for (TopExp_Explorer f(s, TopAbs_FACE); f.More(); f.Next()) {
+    BRepAdaptor_Surface surf(TopoDS::Face(f.Current()));
+    switch (surf.GetType()) {
+      case GeomAbs_Plane: case GeomAbs_Cylinder: case GeomAbs_Cone: case GeomAbs_Sphere: case GeomAbs_Torus: break;
+      default: return true;
+    }
+  }
+  for (TopExp_Explorer e(s, TopAbs_EDGE); e.More(); e.Next()) {
+    const TopoDS_Edge& ed = TopoDS::Edge(e.Current());
+    if (BRep_Tool::Degenerated(ed)) continue;
+    BRepAdaptor_Curve c(ed);
+    if (c.GetType() != GeomAbs_Line && c.GetType() != GeomAbs_Circle) return true;
+  }
+  return false;
+}
+
 double occ_volume(void* p, int h) {
   Arena* a = static_cast<Arena*>(p);
   const TopoDS_Shape* s = get(a, h);
   if (!s) return NAN;
   GProp_GProps g;
-  BRepGProp::VolumeProperties(*s, g);
+  if (free_form(*s)) {
+    // Faces swept from rational B-splines (conics, splines in sketches)
+    // integrate badly as they are: as NURBS, adaptively, they come out exact.
+    BRepGProp::VolumeProperties(BRepBuilderAPI_NurbsConvert(*s).Shape(), g, 1e-9);
+  } else {
+    BRepGProp::VolumeProperties(*s, g);
+  }
   return g.Mass();
 }
 
@@ -776,7 +802,11 @@ double occ_area(void* p, int h) {
   const TopoDS_Shape* s = get(a, h);
   if (!s) return NAN;
   GProp_GProps g;
-  BRepGProp::SurfaceProperties(*s, g);
+  if (free_form(*s)) {
+    BRepGProp::SurfaceProperties(*s, g, 1e-9);
+  } else {
+    BRepGProp::SurfaceProperties(*s, g);
+  }
   return g.Mass();
 }
 
