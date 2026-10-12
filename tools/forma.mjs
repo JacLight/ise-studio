@@ -10,6 +10,8 @@
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
+//   node tools/forma.mjs pcb import <file> [--format f] [--name n] [--board id] [companions…]   a board/schematic from KiCad, Eagle, EasyEDA, Altium, CADSTAR, Fabmaster, PADS, gEDA
+//   node tools/forma.mjs pcb exports <id> | export <id> <file name | kicad_sch | ipc2581 | odb | d356 | …> [--out path]   files for other EDA tools
 //   node tools/forma.mjs simulate <schematic> [--tran 30ms] [--expect "min(V(3V3), burst) > 3.0"] [--save name]   ngspice on a schematic
 //   node tools/forma.mjs list                 every entity, one line each
 //   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
@@ -298,6 +300,46 @@ if (command === "run") {
       }
       for (const u of c.unreadable) console.log(`  ✗ ${u}`);
       failed = !c.ok;
+    } else if (sub === "import") {
+      // A board and/or schematic from another EDA tool, told apart by content.
+      const format = flag("--format");
+      const name = flag("--name");
+      const board = flag("--board");
+      const path = args[2];
+      if (!path) throw new Error("usage: forma pcb import <file> [--format eagle_brd|altium_pcb|…] [--name …] [--board <id>] [companion files…]");
+      const { basename } = await import("node:path");
+      const binary = /\.(pcbdoc|schdoc|epro|zip)$/i.test(path);
+      const bytes = readFileSync(path);
+      const files = {};
+      for (const extra of args.slice(3)) files[basename(extra)] = readFileSync(extra, "utf8");
+      const params = { file: basename(path), ...(binary ? { data: bytes.toString("base64") } : { text: bytes.toString("utf8") }), ...(format ? { format } : {}), ...(name ? { name } : {}), ...(board ? { board } : {}), ...(Object.keys(files).length ? { files } : {}) };
+      const r = await engine.commit("pcb.import", params);
+      if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
+      const o = r.value.output;
+      console.log(`✓ ${o.format}: ${o.board ? `board ${o.board.id} "${o.board.name}" (${o.board.components} parts, ${o.board.tracks} tracks, ${o.board.vias} vias, ${o.board.zones} pours)` : ""}${o.board && o.schematic ? "; " : ""}${o.schematic ? `schematic ${o.schematic.id} (${o.schematic.symbols} symbols, ${o.schematic.wires} wires)` : ""} (rev ${r.value.revision})`);
+      for (const n of [...(o.notes ?? []), ...(o.board?.notes ?? []), ...(o.schematic?.notes ?? [])]) console.log(`  note: ${n}`);
+    } else if (sub === "exports") {
+      // What a board or schematic can be written as.
+      const id = args[2];
+      if (!id) throw new Error("usage: forma pcb exports <board or schematic id>");
+      const r = await get(`/pcb/${id}/exports?${q()}`);
+      for (const f of r.files) console.log(`  ${f.name.padEnd(36)} ${f.what}`);
+    } else if (sub === "export") {
+      // Write one of those files here: by its name, or by what it is (kicad_sch, ipc2581, odb, d356, …).
+      const out = flag("--out");
+      const [, , id, what] = args;
+      if (!id || !what) throw new Error("usage: forma pcb export <board or schematic id> <file name | kicad_pcb | kicad_sch | kicad_pro | kicad_zip | net | xml_net | orcad | pads_net | allegro | cadstar_net | d356 | ipc2581 | odb | gbrjob | drill_map | drill_map_pdf | drill_report | svg | pdf | wrl | glb | pos | pos_csv | x3_top | x3_bottom | step | idf> [--out path]");
+      const list = (await get(`/pcb/${id}/exports?${q()}`)).files.map((f) => f.name);
+      const suffix = { kicad_pcb: ".kicad_pcb", kicad_sch: ".kicad_sch", kicad_pro: ".kicad_pro", kicad_zip: "-kicad.zip", net: ".net", xml_net: "-netlist.xml", orcad: "-orcad.net", pads_net: "-pads.net", allegro: "-allegro.net", cadstar_net: "-cadstar.frp", d356: ".d356", ipc2581: "-ipc2581.xml", odb: "-odb.zip", gbrjob: "-job.gbrjob", drill_map: "-drill-map.gbr", drill_map_svg: "-drill-map.svg", drill_map_pdf: "-drill-map.pdf", drill_report: "-drill-report.txt", svg: "-board.svg", pdf: "-board.pdf", wrl: ".wrl", glb: ".glb", pos: "-both.pos", pos_csv: "-pos.csv", x3_top: "-top-pnp.gbr", x3_bottom: "-bottom-pnp.gbr", step: ".step", idf: ".emn" }[what];
+      const name = list.includes(what) ? what : list.find((n) => suffix && n.endsWith(suffix));
+      if (!name) throw new Error(`no export “${what}”; this one has: ${list.join(", ")}`);
+      const isSchematic = !(await fetch(`${http}/pcb/${id}?${q()}`)).ok;
+      const res = await fetch(`${http}/pcb/${isSchematic ? "schematic/" : ""}${id}/file/${encodeURIComponent(name)}?${q({ download: "1" })}`);
+      if (!res.ok) throw new Error(await res.text());
+      const { writeFileSync } = await import("node:fs");
+      const path = out ?? name;
+      writeFileSync(path, Buffer.from(await res.arrayBuffer()));
+      console.log(`✓ ${path}`);
     } else if (sub === "library") {
       if (args[2] === "update") {
         const res = await fetch(`${http}/pcb/kicad/fetch?repo=all`, { method: "POST" });
@@ -306,7 +348,7 @@ if (command === "run") {
       const s = await get("/pcb/kicad");
       console.log(`KiCad libraries in ${s.root}\n  footprints: ${s.footprints ?? "not downloaded yet"}\n  symbols:    ${s.symbols ?? "not downloaded yet"}\n  ${s.licence}`);
     } else {
-      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | library [update]");
+      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | import <file> [--format f] | exports <id> | export <id> <name|kind> [--out path] | library [update]");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
