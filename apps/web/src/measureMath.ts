@@ -89,7 +89,8 @@ export class Topology {
 
   /** Feature edges: borders and creases sharper than SHARP, as welded vertex pairs. */
   featureEdges(): [number, number][] {
-    const out: [number, number][] = [];
+    if (this.features) return this.features;
+    const out: [number, number][] = (this.features = []);
     for (let t = 0; t < this.tris.length; t++)
       for (let e = 0; e < 3; e++) {
         const u = this.next[t][e];
@@ -196,6 +197,7 @@ export class Topology {
     return { kind: "edge", points, length, closed, dir: straight ? unit(span) : null, circle };
   }
 
+  private features: [number, number][] | null = null;
   private sizeCache = -1;
   size() {
     if (this.sizeCache < 0) {
