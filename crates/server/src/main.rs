@@ -10,6 +10,7 @@
 mod ai;
 mod data;
 mod assembly_api;
+mod exact_files;
 mod history;
 mod machines;
 mod meshes;
@@ -1212,7 +1213,10 @@ fn assembly_package(folder: &str, members: &[Source], tolerance: f64, step_of: &
 /// - `/export/<id>.stl?part=<name>` and `.dxf?part=<name>`: one part of an
 ///   assembly, at the origin; the DXF is laid flat with one layer per cut depth.
 /// - `/export/<id>.step`: exact B-rep (OpenCascade), every part named; with
-///   `?part=<name>` one part at the origin.
+///   `?part=<name>` one part at the origin; parts carry their colours (their
+///   material's, or what the program painted) and painted faces their names.
+/// - `/export/<id>.stpz` (compressed STEP) and `.brep` (OpenCascade BREP, one
+///   compound, no names): the same exact shapes.
 /// - `/export/<id>.zip`: the fabrication package (every distinct part's STL,
 ///   STEP and, for sheet parts, DXF, plus a cut list); `/export/project.zip`
 ///   does the same for every part.
@@ -1337,6 +1341,7 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
                     }
                 }
             }
+            "stpz" | "stepz" | "brep" | "brp" => exact_files::export(&sources[0], part.as_deref(), &ext, tolerance),
             "3mf" => {
                 let s = &sources[0];
                 let (name, solid) = whole_solid(s, part.as_deref(), tolerance)?;
@@ -2314,9 +2319,14 @@ async fn import(
             Err(e) => fail(StatusCode::BAD_REQUEST, e),
         };
     }
-    if !(lower.ends_with(".step") || lower.ends_with(".stp")) {
-        return fail(StatusCode::BAD_REQUEST, "Forma imports STEP (.step, .stp), OpenSCAD (.scad) and tables (.csv, .xlsx)".into());
+    if !exact_files::importable(&lower) {
+        return fail(StatusCode::BAD_REQUEST, "Forma imports STEP (.step, .stp, compressed .stpz), OpenCascade BREP (.brep), OpenSCAD (.scad) and tables (.csv, .xlsx)".into());
     }
+    // Stored as STEP whatever it came as (compressed STEP unpacked, BREP translated).
+    let body = match exact_files::to_step(&lower, &body) {
+        Ok(b) => axum::body::Bytes::from(b),
+        Err(e) => return fail(StatusCode::UNPROCESSABLE_ENTITY, format!("{file} could not be read: {e}")),
+    };
     let app = match server.project(query.get("project")) {
         Ok(app) => app,
         Err(e) => return fail(StatusCode::BAD_REQUEST, e),
@@ -2362,7 +2372,7 @@ async fn import(
     // Show it about as finely as its size calls for (a bolt to ±0.01 mm, a building to ±5).
     let size = (0..3).map(|k| bounds[k + 3] - bounds[k]).fold(0.0, f64::max);
     let shown = (size / 4000.0).clamp(0.005, 5.0);
-    let name = file.rsplit_once('.').map(|(n, _)| n).unwrap_or(&file).replace(['_', '-'], " ");
+    let name = exact_files::stem(&file).replace(['_', '-'], " ");
     let source = format!(
         "// Imported from “{file}” ({count} {}). The geometry is the file's own exact B-rep:\n// the view meshes it, STEP exports pass it through untouched.\nreturn importStep(\"{sha}\");",
         if count == 1 { "body" } else { "bodies" }
@@ -2513,6 +2523,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/assembly-motion/{id}", get(assembly_motion))
         .route("/connectors/{id}", get(connectors))
         .route("/fit/{id}", get(fit_report))
+        .route("/check-geometry/{id}", get(exact_files::check))
         .route("/assembly-dof/{id}", get(assembly_api::dof))
         .route("/interference/{id}", get(assembly_api::interference))
         .route("/explode/{id}", get(assembly_api::explode))

@@ -1068,7 +1068,7 @@ export function App({ engine }: { engine: Engine }) {
         }
         return;
       }
-      if (!/\.(step|stp)$/i.test(file.name)) return notify("Forma imports STEP (.step, .stp), OpenSCAD (.scad), tables (.csv, .xlsx) and project files (.forma)");
+      if (!/\.(step|stp|stpz|stepz|step\.gz|stp\.gz|brep|brp)$/i.test(file.name)) return notify("Forma imports STEP (.step, .stp, compressed .stpz), BREP (.brep), OpenSCAD (.scad), tables (.csv, .xlsx) and project files (.forma)");
       notify(`Importing ${file.name}…`);
       try {
         const res = await fetch(projectUrl(`/import/${encodeURIComponent(file.name)}?user=${encodeURIComponent(state.userId)}`), { method: "POST", body: file });
@@ -1536,7 +1536,7 @@ export function App({ engine }: { engine: Engine }) {
                 Import STEP
                 <input
                   type="file"
-                  accept=".step,.stp,.STEP,.STP,.scad,.csv,.xlsx,.forma"
+                  accept=".step,.stp,.STEP,.STP,.stpz,.stepz,.gz,.brep,.brp,.scad,.csv,.xlsx,.forma"
                   aria-label="Import STEP file"
                   onChange={(e) => {
                     const f = e.target.files?.[0];

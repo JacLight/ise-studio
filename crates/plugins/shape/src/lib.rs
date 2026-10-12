@@ -33,6 +33,7 @@ pub mod scad;
 pub mod sheet;
 pub mod sketch;
 pub mod stock;
+pub mod sweep;
 pub mod table;
 pub mod text;
 pub mod trace;
