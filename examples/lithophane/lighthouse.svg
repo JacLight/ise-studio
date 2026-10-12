@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="750" viewBox="0 0 1000 750">
+  <!-- A lighthouse on a headland at sunset, drawn for this example (no
+       outside image). Full tonal range and a little film grain, as a photo
+       has: a lithophane shows every grey as a thickness of plastic. -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b4a6b"/>
+      <stop offset="0.55" stop-color="#d98c5f"/>
+      <stop offset="1" stop-color="#f6d9a8"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fffbe9"/>
+      <stop offset="0.35" stop-color="#ffe6a6" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#ffd27a" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e9c08f"/>
+      <stop offset="0.25" stop-color="#9a7a6a"/>
+      <stop offset="1" stop-color="#2b3448"/>
+    </linearGradient>
+    <linearGradient id="cliff" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4a3d39"/>
+      <stop offset="1" stop-color="#16141a"/>
+    </linearGradient>
+    <linearGradient id="tower" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#9b9496"/>
+      <stop offset="0.35" stop-color="#f3eee6"/>
+      <stop offset="1" stop-color="#6f6869"/>
+    </linearGradient>
+    <linearGradient id="band" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3a1f22"/>
+      <stop offset="0.35" stop-color="#8e3b3b"/>
+      <stop offset="1" stop-color="#2a1416"/>
+    </linearGradient>
+    <radialGradient id="lamp" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.3" stop-color="#fff2c4" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#ffe8a0" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="7" result="noise"/>
+      <feColorMatrix type="saturate" values="0" in="noise" result="mono"/>
+      <feComponentTransfer in="mono" result="faint"><feFuncA type="linear" slope="0.08"/></feComponentTransfer>
+      <feBlend in="SourceGraphic" in2="faint" mode="multiply"/>
+    </filter>
+    <filter id="haze"><feGaussianBlur stdDeviation="1.5"/></filter>
+  </defs>
+  <g filter="url(#grain)">
+    <rect width="1000" height="750" fill="url(#sky)"/>
+    <circle cx="300" cy="455" r="150" fill="url(#sun)"/>
+    <!-- Thin clouds catching the light. -->
+    <g fill="#f4c99a" opacity="0.55" filter="url(#haze)">
+      <ellipse cx="220" cy="210" rx="190" ry="14"/>
+      <ellipse cx="420" cy="245" rx="150" ry="9"/>
+      <ellipse cx="760" cy="160" rx="210" ry="12"/>
+    </g>
+    <rect y="470" width="1000" height="280" fill="url(#sea)"/>
+    <!-- The sun's path on the water. -->
+    <g fill="#ffeac0" opacity="0.7" filter="url(#haze)">
+      <rect x="270" y="478" width="60" height="4" rx="2"/>
+      <rect x="255" y="492" width="90" height="4" rx="2"/>
+      <rect x="275" y="508" width="50" height="3" rx="1.5"/>
+      <rect x="240" y="524" width="120" height="4" rx="2"/>
+      <rect x="265" y="545" width="70" height="3" rx="1.5"/>
+      <rect x="230" y="568" width="140" height="4" rx="2"/>
+    </g>
+    <!-- The headland. -->
+    <path fill="url(#cliff)" d="M520 750 L560 600 L600 560 L650 548 L700 520 L760 505 L840 498 L900 470 L1000 455 L1000 750 Z"/>
+    <path fill="#2a2326" d="M560 600 L600 560 L650 548 L620 600 L590 640 L570 700 Z" opacity="0.6"/>
+    <!-- Lighthouse: white tower with a red band, gallery, lamp room. -->
+    <path fill="url(#tower)" d="M770 500 L790 300 L840 300 L860 500 Z"/>
+    <path fill="url(#band)" d="M779.5 400 L783.5 360 L846.5 360 L850.5 400 Z"/>
+    <rect x="776" y="288" width="78" height="12" fill="#2b2527"/>
+    <rect x="788" y="250" width="54" height="38" fill="#e8d7a8"/>
+    <rect x="788" y="250" width="54" height="38" fill="none" stroke="#2b2527" stroke-width="5"/>
+    <path fill="#2b2527" d="M782 252 L815 222 L848 252 Z"/>
+    <circle cx="815" cy="270" r="70" fill="url(#lamp)"/>
+    <rect x="806" y="440" width="18" height="34" rx="9" fill="#2b2527"/>
+    <!-- A keeper's cottage. -->
+    <path fill="#c9c0b6" d="M880 470 L880 440 L905 420 L930 440 L930 470 Z"/>
+    <rect x="896" y="448" width="10" height="12" fill="#5b4a3c"/>
+  </g>
+</svg>

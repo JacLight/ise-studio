@@ -87,6 +87,61 @@ class Solid {
   hull() {
     return new Solid(__n.sop("hull", this.h, []));
   }
+  /**
+   * Bends a solid built flat around the Z axis, as a label goes round a
+   * bottle: x runs around the circle (x = 0 lands on +X, +x turning
+   * counter-clockwise seen from above), y runs up the axis, and z = 0 lands
+   * on `radius` (+z outward). Build lettering, a traced logo or a relief
+   * flat, then wrap it onto the cylinder it decorates (see emboss/engrave
+   * with `cylinder`). Faceted in exact exports.
+   *   text("FORMA", { size: 6, align: "center" }).extrude(1).wrap(20)
+   */
+  wrap(radius) {
+    if (typeof radius !== "number" || !(radius > 0)) throw new Error("wrap: the radius must be a positive number of mm");
+    return new Solid(__n.wrap(this.h, radius, tolerance));
+  }
+  /**
+   * Adds a decoration raised off a face: lettering or a traced outline (a
+   * Profile, extruded `height` mm), or a solid such as a relief (placed as
+   * it is: its back, z = 0, on the face). Where it goes:
+   *   at, normal, x   a flat face: the point the decoration's origin lands
+   *                   on, the face's outward normal, and the direction its
+   *                   +x runs (see placeOn). Default the XY plane, +Z out.
+   *   cylinder: { radius, angle = 0, z = 0 }   wrapped around a cylinder on
+   *                   the Z axis: its middle at `angle` degrees from +X, its
+   *                   origin at height z.
+   * A profile sinks `sink` mm (0.2) into the face so the two fuse.
+   *   plate.emboss(text("BATCH 7", { size: 5, align: "center" }), { at: [40, 20, 6], height: 0.8 })
+   *   mug.emboss(relief(photo, { width: 60, depth: 1.2, base: 0.4 }).translate(0, 0, -0.4), { cylinder: { radius: 40, z: 45 } })
+   */
+  emboss(decor, options = {}) {
+    const { height, sink = 0.2 } = options;
+    let s = decor;
+    if (decor instanceof Profile) {
+      if (typeof height !== "number" || !(height > 0)) throw new Error("emboss: give the height a profile stands up, in mm");
+      s = decor.extrude(height + sink).translate(0, 0, -sink);
+    }
+    return this.add(__onto(asSolid(s), options, "emboss"));
+  }
+  /**
+   * Cuts a decoration into a face: lettering or a traced outline (a Profile,
+   * cut `depth` mm deep), or a cutter solid such as relief(…, { mode:
+   * "engrave" }) (placed as it is, z = 0 on the face). Placed as emboss
+   * places it. `through: true` cuts a profile all the way through (to
+   * `depth` if given, else 1000 mm).
+   *   lid.engrave(text("12 V", { size: 4, weight: 700, align: "center" }), { at: [30, 30, 3], depth: 0.6 })
+   *   ring.engrave(trace(logo, { width: 14 }), { cylinder: { radius: 11, angle: 90, z: 4 }, depth: 0.4 })
+   */
+  engrave(decor, options = {}) {
+    const { depth, clear = 1, through = false } = options;
+    let s = decor;
+    if (decor instanceof Profile) {
+      const d = through ? (typeof depth === "number" ? depth : 1000) : depth;
+      if (typeof d !== "number" || !(d > 0)) throw new Error("engrave: give the depth to cut, in mm");
+      s = decor.extrude(d + clear).translate(0, 0, -d);
+    }
+    return this.subtract(__onto(asSolid(s), options, "engrave"));
+  }
   get volume() {
     return __n.squery("volume", this.h)[0];
   }
@@ -396,6 +451,14 @@ class Profile {
   get bounds() {
     const b = __n.pquery("bounds", this.h);
     return { min: [b[0], b[1]], max: [b[2], b[3]] };
+  }
+  /**
+   * The outlines as points: [[[x, y], …], …], counter-clockwise around the
+   * area and clockwise around holes. For measuring a traced picture, or
+   * taking part of an outline to build from (a silhouette's half to revolve).
+   */
+  get loops() {
+    return JSON.parse(__n.ppoints(this.h));
   }
 }
 
@@ -879,6 +942,426 @@ function regularPolygon(n, circumradius, { rotate = 0 } = {}) {
     pts.push([circumradius * Math.cos(a), circumradius * Math.sin(a)]);
   }
   return polygon(pts);
+}
+
+// ---- Placing decorations ---------------------------------------------------------
+
+/**
+ * Moves a solid built in XY (+Z out of the face, +X along it) onto a plane:
+ * its origin to `at`, its +Z along `normal`. Its +X runs along `x` if given;
+ * otherwise "up" (+Y) points as near world +Z as the plane allows (+Y on a
+ * face looking up or down), so lettering on a wall reads level.
+ *   placeOn(text("A1", { size: 4 }).extrude(0.6), { at: [0, -20, 10], normal: [0, -1, 0] })
+ */
+function placeOn(solid, { at = [0, 0, 0], normal = [0, 0, 1], x } = {}) {
+  const z = __unit(vec3(normal));
+  const reject = (v) => {
+    const d = __dot(v, z);
+    return [v[0] - d * z[0], v[1] - d * z[1], v[2] - d * z[2]];
+  };
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  let ax, ay;
+  if (x !== undefined) {
+    ax = reject(vec3(x));
+    if (Math.hypot(...ax) < 1e-9) throw new Error("placeOn: x must not run along the normal");
+    ax = __unit(ax);
+    ay = cross(z, ax);
+  } else {
+    ay = Math.abs(z[2]) > 0.999 ? [0, 1, 0] : __unit(reject([0, 0, 1]));
+    ax = cross(ay, z);
+  }
+  const [rx, ry, rz] = planeRotation(ax, ay);
+  return asSolid(solid).rotate(rx, ry, rz).translate(vec3(at));
+}
+
+function __onto(solid, options, what) {
+  const c = options.cylinder;
+  if (c) {
+    if (typeof c.radius !== "number" || !(c.radius > 0)) throw new Error(`${what}: cylinder needs its radius, in mm`);
+    return solid.wrap(c.radius).rotate(0, 0, c.angle ?? 0).translate(0, 0, c.z ?? 0);
+  }
+  return placeOn(solid, options);
+}
+
+// ---- Pictures --------------------------------------------------------------------
+
+/**
+ * A picture stored in the project (PNG or JPEG; add one with
+ * `./forma image add <file>`, which prints its id). Pictures have no size
+ * of their own: reliefs and traces are given a width or height in mm.
+ *   const photo = image("3f9a…");   // .width, .height (pixels), .aspect (h / w)
+ *   photo.grid(200)                  // brightness, 200 columns × rows to keep the aspect, rows from the top, 0–1
+ *   photo.grid(100, 50, { channel: "alpha" })
+ */
+class Picture {
+  constructor(id) {
+    if (typeof id !== "string" || !/^[0-9a-fA-F]{64}$/.test(id)) {
+      throw new Error(`image: ${JSON.stringify(id)} is not a picture id (add the picture with ./forma image add <file> and use the id it prints)`);
+    }
+    const [w, h, bits, alpha] = __n.imageInfo(id);
+    this.id = id;
+    this.width = w;
+    this.height = h;
+    this.bits = bits;
+    /** Some pixels are see-through (a logo on a transparent background). */
+    this.transparent = alpha === 1;
+    Object.freeze(this);
+  }
+  get aspect() {
+    return this.height / this.width;
+  }
+  /**
+   * The picture as rows of values 0–1 (top row first), resampled to `nx` ×
+   * `ny` points spanning it edge to edge: brightness (1 white), or
+   * channel "alpha" | "red" | "green" | "blue".
+   */
+  grid(nx, ny = Math.max(2, Math.round(nx * this.aspect)), { channel = "brightness" } = {}) {
+    const flat = __n.imageGrid(this.id, channel, nx, ny);
+    const rows = [];
+    for (let j = 0; j < ny; j++) rows.push(flat.slice(j * nx, (j + 1) * nx));
+    return rows;
+  }
+}
+
+function image(id) {
+  return new Picture(id);
+}
+
+const __picture = (img, what) => {
+  if (img instanceof Picture) return img;
+  if (typeof img === "string") return new Picture(img);
+  throw new TypeError(`${what}: give a picture (image("<id>") or its id)`);
+};
+
+/** Width and height in mm: one given, the other follows the picture's aspect. */
+function __pictureSize(pic, { width, height }, what) {
+  const ok = (v) => typeof v === "number" && Number.isFinite(v) && v > 0;
+  if (ok(width) && ok(height)) return [width, height];
+  if (ok(width)) return [width, width * pic.aspect];
+  if (ok(height)) return [height / pic.aspect, height];
+  throw new Error(`${what}: give its width or height in mm`);
+}
+
+/**
+ * A relief from a picture: brightness becomes height. Centred on the
+ * origin, its back flat at z = 0 (the picture's top towards +Y). Modes:
+ *   "emboss"      a plaque: base + depth × brightness (light stands high);
+ *                 sink the base into a face to raise a picture off it.
+ *   "engrave"     a cutter to subtract from a face at z = 0: it reaches
+ *                 depth × darkness down (dark cuts deep, white not at all)
+ *                 and `clear` mm up; part.engrave(relief(…, { mode: "engrave" }), …).
+ *   "lithophane"  light through thin plastic: base + depth × darkness thick
+ *                 (dark blocks light); print upright, light behind it.
+ * Options (mm): width or height (the other follows the picture), depth (2;
+ * lithophane 2.4), base (1; lithophane 0.8, engrave 0 — extra depth),
+ * invert (swap light and dark), gamma (1; above 1 deepens mid-tones),
+ * smooth (Gaussian blur, mm: removes noise and pixel steps), channel
+ * ("brightness", or "alpha" | "red" | "green" | "blue"), border (a frame
+ * this wide at full height, emboss and lithophane), clear (engrave, 1),
+ * detail (grid points a side, 1024; 2048 or 4096 for large fine pictures).
+ * The surface follows the picture to within `tolerance` (no finer than half
+ * a grey level), as few triangles as that needs; exports get more detail
+ * than the view. Watertight, ready to print or to carve.
+ *   relief(photo, { width: 100, depth: 3, base: 2, smooth: 0.2 })
+ *   relief(photo, { width: 80, mode: "lithophane", border: 3 })
+ */
+function relief(img, options = {}) {
+  const pic = __picture(img, "relief");
+  const mode = options.mode ?? "emboss";
+  const litho = mode === "lithophane";
+  const [width, height] = __pictureSize(pic, options, "relief");
+  const depth = options.depth ?? (litho ? 2.4 : 2);
+  const base = options.base ?? (litho ? 0.8 : mode === "engrave" ? 0 : 1);
+  const border = options.border ?? 0;
+  if (border && mode === "engrave") throw new Error("relief: an engraving has no border (cut a frame separately)");
+  if (border && !(border > 0 && 2 * border < Math.min(width, height))) throw new Error("relief: the border must leave room for the picture");
+  const inner = [width - 2 * border, height - 2 * border];
+  const json = JSON.stringify({
+    width: inner[0],
+    height: inner[1],
+    depth,
+    base,
+    mode,
+    invert: !!options.invert,
+    gamma: options.gamma ?? 1,
+    smooth: options.smooth ?? 0,
+    channel: options.channel ?? "brightness",
+    clear: options.clear ?? 1,
+    detail: options.detail ?? 1024,
+  });
+  const r = new Solid(__n.relief(pic.id, json, tolerance));
+  if (!border) return r;
+  const frame = rect(width, height, { center: true }).subtract(rect(inner[0], inner[1], { center: true })).extrude(base + depth);
+  return r.add(frame);
+}
+
+/**
+ * Traces a picture into outlines: a logo, lettering, a line drawing, a
+ * silhouette. The ink is what is dark (or, on a transparent background,
+ * what is opaque); invert traces the light parts. Centred on the origin,
+ * sized by width or height in mm. Extrude it, emboss or engrave it, cut it
+ * through, revolve half of it (see Profile.loops).
+ * Options: threshold (0.5: the ink level the outline follows), invert,
+ * smooth (mm; default 0.7 px, rounding pixel steps; 0 keeps them),
+ * minArea (mm², specks and holes smaller are dropped; default 4 px²),
+ * channel ("brightness" | "alpha" | "red" | "green" | "blue"), simplify
+ * (mm the outline may stray, default `tolerance`).
+ *   const mark = trace(logo, { width: 30 });     // mark.bounds, mark.area, mark.loops
+ *   lid.engrave(mark, { at: [0, 0, 4], depth: 0.5 })
+ */
+function trace(img, options = {}) {
+  const pic = __picture(img, "trace");
+  const [width, height] = __pictureSize(pic, options, "trace");
+  const px = width / pic.width;
+  const json = JSON.stringify({
+    width,
+    height,
+    threshold: options.threshold ?? 0.5,
+    invert: !!options.invert,
+    smooth: options.smooth ?? 0.7 * px,
+    minArea: options.minArea ?? 4 * px * px,
+    channel: options.channel,
+    simplify: options.simplify,
+  });
+  return new Profile(__n.trace(pic.id, json, tolerance));
+}
+
+// ---- Lettering ---------------------------------------------------------------------
+
+/**
+ * Text as a profile, from real font outlines: engrave it, emboss it, cut it
+ * through, wrap it round a cylinder. Options:
+ *   size        height of a capital letter, mm (5)
+ *   weight      100–900 (400 regular, 700 bold) for the built-in font
+ *   font        "Inter" (built in, a clean sans), or a stored font's id
+ *               (`./forma image add font.ttf` stores TrueType/OpenType too)
+ *   align       "left" | "center" | "right"       (about x = 0)
+ *   valign      "baseline" | "top" | "middle" | "bottom"   (about y = 0)
+ *   spacing     extra mm between letters; lineHeight: baseline to baseline,
+ *               × size (1.6); "\n" starts a new line
+ *   arc         set along a circle of this radius (baseline on it), centred
+ *               on +Y reading clockwise over the top; negative reads left to
+ *               right along the bottom, tops toward the centre (a coin)
+ *   text("Forma", { size: 8, weight: 700, align: "center", valign: "middle" })
+ *   text("EST. 2026", { size: 3, arc: -18, align: "center" })
+ */
+function text(str, options = {}) {
+  if (typeof str !== "string" && typeof str !== "number") throw new TypeError("text() needs the text to draw");
+  const json = JSON.stringify({
+    text: String(str),
+    size: options.size ?? 5,
+    font: options.font,
+    weight: options.weight ?? 400,
+    align: options.align ?? "left",
+    baseline: options.valign ?? "baseline",
+    spacing: options.spacing ?? 0,
+    lineHeight: options.lineHeight ?? 1.6,
+    arc: options.arc,
+  });
+  return new Profile(__n.text(json, tolerance));
+}
+
+/**
+ * A scale's tick marks and numbers, as a profile to engrave or emboss.
+ * Straight, along +X from the origin (ticks rising +Y from y = 0):
+ *   graduations({ length: 100, step: 1, every: [5, 10] })      // a 100 mm rule
+ * Round, a dial (ticks outward from `radius`; inward: true for inside):
+ *   graduations({ radius: 30, from: 0, to: 270, step: 5, every: [15, 45], values: [0, 10] })
+ * Options: step (mm or degrees between ticks), every ([mid, major] in the
+ * same units: ticks at multiples are longer), ticks ([minor, mid, major]
+ * lengths, mm), width (line width, mm), labels (true: numbers at major
+ * ticks), size (number height, mm), values ([first, last]: what the ends
+ * read; default the distance or angle), decimals, gap (tick to number, mm),
+ * weight. Angles run clockwise from +Y (12 o'clock), as a dial reads;
+ * counterClockwise: true runs them the other way.
+ */
+function graduations(options = {}) {
+  const round = typeof options.radius === "number";
+  const step = options.step ?? (round ? 10 : 1);
+  if (!(step > 0)) throw new Error("graduations: step must be positive");
+  const [mid, major] = options.every ?? (round ? [step * 3, step * 9] : [step * 5, step * 10]);
+  const size = options.size ?? (round ? options.radius / 10 : 2.5);
+  const [tMinor, tMid, tMajor] = options.ticks ?? [size * 0.8, size * 1.2, size * 1.8];
+  const width = options.width ?? Math.max(0.2, size * 0.12);
+  const gap = options.gap ?? size * 0.4;
+  const labels = options.labels ?? true;
+  const from = round ? options.from ?? 0 : 0;
+  const to = round ? options.to ?? 360 : options.length;
+  if (!(typeof to === "number" && to > from)) throw new Error(round ? "graduations: to must be past from (degrees)" : "graduations: give the length in mm");
+  const [v0, v1] = options.values ?? [from, to];
+  const near = (a, b) => Math.abs(a / b - Math.round(a / b)) < 1e-6;
+  const count = Math.floor((to - from) / step + 1e-9);
+  const full = round && Math.abs(to - from - 360) < 1e-9;
+  const pieces = [];
+  for (let i = 0; i <= count; i++) {
+    if (full && i === count) break; // 360° is 0°
+    const at = from + i * step;
+    const off = at - from;
+    const isMajor = near(off, major);
+    const len = isMajor ? tMajor : near(off, mid) ? tMid : tMinor;
+    const value = v0 + ((at - from) / (to - from)) * (v1 - v0);
+    const label = labels && isMajor ? text(Number(value.toFixed(options.decimals ?? 0)).toString(), { size, align: "center", weight: options.weight ?? 500 }) : null;
+    if (!round) {
+      pieces.push(rect(width, len).translate(at - width / 2, 0));
+      if (label) pieces.push(label.translate(at, len + gap));
+    } else {
+      const inward = !!options.inward;
+      const r0 = inward ? options.radius - len : options.radius;
+      const angle = options.counterClockwise ? at : -at; // degrees from +Y
+      pieces.push(rect(width, len).translate(-width / 2, r0).rotate(angle));
+      if (label) {
+        const rl = inward ? options.radius - len - gap - size : options.radius + len + gap;
+        pieces.push(label.translate(0, rl).rotate(angle));
+      }
+    }
+  }
+  return pieces[0].add(pieces.slice(1));
+}
+
+// ---- Knurls and threads --------------------------------------------------------------
+
+/**
+ * A knurled cylinder along +Z from z = 0: a grip for a knob or a thumb
+ * screw. Union it with the part, or use it as the part's outside.
+ *   radius, length   mm (the tips of the teeth reach the radius)
+ *   pitch            mm between teeth around the circumference (1)
+ *   depth            tooth depth, mm (pitch × 0.5: 90° teeth)
+ *   style            "diamond" (crossed helices) | "straight" (axial ridges)
+ *   angle            helix angle from the axis, degrees (30)
+ *   chamfer          mm taken off both ends at 45° (depth; 0 for none)
+ *   knurl({ radius: 15, length: 12, pitch: 1.2 })
+ */
+function knurl({ radius, length, pitch = 1, depth, style = "diamond", angle = 30, chamfer } = {}) {
+  if (!(radius > 0 && length > 0)) throw new Error("knurl: give the radius and length in mm");
+  const teeth = Math.max(6, Math.round((2 * Math.PI * radius) / pitch));
+  const d = depth ?? (Math.PI * radius / teeth); // half the actual pitch: 90° teeth
+  if (!(d > 0 && d < radius)) throw new Error("knurl: the depth must be less than the radius");
+  const pts = [];
+  for (let i = 0; i < teeth; i++) {
+    const a0 = (2 * Math.PI * i) / teeth;
+    const a1 = (2 * Math.PI * (i + 0.5)) / teeth;
+    pts.push([radius * Math.cos(a0), radius * Math.sin(a0)], [(radius - d) * Math.cos(a1), (radius - d) * Math.sin(a1)]);
+  }
+  const star = polygon(pts);
+  let body;
+  if (style === "straight") body = star.extrude(length);
+  else if (style === "diamond") {
+    const twist = (length * Math.tan(rad(angle)) / radius) * (180 / Math.PI);
+    // Slices so the helix stays within tolerance of its curve.
+    const per = 2 * Math.acos(Math.max(-1, 1 - tolerance / radius)) * (180 / Math.PI);
+    const slices = Math.max(1, Math.ceil(twist / per));
+    body = star.extrude(length, { twist, slices }).intersect(star.extrude(length, { twist: -twist, slices }));
+  } else throw new Error(`knurl: style is "diamond" or "straight", not ${JSON.stringify(style)}`);
+  const c = chamfer ?? d;
+  if (c > 0) {
+    const r = radius + 0.01;
+    body = body.intersect(polygon([[0, 0], [r - c, 0], [r, c], [r, length - c], [r - c, length], [0, length]]).revolve());
+  }
+  return body;
+}
+
+/** ISO 261 coarse pitches, by nominal diameter (mm). */
+const ISO_COARSE = { 1: 0.25, 1.2: 0.25, 1.4: 0.3, 1.6: 0.35, 2: 0.4, 2.5: 0.45, 3: 0.5, 3.5: 0.6, 4: 0.7, 5: 0.8, 6: 1, 7: 1, 8: 1.25, 10: 1.5, 12: 1.75, 14: 2, 16: 2, 18: 2.5, 20: 2.5, 22: 2.5, 24: 3, 27: 3, 30: 3.5, 33: 3.5, 36: 4, 39: 4, 42: 4.5, 45: 4.5, 48: 5, 52: 5, 56: 5.5, 60: 5.5, 64: 6 };
+
+/**
+ * A real ISO metric thread (ISO 68-1 profile: 60° flanks, P/8 crest and P/4
+ * root flats), modelled along +Z from z = 0 to `length`.
+ *   External (a bolt's threaded shank): the solid rod; union a head on it.
+ *   internal: true: the cutter for a tapped hole or a nut, to subtract.
+ * Options: diameter (nominal, mm), pitch (default ISO coarse for the
+ * diameter), length, clearance (radial mm: shrinks an external thread,
+ * grows an internal one; 0.1–0.2 for printed bolts and nuts), chamfer (45°
+ * lead-in at both ends, true by default; "start" | "end" for one),
+ * leftHand, starts (1), phase (degrees the thread is turned about Z, to put
+ * mating threads in step).
+ *   const shank = thread({ diameter: 8, length: 30 });               // M8 × 1.25
+ *   nut.subtract(thread({ diameter: 8, length: 6.5, internal: true, clearance: 0.15 }))
+ */
+function thread({ diameter, pitch, length, internal = false, clearance = 0, chamfer = true, leftHand = false, starts = 1, phase = 0 } = {}) {
+  if (!(diameter > 0 && length > 0)) throw new Error("thread: give the diameter and length in mm");
+  const P = pitch ?? ISO_COARSE[diameter];
+  if (!(P > 0)) throw new Error(`thread: M${diameter} has no standard coarse pitch: give pitch`);
+  if (!(Number.isInteger(starts) && starts >= 1)) throw new Error("thread: starts is a whole number");
+  const H = (Math.sqrt(3) / 2) * P;
+  const grow = internal ? clearance : -clearance;
+  const rMaj = diameter / 2 + grow;
+  const rMin = diameter / 2 - (5 * H) / 8 + grow;
+  if (!(rMin > 0)) throw new Error("thread: the pitch is too coarse for the diameter");
+  const lead = starts * P;
+  // The profile's corners through one pitch, crest centred at 0: root → crest → crest → root.
+  const prof = [[-3 * P / 8, rMin], [-P / 16, rMaj], [P / 16, rMaj], [3 * P / 8, rMin]];
+  const k = prof.length;
+  const K = k * starts; // corners per lead
+  const n = segmentsFor(rMaj);
+  // Rows of corners, from below the start to above the end.
+  const first = Math.floor(-lead / P) - 2;
+  const last = Math.ceil((length + lead) / P) + 2;
+  const rows = [];
+  for (let t = first; t <= last; t++) for (const [s, r] of prof) rows.push([t * P + s, r]);
+  const M = rows.length;
+  const positions = [];
+  for (let i = 0; i < n; i++) {
+    const a = (2 * Math.PI * i) / n;
+    const rise = (lead * i) / n;
+    for (const [z, r] of rows) positions.push([r * Math.cos(a), r * Math.sin(a), z + rise]);
+  }
+  const at = (i, j) => i * M + j;
+  const tris = [];
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j + 1 < M; j++) {
+      // Going once round climbs one lead: the last column meets the first K rows up.
+      const [a, b] = i + 1 < n ? [at(i + 1, j), at(i + 1, j + 1)] : j + 1 + K < M ? [at(0, j + K), at(0, j + 1 + K)] : [-1, -1];
+      if (a < 0) continue;
+      tris.push([at(i, j), a, b], [at(i, j), b, at(i, j + 1)]);
+    }
+  }
+  // Close both open ends with a fan from a point on the axis.
+  const count = new Map();
+  const key = (a, b) => (a < b ? `${a},${b}` : `${b},${a}`);
+  for (const t of tris) for (let e = 0; e < 3; e++) count.set(key(t[e], t[(e + 1) % 3]), (count.get(key(t[e], t[(e + 1) % 3])) ?? 0) + 1);
+  const open = [];
+  for (const t of tris) for (let e = 0; e < 3; e++) if (count.get(key(t[e], t[(e + 1) % 3])) === 1) open.push([t[e], t[(e + 1) % 3]]);
+  const next = new Map(open.map(([a, b]) => [a, b]));
+  while (next.size) {
+    const [start] = next.keys();
+    const loop = [];
+    for (let v = start; next.has(v); ) {
+      const w = next.get(v);
+      next.delete(v);
+      loop.push([v, w]);
+      v = w;
+    }
+    const zc = loop.reduce((s, [v]) => s + positions[v][2], 0) / loop.length;
+    positions.push([0, 0, zc]);
+    const c = positions.length - 1;
+    for (const [v, w] of loop) tris.push([c, w, v]);
+  }
+  let rod = fromMesh(positions, tris);
+  if (phase) rod = rod.rotate(0, 0, phase);
+  if (leftHand) rod = rod.mirror(1, 0, 0);
+  // Trimmed to length, with 45° lead-ins: a bolt's tip down to the root, a
+  // hole's mouth countersunk out to the major diameter.
+  const ends = chamfer === true ? ["start", "end"] : chamfer ? [chamfer] : [];
+  const depth = rMaj - rMin;
+  const room = length > 2 * depth + 2 * tolerance;
+  const [lo, hi] = [room && ends.includes("start"), room && ends.includes("end")];
+  const R = rMaj + 1;
+  let out = rod.intersect(box(2 * R, 2 * R, length, { center: true }).translate(0, 0, length / 2));
+  if (internal) {
+    const sink = depth + 0.01;
+    if (lo) out = out.add(cylinder(sink, rMaj + 0.01, { top: rMaj + 0.01 - sink }));
+    if (hi) out = out.add(cylinder(sink, rMaj + 0.01 - sink, { top: rMaj + 0.01 }).translate(0, 0, length - sink));
+    return out;
+  }
+  if (lo || hi) {
+    const e = rMaj + 0.01;
+    const outline = [[0, 0]];
+    outline.push(...(lo ? [[rMin, 0], [e, e - rMin]] : [[e, 0]]));
+    outline.push(...(hi ? [[e, length - (e - rMin)], [rMin, length]] : [[e, length]]));
+    outline.push([0, length]);
+    out = out.intersect(polygon(outline).revolve());
+  }
+  return out;
 }
 
 // ---- Helpers -------------------------------------------------------------------

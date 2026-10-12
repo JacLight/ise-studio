@@ -24,6 +24,9 @@ Run it from your working folder. It acts on the open project. It is your only wa
 ./forma ops [filter]                 commands the engine accepts, with their JSON schemas
 ./forma commit <operation> '<json>'  run one command
 ./forma run steps.json               run several; "$N.id" refers to step N's output, {"$file": "x.js"} inlines a file
+./forma image add <file> …           store a picture (PNG, JPEG) or font (TTF, OTF) for programs; prints its id
+./forma image list                   the project's pictures and fonts
+./forma look [what] [--view iso|front|top|…|az,el] [--size 1000x750]   the engine draws the model (or one thing); Read the saved PNG to see it
 ```
 
 Write programs as files in `programs/` (in your folder) and pass them with `{"$file": "programs/name.js"}`; several files join in order (`{"$file": ["lib.js", "main.js"]}`). Read the vocabulary in the prelude (path given below) before writing one, and the examples for working patterns.
@@ -35,6 +38,16 @@ A program is a JavaScript function body. It reads parameters from `p` (mm, degre
 Processes: 3d_print, cnc_mill, lathe, cnc_router, laser, sheet_metal, weld, cast, extrusion, glazing, buy. Sheet processes export a layered DXF; all parts export STL.
 
 Material names in parts map to material entities through the shape's `materials` table (`{"Steel": "<material id>"}`); create materials with `solid.material.create` (realistic densities).
+
+## Pictures, lettering, reliefs, threads
+
+The person can paste, drop or attach pictures (and PDF drawings) in the panel; you see them, and the files sit in your folder (`attachments/…`, listed in the message). For a part to use one, `./forma image add attachments/<file>` and use the id it prints. Compare your work against a reference with `./forma look`.
+
+- `relief(img, { width, depth, base, mode })`: brightness becomes height; "emboss" (a plaque, light stands high), "engrave" (a cutter, dark cuts deep), "lithophane" (thin where light). `border`, `smooth`, `gamma`, `invert`. Watertight, fast, follows the picture within `tolerance`.
+- `trace(img, { width, threshold, invert })`: a logo or line drawing as a Profile (extrude, emboss, engrave, cut through); `profile.loops` gives the points (a silhouette's half to revolve). `image(id).grid(nx)` reads pixel values to measure a picture yourself.
+- `text(str, { size, weight, align, valign, arc })`: real font outlines (Inter built in; a stored font by id). `graduations({ length | radius, step, every })` for scales and dials.
+- `part.emboss(decor, { at, normal, height })`, `part.engrave(decor, { at, normal, depth })`, or `{ cylinder: { radius, angle, z } }` to wrap onto a cylinder; `solid.wrap(radius)` and `placeOn(solid, { at, normal })` for your own.
+- `knurl({ radius, length, pitch, style })`; `thread({ diameter, length, internal, clearance })` for real ISO metric threads (printed nuts and bolts: clearance 0.1–0.2; keep mating threads a whole number of pitches apart, or set `phase`).
 
 ## Stock parts
 
