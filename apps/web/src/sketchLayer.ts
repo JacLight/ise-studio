@@ -305,7 +305,9 @@ export class SketchLayer {
                   ? spot(c.element)
                   : c.kind === "block"
                     ? spot(c.curve)
-                    : "line" in c
+                    : c.kind === "equal"
+                      ? spot(c.b)
+                      : "line" in c
                       ? lineMid(c.line)
                       : "a" in c
                         ? spot(c.a)
