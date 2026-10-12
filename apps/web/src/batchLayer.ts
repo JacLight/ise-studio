@@ -28,32 +28,46 @@ type Batch = { mesh: THREE.InstancedMesh; matrices: Float32Array; count: number;
 const sphere = new THREE.Sphere();
 const frustum = new THREE.Frustum();
 const viewProjection = new THREE.Matrix4();
+const eyeAt = new THREE.Vector3();
 
-const looksSeen = new WeakMap<THREE.Material, { version: number; key: string }>();
+/** Everything about a material that changes how it draws (display modes and sections change these in place). */
+type Look = { values: number[]; planes: THREE.Plane[] | null; key: string };
+const looksSeen = new WeakMap<THREE.Material, Look>();
+const planeIds = new WeakMap<THREE.Plane[], number>();
+let nextPlanes = 1;
 
-/** A material's look, as a key: meshes that share it can share a draw call (worked out again only when the material changes). */
-function lookKey(m: THREE.Material): string {
-  const seen = looksSeen.get(m);
-  if (seen && seen.version === m.version) return seen.key;
-  const key = describeLook(m);
-  looksSeen.set(m, { version: m.version, key });
-  return key;
+function lookValues(m: THREE.Material, out: number[]) {
+  const s = m as THREE.MeshStandardMaterial;
+  out[0] = s.color ? s.color.getHex() : -1;
+  out[1] = s.emissive ? s.emissive.getHex() : -1;
+  out[2] = s.emissiveIntensity ?? 0;
+  out[3] = s.roughness ?? 0;
+  out[4] = s.metalness ?? 0;
+  out[5] = s.opacity;
+  out[6] = +s.transparent | (+s.depthWrite << 1) | (+s.colorWrite << 2) | (+(s.wireframe ?? false) << 3) | (+s.depthTest << 4);
+  out[7] = s.side;
+  return out;
 }
 
-function describeLook(m: THREE.Material): string {
-  const s = m as THREE.MeshStandardMaterial;
-  return [
-    s.color?.getHexString(),
-    s.emissive?.getHexString(),
-    s.emissiveIntensity,
-    s.roughness,
-    s.metalness,
-    s.opacity,
-    s.transparent,
-    s.depthWrite,
-    s.wireframe,
-    s.side,
-  ].join(",");
+const scratch: number[] = [];
+
+/**
+ * A material's look, as a key: meshes that share it can share a draw call.
+ * Compared field by field each frame (no strings made unless it changed).
+ */
+function lookKey(m: THREE.Material): string {
+  const values = lookValues(m, scratch);
+  const seen = looksSeen.get(m);
+  if (seen && seen.planes === m.clippingPlanes && seen.values.every((v, i) => v === values[i])) return seen.key;
+  const planes = m.clippingPlanes;
+  let pid = 0;
+  if (planes) {
+    pid = planeIds.get(planes) ?? nextPlanes++;
+    planeIds.set(planes, pid);
+  }
+  const key = `${m.type}:${values.join(",")}:${pid}`;
+  looksSeen.set(m, { values: [...values], planes, key });
+  return key;
 }
 
 /**
@@ -150,11 +164,13 @@ export class BatchLayer {
   }
 
   private drawingMaterial(m: THREE.Material): THREE.Material {
-    const key = `${m.type}|${lookKey(m)}`;
+    const key = lookKey(m);
     let d = this.looks.get(key);
     if (!d) {
       d = m.clone();
       d.visible = true;
+      // A section's planes are moved in place: share them, not a copy.
+      d.clippingPlanes = m.clippingPlanes;
       this.looks.set(key, d);
     }
     return d;
@@ -171,11 +187,17 @@ export class BatchLayer {
    * Rebuilds the instance buffers from `meshes` (already adopted) as the
    * camera sees them. `aside`: meshes left out this frame.
    */
-  update(meshes: Iterable<THREE.Mesh>, camera: THREE.PerspectiveCamera, heightPx: number, wireframe: boolean) {
+  update(meshes: Iterable<THREE.Mesh>, camera: THREE.Camera, heightPx: number, wireframe: boolean) {
     viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     frustum.setFromProjectionMatrix(viewProjection);
-    const pxPerUnit = heightPx / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-    const eye = camera.position;
+    // Pixels per mm at unit distance (perspective), or everywhere (a parallel view).
+    const ortho = camera as THREE.OrthographicCamera;
+    const parallel = ortho.isOrthographicCamera === true;
+    const pxPerUnit = parallel
+      ? heightPx / ((ortho.top - ortho.bottom) / ortho.zoom)
+      : heightPx / 2 / Math.tan(THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov / 2));
+    const eye = eyeAt.setFromMatrixPosition(camera.matrixWorld);
+    const near = parallel ? 1 : (camera as THREE.PerspectiveCamera).near;
     for (const b of this.batches.values()) {
       b.count = 0;
       b.used = false;
@@ -192,8 +214,7 @@ export class BatchLayer {
         this.culled++;
         continue;
       }
-      const distance = Math.max(sphere.center.distanceTo(eye) - sphere.radius, camera.near);
-      const px = ((sphere.radius * 2) / distance) * pxPerUnit;
+      const px = parallel ? sphere.radius * 2 * pxPerUnit : ((sphere.radius * 2) / Math.max(sphere.center.distanceTo(eye) - sphere.radius, near)) * pxPerUnit;
       if (px < CULL_PX) {
         this.culled++;
         continue;

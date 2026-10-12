@@ -11,6 +11,8 @@
 //! - `GET /pcb/<id>/bom.json?project=`       that board's Buy lines
 //! - `GET /pcb/<id>/file/<name>?project=`    one fabrication file (Gerber, drill, CSV, readme)
 //! - `GET /pcb/<id>/fab.zip?project=&fab=`   the package for a fab (jlcpcb, pcbway, …) or generic
+//! - `GET /pcb/<id>/gerber-check?px=`        the package read back independently and compared with the board
+//! - `GET /pcb/<id>/layers`                  each fab file drawn (SVG) from what the reader made of it
 //! - `GET|POST /pcb/settings`                which API keys are set / set them
 
 use crate::Server;
@@ -173,6 +175,50 @@ pub async fn zip(State(server): State<Arc<Server>>, Path(id): Path<String>, Quer
     .await;
     match result {
         Ok((name, bytes)) => ([(header::CONTENT_TYPE, "application/zip".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}\""))], bytes).into_response(),
+        Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// `GET /pcb/<id>/gerber-check?px=0.02`: the fab files read back independently and compared with the board.
+pub async fn gerber_check(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let (_, v) = match board(&server, &query, &id) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let px = query.get("px").and_then(|p| p.parse::<f64>().ok()).unwrap_or(0.02).clamp(0.005, 0.1);
+    match tokio::task::spawn_blocking(move || de_pcb::gerber_check::check(&v, &de_pcb::gerber::files(&v), px)).await {
+        Ok(c) => axum::Json(c).into_response(),
+        Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// `GET /pcb/<id>/layers`: every fab file drawn from what the independent reader made of it (SVG
+/// elements in board millimetres, y up), for the layer preview.
+pub async fn layers(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let (_, v) = match board(&server, &query, &id) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let out = tokio::task::spawn_blocking(move || {
+        let mut list = Vec::new();
+        for (name, text) in de_pcb::gerber::files(&v) {
+            if name.ends_with(".drl") {
+                match de_pcb::reader::excellon(&text) {
+                    Ok(d) => list.push(json!({ "file": name, "function": if d.plated == Some(false) { "Drill,NPTH" } else { "Drill,PTH" }, "svg": de_pcb::gerber_check::drill_svg(&d) })),
+                    Err(e) => list.push(json!({ "file": name, "error": e })),
+                }
+                continue;
+            }
+            match de_pcb::reader::gerber(&text) {
+                Ok(g) => list.push(json!({ "file": name, "function": g.attributes.get("FileFunction"), "polarity": g.attributes.get("FilePolarity"), "objects": g.objects.len(), "svg": de_pcb::gerber_check::svg(&g) })),
+                Err(e) => list.push(json!({ "file": name, "error": e })),
+            }
+        }
+        json!({ "bounds": v.bounds, "outline": v.outline, "layers": list })
+    })
+    .await;
+    match out {
+        Ok(j) => axum::Json(j).into_response(),
         Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }

@@ -228,7 +228,20 @@ export type Connection = "connecting" | "online" | "offline";
 export type HistoryEntry = { revision: number; operation: string; user_id: string; at?: number };
 
 /** One line of the Forma AI conversation, shared by every view of the project. */
-export type ChatRecord = { role: "user" | "assistant" | "tool" | "error"; text: string; user?: string; at: number };
+export type ChatRecord = { role: "user" | "assistant" | "tool" | "error"; text: string; user?: string; at: number; attachments?: Attachment[] };
+
+/** A picture (or PDF) sent to Forma AI with a message, kept with the conversation. */
+export type Attachment = { id: string; kind: "png" | "jpg" | "gif" | "webp" | "pdf"; name: string; width?: number; height?: number };
+
+/** Keeps a picture or PDF for the conversation; answers what to send with the message. */
+export async function attachToAi(file: Blob, name: string): Promise<Attachment> {
+  const res = await fetch(projectUrl(`/ai/attachments/${encodeURIComponent(name)}`), { method: "POST", body: file });
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as Attachment;
+}
+
+/** Where an attachment can be shown from. */
+export const attachmentUrl = (id: string) => projectUrl(`/ai/attachments/${id}`);
 
 /** A view command (from Forma AI) for this person: select, frame, isolate, hide, paint, camera. */
 export type ViewCommand = { action: string; target: string | null; value: string | null };
@@ -499,11 +512,12 @@ export class Engine {
   askAi(
     text: string,
     context: { selected: string | null; picked_part: string | null; isolated?: string | null; hidden?: string[]; color_by?: string },
+    attachments: string[] = [],
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const requestId = this.nextRequest++;
       this.pending.set(requestId, { resolve, reject, retry: null });
-      this.send({ type: "ai_ask", request_id: requestId, text, context });
+      this.send({ type: "ai_ask", request_id: requestId, text, context, attachments });
     });
   }
 

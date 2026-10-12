@@ -12,8 +12,10 @@ mod history;
 mod machines;
 mod meshes;
 mod pcb;
+mod pcb_library;
 mod pcb_schematic;
 mod peers;
+mod pictures;
 mod share;
 mod sourcing;
 mod stock;
@@ -390,6 +392,9 @@ enum AiMessage {
         text: String,
         #[serde(default)]
         context: ai::ViewContext,
+        /// Pictures or PDFs attached in the panel (ids from `POST /ai/attachments`).
+        #[serde(default)]
+        attachments: Vec<String>,
     },
     AiStop {
         request_id: u64,
@@ -664,7 +669,8 @@ impl App {
             }
             ClientMessage::Check { request_id } => {
                 let mut report = serde_json::to_value(de_intent::check(&project)).unwrap();
-                let boards = pcb::findings(&project);
+                let mut boards = pcb::findings(&project);
+                boards.extend(pcb_schematic::findings(&project));
                 if !boards.is_empty() {
                     report["ok"] = json!(false);
                     if let Some(f) = report["findings"].as_array_mut() {
@@ -904,8 +910,8 @@ async fn session(app: Arc<App>, socket: WebSocket, user_id: String) {
             // Messages for Forma AI run alongside the engine, not on its lock.
             if let Ok(m) = serde_json::from_str::<AiMessage>(text.as_str()) {
                 let reply = match m {
-                    AiMessage::AiAsk { request_id, text, context } => {
-                        let result = app.ai.ask(Arc::clone(&app), &actor.user_id, &text, context).await;
+                    AiMessage::AiAsk { request_id, text, context, attachments } => {
+                        let result = app.ai.ask(Arc::clone(&app), &actor.user_id, &text, context, &attachments).await;
                         reply(request_id, result.map(|_| json!({ "queued": true })).map_err(|e| CommandError::new(ErrorCode::Internal, e)))
                     }
                     AiMessage::AiStop { request_id } => {
@@ -913,7 +919,7 @@ async fn session(app: Arc<App>, socket: WebSocket, user_id: String) {
                         reply(request_id, Ok(json!({ "stopped": true })))
                     }
                     AiMessage::View { request_id, action, target, value, to } => {
-                        const ACTIONS: &[&str] = &["select", "frame", "isolate", "show_all", "hide", "show", "color", "camera", "explode"];
+                        const ACTIONS: &[&str] = &["select", "frame", "isolate", "show_all", "hide", "show", "color", "camera", "explode", "projection", "display", "section", "measure"];
                         let known = target.is_none_or(|id| app.project.lock().unwrap().entity(id).is_some());
                         if !ACTIONS.contains(&action.as_str()) {
                             reply(request_id, Err(CommandError::new(ErrorCode::InvalidParameters, format!("unknown view action {action} (use {})", ACTIONS.join(", ")))))
@@ -1125,6 +1131,36 @@ impl Source {
                 out.push((label(&self.name), placed));
             }
             _ => {}
+        }
+        Ok(())
+    }
+
+    /// Every part as a mesh in world millimetres, coloured by its material,
+    /// for the engine's pictures (`/look`). Shapes come as the view shows them.
+    fn meshes(&self, out: &mut Vec<de_shape::render::Mesh>) -> Result<(), String> {
+        for m in &self.members {
+            m.meshes(out)?;
+        }
+        let items = match &self.program {
+            Some(p) => fabricate::items(p, p.display_tolerance())?,
+            None if self.boxed.is_some() => self.items(0.01)?,
+            None => return Ok(()),
+        };
+        let r = self.rotation;
+        let turn = |v: &[f32]| -> [f32; 3] {
+            let v = [v[0] as f64, v[1] as f64, v[2] as f64];
+            [0, 1, 2].map(|i| (r[i][0] * v[0] + r[i][1] * v[1] + r[i][2] * v[2]) as f32)
+        };
+        for item in items {
+            let (positions, normals, indices) = de_shape::runtime::mesh_with_normals(&item.solid);
+            let positions = positions.chunks_exact(3).flat_map(|p| {
+                let q = turn(p);
+                [q[0] + self.at[0] as f32, q[1] + self.at[1] as f32, q[2] + self.at[2] as f32]
+            });
+            let normals = normals.chunks_exact(3).flat_map(turn).collect();
+            let (material, _) = self.material(item.material.as_deref());
+            let (color, metal) = de_shape::render::material_color(Some(material.as_str()).filter(|m| !m.is_empty()));
+            out.push(de_shape::render::Mesh { positions: positions.collect(), normals, indices, color, metal });
         }
         Ok(())
     }
@@ -1498,6 +1534,96 @@ async fn fit_report(State(server): State<Arc<Server>>, Path(id): Path<String>, Q
         Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
         Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
+}
+
+/// Volume, area, mass, centre of mass and moments of inertia of a part, an
+/// instance (an assembly's taken whole) or one named part of an assembly
+/// shape (`?part=`), in project coordinates (mm, kg, kg·mm²).
+async fn measure_report(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let fail = |code: StatusCode, message: String| (code, message).into_response();
+    let app = match server.project(query.get("project")) {
+        Ok(app) => app,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let app = app.clone();
+    let part = query.get("part").cloned();
+    let result = tokio::task::spawn_blocking(move || -> Result<Value, String> {
+        let project = app.project.lock().unwrap();
+        let sid = serde_json::from_value::<StableId>(json!(id)).ok().filter(|s| project.entity(*s).is_some()).or_else(|| {
+            project.entity_ids().into_iter().find(|e| {
+                project.get::<de_assembly::Instance>(*e).is_some_and(|i| i.name == id) || project.get::<ShapeProgram>(*e).is_some_and(|p| p.name == id && project.get::<de_solid::Placement>(*e).is_some())
+            })
+        });
+        let sid = sid.ok_or_else(|| format!("nothing called {id}"))?;
+        let m = measure_entity(&project, sid, part.as_deref())?;
+        let mut v = serde_json::to_value(&m).map_err(|e| e.to_string())?;
+        v["id"] = json!(sid);
+        Ok(v)
+    })
+    .await;
+    match result {
+        Ok(Ok(r)) => axum::Json(r).into_response(),
+        Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// An item measured where it is in the project.
+fn measure_entity(project: &Project, sid: StableId, part: Option<&str>) -> Result<de_shape::measure::Measured, String> {
+    use de_shape::measure::placed;
+    let world = project.world();
+    if let Some(inst) = project.get::<de_assembly::Instance>(sid) {
+        // Into project coordinates: through every instance up to the top.
+        let mut t = de_assembly::Transform::IDENTITY;
+        let mut cur = Some(sid);
+        while let Some(c) = cur {
+            let Some(i) = project.get::<de_assembly::Instance>(c) else { break };
+            let place = project.entity(c).and_then(|e| de_assembly::placement(world, e)).unwrap_or_else(|| i.transform());
+            t = place.then(&t);
+            cur = i.parent.and_then(|a| project.entity_ids().into_iter().find(|e| project.get::<de_assembly::Instance>(*e).is_some_and(|x| x.of == a)));
+        }
+        let local = measure_definition(project, inst.of, part, 0)?;
+        return Ok(placed(&local, t.rot, t.at));
+    }
+    let local = measure_definition(project, sid, part, 0)?;
+    let p = project.get::<de_solid::Placement>(sid).copied().unwrap_or_default();
+    let at = [p.x, p.y, p.z].map(|l| l.canonical() * 1000.0);
+    Ok(placed(&local, de_assembly::Transform::IDENTITY.rot, at))
+}
+
+/// A definition (shape, box or assembly) measured in its own coordinates.
+fn measure_definition(project: &Project, sid: StableId, part: Option<&str>, depth: usize) -> Result<de_shape::measure::Measured, String> {
+    use de_shape::measure::{combine, measure, measure_mesh, placed};
+    if depth > 32 {
+        return Err("assemblies nest too deep to measure".into());
+    }
+    let world = project.world();
+    let e = project.entity(sid).ok_or("no such item")?;
+    if project.get::<de_assembly::AssemblyDef>(sid).is_some() {
+        let mut list = vec![];
+        for c in project.entity_ids() {
+            let Some(i) = project.get::<de_assembly::Instance>(c) else { continue };
+            if i.parent != Some(sid) {
+                continue;
+            }
+            let t = project.entity(c).and_then(|ce| de_assembly::placement(world, ce)).unwrap_or_else(|| i.transform());
+            list.push(placed(&measure_definition(project, i.of, None, depth + 1)?, t.rot, t.at));
+        }
+        if list.is_empty() {
+            return Err("this assembly is empty".into());
+        }
+        return Ok(combine(&list));
+    }
+    if let Some(r) = measure(world, e, part) {
+        return r;
+    }
+    if let Some(mesh) = project.get::<DisplayMesh>(sid) {
+        // Meters to millimeters.
+        let positions: Vec<f32> = mesh.positions.iter().map(|v| v * 1000.0).collect();
+        let density = project.get::<de_solid::MaterialRef>(sid).and_then(|m| project.get::<de_solid::Material>(m.0)).map(|m| m.density.canonical());
+        return Ok(measure_mesh(&positions, &mesh.indices, density));
+    }
+    Err("this item has no solid to measure (yet)".into())
 }
 
 #[derive(serde::Deserialize)]
@@ -2342,6 +2468,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/assembly-motion/{id}", get(assembly_motion))
         .route("/connectors/{id}", get(connectors))
         .route("/fit/{id}", get(fit_report))
+        .route("/measure/{id}", get(measure_report))
         .route("/stress/{id}", axum::routing::post(stress))
         .route("/modes/{id}", axum::routing::post(modes))
         .route("/study/{id}", get(study))
@@ -2376,6 +2503,14 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/schematics", get(pcb_schematic::list))
         .route("/pcb/schematic/{id}", get(pcb_schematic::show))
         .route("/pcb/schematic/{id}/schematic.pdf", get(pcb_schematic::pdf))
+        .route("/pcb/schematic/{id}/simulate", axum::routing::post(pcb_schematic::simulate))
+        .route("/pcb/simulations", get(pcb_schematic::simulations))
+        .route("/pcb/kicad", get(pcb_library::status))
+        .route("/pcb/kicad/fetch", axum::routing::post(pcb_library::fetch))
+        .route("/pcb/kicad/search", get(pcb_library::search))
+        .route("/pcb/kicad/footprint/{id}", get(pcb_library::footprint))
+        .route("/pcb/kicad/symbol/{id}", get(pcb_library::symbol))
+        .route("/pcb/verify-footprints", get(pcb_library::verify))
         .route("/pcb/boards", get(pcb::boards))
         .route("/pcb/buy", get(pcb::buy))
         .route("/pcb/settings", get(pcb::settings_get).post(pcb::settings_post))
@@ -2383,8 +2518,14 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/{id}/3d", get(pcb::scene3d))
         .route("/pcb/{id}/bom.json", get(pcb::bom_json))
         .route("/pcb/{id}/fab.zip", get(pcb::zip))
+        .route("/pcb/{id}/gerber-check", get(pcb::gerber_check))
+        .route("/pcb/{id}/layers", get(pcb::layers))
         .route("/pcb/{id}/file/{name}", get(pcb::file))
         .route("/import/{file}", axum::routing::post(import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
+        .route("/images", get(pictures::list))
+        .route("/images/{file}", get(pictures::get).post(pictures::add).layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)))
+        .route("/ai/attachments/{file}", get(pictures::attachment).post(pictures::attach).layer(axum::extract::DefaultBodyLimit::max(40 * 1024 * 1024)))
+        .route("/look", get(pictures::look))
         .fallback_service(ui)
         // Everything above answers to this computer only.
         .layer(axum::middleware::from_fn(local_only))

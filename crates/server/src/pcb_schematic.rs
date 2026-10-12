@@ -6,6 +6,8 @@
 //! - `GET /pcb/schematics?project=`                  schematics (id, name, board, errors)
 //! - `GET /pcb/schematic/<id>?project=`              view + pending sync report
 //! - `GET /pcb/schematic/<id>/schematic.pdf?project=` every sheet as a PDF page
+//! - `POST /pcb/schematic/<id>/simulate?project=`    ngspice on the schematic (body: a SimRequest)
+//! - `GET /pcb/simulations?project=`                 saved simulations (requirements)
 
 use crate::Server;
 use axum::{
@@ -60,6 +62,7 @@ pub async fn preview(Path(name): Path<String>) -> axum::response::Response {
         value_at: None,
         exclude_from_board: false,
         component: None,
+        definition: None,
     };
     let v = de_pcb::schematic_view::symbol_preview(&s);
     axum::Json(json!({ "draw": v.draw, "bbox": v.bbox, "pins": v.pins })).into_response()
@@ -115,4 +118,45 @@ pub async fn pdf(State(server): State<Arc<Server>>, Path(id): Path<String>, Quer
     let name = format!("{}-schematic.pdf", de_pcb::gerber::file_stem(&v.name));
     let disposition = if query.contains_key("download") { format!("attachment; filename=\"{name}\"") } else { format!("inline; filename=\"{name}\"") };
     ([(header::CONTENT_TYPE, "application/pdf".to_string()), (header::CONTENT_DISPOSITION, disposition)], bytes).into_response()
+}
+
+/// `POST /pcb/schematic/<id>/simulate`: run ngspice on the schematic (body: a `SimRequest`).
+pub async fn simulate(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>, axum::Json(req): axum::Json<de_pcb::spice::SimRequest>) -> axum::response::Response {
+    let (v, _) = match view(&server, &query, &id) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    match tokio::task::spawn_blocking(move || de_pcb::spice::simulate(&v, &req)).await {
+        Ok(Ok(r)) => axum::Json(&*r).into_response(),
+        Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// `GET /pcb/simulations?project=`: the saved simulations.
+pub async fn simulations(State(server): State<Arc<Server>>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let app = match server.project(query.get("project")) {
+        Ok(a) => a,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let project = app.project.lock().unwrap();
+    let list: Vec<Value> = de_pcb::spice::saved(project.world()).into_iter().map(|(id, s)| json!({ "id": id, "schematic": s.schematic, "name": s.name, "request": s.request })).collect();
+    axum::Json(list).into_response()
+}
+
+/// Saved simulations that fail a datasheet check or an expectation, for `./forma check`.
+pub fn findings(project: &de_core::Project) -> Vec<Value> {
+    let mut out = Vec::new();
+    for (id, s) in de_pcb::spice::saved(project.world()) {
+        let Some(v) = schematic::view(project.world(), s.schematic) else { continue };
+        match de_pcb::spice::simulate(&v, &s.request) {
+            Ok(r) => {
+                for c in r.checks.iter().chain(&r.expectations).filter(|c| c.status == "fail") {
+                    out.push(json!({ "code": "PCB_SIM", "severity": "error", "entities": [id, s.schematic], "message": format!("simulation “{}”: {} — {}", s.name, c.name, c.detail), "fix": null }));
+                }
+            }
+            Err(e) => out.push(json!({ "code": "PCB_SIM", "severity": "error", "entities": [id], "message": format!("simulation “{}” did not run: {e}", s.name), "fix": null })),
+        }
+    }
+    out
 }
