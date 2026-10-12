@@ -372,11 +372,18 @@ fn kind_of(world: &World, id: StableId, inst: &Instance) -> Kind {
         },
         Some("iso4032") => Kind::Nut { d: v("d"), s: metric("Across flats").unwrap_or(0.0), m: metric("Height").unwrap_or(0.0) },
         Some("iso7089") => Kind::Washer { d: v("d") },
-        Some("bearing_deep_groove") => Kind::Bearing {
+        Some("bearing_deep_groove" | "bearing_flanged" | "bearing_thrust") => Kind::Bearing {
             d: v("d"),
             outer: v("D"),
             width: v("B"),
             number: stats.as_ref().and_then(|s| s.declared.stock.as_ref()).map(|s| s.part_number.clone()).unwrap_or_else(|| "bearing".into()),
+        },
+        // Linear ball bushings: the shaft runs in the bore, the sleeve sits in a housing.
+        Some("linear_bearing_lmuu") => Kind::Bearing {
+            d: v("dr"),
+            outer: metric("Outside diameter").unwrap_or(0.0),
+            width: metric("Length").unwrap_or(0.0),
+            number: stats.as_ref().and_then(|s| s.declared.stock.as_ref()).map(|s| s.part_number.clone()).unwrap_or_else(|| "linear bearing".into()),
         },
         Some("iso8734") => Kind::Pin { d: v("d"), len: v("length") },
         _ if metric("Tapped thread").is_some() => Kind::Tapped { depth: metric("Tapped depth").unwrap_or(0.0) },
