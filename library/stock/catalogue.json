@@ -20,6 +20,8 @@
     "bearing_thrust",
     "linear_bearing_lmuu",
     "linear_rod",
+    "linear_rail_mgn",
+    "linear_carriage_mgn",
     "shaft_collar",
     "gt2_pulley",
     "gt2_idler",
