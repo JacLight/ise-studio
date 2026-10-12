@@ -9,6 +9,7 @@ import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo
 import { projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
 import { FabCheck, SimulateTab } from "./PcbSim";
+import { LibraryPane } from "./PcbLibrary";
 import { SchematicPane } from "./Schematic";
 
 type P = [number, number];
@@ -265,23 +266,23 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
   const [hiddenNets, setHiddenNets] = useState<string[]>([]);
   const toggle = (list: string[], x: string) => (list.includes(x) ? list.filter((y) => y !== x) : [...list, x]);
   // Schematic, board, or both side by side; keys go to the pane last clicked.
-  const [pane, setPane] = useState<"schematic" | "split" | "board">(() => {
+  const [pane, setPane] = useState<"schematic" | "split" | "board" | "library">(() => {
     try {
       const v = localStorage.getItem("forma.pcb.pane");
-      return v === "schematic" || v === "split" ? v : "board";
+      return v === "schematic" || v === "split" || v === "library" ? v : "board";
     } catch {
       return "board";
     }
   });
   const schKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
-  const keyPane = useRef<"schematic" | "board">("board");
+  const keyPane = useRef<"schematic" | "board" | "library">("board");
   useEffect(() => {
     try {
       localStorage.setItem("forma.pcb.pane", pane);
     } catch {
       /* private window */
     }
-    keyPane.current = pane === "board" ? "board" : "schematic";
+    keyPane.current = pane === "board" ? "board" : pane === "library" ? "library" : "schematic";
   }, [pane]);
 
   // Boards in the project, then the chosen board in full, again after every change.
@@ -361,6 +362,15 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
         e.preventDefault();
         e.stopImmediatePropagation();
       };
+      if (keyPane.current === "library") {
+        // The library editors take their own input; only Esc closes the workspace.
+        if (e.key === "Escape") {
+          handled();
+          return props.onClose();
+        }
+        if (k.length === 1 || e.key === "Delete" || e.key === "Backspace") e.stopImmediatePropagation();
+        return;
+      }
       if (keyPane.current === "schematic" && schKeys.current) {
         if (schKeys.current(e)) return handled();
         if (e.key === "Escape") {
@@ -524,6 +534,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
                   ["schematic", "Schematic"],
                   ["split", "Both"],
                   ["board", "Board"],
+                  ["library", "Library"],
                 ] as const
               ).map(([k, label]) => (
                 <button key={k} type="button" role="tab" aria-selected={pane === k} className={pane === k ? "active" : ""} onClick={() => setPane(k)}>
@@ -551,6 +562,10 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
         <NewBoard run={commit} canEdit={props.canEdit} onMade={(id) => setBoardId(id)} />
       ) : !b ? (
         <div className="pcb-empty">{error ? <p className="pcb-error">{error}</p> : <div className="pcb-spinner" />}</div>
+      ) : pane === "library" ? (
+        <div className="pcb-body">
+          <LibraryPane boardId={b.id} revision={props.revision} commit={commit} notify={notify} canEdit={props.canEdit} />
+        </div>
       ) : pane !== "board" ? (
         <div className={`pcb-body ${pane === "split" ? "split" : ""}`}>
           {side}

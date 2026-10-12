@@ -117,6 +117,13 @@ pub struct PadView {
     /// A custom pad's real outline on the board (`prim` is its convex hull).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub polygon: Option<Vec<P>>,
+    /// The pad's own pour connection and thermal settings (the footprint's), over the zone's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zone_connection: Option<PadConnection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thermal_gap: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thermal_spoke: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -326,24 +333,30 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
             continue;
         };
         let first = pads.len();
-        for p in &fp.pads {
+        // A pad stack is one pad per group of copper layers (one hole).
+        for (variant, (p, stack_layers)) in fp.pads.iter().flat_map(|p| crate::footprints::stack_variants(p, &layers, bottom).into_iter().enumerate()) {
+            let p = &p;
             let prim = crate::footprints::pad_prim(p, c.at, c.rotation, bottom);
             let rot = (if bottom { -p.rotation } else { p.rotation } + c.rotation).rem_euclid(360.0);
             let at = place(c.at, c.rotation, bottom, p.at);
             let side_layer = if bottom { layers[nl - 1].clone() } else { layers[0].clone() };
             let pad_layers = match p.kind {
                 PadKind::Smd => vec![side_layer],
-                PadKind::Tht => layers.clone(),
+                PadKind::Tht => stack_layers.unwrap_or_else(|| layers.clone()),
                 PadKind::Npth => vec![],
             };
-            let paste = if p.kind != PadKind::Smd {
+            let paste = if p.kind != PadKind::Smd || p.extra.no_paste {
                 vec![]
             } else if p.paste.is_empty() {
                 vec![prim.clone()]
             } else {
                 p.paste.iter().map(|w| Prim::rect(place(c.at, c.rotation, bottom, [w[0], w[1]]), w[2], w[3], rot, 0.0)).collect()
             };
-            if let Some(d) = p.drill {
+            if let Some(d) = p.drill.filter(|_| variant == 0) {
+                let at = match p.extra.drill_offset {
+                    Some(o) => place(c.at, c.rotation, bottom, geom::add(p.at, geom::rotate(o, p.rotation))),
+                    None => at,
+                };
                 holes.push(Hole { at, size: d, rotation: rot, plated: p.kind == PadKind::Tht, owner: if p.number.is_empty() { c.reference.clone() } else { format!("{}.{}", c.reference, p.number) } });
             }
             let corner = match p.shape {
@@ -369,6 +382,9 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
                 paste,
                 side: c.side,
                 polygon: Some(crate::footprints::pad_polygon(p, c.at, c.rotation, bottom)).filter(|v| !v.is_empty()),
+                zone_connection: p.extra.zone_connection,
+                thermal_gap: p.extra.thermal_gap,
+                thermal_spoke: p.extra.thermal_spoke,
             });
         }
         // Pads of one part that overlap are one piece of copper (USB-C's paired contacts, a switch's legs): one net.
@@ -803,16 +819,18 @@ fn fill_zones(board: &Board, zones: &[(StableId, Zone)], outline: &[P], cutouts:
                 Owner::Pad(i) if c.layers & (1 << li) != 0 && c.net.as_deref() == Some(z.net.as_str()) => Some(i),
                 _ => None,
             })
-            .filter(|i| match z.connection {
+            .filter(|i| match pads[*i].zone_connection.unwrap_or(z.connection) {
                 PadConnection::Solid => false,
                 PadConnection::ThermalTht => pads[*i].kind == PadKind::Tht,
                 PadConnection::Thermal | PadConnection::None => true,
             })
             .collect();
         let allowed = shape.clone();
-        let tgap = z.gap_thermal();
+        // A pad's own thermal settings (from its footprint) win over the zone's.
+        let pad_gap = |i: usize| pads[i].thermal_gap.unwrap_or_else(|| z.gap_thermal());
+        let pad_spoke = |i: usize| pads[i].thermal_spoke.map(|s| s.max(z.min_width)).unwrap_or_else(|| z.spoke_width());
         if !relieved.is_empty() {
-            let rings: Vec<CrossSection> = relieved.iter().map(|i| pads[*i].prim.section(tgap, TOL)).collect();
+            let rings: Vec<CrossSection> = relieved.iter().map(|i| pads[*i].prim.section(pad_gap(*i), TOL)).collect();
             shape = shape.difference(&CrossSection::batch_union(&rings));
         }
         let half = z.min_width / 2.0;
@@ -820,10 +838,10 @@ fn fill_zones(board: &Board, zones: &[(StableId, Zone)], outline: &[P], cutouts:
             shape = shape.offset(-half, JoinType::Round, 2.0, segs(half)).offset(half, JoinType::Round, 2.0, segs(half));
         }
         let mut reliefs = Vec::new();
-        if z.connection != PadConnection::None && !relieved.is_empty() {
-            let sw = z.spoke_width();
+        if !relieved.is_empty() {
             let mut spokes = Vec::new();
-            for &i in &relieved {
+            for &i in relieved.iter().filter(|i| pads[**i].zone_connection.unwrap_or(z.connection) != PadConnection::None) {
+                let (sw, tgap) = (pad_spoke(i), pad_gap(i));
                 let p = &pads[i];
                 let mut n = 0;
                 for k in 0..4 {
