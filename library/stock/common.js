@@ -170,6 +170,7 @@ function supplierSearch(supplier, query) {
     "CNC Kitchen": `https://cnckitchen.store/search?q=${q}`,
     "Ruthex": `https://www.ruthex.de/search?sSearch=${q}`,
     "StepperOnline": `https://www.omc-stepperonline.com/search?keyword=${q}`,
+    PEM: `https://www.pemnet.com/products/product-finder/${query.toLowerCase().replace(/\./g, "-")}/`,
   }[supplier];
   if (!url) throw new Error(`no search link for ${supplier}`);
   return { supplier, url };

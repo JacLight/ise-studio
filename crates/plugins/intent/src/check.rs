@@ -101,6 +101,26 @@ pub fn check(project: &Project) -> CheckReport {
                 findings.push(Finding { code: "PART_NOT_CURRENT", severity: Severity::Error, entities: vec![id], message: reason.clone(), fix: None });
             }
         }
+        // Sheet-metal design rules (sheet.js), on placed shapes and definitions alike.
+        if let (Some(program), Some(solid)) = (project.get::<de_shape::ShapeProgram>(id), project.get::<de_shape::ShapeSolid>(id)) {
+            for (part, data) in &solid.stats.sheet_metal {
+                for c in data["checks"].as_array().into_iter().flatten() {
+                    let severity = match c["severity"].as_str() {
+                        Some("error") => Severity::Error,
+                        Some("warning") => Severity::Warning,
+                        _ => continue,
+                    };
+                    let name = if part.is_empty() { program.name.clone() } else { format!("{} › {part}", program.name) };
+                    findings.push(Finding {
+                        code: "SHEET_METAL",
+                        severity,
+                        entities: vec![id],
+                        message: format!("{name}: {} ({})", c["message"].as_str().unwrap_or(""), c["code"].as_str().unwrap_or("")),
+                        fix: None,
+                    });
+                }
+            }
+        }
     }
 
     if parts.len() > OVERLAP_SCAN_LIMIT {

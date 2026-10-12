@@ -14,6 +14,8 @@
     "iso4032",
     "iso7089",
     "heatset_insert",
+    "pem_nut",
+    "pem_standoff",
     "iso8734",
     "bearing_deep_groove",
     "linear_bearing_lmuu",

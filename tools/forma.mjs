@@ -9,6 +9,7 @@
 //   node tools/forma.mjs fit <assembly or instance id | project> [--motion]   do screws, inserts, nuts, bearings and joined parts fit (and, with --motion, every joint's sweep)
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
+//   node tools/forma.mjs sheet [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
 //   node tools/forma.mjs list                 every entity, one line each
 //   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
 //   node tools/forma.mjs get <id>             one entity in full (program source, params, results)
@@ -24,7 +25,7 @@
 // path (e.g. "$0.id"), and { "$file": "path.js" } inlines a file's text (paths
 // are relative to steps.json; several files can be joined with an array).
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 const args = process.argv.slice(2);
@@ -198,6 +199,48 @@ if (command === "run") {
     for (const n of r.notes) console.log(`  ! ${n}`);
     failed = !r.ok;
   }
+} else if (command === "sheet") {
+  // Sheet-metal flat patterns: every sheet part, or one with its bend table and checks; files on request.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const files = {};
+  for (const ext of ["dxf", "svg", "csv"]) {
+    const i = args.indexOf(`--${ext}`);
+    if (i >= 0) files[ext] = args.splice(i, 2)[1];
+  }
+  const [, id = "project", part] = args;
+  const q = new URLSearchParams({ ...(project ? { project } : {}), ...(part ? { part } : {}) });
+  const res = await fetch(`${http}/sheet/${id}?${q}`);
+  if (!res.ok) {
+    console.error(`✗ ${await res.text()}`);
+    failed = true;
+  } else if (id === "project") {
+    const list = await res.json();
+    if (!list.length) console.log("no sheet-metal parts (build them with sheet() or sheetProfile(); see the prelude)");
+    for (const s of list) console.log(`${s.errors ? "✗" : "✓"} ${s.part} (${s.shape}, ${s.id}): ${s.thickness} mm ${s.material}, flat ${s.flat.join(" × ")} mm, ${s.bends} bends${s.errors ? `, ${s.errors} errors` : ""}${s.warnings ? `, ${s.warnings} warnings` : ""}`);
+    failed = list.some((s) => s.errors);
+  } else {
+    const f = await res.json();
+    const errors = f.checks.filter((c) => c.severity === "error");
+    console.log(`${errors.length ? "✗" : "✓"} ${f.part}: ${f.thickness} mm ${f.material}, K ${f.k} at R${f.radius}; flat blank ${f.size.map((v) => v.toFixed(2)).join(" × ")} mm, ${(f.area / 100).toFixed(1)} cm², cut ${f.cut_length.toFixed(0)} mm in ${f.pierces} outline${f.pierces > 1 ? "s" : ""}`);
+    if (f.bends.length) console.log("  order bend  dir   angle  R      K     BA      BD      length  from → to");
+    for (const b of [...f.bends].sort((a, b) => a.order - b.order)) {
+      console.log(`  ${String(b.order).padStart(5)} ${b.id.padEnd(5)} ${(b.dir + (b.hem ? "*" : "")).padEnd(5)} ${String(b.angle).padStart(5)}° ${String(b.radius).padEnd(6)} ${String(b.k).padEnd(5)} ${b.allowance.toFixed(3).padStart(7)} ${b.deduction.toFixed(3).padStart(7)} ${b.length.toFixed(1).padStart(7)}  ${b.from} → ${b.to}`);
+    }
+    if (f.bends.some((b) => b.hem)) console.log("  (* hem)");
+    for (const c of f.checks) console.log(`  ${c.severity.padEnd(7)} ${c.code}: ${c.message}`);
+    for (const [ext, path] of Object.entries(files)) {
+      const r = await fetch(`${http}/sheet/${id}?${new URLSearchParams({ ...Object.fromEntries(q), format: ext })}`);
+      if (!r.ok) {
+        console.error(`✗ ${ext}: ${await r.text()}`);
+        failed = true;
+        continue;
+      }
+      const bytes = Buffer.from(await r.arrayBuffer());
+      writeFileSync(path, bytes);
+      console.log(`  wrote ${path} (${bytes.length} bytes)`);
+    }
+    failed ||= errors.length > 0;
+  }
 } else if (command === "stock") {
   // The stock library: families, or the sizes matching a search ("M3×12", "608", "servo").
   const query = args.slice(1).join(" ");
@@ -336,7 +379,7 @@ if (command === "run") {
     }
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | view <action> [what]  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | sheet [id] [part] | get <id> | tree | list | check | ops | view <action> [what]  [--project name] [--url ws://…]");
   failed = true;
 }
 

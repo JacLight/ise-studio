@@ -97,7 +97,7 @@ pub struct FlatPattern {
 
 impl FlatPattern {
     /// The blank's outlines from the flat solid, at mid-thickness.
-    fn from_parts(part: &str, flat: &manifold_csg::Manifold, data: &Value) -> Result<FlatPattern, String> {
+    pub(crate) fn from_parts(part: &str, flat: &manifold_csg::Manifold, data: &Value) -> Result<FlatPattern, String> {
         let thickness = data["thickness"].as_f64().ok_or("the flat pattern has no thickness")?;
         let loops: Vec<Vec<[f64; 2]>> = flat.slice_at_z(thickness / 2.0).into_iter().filter(|r| r.len() >= 3).collect();
         let cut_length = loops.iter().map(|r| perimeter(r)).sum();
@@ -350,6 +350,43 @@ pub fn svg(f: &FlatPattern) -> String {
     }
     s.push_str("</svg>");
     s
+}
+
+/// The bend table as CSV, in the suggested press-brake order.
+pub fn bend_table_csv(f: &FlatPattern) -> String {
+    let mut out = format!(
+        "# {} — {} mm {}, flat blank {} × {} mm\nOrder,Bend,From,To,Direction,Angle deg,Inside radius mm,K-factor,Bend allowance mm,Bend deduction mm,Bend line length mm,Line from x,Line from y,Line to x,Line to y\n",
+        f.part,
+        fmt_num(f.thickness),
+        f.material,
+        fmt_num(f.size[0]),
+        fmt_num(f.size[1])
+    );
+    let quoted = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+    let mut bends: Vec<&Bend> = f.bends.iter().collect();
+    bends.sort_by_key(|b| b.order);
+    for b in bends {
+        let _ = writeln!(
+            out,
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            b.order,
+            b.id,
+            quoted(&b.from),
+            quoted(&b.to),
+            if b.hem { format!("{} (hem)", b.dir) } else { b.dir.clone() },
+            fmt_num(b.angle),
+            fmt_num(b.radius),
+            fmt_num(b.k),
+            fmt_num(b.allowance),
+            fmt_num(b.deduction),
+            fmt_num(b.length),
+            fmt_num(b.line[0][0]),
+            fmt_num(b.line[0][1]),
+            fmt_num(b.line[1][0]),
+            fmt_num(b.line[1][1]),
+        );
+    }
+    out
 }
 
 fn xml(s: &str) -> String {

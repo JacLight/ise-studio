@@ -14,6 +14,7 @@ mod pcb;
 mod pcb_schematic;
 mod peers;
 mod share;
+mod sheet;
 mod sourcing;
 mod stock;
 
@@ -1054,7 +1055,7 @@ impl Source {
         match (&self.program, self.boxed) {
             (Some(program), _) => fabricate::items(program, tolerance),
             (None, Some([w, d, h])) => {
-                Ok(vec![fabricate::Item { name: self.name.clone(), material: None, process: None, solid: manifold_csg::Manifold::cube(w, d, h, false), volume_mm3: w * d * h, key: String::new() }])
+                Ok(vec![fabricate::Item { name: self.name.clone(), material: None, process: None, solid: manifold_csg::Manifold::cube(w, d, h, false), volume_mm3: w * d * h, key: String::new(), flat: None }])
             }
             _ => Err("not a part".into()),
         }
@@ -1253,7 +1254,7 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
                         };
                         let base = fabricate::file_name(&item.name);
                         if ext == "dxf" {
-                            Ok((format!("{base}.dxf"), "image/vnd.dxf", fabricate::dxf(&item.name, &item.solid).into_bytes()))
+                            Ok((format!("{base}.dxf"), "image/vnd.dxf", item.cut_file().into_bytes()))
                         } else {
                             Ok((format!("{base}.stl"), "model/stl", de_shape::stl_of(&fabricate::at_origin(&item.solid), &format!("Forma {}", item.name), [0.0; 3])))
                         }
@@ -2320,6 +2321,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/touching/{id}", get(touching))
         .route("/motion-stress/{id}", get(motion_stress))
         .route("/thermal/{id}", axum::routing::post(thermal))
+        .route("/sheet/{id}", get(sheet::pattern))
         .route("/bom/{id}", get(sourcing::bom))
         .route("/bom/{id}/file", get(sourcing::line_file))
         .route("/rfq/{file}", get(sourcing::rfq))

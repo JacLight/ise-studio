@@ -179,8 +179,8 @@ fn sheet_parts_export_a_layered_cut_file_and_a_package() {
     assert_eq!(dxf.matches("POLYLINE").count(), 2 + 3, "outline+hole at depth 18; outline+hole+pocket at 6");
 
     let items = vec![
-        fabricate::Item { name: "Shelf 1".into(), material: None, process: Some("cnc_router".into()), solid: manifold_csg::Manifold::cube(500.0, 300.0, 18.0, false), volume_mm3: 2.7e6, key: String::new() },
-        fabricate::Item { name: "Shelf 2".into(), material: None, process: Some("cnc_router".into()), solid: manifold_csg::Manifold::cube(500.0, 300.0, 18.0, false).translate(0.0, 0.0, 400.0), volume_mm3: 2.7e6, key: String::new() },
+        fabricate::Item { name: "Shelf 1".into(), material: None, process: Some("cnc_router".into()), solid: manifold_csg::Manifold::cube(500.0, 300.0, 18.0, false), volume_mm3: 2.7e6, key: String::new(), flat: None },
+        fabricate::Item { name: "Shelf 2".into(), material: None, process: Some("cnc_router".into()), solid: manifold_csg::Manifold::cube(500.0, 300.0, 18.0, false).translate(0.0, 0.0, 400.0), volume_mm3: 2.7e6, key: String::new(), flat: None },
     ];
     let (files, lines) = fabricate::package("Cabinet", &items, &|_| ("Birch ply".into(), Some(680.0)), &|_| None);
     assert_eq!(lines.len(), 1, "identical parts share one cut list line");
