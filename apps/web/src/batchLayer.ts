@@ -36,38 +36,46 @@ const looksSeen = new WeakMap<THREE.Material, Look>();
 const planeIds = new WeakMap<THREE.Plane[], number>();
 let nextPlanes = 1;
 
-function lookValues(m: THREE.Material, out: number[]) {
-  const s = m as THREE.MeshStandardMaterial;
-  out[0] = s.color ? s.color.getHex() : -1;
-  out[1] = s.emissive ? s.emissive.getHex() : -1;
-  out[2] = s.emissiveIntensity ?? 0;
-  out[3] = s.roughness ?? 0;
-  out[4] = s.metalness ?? 0;
-  out[5] = s.opacity;
-  out[6] = +s.transparent | (+s.depthWrite << 1) | (+s.colorWrite << 2) | (+(s.wireframe ?? false) << 3) | (+s.depthTest << 4);
-  out[7] = s.side;
-  return out;
-}
+const NO_COLOR = { r: -1, g: -1, b: -1 };
 
-const scratch: number[] = [];
+/** Writes the look into `out`; true when it differs from what `out` held. */
+function lookValues(m: THREE.Material, out: number[]): boolean {
+  const s = m as THREE.MeshStandardMaterial;
+  const c = s.color ?? NO_COLOR;
+  const e = s.emissive ?? NO_COLOR;
+  const flags = +s.transparent | (+s.depthWrite << 1) | (+s.colorWrite << 2) | (+(s.wireframe ?? false) << 3) | (+s.depthTest << 4) | (s.side << 5);
+  const now = [c.r, c.g, c.b, e.r, e.g, e.b, s.emissiveIntensity ?? 0, s.roughness ?? 0, s.metalness ?? 0, s.opacity, flags];
+  let changed = out.length !== now.length;
+  for (let i = 0; i < now.length; i++) {
+    if (out[i] !== now[i]) {
+      out[i] = now[i];
+      changed = true;
+    }
+  }
+  return changed;
+}
 
 /**
  * A material's look, as a key: meshes that share it can share a draw call.
- * Compared field by field each frame (no strings made unless it changed).
+ * Compared field by field each frame (a key string is made only when it changed).
  */
 function lookKey(m: THREE.Material): string {
-  const values = lookValues(m, scratch);
-  const seen = looksSeen.get(m);
-  if (seen && seen.planes === m.clippingPlanes && seen.values.every((v, i) => v === values[i])) return seen.key;
+  let seen = looksSeen.get(m);
+  if (!seen) {
+    seen = { values: [], planes: null, key: "" };
+    looksSeen.set(m, seen);
+  }
+  const changed = lookValues(m, seen.values);
+  if (!changed && seen.planes === m.clippingPlanes && seen.key) return seen.key;
   const planes = m.clippingPlanes;
   let pid = 0;
   if (planes) {
     pid = planeIds.get(planes) ?? nextPlanes++;
     planeIds.set(planes, pid);
   }
-  const key = `${m.type}:${values.join(",")}:${pid}`;
-  looksSeen.set(m, { values: [...values], planes, key });
-  return key;
+  seen.planes = planes;
+  seen.key = `${m.type}:${seen.values.join(",")}:${pid}`;
+  return seen.key;
 }
 
 /**
