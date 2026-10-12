@@ -133,6 +133,7 @@ fn a_shaft_goes_concentric_into_a_bore_found_on_the_mesh() {
     let axis_pt = t.apply([0.0, 0.0, 0.0]);
     assert!((axis_pt[0] - 20.0).abs() < 1e-6 && (axis_pt[1] - 20.0).abs() < 1e-6, "{axis_pt:?}");
     assert!(t.turn([0.0, 0.0, 1.0])[2].abs() > 1.0 - 1e-9);
+    assert!(axis_pt[2].abs() < 15.0, "it moves as little as the mate needs, not along its free axis: {axis_pt:?}");
     // Slides along and turns about the axis: 2 left.
     let d = de_assembly::dof::report(p.world(), None).unwrap();
     assert_eq!(d.groups[0].free, 2, "{:?}", d.groups[0]);
@@ -284,10 +285,10 @@ fn exploded_views_studies_and_poses() {
     // An exploded view worked out from the middle, with trails.
     let ex = id(&run(&mut p, "assembly.explode.create", json!({ "name": "Apart", "auto": { "spread": 1 } })).unwrap());
     let e = de_assembly::views::explode(p.world(), ex).unwrap();
-    assert_eq!(e.steps.len(), 3);
-    assert_eq!(e.trails.len(), 2);
+    assert_eq!(e.steps.len(), 2, "one step: everything but the biggest part (the arm) comes off together");
+    assert_eq!(e.trails.len(), 1);
     let kpos = e.instances.iter().position(|i| i.id == k).unwrap();
-    assert!(e.steps[2].poses[kpos].0[0] > 200.0, "the block moves outward: {:?}", e.steps[2].poses[kpos]);
+    assert!(e.steps[1].poses[kpos].0[0] > 200.0, "the block moves outward: {:?}", e.steps[1].poses[kpos]);
     // Steps given by hand: lift the block 50 mm, then turn it a quarter.
     run(&mut p, "assembly.explode.update", json!({ "target": ex, "steps": [{ "instances": [k], "move": [0, 0, 50] }, { "instances": [k], "turn": { "axis": [0, 0, 1], "angle": 90 } }] })).unwrap();
     let e = de_assembly::views::explode(p.world(), ex).unwrap();

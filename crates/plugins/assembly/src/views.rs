@@ -274,6 +274,9 @@ pub struct ExplodeStep {
     pub instances: Vec<StableId>,
     #[serde(default, rename = "move")]
     pub by: V3,
+    /// Moves of their own for some of the instances (in place of `move`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub moves: BTreeMap<StableId, V3>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn: Option<Turn>,
 }
@@ -330,10 +333,16 @@ pub fn auto_steps(world: &World, scope: Option<StableId>, spread: f64) -> Result
     }
     let centre = mid((lo, hi));
     let size = tf::norm(tf::sub(hi, lo)).max(1.0);
+    // The biggest part (the base, the frame) stays where it is; the rest come off it.
+    let volume = |b: &(V3, V3)| (0..3).map(|k| (b.1[k] - b.0[k]).max(0.0)).product::<f64>();
+    let keep = list.iter().max_by(|x, y| volume(&x.2).total_cmp(&volume(&y.2))).map(|x| x.0);
     // By assembly step, last first; otherwise all at once.
     let step_of = |i: &Instance| i.properties.get("step").and_then(|s| s.trim().parse::<f64>().ok());
     let mut groups: BTreeMap<i64, Vec<(StableId, V3)>> = BTreeMap::new();
     for (id, inst, b) in &list {
+        if Some(*id) == keep {
+            continue;
+        }
         let out = tf::sub(mid(*b), centre);
         let len = tf::norm(out);
         let dir = if len > size * 0.01 { tf::scale(out, 1.0 / len) } else { [0.0, 0.0, 1.0] };
@@ -343,10 +352,14 @@ pub fn auto_steps(world: &World, scope: Option<StableId>, spread: f64) -> Result
     }
     let mut steps = vec![];
     for (k, members) in groups {
-        // One step per group; each member's own direction is a step of its own when they differ.
-        for (id, by) in members {
-            steps.push(ExplodeStep { name: if k == 0 { String::new() } else { format!("Step {}", -k as f64 / 1000.0) }, instances: vec![id], by: by.map(|v| (v * 1000.0).round() / 1000.0), turn: None });
-        }
+        // One step per group, each member out along its own line.
+        steps.push(ExplodeStep {
+            name: if k == 0 { "Apart".into() } else { format!("Assembly step {}", -k as f64 / 1000.0) },
+            instances: members.iter().map(|(id, _)| *id).collect(),
+            by: [0.0; 3],
+            moves: members.into_iter().map(|(id, by)| (id, by.map(|v| (v * 1000.0).round() / 1000.0))).collect(),
+            turn: None,
+        });
     }
     Ok(steps)
 }
@@ -362,7 +375,7 @@ fn check_steps(tx: &Tx, scope: Option<StableId>, steps: &[ExplodeStep]) -> Resul
                 return Err(bad(ErrorCode::InvalidParameters, format!("step {}: {} is in another assembly", n + 1, inst.name)));
             }
         }
-        let ok = s.by.iter().all(|v| v.is_finite()) && s.turn.as_ref().is_none_or(|t| t.angle.is_finite() && t.axis.iter().all(|v| v.is_finite()) && tf::norm(t.axis) > 1e-12 && t.at.is_none_or(|a| a.iter().all(|v| v.is_finite())));
+        let ok = s.by.iter().chain(s.moves.values().flatten()).all(|v| v.is_finite()) && s.moves.keys().all(|k| s.instances.contains(k)) && s.turn.as_ref().is_none_or(|t| t.angle.is_finite() && t.axis.iter().all(|v| v.is_finite()) && tf::norm(t.axis) > 1e-12 && t.at.is_none_or(|a| a.iter().all(|v| v.is_finite())));
         if !ok {
             return Err(bad(ErrorCode::InvalidParameters, format!("step {}: moves and turns need finite numbers (and an axis)", n + 1)));
         }
@@ -519,8 +532,9 @@ pub fn explode(world: &World, id: StableId) -> Result<Exploded, String> {
                 next = rot.then(&next);
                 middle = rot.apply(middle);
             }
-            next = Transform::translation(s.by).then(&next);
-            middle = tf::add(middle, s.by);
+            let by = s.moves.get(i).copied().unwrap_or(s.by);
+            next = Transform::translation(by).then(&next);
+            middle = tf::add(middle, by);
             now[k] = next;
             trails[k].push(middle);
             moved[k] = true;

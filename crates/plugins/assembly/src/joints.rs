@@ -597,6 +597,7 @@ pub fn solve(links: &[Link], fixed: &HashMap<StableId, Transform>, guess: &HashM
 /// holds; Err with the remaining miss.
 fn settle(links: &[&Link], moving: &[StableId], start: HashMap<StableId, Transform>, size: f64) -> Result<HashMap<StableId, Transform>, f64> {
     let n = 6 * moving.len();
+    let min_norm = links.iter().any(|l| !l.kind.places());
     let res = |p: &HashMap<StableId, Transform>| {
         let mut r = vec![];
         for l in links {
@@ -646,12 +647,46 @@ fn settle(links: &[&Link], moving: &[StableId], start: HashMap<StableId, Transfo
             }
         }
         let mut improved = false;
-        for _ in 0..14 {
-            let mut m = a.clone();
-            for (i, row) in m.iter_mut().enumerate() {
-                row[i] += lambda * (a[i][i] + 1e-12);
+        // What mates hold is under-determined: each step is then the least
+        // motion that closes the miss (turns weighed by the reach), d = −W⁻¹Jᵀ(JW⁻¹Jᵀ + λI)⁻¹r,
+        // so free directions stay where they were instead of drifting.
+        let dual = |r: &[f64], lambda: f64| -> Option<Vec<f64>> {
+            let m = r.len();
+            let w = |k: usize| if k % 6 < 3 { 1.0 } else { 1.0 / (size * size) };
+            let mut jj = vec![vec![0.0; m]; m];
+            for k in 0..n {
+                let c = &cols[k];
+                let wk = w(k);
+                for i in 0..m {
+                    if c[i] == 0.0 {
+                        continue;
+                    }
+                    for j in i..m {
+                        jj[i][j] += c[i] * c[j] * wk;
+                    }
+                }
             }
-            let Some(d) = de_shape::mechanism::solve_dense(m, g.clone()) else {
+            let mean = (0..m).map(|i| jj[i][i]).sum::<f64>() / m.max(1) as f64;
+            for i in 0..m {
+                for j in 0..i {
+                    jj[i][j] = jj[j][i];
+                }
+                jj[i][i] += lambda * mean.max(1e-300) + 1e-14 * mean;
+            }
+            let y = de_shape::mechanism::solve_dense(jj, r.to_vec())?;
+            Some((0..n).map(|k| -w(k) * cols[k].iter().zip(&y).map(|(a, b)| a * b).sum::<f64>()).collect())
+        };
+        for _ in 0..14 {
+            let d = if min_norm {
+                dual(&r, lambda)
+            } else {
+                let mut m = a.clone();
+                for (i, row) in m.iter_mut().enumerate() {
+                    row[i] += lambda * (a[i][i] + 1e-12);
+                }
+                de_shape::mechanism::solve_dense(m, g.clone())
+            };
+            let Some(d) = d else {
                 lambda *= 10.0;
                 continue;
             };
