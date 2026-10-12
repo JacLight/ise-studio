@@ -598,6 +598,36 @@ pub fn solve(links: &[Link], fixed: &HashMap<StableId, Transform>, guess: &HashM
 fn settle(links: &[&Link], moving: &[StableId], start: HashMap<StableId, Transform>, size: f64) -> Result<HashMap<StableId, Transform>, f64> {
     let n = 6 * moving.len();
     let min_norm = links.iter().any(|l| !l.kind.places());
+    // How freely each instance moves in those steps: the farther it is (by
+    // joints) from what is fixed, the more it yields — the part mated last
+    // moves to its mate, not the part it is mated to.
+    let mobility: Vec<f64> = {
+        let mut depth: HashMap<StableId, usize> = start.keys().filter(|id| !moving.contains(id)).map(|id| (*id, 0)).collect();
+        for l in links {
+            if let (None, Some(b)) | (Some(b), None) = (l.a.id(), l.b.id()) {
+                depth.entry(b).or_insert(1);
+            }
+        }
+        for _ in 0..links.len() {
+            let mut changed = false;
+            for l in links {
+                if let (Some(a), Some(b)) = (l.a.id(), l.b.id()) {
+                    for (x, y) in [(a, b), (b, a)] {
+                        if let Some(dx) = depth.get(&x).copied()
+                            && depth.get(&y).is_none_or(|dy| *dy > dx + 1)
+                        {
+                            depth.insert(y, dx + 1);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        moving.iter().map(|id| 8f64.powi(depth.get(id).copied().unwrap_or(1).saturating_sub(1).min(6) as i32)).collect()
+    };
     let res = |p: &HashMap<StableId, Transform>| {
         let mut r = vec![];
         for l in links {
@@ -652,7 +682,7 @@ fn settle(links: &[&Link], moving: &[StableId], start: HashMap<StableId, Transfo
         // so free directions stay where they were instead of drifting.
         let dual = |r: &[f64], lambda: f64| -> Option<Vec<f64>> {
             let m = r.len();
-            let w = |k: usize| if k % 6 < 3 { 1.0 } else { 1.0 / (size * size) };
+            let w = |k: usize| mobility[k / 6] * if k % 6 < 3 { 1.0 } else { 1.0 / (size * size) };
             let mut jj = vec![vec![0.0; m]; m];
             for k in 0..n {
                 let c = &cols[k];

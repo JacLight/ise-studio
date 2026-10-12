@@ -73,7 +73,9 @@ fn tool_frame(world: &World, tip: StableId, tool: Option<&str>, point: Option<V3
     }
     let e = entity(world, tip).ok_or("the tip is gone")?;
     let s = world.get::<AssemblyStats>(e).ok_or("the tip has no shape yet")?;
-    Ok(Transform::translation(tf::scale(tf::add(s.bounds_min, s.bounds_max), 0.5)))
+    // Its totals are where it is placed (its parent's coordinates): into its own.
+    let place = crate::placement(world, e).ok_or("the tip is not placed")?;
+    Ok(Transform::translation(place.inverse().apply(tf::scale(tf::add(s.bounds_min, s.bounds_max), 0.5))))
 }
 
 impl Rig {

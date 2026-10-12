@@ -304,12 +304,11 @@ fn scope_instances(world: &World, scope: Option<StableId>) -> Vec<(StableId, Ins
 fn placed_box(world: &World, id: StableId) -> Option<(V3, V3)> {
     let e = entity(world, id)?;
     let s = world.get::<AssemblyStats>(e)?;
-    let t = placement(world, e)?;
     if s.shapes == 0 {
         return None;
     }
-    // Stats of an instance are in its definition's coordinates.
-    Some(t.bounds(s.bounds_min, s.bounds_max))
+    // An instance's totals are where it is placed, in its parent's coordinates.
+    Some((s.bounds_min, s.bounds_max))
 }
 
 fn mid(b: (V3, V3)) -> V3 {
