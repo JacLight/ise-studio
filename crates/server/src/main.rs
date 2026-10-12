@@ -2362,6 +2362,8 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/{id}/3d", get(pcb::scene3d))
         .route("/pcb/{id}/bom.json", get(pcb::bom_json))
         .route("/pcb/{id}/fab.zip", get(pcb::zip))
+        .route("/pcb/{id}/gerber-check", get(pcb::gerber_check))
+        .route("/pcb/{id}/layers", get(pcb::layers))
         .route("/pcb/{id}/file/{name}", get(pcb::file))
         .route("/import/{file}", axum::routing::post(import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
         .fallback_service(ui)

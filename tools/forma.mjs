@@ -264,6 +264,29 @@ if (command === "run") {
       }
       for (const m of r.missing) console.log(`  ? ${m}`);
       failed = r.errors > 0;
+    } else if (sub === "gerber-check") {
+      // The fab package read back by an independent reader and compared with the board.
+      const board = args[2];
+      if (!board) throw new Error("usage: forma pcb gerber-check <board id>");
+      const c = await get(`/pcb/${board}/gerber-check?${q()}`);
+      console.log(`${c.ok ? "✓" : "✗"} ${c.summary}`);
+      for (const l of c.layers) {
+        const area = l.board_area != null ? `, copper ${l.file_area} mm² (board ${l.board_area}, ${l.differ_area} differ)` : "";
+        console.log(`  ${l.ok ? "✓" : "✗"} ${l.file} (${l.function}): ${l.objects} objects${l.pads ? `, ${l.pads_ok}/${l.pads} pads` : ""}${area}${l.nets.length ? `, ${l.nets.filter((n) => n.ok).length}/${l.nets.length} nets match` : ""}`);
+        for (const p of l.problems) console.log(`      ✗ ${p}`);
+        for (const n of l.notes) console.log(`      · ${n}`);
+      }
+      for (const d of c.drills) {
+        console.log(`  ${d.ok ? "✓" : "✗"} ${d.file}: ${d.file_holes}/${d.board_holes} holes (${d.sizes.map(([s, b, f]) => `ø${s}×${f}`).join(", ")})`);
+        for (const p of d.problems) console.log(`      ✗ ${p}`);
+      }
+      if (c.outline) {
+        const o = c.outline;
+        console.log(`  ${o.ok ? "✓" : "✗"} ${o.file}: ${o.loops} closed loop(s), ${o.file_size.join(" × ")} mm, ${o.file_area} mm²`);
+        for (const p of o.problems) console.log(`      ✗ ${p}`);
+      }
+      for (const u of c.unreadable) console.log(`  ✗ ${u}`);
+      failed = !c.ok;
     } else if (sub === "library") {
       if (args[2] === "update") {
         const res = await fetch(`${http}/pcb/kicad/fetch?repo=all`, { method: "POST" });
@@ -272,7 +295,7 @@ if (command === "run") {
       const s = await get("/pcb/kicad");
       console.log(`KiCad libraries in ${s.root}\n  footprints: ${s.footprints ?? "not downloaded yet"}\n  symbols:    ${s.symbols ?? "not downloaded yet"}\n  ${s.licence}`);
     } else {
-      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | library [update]");
+      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | library [update]");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);

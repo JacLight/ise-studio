@@ -38,6 +38,7 @@ pub mod font;
 pub mod footprints;
 pub mod geom;
 pub mod gerber;
+pub mod gerber_check;
 pub mod idf;
 pub mod kicad;
 pub mod kicad_lib;
