@@ -468,6 +468,8 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
     let _ = side_layer;
     let mut pads = Vec::new();
     let mut pins = BTreeMap::new();
+    // Pads with no copper (KiCad's paste windows on an exposed pad): (centre, size, rotation) in Forma footprint coordinates.
+    let mut windows: Vec<(P, [f64; 2], f64)> = Vec::new();
     for pe in e.find_all("pad") {
         let number = pe.arg_text(0).unwrap_or("").to_string();
         let ptype = pe.arg_text(1).unwrap_or("smd");
@@ -477,6 +479,14 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
         let abs_rot = norm_angle(*pat.get(2).unwrap_or(&0.0));
         let size = { let v = pe.nums("size"); [*v.first().unwrap_or(&1.0), *v.get(1).or(v.first()).unwrap_or(&1.0)] };
         let center = place.board(local);
+        let layer_names: Vec<&str> = pe.find("layers").map(|l| l.args().iter().filter_map(|a| a.text()).collect()).unwrap_or_default();
+        if ptype == "smd" && !layer_names.is_empty() && !layer_names.iter().any(|l| l.ends_with(".Cu")) {
+            if layer_names.iter().any(|l| l.ends_with("Paste")) {
+                let rotation = if bottom { norm_angle(place.rot - abs_rot) } else { norm_angle(abs_rot - place.rot) };
+                windows.push((place.forma_local(center), size, rotation));
+            }
+            continue;
+        }
         let kind = match ptype {
             "thru_hole" => PadKind::Tht,
             "np_thru_hole" => PadKind::Npth,
@@ -560,6 +570,21 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
     if pads.is_empty() {
         // Logos and graphics: nothing to place.
         return None;
+    }
+    // Paste windows go to the copper pad under them (sizes in that pad's frame).
+    for (c, size, rotation) in windows {
+        let host = pads.iter_mut().filter(|p: &&mut Pad| p.kind == PadKind::Smd).find(|p| {
+            let b = crate::footprints::pad_prim(p, [0.0, 0.0], 0.0, false).bbox();
+            c[0] >= b[0] - 1e-6 && c[0] <= b[2] + 1e-6 && c[1] >= b[1] - 1e-6 && c[1] <= b[3] + 1e-6
+        });
+        match host {
+            Some(p) => {
+                let quarter = (((rotation - p.rotation) / 90.0).round() as i64).rem_euclid(2) == 1;
+                let (w, h) = if quarter { (size[1], size[0]) } else { (size[0], size[1]) };
+                p.paste.push([r6(c[0]), r6(c[1]), r6(w), r6(h)]);
+            }
+            None => notes.push(format!("{reference}: a paste opening at ({:.2}, {:.2}) with no pad under it was left out", c[0], c[1])),
+        }
     }
     // Silkscreen, courtyard and fabrication outline, in Forma footprint coordinates.
     let silk_layer = if bottom { "B.SilkS" } else { "F.SilkS" };
@@ -672,6 +697,62 @@ fn chain_tracks(segs: Vec<(Option<String>, String, f64, P, P)>) -> Vec<KTrack> {
 }
 
 /// Reads a `.kicad_pcb` file into Forma's terms.
+/// A library footprint file (`.kicad_mod`: KiCad 6–10, or a KiCad 5 `module`)
+/// in Forma's terms: pads exactly as drawn (y flipped up), silkscreen,
+/// courtyard and a body box from the fabrication outline, with notes on
+/// anything approximated. The kind and body height are guessed from the
+/// library name (`Resistor_SMD`, `Package_SO`, `Connector_JST` …) when given.
+pub fn read_footprint_file(text: &str, library: Option<&str>) -> Result<(Footprint, Vec<String>), String> {
+    let top = sexpr::parse(text)?;
+    let e = top.iter().find(|e| e.is("footprint") || e.is("module")).ok_or("not a KiCad footprint: the file does not start with (footprint …)")?;
+    let mut notes = Vec::new();
+    let (mut fp, _) = read_footprint(e, &Nets(HashMap::new()), &[], &mut notes).ok_or("the footprint has no pads")?;
+    let lib = library.unwrap_or("");
+    let kind = library_kind(lib, &fp.name);
+    if !kind.is_empty() && kind != fp.kind {
+        fp.kind = kind.to_string();
+        let (h, material) = body_guess(kind);
+        for b in &mut fp.body {
+            b.z = [0.0, h];
+            b.material = material.into();
+        }
+        if kind == "hole" {
+            fp.body.clear();
+        }
+    }
+    if let Some(t) = e.value("tags").filter(|t| !t.is_empty()) {
+        fp.description = if fp.description.is_empty() { t.to_string() } else { format!("{} ({t})", fp.description) };
+    }
+    Ok((fp, notes))
+}
+
+/// What a KiCad library holds, by its name.
+fn library_kind(lib: &str, name: &str) -> &'static str {
+    let l = lib.to_ascii_lowercase();
+    let n = name.to_ascii_lowercase();
+    if l.starts_with("resistor") {
+        "resistor"
+    } else if l.starts_with("capacitor") {
+        "capacitor"
+    } else if l.starts_with("led") || n.starts_with("led_") {
+        "led"
+    } else if l.starts_with("diode") {
+        "diode"
+    } else if l.starts_with("connector") || l.starts_with("terminalblock") {
+        "connector"
+    } else if l.starts_with("button_switch") {
+        "switch"
+    } else if l.starts_with("mountinghole") {
+        "hole"
+    } else if l.starts_with("rf_module") || l.starts_with("module") {
+        "module"
+    } else if l.starts_with("package") || l.starts_with("crystal") || l.starts_with("inductor") || l.starts_with("oscillator") || l.starts_with("sensor") {
+        "ic"
+    } else {
+        ""
+    }
+}
+
 pub fn parse_board(text: &str) -> Result<KicadBoard, String> {
     let top = sexpr::parse(text)?;
     let root = top.iter().find(|e| e.is("kicad_pcb")).ok_or("not a KiCad board: the file does not start with (kicad_pcb …)")?;

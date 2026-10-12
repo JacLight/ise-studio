@@ -12,11 +12,13 @@
 // • Esc steps back from face to part. Values snap to 1 mm (⇧ 10, ⌥ 0.1),
 //   preview live, and commit once on release; Esc mid-drag cancels.
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { attachTumble, attachWalk, type Tumble } from "./tumble";
 import { pcbLooks } from "./pcb3d";
+import { type DisplayMode, type SectionPlane, type ViewName, ViewTools } from "./viewTools";
+import { ViewToolbar } from "./ViewToolbar";
 import type { EntityView, MeshData } from "./engine";
 import {
   AXIS_NAMES,
@@ -70,7 +72,7 @@ import {
   type V3,
 } from "./model";
 
-export type ViewName = "perspective" | "top" | "front" | "bottom";
+export type { ViewName, DisplayMode, SectionPlane };
 
 /**
  * Driving a mechanism by hand: pressing on one of `groups` of part `id`
@@ -317,6 +319,8 @@ export type ViewportHandle = {
   /** Shows a stress study on a part: its supports and loads, and (when solved) the stress map. Null clears it. */
   stress: (id: string, view: StressView | null) => void;
   view: (name: ViewName) => void;
+  /** The view's tools (projection, display mode, section, measure), for commands from elsewhere. */
+  tools: () => ViewTools | null;
   zoom: (factor: number) => void;
   setWireframe: (on: boolean) => void;
   setTurntable: (on: boolean) => void;
@@ -385,6 +389,8 @@ type Props = {
   poses?: ReadonlyMap<string, Transform> | null;
   /** An instance turned with the gizmo's rings: its new position and rotation (false: refused, put it back). */
   onTurnInstance?: (id: string, at: V3, rotation: V3) => Promise<boolean>;
+  /** A selection box closed on these items (add: Shift held, adding to what is selected). */
+  onSelectMany?: (ids: string[], add: boolean) => void;
 };
 
 /** A flat face of a part made by a program, and which part of an assembly it is on. */
@@ -836,6 +842,8 @@ const FACE_NAMES: Record<string, string> = { "0:1": "Right face", "0:-1": "Left 
 export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(props, ref) {
   const { entities, selected, live, overlays } = props;
   const host = useRef<HTMLDivElement>(null);
+  const [viewTools, setViewTools] = useState<ViewTools | null>(null);
+  const toolsRef = useRef<ViewTools | null>(null);
   const label = useRef<HTMLDivElement>(null);
   const readout = useRef<HTMLDivElement>(null);
   const cursorLayer = useRef<HTMLDivElement>(null);
@@ -887,10 +895,11 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
 
   useEffect(() => {
     const el = host.current!;
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true, stencil: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x000000, 0);
     renderer.shadowMap.enabled = true;
+    renderer.localClippingEnabled = true; // section planes cut the parts, not the ground
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.45;
@@ -992,6 +1001,33 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     const tumbler = attachTumble(renderer.domElement, camera, controls);
     // Close in, zoom walks through a lid or a floor instead of stalling at it.
     const unwalk = attachWalk(renderer.domElement, camera, controls, () => Math.max((three.current?.extent.radius ?? 100) * 0.04, 0.5));
+    // Projection, display modes, sections, measuring, box select and the view cube.
+    const tools = new ViewTools({
+      el,
+      canvas: renderer.domElement,
+      camera,
+      target: () => controls.target,
+      scene,
+      bodies: () => visibleBodies(),
+      materialsOf: bodyMaterials,
+      extent: () => three.current?.extent ?? new THREE.Sphere(new THREE.Vector3(), 100),
+      invalidate: () => (dirty = true),
+      fit: (only, direction, up) => three.current && fitView(three.current, only, true, direction, up),
+      selected: () => callbacks.current.selected,
+      onSelectMany: (ids, add) => callbacks.current.onSelectMany?.(ids, add),
+      nameOf: (id) => {
+        const e = callbacks.current.entities.get(id);
+        return e ? partName(e) : id;
+      },
+    });
+    tools.measure.nameOf = (id) => {
+      const e = callbacks.current.entities.get(id);
+      return e ? partName(e) : id;
+    };
+    toolsRef.current = tools;
+    // Reachable from the element for automated checks (headless browser tests).
+    (el as HTMLElement & { viewTools?: ViewTools }).viewTools = tools;
+    setViewTools(tools);
 
     let dirty = true;
     let raf = 0;
@@ -1006,7 +1042,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     });
 
     const toScreen = (p: THREE.Vector3) => {
-      const v = p.clone().project(camera);
+      const v = p.clone().project(tools.camera());
       const rect = renderer.domElement.getBoundingClientRect();
       return { x: ((v.x + 1) / 2) * rect.width, y: ((1 - v.y) / 2) * rect.height, behind: v.z > 1 };
     };
@@ -1430,7 +1466,9 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       // shows instead of the inside of its walls.
       const aside = three.current ? enclosing(three.current, camera.position) : [];
       for (const m of aside) m.visible = false;
-      renderer.render(scene, camera);
+      const view = tools.beforeRender();
+      renderer.render(scene, view);
+      tools.afterRender(renderer, view);
       for (const m of aside) m.visible = true;
       if (callbacks.current.comments?.pins.length) scheduleOcclusion();
     };
@@ -1459,7 +1497,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       if (Math.round(size.x) !== el.clientWidth || Math.round(size.y) !== el.clientHeight) resize();
       if (dirty) scene.updateMatrixWorld();
       camera.updateMatrixWorld();
-      raycaster.setFromCamera(new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1), camera);
+      raycaster.setFromCamera(new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1), tools.camera());
       return raycaster;
     };
     /** What is drawn for the selection: a part, or the shapes inside a selected instance (at any depth). */
@@ -1609,6 +1647,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     let motionDrag: { x: number; y: number } | null = null;
     const onDown = (e: PointerEvent) => {
       if (onCommentUi(e)) return;
+      // Measuring, picking a section face or drawing a selection box.
+      if (tools.down(e)) return;
       // Picking a joint's connector: a click on a triad picks it; anywhere else orbits.
       if (connectorLayer.active && e.button === 0) {
         const rect = renderer.domElement.getBoundingClientRect();
@@ -1791,6 +1831,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       }
     };
     const onMove = (e: PointerEvent) => {
+      if (tools.move(e, rayAt)) return;
       reportHover(e);
       if (connectorLayer.active && !(e.buttons & 1)) {
         const rect = renderer.domElement.getBoundingClientRect();
@@ -2050,6 +2091,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       callbacks.current.onDragEnd(commit && moved);
     };
     const onUp = (e: PointerEvent) => {
+      if (tools.boxUp(e)) return;
       if (liveStroke) {
         const st = liveStroke;
         liveStroke = null;
@@ -2201,6 +2243,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     const onCanvasUp = (e: PointerEvent) => {
       if (callbacks.current.sketch || callbacks.current.edges || connectorLayer.active) return;
       renderer.domElement.classList.remove("dragging");
+      if (tools.click(e, rayAt)) {
+        down = null;
+        return;
+      }
       // Each press makes at most one click: a press that ended elsewhere must
       // not pair with a later release near the same spot.
       const from = down;
@@ -2272,6 +2318,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       controls.dispose();
       tumbler.dispose();
       unwalk();
+      tools.dispose();
+      toolsRef.current = null;
       window.removeEventListener("keydown", onKey, true);
       for (const part of three.current?.parts.values() ?? []) disposePart(part);
       scene.traverse((o) => {
@@ -2837,16 +2885,11 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       const t = three.current;
       if (!t) return;
       t.controls.autoRotate = false;
-      t.flight = null;
-      const distance = t.camera.position.distanceTo(t.controls.target);
-      const direction = {
-        perspective: new THREE.Vector3(0.55, -0.7, 0.45),
-        top: new THREE.Vector3(0, -0.0001, 1),
-        front: new THREE.Vector3(0, -1, 0.06),
-        bottom: new THREE.Vector3(0, 0.0001, -1),
-      }[name].normalize();
-      t.camera.position.copy(t.controls.target).addScaledVector(direction, distance);
-      t.controls.update();
+      // Glides round to the view, everything framed (a standard view in an orthographic camera is a true elevation).
+      toolsRef.current?.view(name);
+    },
+    tools() {
+      return toolsRef.current;
     },
     zoom(factor) {
       const t = three.current;
@@ -2889,6 +2932,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
   return (
     <div ref={host} className="viewport" aria-label="3D model. Drag to orbit, scroll to zoom. Click a part to move it; click one of its faces to push or pull it.">
       <div ref={labelLayer} className="intent-layer" aria-hidden />
+      {viewTools && <ViewToolbar tools={viewTools} selected={props.selected} onFitAll={() => three.current && fitView(three.current, undefined, true)} />}
       <div ref={sketchLabels} className="sketch-layer" />
       <div ref={label} className="model-dimension" aria-hidden />
       <div ref={faceBadge} className="face-badge" aria-hidden />
