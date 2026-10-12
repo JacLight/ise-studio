@@ -279,6 +279,26 @@ impl Picture {
     }
 }
 
+/// A picture no larger than `max_edge` pixels on its long side, as PNG
+/// (None when it is already small enough and can be sent as it is).
+pub fn downscale(bytes: &[u8], max_edge: usize) -> Result<Option<Vec<u8>>, String> {
+    let p = decode(bytes)?;
+    let long = p.width.max(p.height);
+    if long <= max_edge {
+        return Ok(None);
+    }
+    let k = max_edge as f64 / long as f64;
+    let (w, h) = (((p.width as f64 * k).round() as usize).max(2), ((p.height as f64 * k).round() as usize).max(2));
+    let chans: Vec<Field> = [Channel::Red, Channel::Green, Channel::Blue, Channel::Alpha].iter().map(|c| p.field(*c).resample(w, h)).collect();
+    let mut px = Vec::with_capacity(w * h * 4);
+    for i in 0..w * h {
+        for c in &chans {
+            px.push((c.v[i].clamp(0.0, 1.0) * 255.0).round() as u8);
+        }
+    }
+    Ok(Some(encode_png(w as u32, h as u32, &px)))
+}
+
 /// Encodes 8-bit RGBA pixels (top row first) as a PNG.
 pub fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();

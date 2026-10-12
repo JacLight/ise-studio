@@ -63,6 +63,28 @@ fn font_bytes(font: Option<&str>) -> Result<std::borrow::Cow<'static, [u8]>, Str
     }
 }
 
+/// Whether these bytes are a font text() can set: it parses and draws a capital.
+pub fn check_font(bytes: &[u8]) -> Result<(), String> {
+    let face = Face::parse(bytes, 0).map_err(|e| format!("not a font Forma reads ({e})"))?;
+    let g = face.glyph_index('H').ok_or("the font has no Latin capitals")?;
+    struct Count(usize);
+    impl OutlineBuilder for Count {
+        fn move_to(&mut self, _: f32, _: f32) {}
+        fn line_to(&mut self, _: f32, _: f32) {
+            self.0 += 1;
+        }
+        fn quad_to(&mut self, _: f32, _: f32, _: f32, _: f32) {
+            self.0 += 1;
+        }
+        fn curve_to(&mut self, _: f32, _: f32, _: f32, _: f32, _: f32, _: f32) {
+            self.0 += 1;
+        }
+        fn close(&mut self) {}
+    }
+    let mut c = Count(0);
+    face.outline_glyph(g, &mut c).filter(|_| c.0 > 0).map(|_| ()).ok_or_else(|| "the font has no outlines (a bitmap or colour font?)".to_string())
+}
+
 struct Flatten {
     loops: Vec<Vec<[f64; 2]>>,
     at: [f64; 2],

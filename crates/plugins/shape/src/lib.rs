@@ -24,6 +24,7 @@ pub mod pathfinder;
 pub mod pattern;
 pub mod project;
 pub mod relief;
+pub mod render;
 pub mod runtime;
 pub mod sketch;
 pub mod stock;

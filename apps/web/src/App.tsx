@@ -8,7 +8,7 @@ import { PcbWorkspace, importKicadFile } from "./Pcb";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
 import { type Bench, Workbench } from "./Bom";
 import { RequirementsPanel } from "./RequirementsPanel";
-import { type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, type TeamCursor, mm, projectInfo, projectName, projectTitle, projectUrl } from "./engine";
+import { type Attachment, type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, type TeamCursor, mm, projectInfo, projectName, projectTitle, projectUrl } from "./engine";
 import { type ConfigRow, type EdgeFinish, type Frac, type LiveEdit, type Shape, assemblyParts, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
 import { GroupList, HistoryBody, ObjectsBody, ProjectBody, PropertiesBody, ToolPanel, ViewsBody } from "./Panels";
 import { useEdgeEditor } from "./EdgeEditor";
@@ -1005,6 +1005,12 @@ export function App({ engine }: { engine: Engine }) {
       const f = e.dataTransfer?.files?.[0];
       if (!f) return;
       e.preventDefault();
+      // A picture (or a PDF drawing) goes to Forma AI, to talk about or build from.
+      if (/\.(png|jpe?g|gif|webp|pdf)$/i.test(f.name) && state.ai.available) {
+        window.dispatchEvent(new CustomEvent("forma:attach", { detail: f }));
+        setPrefs((p) => ({ ...p, aiMode: p.aiMode === "mini" || p.aiMode === "hidden" ? p.lastMode : p.aiMode }));
+        return;
+      }
       // A KiCad board becomes a Forma board, opened in the Electronics workspace.
       if (/\.kicad_pcb$/i.test(f.name)) {
         void importKicadFile(f, (op, p, done) => run(op, p).then((out) => (out && done && notify(done), out))).then((made) => made && setPcbOpen(true));
@@ -1018,7 +1024,7 @@ export function App({ engine }: { engine: Engine }) {
       window.removeEventListener("dragover", over);
       window.removeEventListener("drop", drop);
     };
-  }, [importStep, run, notify]);
+  }, [importStep, run, notify, state.ai.available, setPrefs]);
 
   /** Steps that keep saved groups tidy when items leave them: shrink the group, or drop it below two. */
   const regroupSteps = useCallback(
@@ -1100,9 +1106,9 @@ export function App({ engine }: { engine: Engine }) {
   // With Claude on this computer, the panel talks to it; otherwise the local interpreter answers.
   const claude = state.ai.available;
   const submit = useCallback(
-    async (value?: string) => {
+    async (value?: string, attachments: Attachment[] = []) => {
       const text = (value ?? prefs.draft).trim();
-      if (!text) return;
+      if (!text && !(claude && attachments.length)) return;
       if (claude) {
         setPrefs((p) => ({
           ...p,
@@ -1110,7 +1116,9 @@ export function App({ engine }: { engine: Engine }) {
           voice: false,
           aiMode: p.aiMode === "mini" || p.aiMode === "hidden" ? p.lastMode : p.aiMode,
         }));
-        engine.askAi(text, { selected, picked_part: selectedPartName, isolated, hidden: [...hiddenItems], color_by: colorBy }).catch((e) => notify(`Forma AI: ${(e as EngineError).message}`));
+        engine
+          .askAi(text, { selected, picked_part: selectedPartName, isolated, hidden: [...hiddenItems], color_by: colorBy }, attachments.map((a) => a.id))
+          .catch((e) => notify(`Forma AI: ${(e as EngineError).message}`));
         return;
       }
       if (busy) return;

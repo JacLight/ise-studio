@@ -252,7 +252,7 @@ pub struct Metric {
 }
 
 /// Positions, normals and indices of a solid, normals split at sharp edges.
-fn mesh_with_normals(solid: &Manifold) -> (Vec<f32>, Vec<f32>, Vec<u32>) {
+pub fn mesh_with_normals(solid: &Manifold) -> (Vec<f32>, Vec<f32>, Vec<u32>) {
     // Normal channel 0 is the first property after x, y, z: vertices export as [x, y, z, nx, ny, nz].
     let with_normals = solid.calculate_normals(0, SHARP_ANGLE);
     let (props, n_props, indices) = with_normals.to_mesh_f32();

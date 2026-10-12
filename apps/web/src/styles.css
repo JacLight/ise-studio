@@ -825,6 +825,142 @@ svg.icon {
   width: 16px;
 }
 
+/* Pictures and PDFs: waiting in the composer, and sent with a message. */
+.pending-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.pending-attachment {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f4f1f9;
+  border: 1px solid #e5e1eb;
+  display: grid;
+  place-items: center;
+}
+
+.pending-attachment img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pending-attachment.uploading img {
+  opacity: 0.45;
+}
+
+.pending-attachment.uploading::after {
+  content: "";
+  position: absolute;
+  inset: auto 6px 6px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #ae92dc 30%, #e9e1f6 30%);
+  background-size: 200% 100%;
+  animation: attach-progress 0.9s linear infinite;
+}
+
+@keyframes attach-progress {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.pending-attachment.failed {
+  border-color: #e8b4bd;
+  background: #fdf0f2;
+}
+
+.pending-attachment button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(40, 34, 52, 0.62);
+  color: white;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.pending-attachment:hover button,
+.pending-attachment button:focus-visible {
+  opacity: 1;
+}
+
+.pending-attachment button .icon {
+  width: 10px;
+}
+
+.pending-error {
+  font-size: 10px;
+  color: #b0485b;
+  flex-basis: 100%;
+}
+
+.attachment-kind {
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  color: #8a6fc2;
+}
+
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.attachment-thumb {
+  display: block;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #e5e1eb;
+  background: white;
+  line-height: 0;
+}
+
+.attachment-thumb img {
+  height: 84px;
+  max-width: 220px;
+  object-fit: cover;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid #e5e1eb;
+  background: white;
+  color: #5a506f;
+  font-size: 11px;
+  text-decoration: none;
+  max-width: 220px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ai-panel.dropping .ai-form {
+  border-color: #ae92dc;
+  box-shadow: 0 0 0 3px #efe7fb;
+  background: #fbf9fe;
+}
+
 .ai-mini .ai-form {
   border: 0;
   padding: 7px 4px 0;

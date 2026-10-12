@@ -13,6 +13,10 @@
 //   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
 //   node tools/forma.mjs get <id>             one entity in full (program source, params, results)
 //   node tools/forma.mjs commit <operation> '<json>'   one command (same $file inlining)
+//   node tools/forma.mjs image add <file> …   store pictures (PNG, JPEG) or fonts (TTF, OTF) for programs; prints each id
+//   node tools/forma.mjs image list           the pictures and fonts in the project
+//   node tools/forma.mjs look [what] [--view iso|front|top|…|az,el] [--size 1000x750] [--out file.png]
+//        a picture of the model (or one thing in it) drawn by the engine, saved to look/…png
 //   node tools/forma.mjs ops [filter]         the commands the engine accepts, with schemas
 //   node tools/forma.mjs view <action> [what] show something in the person's view (not saved):
 //        select L26 · frame L26 · isolate L26 · show_all · hide L19 · show L19
@@ -232,6 +236,90 @@ if (command === "run") {
     }
     if (words.length && !shown) console.log(`nothing in the stock library matches “${query}”`);
   }
+} else if (command === "image") {
+  // Pictures (and fonts) shape programs read: add one, or list them.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const q = project ? `?project=${encodeURIComponent(project)}` : "";
+  const sub = file;
+  if (sub === "add") {
+    const files = args.slice(2);
+    if (!files.length) {
+      console.error("✗ say which file: forma image add <photo.png|logo.jpg|font.ttf> …");
+      failed = true;
+    }
+    for (const f of files) {
+      let bytes;
+      try {
+        bytes = readFileSync(f);
+      } catch (e) {
+        console.error(`✗ ${f}: ${e.message}`);
+        failed = true;
+        continue;
+      }
+      const name = f.split("/").pop();
+      const res = await fetch(`${http}/images/${encodeURIComponent(name)}${q}`, { method: "POST", body: bytes });
+      if (!res.ok) {
+        console.error(`✗ ${await res.text()}`);
+        failed = true;
+        continue;
+      }
+      const e = await res.json();
+      const size = e.width ? `, ${e.width} × ${e.height} px` : "";
+      const use = e.kind === "ttf" || e.kind === "otf" ? `text("…", { font: "${e.id}" })` : `image("${e.id}")`;
+      console.log(`✓ ${name} (${e.kind.toUpperCase()}${size}) → ${e.id}\n  in a program: ${use}`);
+    }
+  } else if (sub === "list" || !sub) {
+    const res = await fetch(`${http}/images${q}`);
+    const list = await res.json();
+    if (!list.length) console.log("no pictures or fonts in this project yet (forma image add <file>)");
+    for (const e of list) console.log(`${e.id}  ${e.name} (${e.kind.toUpperCase()}${e.width ? `, ${e.width} × ${e.height} px` : ""})`);
+  } else {
+    console.error("usage: forma image add <file> … | forma image list");
+    failed = true;
+  }
+} else if (command === "look") {
+  // A picture of the model drawn by the engine, saved here to read.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const viewName = flag("--view") ?? "iso";
+  const size = flag("--size");
+  const out = flag("--out");
+  const what = args.slice(1).join(" ").trim();
+  let id = null;
+  if (what) {
+    const s = await engine.snapshot;
+    const name = (e) => {
+      const c = e.components;
+      return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["assembly.definition"]?.name;
+    };
+    const byId = s.entities.find((e) => e.id === what);
+    const named = byId ? [byId] : s.entities.filter((e) => name(e)?.toLowerCase() === what.toLowerCase());
+    const placed = named.filter((e) => e.components["assembly.instance"] || e.components["solid.placement"]);
+    const pick = placed.length ? placed : named;
+    if (pick.length !== 1) {
+      console.error(pick.length ? `✗ “${what}” matches ${pick.length} things: use an id (${pick.map((e) => e.id).join(", ")})` : `✗ nothing called “${what}”`);
+      failed = true;
+    } else id = pick[0].id;
+  }
+  if (!failed) {
+    const q = new URLSearchParams({ ...(project ? { project } : {}), ...(id ? { id } : {}), view: viewName, ...(size ? { size } : {}) });
+    const res = await fetch(`${http}/look?${q}`);
+    if (!res.ok) {
+      console.error(`✗ ${await res.text()}`);
+      failed = true;
+    } else {
+      const { mkdirSync, writeFileSync } = await import("node:fs");
+      const slug = (what || "all").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "part";
+      const path = out ?? `look/${slug}-${viewName.replace(/[^a-z0-9]+/gi, "_")}.png`;
+      if (path.includes("/")) mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, Buffer.from(await res.arrayBuffer()));
+      const b = res.headers.get("x-forma-bounds").split(",").map(Number);
+      console.log(`✓ ${path}  (${viewName} view; read the file to see it)\n  ${res.headers.get("x-forma-mm-per-px")} mm per pixel; bounds x ${b[0]}…${b[3]}, y ${b[1]}…${b[4]}, z ${b[2]}…${b[5]} mm; ${res.headers.get("x-forma-triangles")} triangles`);
+    }
+  }
 } else if (command === "list") {
   const s = await engine.snapshot;
   for (const e of s.entities) {
@@ -336,7 +424,7 @@ if (command === "run") {
     }
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | view <action> [what]  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | view <action> [what] | image add <file> | image list | look [what] [--view v]  [--project name] [--url ws://…]");
   failed = true;
 }
 

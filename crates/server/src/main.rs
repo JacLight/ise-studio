@@ -13,6 +13,7 @@ mod machines;
 mod pcb;
 mod pcb_schematic;
 mod peers;
+mod pictures;
 mod share;
 mod sourcing;
 mod stock;
@@ -389,6 +390,9 @@ enum AiMessage {
         text: String,
         #[serde(default)]
         context: ai::ViewContext,
+        /// Pictures or PDFs attached in the panel (ids from `POST /ai/attachments`).
+        #[serde(default)]
+        attachments: Vec<String>,
     },
     AiStop {
         request_id: u64,
@@ -883,8 +887,8 @@ async fn session(app: Arc<App>, socket: WebSocket, user_id: String) {
             // Messages for Forma AI run alongside the engine, not on its lock.
             if let Ok(m) = serde_json::from_str::<AiMessage>(text.as_str()) {
                 let reply = match m {
-                    AiMessage::AiAsk { request_id, text, context } => {
-                        let result = app.ai.ask(Arc::clone(&app), &actor.user_id, &text, context).await;
+                    AiMessage::AiAsk { request_id, text, context, attachments } => {
+                        let result = app.ai.ask(Arc::clone(&app), &actor.user_id, &text, context, &attachments).await;
                         reply(request_id, result.map(|_| json!({ "queued": true })).map_err(|e| CommandError::new(ErrorCode::Internal, e)))
                     }
                     AiMessage::AiStop { request_id } => {
@@ -1104,6 +1108,36 @@ impl Source {
                 out.push((label(&self.name), placed));
             }
             _ => {}
+        }
+        Ok(())
+    }
+
+    /// Every part as a mesh in world millimetres, coloured by its material,
+    /// for the engine's pictures (`/look`). Shapes come as the view shows them.
+    fn meshes(&self, out: &mut Vec<de_shape::render::Mesh>) -> Result<(), String> {
+        for m in &self.members {
+            m.meshes(out)?;
+        }
+        let items = match &self.program {
+            Some(p) => fabricate::items(p, p.display_tolerance())?,
+            None if self.boxed.is_some() => self.items(0.01)?,
+            None => return Ok(()),
+        };
+        let r = self.rotation;
+        let turn = |v: &[f32]| -> [f32; 3] {
+            let v = [v[0] as f64, v[1] as f64, v[2] as f64];
+            [0, 1, 2].map(|i| (r[i][0] * v[0] + r[i][1] * v[1] + r[i][2] * v[2]) as f32)
+        };
+        for item in items {
+            let (positions, normals, indices) = de_shape::runtime::mesh_with_normals(&item.solid);
+            let positions = positions.chunks_exact(3).flat_map(|p| {
+                let q = turn(p);
+                [q[0] + self.at[0] as f32, q[1] + self.at[1] as f32, q[2] + self.at[2] as f32]
+            });
+            let normals = normals.chunks_exact(3).flat_map(turn).collect();
+            let (material, _) = self.material(item.material.as_deref());
+            let (color, metal) = de_shape::render::material_color(Some(material.as_str()).filter(|m| !m.is_empty()));
+            out.push(de_shape::render::Mesh { positions: positions.collect(), normals, indices, color, metal });
         }
         Ok(())
     }
@@ -2357,6 +2391,10 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/{id}/fab.zip", get(pcb::zip))
         .route("/pcb/{id}/file/{name}", get(pcb::file))
         .route("/import/{file}", axum::routing::post(import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
+        .route("/images", get(pictures::list))
+        .route("/images/{file}", get(pictures::get).post(pictures::add).layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)))
+        .route("/ai/attachments/{file}", get(pictures::attachment).post(pictures::attach).layer(axum::extract::DefaultBodyLimit::max(40 * 1024 * 1024)))
+        .route("/look", get(pictures::look))
         .fallback_service(ui)
         // Everything above answers to this computer only.
         .layer(axum::middleware::from_fn(local_only))
