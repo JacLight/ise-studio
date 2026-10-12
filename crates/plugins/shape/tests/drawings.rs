@@ -67,7 +67,22 @@ fn a_machined_bracket_is_dimensioned_for_the_shop() {
     let d = drawing::drawing(&program, &options, &title("Bearing bracket", "Aluminium 6061-T6")).unwrap();
     write(std::slice::from_ref(&d), "bracket");
     let all = texts(&d);
-    eprintln!("{all:?}\nautos: {:?}\nwarnings: {:?}\nquality: {:?}", d.autos.iter().map(|a| &a.key).collect::<Vec<_>>(), d.warnings, d.quality);
+    let keys: Vec<&str> = d.autos.iter().map(|a| a.key.as_str()).collect();
+    eprintln!("{all:?}\nautos: {keys:?}\nwarnings: {:?}\nquality: {:?}", d.warnings, d.quality);
+    // Every step, wall and hole centre placed once: the flange (15), tapped holes (25, 110 · 10, 70),
+    // pocket walls (35, 95 · 20, 60), dowels (65), counterbore (40), pocket floor (9), base (15), seat (50).
+    let want = ["x:15", "x:25", "x:35", "x:65", "x:95", "x:110", "x:120", "y:10", "y:20", "y:40", "y:60", "y:70", "y:80", "z:9", "z:15", "z:50", "z:75", "hole:22", "hole:8", "hole:6.6", "hole:5", "r:8"];
+    let mut sorted = keys.clone();
+    sorted.sort();
+    let mut wanted = want.to_vec();
+    wanted.sort();
+    assert_eq!(sorted, wanted, "every feature dimensioned, nothing else");
+    for t in ["4× M6-6H ", "⌀5 ", "2× ⌀8 H7", "⌀6.6 THRU", "⌀11 ", "4× R8", "⌀22 H7", "Ra 0.8", "Ra 3.2", "NOTES", "First issue", "Anodise clear"] {
+        assert!(all.iter().any(|x| x == t), "{t}");
+    }
+    assert!(d.quality.is_clean(), "{:?}", d.quality);
+    assert!(d.warnings.is_empty(), "{:?}", d.warnings);
+    assert_eq!(d.scale_text, "1:1", "a 120 mm bracket at full size on A3");
 }
 
 #[test]
@@ -82,7 +97,21 @@ fn a_turned_shaft_is_dimensioned_for_the_shop() {
     let d = drawing::drawing(&program, &options, &title("Output shaft", "Steel C45")).unwrap();
     write(std::slice::from_ref(&d), "shaft");
     let all = texts(&d);
-    eprintln!("{all:?}\nautos: {:?}\nwarnings: {:?}\nquality: {:?}", d.autos.iter().map(|a| &a.key).collect::<Vec<_>>(), d.warnings, d.quality);
+    let keys: Vec<&str> = d.autos.iter().map(|a| a.key.as_str()).collect();
+    eprintln!("{all:?}\nautos: {keys:?}\nwarnings: {:?}\nquality: {:?}", d.warnings, d.quality);
+    for k in ["d:16", "d:13.5", "d:20", "d:19", "d:26", "d:22", "d:18", "x:20", "x:24", "x:40", "x:41.3", "x:44", "x:54", "x:94", "x:110", "c:1@0", "c:1@53", "c:1@109"] {
+        assert!(keys.contains(&k), "{k}");
+    }
+    assert_eq!(keys.len(), 18, "nothing else");
+    for t in ["M16×1.5-6g", "⌀20 g6", "−0.007", "−0.020", "⌀22 k6", "+0.015", "+0.002", "1×45°"] {
+        assert!(all.iter().any(|x| x == t), "{t}");
+    }
+    // A turned part shows its profile once (and the isometric).
+    assert_eq!(d.views.len(), 1);
+    assert!(d.quality.is_clean() && d.warnings.is_empty(), "{:?} {:?}", d.quality, d.warnings);
+    // The thread drawn ISO 6410: thin lines at the minor diameter (13.16 for M16×1.5) along it.
+    let s = d.scale;
+    assert!(d.strokes.iter().filter(|st| st.pen == drawing::Pen::Thin && st.points.len() == 2 && (st.points[0][1] - st.points[1][1]).abs() < 1e-9 && (st.points[1][0] - st.points[0][0]).abs() > 15.0 * s).count() >= 2);
     let _ = Sheet::A3;
 }
 
@@ -116,6 +145,10 @@ fn an_assembly_drawing_explodes_and_balloons_every_part() {
     let t = Title { parts: parts.clone(), ..title("Two-stage spur reducer", "—") };
     let d = drawing::drawing(&program, &options, &t).unwrap();
     write(std::slice::from_ref(&d), "gearbox");
+    assert!(parts.iter().any(|r| r.name == "Spacer" && r.quantity == 4), "four spacers are one row");
+    assert_eq!(d.balloons.len(), parts.len(), "a balloon for every row");
+    assert!(texts(&d).iter().any(|t| t.starts_with("EXPLODED VIEW")));
+    assert!(d.quality.is_clean() && d.warnings.is_empty(), "{:?} {:?}", d.quality, d.warnings);
     eprintln!("rows {:?}\nwarnings: {:?}\nquality: {:?}", parts.iter().map(|r| (&r.name, r.quantity)).collect::<Vec<_>>(), d.warnings, d.quality);
 }
 

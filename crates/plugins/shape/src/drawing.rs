@@ -967,9 +967,9 @@ fn layout_in(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], options
 
     // The views in a grid: front in the middle, the others where the projection puts them.
     // Sheet mm between views: room for a dimension, or a row of ordinates.
-    let gap = if dimensioned { 26.0 } else { 22.0 };
+    let gap = if dimensioned { 24.0 } else { 22.0 };
     // Round the outside of the views: room for their dimensions.
-    let margin = 22.0;
+    let margin = 20.0;
     let (fw, fh) = (front.size()[0], front.size()[1]);
     let (tw, th) = (top.size()[0], top.size()[1]);
     let (rw, rh) = (right.size()[0], right.size()[1]);
@@ -2252,6 +2252,28 @@ pub fn svg(d: &Drawing) -> String {
     o
 }
 
+/// Text as a DXF TEXT entity writes it: AutoCAD's control codes for ⌀ ° ±,
+/// plain ASCII for the drawing's own punctuation, `\U+XXXX` for anything else.
+fn dxf_text(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        match c {
+            '⌀' | 'Ø' => out.push_str("%%c"),
+            '°' => out.push_str("%%d"),
+            '±' => out.push_str("%%p"),
+            '·' | '−' | '–' | '—' => out.push('-'),
+            '×' => out.push('x'),
+            '“' | '”' => out.push('"'),
+            '’' => out.push('\''),
+            c if c.is_ascii() => out.push(c),
+            c => {
+                let _ = write!(out, "\\U+{:04X}", c as u32);
+            }
+        }
+    }
+    out
+}
+
 /// The drawing as a DXF (R12, millimetres): layers VISIBLE, HIDDEN (dashed),
 /// DIMENSIONS, FRAME and TEXT, so a CAD or laser program can pick them apart.
 pub fn dxf(d: &Drawing) -> String {
@@ -2263,6 +2285,8 @@ pub fn dxf(d: &Drawing) -> String {
     pair(2, "HEADER");
     pair(9, "$ACADVER");
     pair(1, "AC1009");
+    pair(9, "$DWGCODEPAGE");
+    pair(3, "ANSI_1252");
     pair(9, "$INSUNITS");
     pair(70, "4");
     pair(9, "$EXTMIN");
@@ -2339,7 +2363,7 @@ pub fn dxf(d: &Drawing) -> String {
         pair(10, &format!("{:.4}", t.at[0]));
         pair(20, &format!("{:.4}", t.at[1]));
         pair(40, &format!("{:.3}", t.size));
-        pair(1, &t.text.replace('·', "-").replace('−', "-").replace('⌀', "%%c").replace('°', "%%d").replace('±', "%%p"));
+        pair(1, &dxf_text(&t.text));
         if t.angle != 0.0 {
             pair(50, &format!("{:.3}", t.angle));
         }

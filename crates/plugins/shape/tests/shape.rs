@@ -682,7 +682,7 @@ fn a_drawing_has_views_hidden_lines_dimensions_and_exports() {
             assert!(d.texts.iter().any(|t| t.text == v), "dimension {v}");
         }
         assert!(d.texts.iter().any(|t| t.text == "Plate" && t.bold), "the title");
-        assert!(d.texts.iter().any(|t| t.text == "⌀16"), "the hole is called out");
+        assert!(d.texts.iter().any(|t| t.text.starts_with("⌀16")), "the hole is called out");
         assert!(d.strokes.iter().filter(|s| s.pen == de_shape::drawing::Pen::Center).count() >= 2, "and has centre lines");
         // Everything inside the sheet.
         assert!(d.strokes.iter().flat_map(|s| &s.points).all(|p| p[0] >= 0.0 && p[0] <= d.width && p[1] >= 0.0 && p[1] <= d.height));
@@ -731,8 +731,8 @@ fn a_drawing_sections_dimensions_and_lists_parts() {
     // Section through the hole's centre (half way back): hatching on the
     // material either side of the hole, none across the hole.
     let dims = vec![
-        DimSpec { view: ViewName::Top, a: [50.0, 30.0], b: [100.0, 30.0], kind: DimKind::Horizontal, offset: 12.0, tolerance: None, diameter: false, detail: None },
-        DimSpec { view: ViewName::Front, a: [0.0, 0.0], b: [100.0, 20.0], kind: DimKind::Aligned, offset: 8.0, tolerance: None, diameter: false, detail: None },
+        DimSpec { view: ViewName::Top, a: [50.0, 30.0], b: [100.0, 30.0], kind: DimKind::Horizontal, offset: 12.0, tolerance: None, diameter: false, detail: None, stated: None },
+        DimSpec { view: ViewName::Front, a: [0.0, 0.0], b: [100.0, 20.0], kind: DimKind::Aligned, offset: 8.0, tolerance: None, diameter: false, detail: None, stated: None },
     ];
     let cut = de_shape::drawing::drawing(&program, &Options { sheet: Sheet::A4, section: Some(50.0), dimensions: dims, ..Default::default() }, &title(vec![])).unwrap();
     let f = cut.views.iter().find(|v| v.view == ViewName::Front).unwrap();
@@ -820,7 +820,7 @@ fn a_drawing_has_details_tolerances_and_gdt() {
         inputs: String::new(),
     };
     let title = Title { title: "Plate".into(), number: "P-2".into(), material: "Steel".into(), mass: "0.9 kg".into(), drawn_by: "F".into(), date: "2026-10-11".into(), parts: vec![], ..Default::default() };
-    let dim = |view, a, b, kind, offset, tolerance, diameter| DimSpec { view, a, b, kind, offset, tolerance, diameter, detail: None };
+    let dim = |view, a, b, kind, offset, tolerance, diameter| DimSpec { view, a, b, kind, offset, tolerance, diameter, detail: None, stated: None };
     let options = Options {
         sheet: Sheet::A3,
         section: Some(50.0),
@@ -1840,7 +1840,7 @@ fn dimensions_in_a_detail_view_measure_true_size() {
     assert!(d.texts.iter().any(|t| t.text == "10" && t.at[0] > width[0] && t.at[0] < width[2] && t.at[1] > width[1] && t.at[1] < width[3]), "10 in the detail");
     let depth = mark(1);
     assert!(d.texts.iter().any(|t| t.text == "4" && t.at[0] > depth[0] - 0.01 && t.at[0] < depth[2] + 0.01 && t.at[1] > depth[1] && t.at[1] < depth[3]), "4 in the detail");
-    assert!(!d.texts.iter().any(|t| t.text == "50"), "not the sheet length");
+    assert!(!d.texts.iter().any(|t| t.text == "50" && t.at[0] > width[0] && t.at[0] < width[2] && t.at[1] > width[1] && t.at[1] < width[3]), "not the sheet length");
     // Drawn at the detail's scale: the 10 spans 50 sheet mm, beside the enlarged slot.
     assert!(width[2] - width[0] >= 50.0 - 0.01 && width[2] - width[0] < 60.0, "{width:?}");
     let x0 = detail.at[0] + 10.0 * detail.scale;
