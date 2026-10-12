@@ -1,0 +1,140 @@
+{
+ "id": "iso10511",
+ "name": "Nyloc nut",
+ "standard": "ISO 10511",
+ "category": "Fasteners",
+ "summary": "Nylon insert lock nut, thin type, stainless A2-70 with a PA66 ring. Bearing face on z = 0, collar up +Z.",
+ "keywords": [
+  "nyloc",
+  "nylock",
+  "nylon insert nut",
+  "lock nut",
+  "locknut",
+  "self-locking nut",
+  "prevailing torque",
+  "DIN 985",
+  "nut"
+ ],
+ "source": [
+  "common.js",
+  "iso10511.js"
+ ],
+ "display_tolerance": 0.01,
+ "materials": {
+  "Stainless steel A2": 7900,
+  "Nylon PA66": 1140
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Thread diameter",
+   "value": 3,
+   "unit": "mm",
+   "min": 2.5,
+   "max": 12,
+   "step": 0.5
+  },
+  {
+   "key": "threads",
+   "label": "True helical thread (1 = on)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "d"
+ ],
+ "rows": [
+  {
+   "name": "M2.5",
+   "values": {
+    "d": 2.5
+   }
+  },
+  {
+   "name": "M3",
+   "values": {
+    "d": 3
+   }
+  },
+  {
+   "name": "M4",
+   "values": {
+    "d": 4
+   }
+  },
+  {
+   "name": "M5",
+   "values": {
+    "d": 5
+   }
+  },
+  {
+   "name": "M6",
+   "values": {
+    "d": 6
+   }
+  },
+  {
+   "name": "M8",
+   "values": {
+    "d": 8
+   }
+  },
+  {
+   "name": "M10",
+   "values": {
+    "d": 10
+   }
+  },
+  {
+   "name": "M12",
+   "values": {
+    "d": 12
+   }
+  }
+ ],
+ "default": "M3",
+ "checks": {
+  "M3": {
+   "size": [
+    5.5,
+    6.3508529610858835,
+    4
+   ],
+   "tolerance": 0.06,
+   "connectors": [
+    "Bottom face",
+    "Top face",
+    "Axis"
+   ],
+   "connector_at": {
+    "Top face": [
+     0,
+     0,
+     4
+    ]
+   },
+   "metrics": {
+    "Across flats": 5.5,
+    "Height": 4
+   },
+   "partNumber": "ISO 10511 M3 A2-70"
+  },
+  "M12": {
+   "size": [
+    18,
+    20.784609690826528,
+    12
+   ],
+   "tolerance": 0.06,
+   "metrics": {
+    "Across flats": 18,
+    "Height": 12
+   }
+  }
+ }
+}
