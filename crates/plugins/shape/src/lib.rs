@@ -14,6 +14,7 @@ pub mod exact;
 pub mod fea;
 pub mod fabricate;
 pub mod fillet;
+pub mod formats;
 pub mod gears;
 pub mod library;
 pub mod mechanism;
