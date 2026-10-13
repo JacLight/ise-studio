@@ -2,7 +2,7 @@
 //! plugin whose parts name other entities in fields, in map keys and inside
 //! text: copies get new ids everywhere, links follow their source.
 
-use de_core::{Actor, Command, CommandError, Envelope, Persist, Plugin, Project, Registry, SCHEMA_VERSION, StableId, Tx, Value, bevy_ecs, json, schemars};
+use de_core::{Actor, Command, CommandError, Envelope, ErrorCode, Persist, Plugin, Project, Registry, SCHEMA_VERSION, StableId, Tx, Value, bevy_ecs, json, schemars};
 use bevy_ecs::component::Component;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -238,8 +238,9 @@ fn a_link_follows_its_source_and_keeps_local_placement_and_edits() {
     let link = sid(&out["link"]);
     let bracket = sid(&out["ids"][s.bracket.to_string()]);
     let bolt = sid(&out["ids"][s.bolt.to_string()]);
-    // Moved here; the bolt's size changed here.
+    // Moved here; the bolt's size changed here (edited locally).
     run(&mut t, "test.put", json!({ "target": bracket, "at": { "x": 5 } })).unwrap();
+    run(&mut t, "link.settings", json!({ "link": link, "local_edits": true })).unwrap();
     let mut b = part(&t, bolt);
     b.size = 10;
     run(&mut t, "test.put", json!({ "target": bolt, "part": b })).unwrap();
@@ -335,4 +336,84 @@ fn derived_ids_are_stable_and_distinct() {
     assert_eq!(de_core::links::derived_id(a, x), de_core::links::derived_id(a, x));
     assert_ne!(de_core::links::derived_id(a, x), de_core::links::derived_id(b, x));
     assert_eq!(de_core::links::derived_id(a, x).0.get_version_num(), 7);
+}
+
+fn preview(p: &mut Project, operation: &str, parameters: Value) -> Result<Value, CommandError> {
+    let e = Envelope {
+        schema_version: SCHEMA_VERSION,
+        command_id: StableId::new().to_string(),
+        project_id: p.id().to_string(),
+        expected_revision: p.revision(),
+        operation: operation.into(),
+        parameters,
+        actor: actor(),
+    };
+    p.preview(&e).map(|c| c.output)
+}
+
+#[test]
+fn linked_items_are_read_only_until_edited_locally_or_the_link_is_broken() {
+    let s = source();
+    let mut t = Project::new("dst", registry());
+    let out = insert(&mut t, &s, true);
+    let link = sid(&out["link"]);
+    let bracket = sid(&out["ids"][s.bracket.to_string()]);
+    let bolt = sid(&out["ids"][s.bolt.to_string()]);
+    let mut b = part(&t, bolt);
+    b.size = 10;
+    let edit = json!({ "target": bolt, "part": b });
+
+    // Refused, with what to do instead; nothing changed, and a preview says the same.
+    let before = t.revision();
+    let err = run(&mut t, "test.put", edit.clone()).unwrap_err();
+    assert_eq!(err.code, ErrorCode::LinkedReadOnly);
+    assert!(err.message.contains("“Bolt”") && err.message.contains("break the link") && err.message.contains("edit it locally"), "{}", err.message);
+    assert!(err.message.contains(&link.to_string()), "names the link: {}", err.message);
+    assert_eq!(part(&t, bolt).size, 8);
+    assert_eq!(t.revision(), before);
+    assert_eq!(preview(&mut t, "test.put", edit.clone()).unwrap_err().code, ErrorCode::LinkedReadOnly);
+
+    // Where it is placed stays editable; a field beside it that is not kept does not.
+    run(&mut t, "test.put", json!({ "target": bracket, "at": { "x": 7 } })).unwrap();
+    assert_eq!(t.get::<At>(bracket).unwrap().x, 7);
+    let mut br = part(&t, bracket);
+    br.name = "Renamed".into();
+    assert!(run(&mut t, "test.put", json!({ "target": bracket, "part": br })).is_err());
+
+    // A command touching a linked item and a local one is refused whole.
+    let mine = put(&mut t, json!({ "part": { "name": "Mine", "size": 1 } }));
+    let err = run(&mut t, "core.batch", json!({ "steps": [
+        { "operation": "test.put", "parameters": { "target": mine, "part": { "name": "Mine", "size": 2 } } },
+        { "operation": "test.put", "parameters": edit.clone() },
+    ] }))
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::LinkedReadOnly);
+    assert_eq!(part(&t, mine).size, 1, "nothing of a refused batch is kept");
+
+    // Edit locally: allowed (and updates merge, see above); off again: read-only again.
+    let set = run(&mut t, "link.settings", json!({ "link": bolt, "local_edits": true })).unwrap();
+    assert_eq!(set["local_edits"], true);
+    assert_eq!(set["auto_update"], false, "the other setting stays");
+    run(&mut t, "test.put", edit.clone()).unwrap();
+    assert_eq!(part(&t, bolt).size, 10);
+    run(&mut t, "link.settings", json!({ "link": link, "local_edits": false })).unwrap();
+    let mut b = part(&t, bolt);
+    b.size = 11;
+    assert!(run(&mut t, "test.put", json!({ "target": bolt, "part": b.clone() })).is_err());
+    assert!(run(&mut t, "link.settings", json!({ "link": link })).is_err(), "says what to set");
+
+    // Removing a linked item is allowed (an update leaves it removed).
+    run(&mut t, "test.put", json!({ "target": bracket, "delete": true })).unwrap();
+    assert!(t.entity(bracket).is_none());
+
+    // A broken link leaves an ordinary copy, free to change.
+    run(&mut t, "link.break", json!({ "link": link })).unwrap();
+    run(&mut t, "test.put", json!({ "target": bolt, "part": b })).unwrap();
+    assert_eq!(part(&t, bolt).size, 11);
+
+    // A copy was never locked.
+    let mut c = Project::new("dst", registry());
+    let out = insert(&mut c, &s, false);
+    let bolt = sid(&out["ids"][s.bolt.to_string()]);
+    run(&mut c, "test.put", json!({ "target": bolt, "part": { "name": "Bolt", "size": 3 } })).unwrap();
 }

@@ -703,6 +703,8 @@ impl Project {
         let mut tx = Tx::new(&mut self.world, &registry, &envelope.actor);
         let result = (info.exec)(envelope.parameters.clone(), &mut tx);
         let ops = tx.into_ops();
+        // Items linked from another project are read-only (see `links::guard`).
+        let result = result.and_then(|out| crate::links::guard(self, &ops, &envelope.operation).map(|_| out));
         match result {
             Ok(output) => Ok((output, ops)),
             Err(err) => {
