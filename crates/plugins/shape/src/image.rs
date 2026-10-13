@@ -312,9 +312,214 @@ pub fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
     out
 }
 
+/// One row of an object's silhouette: where the object starts and ends
+/// across the picture (pixels from the left), `y` pixels from the top.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SilhouetteRow {
+    pub y: f64,
+    pub left: f64,
+    pub right: f64,
+}
+
+/// The outline of the one object a photo or drawing shows (a vase on a
+/// table, a bottle on white): what sets it apart from the background, row
+/// by row.
+#[derive(Clone, Debug)]
+pub struct Silhouette {
+    /// Its rows, top first, `rows` of them evenly from its top to its bottom.
+    pub rows: Vec<SilhouetteRow>,
+    /// Its top and bottom (pixels from the top).
+    pub top: f64,
+    pub bottom: f64,
+    /// Its axis: the median of the rows' middles (pixels from the left).
+    pub axis: f64,
+    /// How far the rows' middles stray from the axis at most (pixels): large
+    /// when the object is not symmetric or the photo is taken at an angle.
+    pub drift: f64,
+    /// Where each end first reaches its full width (pixels from the top):
+    /// below `top` when the top is a rim seen from a little above (its widest
+    /// line is the rim) or a rounded end; likewise above `bottom`.
+    pub cap_top: f64,
+    pub cap_bottom: f64,
+}
+
+/// Finds the main object in a picture and measures its outline across `rows`
+/// rows. A pixel is the object where it differs (by more than `threshold`, a
+/// colour distance 0–1, default 0.12) from both ends of its row, which are
+/// taken to be background (a wall above, a table below, paper); on a picture
+/// with transparency, where it is opaque. Of the runs this leaves in a row,
+/// the one over the object's main column counts, small gaps in it (a
+/// highlight) bridged. The object spans the longest band of rows that have it,
+/// less rows at its ends off its axis (a shadow); with `rim`, from where its
+/// top reaches full width (the line of a rim seen from a little above).
+pub fn silhouette(p: &Picture, rows: usize, threshold: Option<f32>, rim: bool) -> Result<Silhouette, String> {
+    let (w, h) = (p.width, p.height);
+    if w < 8 || h < 8 {
+        return Err("silhouette: the picture is too small".into());
+    }
+    let rows = rows.clamp(2, h);
+    let t = threshold.unwrap_or(0.12).clamp(0.01, 1.0);
+    let [r, g, b] = &p.rgb;
+    let edge = (w / 60).max(3);
+    let mut mask = vec![false; w * h];
+    for y in 0..h {
+        let mean = |xs: std::ops::Range<usize>| {
+            let n = xs.len() as f32;
+            let mut c = [0.0f32; 3];
+            for x in xs {
+                let i = y * w + x;
+                c[0] += r[i];
+                c[1] += g[i];
+                c[2] += b[i];
+            }
+            c.map(|v| v / n)
+        };
+        let (bl, br) = (mean(0..edge), mean(w - edge..w));
+        for x in 0..w {
+            let i = y * w + x;
+            mask[i] = match &p.alpha {
+                Some(a) => a[i] > 0.5,
+                None => {
+                    let d = |c: [f32; 3]| ((r[i] - c[0]).powi(2) + (g[i] - c[1]).powi(2) + (b[i] - c[2]).powi(2)).sqrt() / 3f32.sqrt();
+                    d(bl) > t && d(br) > t
+                }
+            };
+        }
+    }
+    // The main column: where the object covers the most rows (smoothed).
+    let mut cols = vec![0usize; w];
+    for y in 0..h {
+        for x in 0..w {
+            if mask[y * w + x] {
+                cols[x] += 1;
+            }
+        }
+    }
+    let k = (w / 100).max(1);
+    let main = (0..w).max_by_key(|&x| (x.saturating_sub(k)..(x + k + 1).min(w)).map(|j| cols[j]).sum::<usize>()).unwrap_or(w / 2);
+    if cols[main] == 0 {
+        return Err("silhouette: no object stands out from the background (try a lower threshold, or a photo against a plain background)".into());
+    }
+    // Each row's run over the main column, gaps up to 1.5 % of the width bridged.
+    let gap = (w * 3 / 200).max(2);
+    let run = |y: usize| -> Option<(usize, usize)> {
+        let at = |x: usize| mask[y * w + x];
+        let near = (main.saturating_sub(gap)..(main + gap + 1).min(w)).find(|&x| at(x))?;
+        let (mut lo, mut hi) = (near, near);
+        loop {
+            match (lo.saturating_sub(gap)..lo).rev().find(|&x| at(x)) {
+                Some(x) if x < lo => lo = x,
+                _ => break,
+            }
+        }
+        loop {
+            match (hi + 1..(hi + gap + 1).min(w)).find(|&x| at(x)) {
+                Some(x) => hi = x,
+                None => break,
+            }
+        }
+        Some((lo, hi))
+    };
+    let runs: Vec<Option<(usize, usize)>> = (0..h).map(run).collect();
+    // The longest band of rows that have the object.
+    let (mut best, mut start) = ((0, 0), None);
+    for y in 0..=h {
+        match (y < h && runs[y].is_some(), start) {
+            (true, None) => start = Some(y),
+            (false, Some(s)) => {
+                if y - s > best.1 - best.0 {
+                    best = (s, y);
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    let (mut top, mut bottom) = (best.0, best.1 - 1);
+    if bottom <= top {
+        return Err("silhouette: the object is less than two rows tall".into());
+    }
+    // Rows at the ends whose middle is off the object's axis are not the
+    // object: a shadow cast beside its foot, a reflection on the table.
+    let mid = |y: usize| runs[y].map(|(a, b)| (a + b + 1) as f64 / 2.0).unwrap();
+    let wid = |y: usize| runs[y].map(|(a, b)| (b + 1 - a) as f64).unwrap();
+    let mut mids: Vec<f64> = (top..=bottom).map(mid).collect();
+    mids.sort_by(|a, b| a.total_cmp(b));
+    let axis0 = mids[mids.len() / 2];
+    let widest0 = (top..=bottom).map(wid).fold(0.0, f64::max);
+    let off = (0.02 * widest0).max(2.0);
+    while bottom > top + 1 && (mid(bottom) - axis0).abs() > off {
+        bottom -= 1;
+    }
+    while top + 1 < bottom && (mid(top) - axis0).abs() > off {
+        top += 1;
+    }
+    // Where each end reaches its full width: below a rim seen from a little
+    // above (an ellipse whose widest line is the rim), or a rounded end.
+    let k = ((bottom - top) / 60).max(2);
+    let full = |y: usize, inward: &dyn Fn(usize) -> Option<usize>| -> bool {
+        let ahead = (1..=k).filter_map(inward).map(wid).fold(0.0, f64::max);
+        wid(y) >= 0.95 * ahead
+    };
+    let mut cap_top = top;
+    while cap_top < bottom && !full(cap_top, &|i| Some(cap_top + i).filter(|y| *y <= bottom)) {
+        cap_top += 1;
+    }
+    let mut cap_bottom = bottom;
+    while cap_bottom > top && !full(cap_bottom, &|i| cap_bottom.checked_sub(i).filter(|y| *y >= top)) {
+        cap_bottom -= 1;
+    }
+    // A rim seen from above: the object is measured from the rim's line down.
+    let top = if rim { cap_top.min(bottom.saturating_sub(1)).max(top) } else { top };
+    let at = |y: f64| -> SilhouetteRow {
+        let i = (y.round() as usize).clamp(top, bottom);
+        let (lo, hi) = runs[i].unwrap();
+        // Pixel edges, not centres: a run of one pixel is one pixel wide.
+        SilhouetteRow { y: i as f64, left: lo as f64, right: hi as f64 + 1.0 }
+    };
+    let out: Vec<SilhouetteRow> = (0..rows).map(|j| at(top as f64 + (bottom - top) as f64 * j as f64 / (rows - 1) as f64)).collect();
+    let mut mids: Vec<f64> = (top..=bottom).map(mid).collect();
+    mids.sort_by(|a, b| a.total_cmp(b));
+    let axis = mids[mids.len() / 2];
+    let drift = mids.iter().map(|m| (m - axis).abs()).fold(0.0, f64::max);
+    Ok(Silhouette { rows: out, top: top as f64, bottom: bottom as f64 + 1.0, axis, drift, cap_top: cap_top as f64, cap_bottom: cap_bottom as f64 + 1.0 })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_silhouette_finds_a_bottle_on_a_wall_and_table() {
+        // 200 × 300: a beige wall above y = 250, a brown table below, a blue
+        // body of radius 30 + 20·sin, axis x = 100, from y = 40 to y = 249, a
+        // white highlight 2 px wide down it.
+        let (w, h) = (200usize, 300usize);
+        let mut px = vec![0u8; w * h * 4];
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 4;
+                let mut c = if y < 250 { [214, 206, 194] } else { [140, 100, 70] };
+                if (40..250).contains(&y) {
+                    let rad = 30.0 + 20.0 * ((y - 40) as f64 / 210.0 * std::f64::consts::PI).sin();
+                    let dx = x as f64 + 0.5 - 100.0;
+                    if dx.abs() < rad {
+                        c = if (80..82).contains(&x) { [235, 235, 240] } else { [60, 90, 150] };
+                    }
+                }
+                px[i..i + 4].copy_from_slice(&[c[0], c[1], c[2], 255]);
+            }
+        }
+        let p = decode(&encode_png(w as u32, h as u32, &px)).unwrap();
+        let s = silhouette(&p, 22, None, false).unwrap();
+        assert_eq!((s.top, s.bottom), (40.0, 250.0));
+        assert!((s.axis - 100.0).abs() <= 0.5, "axis {}", s.axis);
+        // The highlight is bridged, the table not taken.
+        for row in &s.rows {
+            let rad = 30.0 + 20.0 * ((row.y - 40.0) / 210.0 * std::f64::consts::PI).sin();
+            assert!(((row.right - row.left) / 2.0 - rad).abs() <= 1.0, "row {} half width {} vs {rad}", row.y, (row.right - row.left) / 2.0);
+        }
+    }
 
     #[test]
     fn a_png_reads_back_as_written() {

@@ -211,6 +211,22 @@ pub fn grid(sha: &str, channel: &str, nx: usize, ny: usize) -> Result<Vec<f64>, 
     Ok(f.resample(nx, ny).v.into_iter().map(|v| v as f64).collect())
 }
 
+/// The outline of the object a picture shows, measured across `rows` rows
+/// (see `image::silhouette`), flat: top, bottom, axis, drift, cap top, cap bottom, then each row's
+/// y, left, right (pixels).
+pub fn silhouette(sha: &str, rows: usize, threshold: Option<f32>, rim: bool) -> Result<Vec<f64>, String> {
+    if !(2..=2000).contains(&rows) {
+        return Err("silhouette: 2 to 2000 rows".into());
+    }
+    let p = crate::image::load(sha)?;
+    let s = crate::image::silhouette(&p, rows, threshold, rim)?;
+    let mut out = vec![s.top, s.bottom, s.axis, s.drift, s.cap_top, s.cap_bottom];
+    for r in &s.rows {
+        out.extend([r.y, r.left, r.right]);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::runtime::evaluate;

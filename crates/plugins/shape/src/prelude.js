@@ -1169,6 +1169,44 @@ class Picture {
     for (let j = 0; j < ny; j++) rows.push(flat.slice(j * nx, (j + 1) * nx));
     return rows;
   }
+  /**
+   * The outline of the one object the picture shows (a vase on a table, a
+   * bottle on white), in pixels: `{ top, bottom, axis, drift, rows: [{ y,
+   * left, right }] }`, `rows` rows evenly from its top to its bottom (top
+   * first). The object is what differs from both ends of each row (by
+   * `threshold`, a colour distance 0–1, default 0.12), or what is opaque on a
+   * transparent picture. `drift`: how far the rows' middles stray from the
+   * axis (large when it is not symmetric or the photo is at an angle). Rows
+   * off the axis at its ends (a shadow) are left out. `capTop`/`capBottom`:
+   * where each end first reaches full width (below `top` when the top is a
+   * rim seen from a little above); `rim: true` measures from the rim's line.
+   */
+  silhouette({ rows = 60, threshold = 0, rim = false } = {}) {
+    const f = __n.imageSilhouette(this.id, rows, threshold, rim ? 1 : 0);
+    const out = { top: f[0], bottom: f[1], axis: f[2], drift: f[3], capTop: f[4], capBottom: f[5], rows: [] };
+    for (let i = 6; i + 2 < f.length; i += 3) out.rows.push({ y: f[i], left: f[i + 1], right: f[i + 2] });
+    return out;
+  }
+  /**
+   * A round object's profile to revolve, from its silhouette, in mm: give its
+   * real `height` (or `width`, its widest). `points` are [radius, z] from the
+   * bottom (z = 0) up, the radius half the width across each row;
+   * `outline` closes them on the axis, ready for
+   * `polygon(photo.profile({ height: 240 }).outline).revolve()` (or pass
+   * `points` to `spline` for a smooth wall). Also `height`, `maxRadius`,
+   * `mmPerPixel`, `drift` (mm).
+   */
+  profile({ height, width, rows = 60, threshold = 0, rim = false } = {}) {
+    const s = this.silhouette({ rows, threshold, rim });
+    const widest = Math.max(...s.rows.map((r) => r.right - r.left));
+    const k = height > 0 ? height / (s.bottom - s.top) : width > 0 ? width / widest : 0;
+    if (!(k > 0)) throw new Error("profile: give the object's real height or width in mm");
+    const points = s.rows.map((r) => [((r.right - r.left) / 2) * k, (s.bottom - r.y) * k]).reverse();
+    points[0][1] = 0;
+    points[points.length - 1][1] = (s.bottom - s.top) * k;
+    const h = (s.bottom - s.top) * k;
+    return { points, outline: [[0, 0], ...points, [0, h]], height: h, maxRadius: (widest / 2) * k, mmPerPixel: k, drift: s.drift * k };
+  }
 }
 
 function image(id) {
