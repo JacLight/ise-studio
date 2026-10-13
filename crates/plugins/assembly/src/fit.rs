@@ -282,7 +282,7 @@ enum Kind {
     Nut { d: f64, s: f64, m: f64 },
     Washer { d: f64 },
     /// A bought item with tapped holes (a servo horn): its threads hold screws.
-    Tapped { depth: f64 },
+    Tapped { depth: f64, seat: Seat },
     Bearing { d: f64, outer: f64, width: f64, number: String },
     Pin { d: f64, len: f64 },
     /// Some other bought item (a servo, a stepper, a horn).
@@ -291,7 +291,29 @@ enum Kind {
     Made { printed: bool },
 }
 
+/// How a bought threaded part sits where it goes, which says what overlap is meant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Seat {
+    /// Holds a thread and nothing more (a servo horn's tapped holes).
+    Plain,
+    /// Pressed into a sheet (PEM self-clinching nuts and standoffs): its
+    /// knurl and shank sit inside the sheet by design.
+    Clinched,
+    /// Has a male stud that threads into what it stands on (an M-F standoff).
+    Stud,
+}
+
 impl Kind {
+    /// Overlap between these two is how they go together: a self-clinching
+    /// part pressed into the made part it is in, or a threaded stud in a
+    /// threaded part.
+    fn meant_overlap(&self, other: &Kind) -> bool {
+        match self {
+            Kind::Tapped { seat: Seat::Clinched, .. } => !other.bought(),
+            Kind::Tapped { seat: Seat::Stud, .. } => other.threaded(),
+            _ => false,
+        }
+    }
     fn bought(&self) -> bool {
         !matches!(self, Kind::Made { .. })
     }
@@ -327,10 +349,11 @@ fn entity(world: &World, id: StableId) -> Option<de_core::bevy_ecs::entity::Enti
 }
 
 /// Whether an instance is a threaded fastener (a screw, a heat-set insert, a
-/// nut): overlap with what it threads or melts into is meant.
+/// nut, a self-clinching PEM part, a standoff with a stud): overlap with what
+/// it threads, melts or is pressed into is meant.
 pub fn is_fastener(world: &World, id: StableId) -> bool {
     let Some(inst) = entity(world, id).and_then(|e| world.get::<Instance>(e)) else { return false };
-    matches!(kind_of(world, id, inst), Kind::Screw { .. } | Kind::Insert { .. } | Kind::Nut { .. })
+    matches!(kind_of(world, id, inst), Kind::Screw { .. } | Kind::Insert { .. } | Kind::Nut { .. } | Kind::Tapped { seat: Seat::Clinched | Seat::Stud, .. })
 }
 
 fn kind_of(world: &World, id: StableId, inst: &Instance) -> Kind {
@@ -393,7 +416,14 @@ fn kind_of(world: &World, id: StableId, inst: &Instance) -> Kind {
             number: stats.as_ref().and_then(|s| s.declared.stock.as_ref()).map(|s| s.part_number.clone()).unwrap_or_else(|| "linear bearing".into()),
         },
         Some("iso8734" | "iso8752") => Kind::Pin { d: v("d"), len: v("length") },
-        _ if metric("Tapped thread").is_some() => Kind::Tapped { depth: metric("Tapped depth").unwrap_or(0.0) },
+        _ if metric("Tapped thread").is_some() => Kind::Tapped {
+            depth: metric("Tapped depth").unwrap_or(0.0),
+            seat: match family.as_deref() {
+                Some(f) if f.starts_with("pem_") => Seat::Clinched,
+                Some("standoff_hex") => Seat::Stud,
+                _ => Seat::Plain,
+            },
+        },
         Some(_) => Kind::Stock,
         None if declared_stock => Kind::Stock,
         None => {
@@ -1461,9 +1491,14 @@ fn joined_item(cx: &mut Ctx, joint: StableId, j: &joints::Joint, a: usize, b: us
     let printed = ia.kind.printed() || ib.kind.printed();
     let mut checks = vec![];
     let moving = !j.kind.rigid();
+    // A PEM part clinched into its sheet, a standoff's stud in its thread: overlap by design.
+    let meant = ia.kind.meant_overlap(&ib.kind) || ib.kind.meant_overlap(&ia.kind);
     if let Some((v, lo, hi)) = overlap(ia, ib) {
-        if v > 0.01 {
-            let at = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0, (lo[2] + hi[2]) / 2.0];
+        let at = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0, (lo[2] + hi[2]) / 2.0];
+        if v > 0.01 && meant {
+            let how = if matches!(ia.kind, Kind::Tapped { seat: Seat::Clinched, .. }) || matches!(ib.kind, Kind::Tapped { seat: Seat::Clinched, .. }) { "pressed in (self-clinching)" } else { "threaded in" };
+            checks.push(check("Seated", FitStatus::Pass, format!("{} and {} overlap by {} mm³: {how}, as designed", ia.name, ib.name, mm(v))).value(v, "mm³").at(at));
+        } else if v > 0.01 {
             checks.push(check("Overlap", FitStatus::Fail, format!("{} and {} overlap by {} mm³ ({} × {} × {} mm)", ia.name, ib.name, mm(v), mm(hi[0] - lo[0]), mm(hi[1] - lo[1]), mm(hi[2] - lo[2]))).value(v, "mm³").at(at));
         }
     }
@@ -1634,6 +1669,10 @@ pub fn report(world: &World, scope: Option<StableId>, options: &FitOptions) -> R
             }
             // A screw is judged by its own item against everything it passes.
             if matches!(cx.insts[a].kind, Kind::Screw { .. }) || matches!(cx.insts[b].kind, Kind::Screw { .. }) {
+                continue;
+            }
+            // A PEM part in its sheet, a standoff's stud in a tapped part: overlap by design.
+            if cx.insts[a].kind.meant_overlap(&cx.insts[b].kind) || cx.insts[b].kind.meant_overlap(&cx.insts[a].kind) {
                 continue;
             }
             if let Some((v, lo, hi)) = overlap(&cx.insts[a], &cx.insts[b])

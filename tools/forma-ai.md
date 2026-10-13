@@ -19,7 +19,7 @@ Run it from your working folder. It acts on the open project. It is your only wa
 ./forma surfaces <id> [part] [--pull x,y,z] [--min deg]   surface analysis of each part: continuity across every seam (gap, crease angle, curvature jump), tightest bend, faces needing draft
 ./forma bom <assembly|instance|project> [qty]   the bill of materials as CSV (made parts with process, bought parts with part numbers, totals)
 ./forma dof <assembly|top>            what can still move and how, mobility, redundant and conflicting joints
-./forma interference <assembly|instance|top> [clearance]   every pair of parts that overlap (mm³, where), touch, or come within clearance mm
+./forma interference <assembly|instance|shape|top> [clearance]   every pair of parts (a many-part shape's parts too: a building's walls, slabs, doors) that overlap (mm³, where), touch, or come within clearance mm
 ./forma exploded <view>               a saved exploded view's steps and trails
 ./forma study <study> [fps] [--out frames.json]   play a motion study: what moves, clashes, binding; every frame's placements to a file
 ./forma robot <tip> [fk '{json}' | ik x,y,z [--axis x,y,z] | reach [n] | path '<waypoints>'] [--tool connector]   the arm's chain, kinematics, reach, trajectories
@@ -344,7 +344,7 @@ To try the pipeline on a known shape, `./forma scan render-photos <folder> [--co
 Build like a designer: smallest components first, then assemblies of them.
 
 - `shape.create` with `"definition": true` makes a component that is only placed through instances.
-- `assembly.create` makes an assembly definition; `assembly.instance.create { of, parent, name, at:[x,y,z] mm, rotation:[rx,ry,rz] (degrees about X, then Y, then Z, as Solid.rotate), properties }` places a component or assembly inside an assembly (`parent`), or at the top of the project (no parent).
+- `assembly.create` makes an assembly definition; `assembly.instance.create { of, parent, name, at:[x,y,z] mm, rotation:[rx,ry,rz] (degrees about X, then Y, then Z, as Solid.rotate), properties }` places a component or assembly inside an assembly (`parent`), or at the top of the project (no parent). A definition shows in the person's view only through instances: finish an assembly by placing it at the top (`./forma look` draws a definition either way; the person's view does not, and `./forma check` warns about assemblies placed nowhere).
 - Every instance of a definition shows the same design: edit the definition (`shape.set_params`, `shape.update`) and all of them change. Say so when you do it ("this changes all 12 hotel floors").
 - To customise one instance only, `assembly.instance.make_unique` first; it returns the new `definition` to edit.
 - `assembly.instance.update` moves, rotates, swaps `of`, renames, or sets `properties` (a value "" removes one). Properties carry facts like `use`, `status` (Available, Reserved, Sold), `owner`, `unit`.
@@ -387,7 +387,7 @@ Robots (any serial chain of joints):
 
 Interference across an assembly:
 
-- `./forma interference <assembly|instance|top> [clearance]` (GET `/interference/<id>?clearance=`): every pair of placed parts at every depth that overlap (mm³, and the overlap's box and middle), touch, or come within `clearance` mm; pairs a joint joins directly are marked `joined` (contact meant; overlap rarely is) and pairs where one is a screw, heat-set insert or nut are marked `fastener` (threads and inserts overlap what they go into by design); only the rest fail. Checked: two 10 mm cubes 5 mm apart overlap by exactly 500 mm³ (5 × 10 × 10); one 0.5 mm above is reported 0.5 mm away. Run it after assembling and before printing.
+- `./forma interference <assembly|instance|shape|top> [clearance]` (GET `/interference/<id>?clearance=`): every pair of placed parts at every depth, each part of a many-part shape on its own, that overlap (mm³, and the overlap's box and middle), touch, or come within `clearance` mm; pairs a joint joins directly are marked `joined` (contact meant; overlap rarely is) and pairs where one is a screw, heat-set insert, nut, PEM self-clinching part or studded standoff are marked `fastener` (threads and inserts overlap what they go into by design); only the rest fail. Checked: two 10 mm cubes 5 mm apart overlap by exactly 500 mm³ (5 × 10 × 10); one 0.5 mm above is reported 0.5 mm away. Run it after assembling and before printing.
 
 - `assembly.group.create { name, members }` groups two or more items so they are picked and moved together; nothing about the items changes. `assembly.group.update { target, name?, members? }` renames or changes membership; deleting the group (`core.entity.delete`) ungroups. Several changes that belong together go in one `core.batch { steps: [{ operation, parameters }] }` (one undo step, all or nothing).
 

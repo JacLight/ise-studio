@@ -88,13 +88,25 @@
 // path (e.g. "$0.id"), and { "$file": "path.js" } inlines a file's text (paths
 // are relative to steps.json; several files can be joined with an array).
 
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import fsModule, { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { request as httpRequest } from "node:http";
 import { pcbLib } from "./forma-pcblib.mjs";
 import { pcbBoard, BOARD_SUBS } from "./forma-pcbboard.mjs";
 import { pcbSignal, SIGNAL_SUBS } from "./forma-pcbsignal.mjs";
+
+// Every file a command writes (--pdf out/drawing.pdf, --dxf flat/base.dxf…)
+// gets its folder made first, wherever the command imports writeFileSync from.
+{
+  const write = fsModule.writeFileSync;
+  fsModule.writeFileSync = (path, ...rest) => {
+    if (typeof path === "string" && dirname(path) !== ".") fsModule.mkdirSync(dirname(resolve(path)), { recursive: true });
+    return write(path, ...rest);
+  };
+  syncBuiltinESMExports();
+}
 
 const args = process.argv.slice(2);
 const urlFlag = args.indexOf("--url");
@@ -2166,4 +2178,22 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
 }
 
 engine.close();
+
+// An assembly made but never placed shows nothing in the person's view (a
+// definition appears only through its instances): say so after changes and
+// checks, while it is easy to put right.
+if (["run", "commit", "check", "look"].includes(command)) {
+  try {
+    const fresh = await connect();
+    const s = await fresh.snapshot;
+    fresh.close();
+    const placedOf = new Set(s.entities.map((e) => e.components?.["assembly.instance"]?.of).filter(Boolean));
+    const unplaced = s.entities.filter((e) => e.components?.["assembly.definition"] && !placedOf.has(e.id));
+    for (const e of unplaced) {
+      console.log(`! assembly “${e.components["assembly.definition"].name}” (${e.id}) is not placed anywhere, so the person's view does not show it: place it with assembly.instance.create { "of": "${e.id}", "name": "…" } (no parent puts it at the top of the project)`);
+    }
+  } catch {
+    // The engine went away: nothing to add.
+  }
+}
 process.exit(failed ? 1 : 0);

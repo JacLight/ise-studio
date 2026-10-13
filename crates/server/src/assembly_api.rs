@@ -87,9 +87,19 @@ pub async fn interference(State(server): State<Arc<Server>>, Path(id): Path<Stri
     let clearance = q.get("clearance").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
     read(server, &q, move |p, w| {
         let direct = serde_json::from_value::<StableId>(json!(id)).ok().filter(|s| p.get::<de_assembly::AssemblyDef>(*s).is_some() || p.get::<de_assembly::Instance>(*s).is_some());
+        // A shape of several parts (a building, a gearbox drawn as one program): its parts against each other.
+        let shape = || {
+            serde_json::from_value::<StableId>(json!(id))
+                .ok()
+                .filter(|s| p.get::<de_shape::ShapeProgram>(*s).is_some())
+                .or_else(|| p.entity_ids().into_iter().find(|e| p.get::<de_shape::ShapeProgram>(*e).is_some_and(|x| x.name == id)))
+        };
         let of = match direct {
             Some(s) => Some(s),
-            None => scope(p, &id)?,
+            None => match scope(p, &id) {
+                Ok(s) => s,
+                Err(e) => Some(shape().ok_or(e)?),
+            },
         };
         de_assembly::interference::report(w, of, clearance)
     })

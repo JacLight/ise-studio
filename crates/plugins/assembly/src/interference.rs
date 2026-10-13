@@ -62,6 +62,32 @@ struct Leaf {
     hi: V3,
 }
 
+/// The leaves of one occurrence: each part of a shape made of several (a
+/// building's walls, slabs, doors; a gearbox's housing and shafts), else the
+/// shape whole.
+fn leaves_of(world: &World, o: &Occurrence) -> Result<Vec<Leaf>, String> {
+    let se = entity(world, o.shape).ok_or("a component is gone")?;
+    let several = world.get::<ShapeSolid>(se).is_some_and(|s| s.stats.parts.len() >= 2);
+    if !several {
+        return Ok(leaf(world, o)?.into_iter().collect());
+    }
+    let program = match &o.config {
+        Some(c) => de_shape::configs::configured_program(world, se, c)?,
+        None => de_shape::resolved_program(world, se).ok_or("not a shape")?,
+    };
+    let ev = de_shape::evaluated_at(&program, program.display_tolerance())?;
+    let mut out = vec![];
+    for p in &ev.parts {
+        let placed = o.transform.solid(&p.solid);
+        let Some(bb) = placed.bounding_box() else { continue };
+        if placed.is_empty() {
+            continue;
+        }
+        out.push(Leaf { names: format!("{} › {}", o.names.join(" › "), p.name), path: o.path.clone(), solid: placed, lo: bb.min(), hi: bb.max() });
+    }
+    Ok(out)
+}
+
 fn leaf(world: &World, o: &Occurrence) -> Result<Option<Leaf>, String> {
     let se = entity(world, o.shape).ok_or("a component is gone")?;
     let solid = match &o.config {
@@ -82,6 +108,18 @@ fn leaf(world: &World, o: &Occurrence) -> Result<Option<Leaf>, String> {
     Ok(Some(Leaf { names: o.names.join(" › "), path: o.path.clone(), solid: placed, lo: bb.min(), hi: bb.max() }))
 }
 
+/// Every shape in an instance or assembly; a shape placed on its own where its placement puts it.
+fn placed_occurrences(world: &World, id: StableId) -> Vec<Occurrence> {
+    let mut occ = crate::occurrences(world, id);
+    if let Some(p) = entity(world, id).filter(|e| world.get::<Instance>(*e).is_none()).and_then(|e| world.get::<de_solid::Placement>(e)) {
+        let mm = |l: de_core::Length| l.canonical() * 1000.0;
+        for o in &mut occ {
+            o.transform.at = [o.transform.at[0] + mm(p.x), o.transform.at[1] + mm(p.y), o.transform.at[2] + mm(p.z)];
+        }
+    }
+    occ
+}
+
 /// Whether a joint joins two sibling instances directly.
 fn joined(world: &World, a: StableId, b: StableId) -> bool {
     let Some(scope) = entity(world, a).and_then(|e| world.get::<Instance>(e)).map(|i| i.parent) else { return false };
@@ -99,19 +137,30 @@ pub fn report(world: &World, of: Option<StableId>, clearance: f64) -> Result<Int
     match of {
         Some(id) => {
             let e = entity(world, id).ok_or_else(|| format!("{id} does not exist"))?;
-            name = world.get::<AssemblyDef>(e).map(|a| a.name.clone()).or_else(|| world.get::<Instance>(e).map(|i| i.name.clone())).ok_or_else(|| format!("{id} is not an assembly or an instance"))?;
-            occ = crate::occurrences(world, id);
+            name = world
+                .get::<AssemblyDef>(e)
+                .map(|a| a.name.clone())
+                .or_else(|| world.get::<Instance>(e).map(|i| i.name.clone()))
+                .or_else(|| world.get::<de_shape::ShapeProgram>(e).map(|p| p.name.clone()))
+                .ok_or_else(|| format!("{id} is not an assembly, an instance or a shape"))?;
+            occ = placed_occurrences(world, id);
         }
         None => {
             name = "the project".into();
-            let mut tops: Vec<StableId> = world.resource::<IdIndex>().iter().filter(|(_, e)| world.get::<Instance>(*e).is_some_and(|i| i.parent.is_none())).map(|(id, _)| id).collect();
+            // Instances at the top, and shapes placed on their own (a building, a part).
+            let mut tops: Vec<StableId> = world
+                .resource::<IdIndex>()
+                .iter()
+                .filter(|(_, e)| world.get::<Instance>(*e).is_some_and(|i| i.parent.is_none()) || (world.get::<de_shape::ShapeProgram>(*e).is_some() && world.get::<de_solid::Placement>(*e).is_some()))
+                .map(|(id, _)| id)
+                .collect();
             tops.sort();
             for t in tops {
-                occ.extend(crate::occurrences(world, t));
+                occ.extend(placed_occurrences(world, t));
             }
         }
     }
-    let leaves: Vec<Leaf> = occ.iter().map(|o| leaf(world, o)).collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect();
+    let leaves: Vec<Leaf> = occ.iter().map(|o| leaves_of(world, o)).collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect();
     let clearance = if clearance.is_finite() { clearance.max(0.0) } else { 0.0 };
     let mut out = Interference { of, name, parts: leaves.len(), checked: 0, overlaps: vec![], touching: vec![], near: vec![], clearance, notes: vec![] };
     let reach = clearance.max(1e-3);
