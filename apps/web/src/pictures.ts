@@ -91,7 +91,8 @@ export async function picturesReady() {
 /**
  * Lays each printed part's picture on its triangles: `printed[i]` is the
  * picture of geometry group i (or of the whole geometry when it has no
- * groups). Seen from the side a face looks out of along the part's thinnest
+ * groups), on its face turned away from the middle of the whole shape. Seen
+ * from the side a face looks out of along the part's thinnest
  * direction, the picture's right and up are the view's (from +Z: right +X,
  * up +Y; from −Y, the front: right +X, up +Z; from −X: right −Y, up +Z; the
  * opposite sides mirrored to read the right way round from there).
@@ -108,6 +109,9 @@ export function applyPictureUVs(geometry: THREE.BufferGeometry, printed: (string
   const index = geometry.getIndex();
   const total = index ? index.count : pos.count;
   const groups = geometry.groups.length ? geometry.groups : [{ start: 0, count: total, materialIndex: 0 }];
+  // The middle of the whole shape: a print's outward face is the one turned away from it.
+  if (!geometry.boundingBox) geometry.computeBoundingBox();
+  const middle = geometry.boundingBox!.getCenter(new THREE.Vector3()).toArray();
   for (const g of groups) {
     if (!printed[g.materialIndex ?? 0]) continue;
     const verts = new Set<number>();
@@ -126,8 +130,15 @@ export function applyPictureUVs(geometry: THREE.BufferGeometry, printed: (string
     // Right and up axes as seen from the + side of the thin direction.
     const [right, up] = thin === 2 ? [0, 1] : thin === 1 ? [0, 2] : [1, 2];
     const across = (v: number, k: number) => (pos.getComponent(v, k) - lo[k]) / size[k];
+    // Printed on the outward face only: the face against the body shows the picture's corner
+    // (clear on ink-only artwork), so an ink print never shows its mirror image through itself.
+    const outward = (lo[thin] + hi[thin]) / 2 >= middle[thin] ? 1 : -1;
     for (const v of verts) {
-      const n = normal ? normal.getComponent(v, thin) : 1;
+      const n = normal ? normal.getComponent(v, thin) : outward;
+      if (n * outward < -0.5) {
+        uv.setXY(v, 0, 0);
+        continue;
+      }
       const back = n < -0.5;
       let u = across(v, right);
       let w = across(v, up);
