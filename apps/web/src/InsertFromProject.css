@@ -1,0 +1,691 @@
+/* Insert from project: the dialog, the link badge in the tree, the link's section in Properties.
+   Purple only for what is picked and the action; amber for "update available". */
+
+dialog.xp-dialog {
+  --xp-ink: #2f3140;
+  --xp-soft: #8a8696;
+  --xp-line: #ece9f1;
+  --xp-tint: #f6f4fa;
+  --xp-accent: #7352d6;
+  --xp-due: #c27a12;
+  max-width: 1040px;
+  width: calc(100vw - 48px);
+  height: min(760px, calc(100vh - 48px));
+  padding: 0;
+  overflow: hidden;
+  color: var(--xp-ink);
+  background: #fff;
+  border-radius: 20px;
+}
+
+dialog.xp-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  animation: xp-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes xp-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+}
+
+.xp-head {
+  display: flex !important;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 14px 14px 20px;
+  border-bottom: 1px solid var(--xp-line);
+}
+
+.xp-badge {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--xp-accent);
+  background: var(--xp-tint);
+}
+
+.xp-badge .icon {
+  width: 19px;
+  height: 19px;
+}
+
+.xp-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.xp-title h2 {
+  font-size: 19px;
+}
+
+.xp-title p {
+  margin: 1px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--xp-soft);
+}
+
+.xp-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 270px minmax(0, 1fr);
+}
+
+.xp-projects {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 10px 12px 14px;
+  border-right: 1px solid var(--xp-line);
+  background: #fcfbfd;
+}
+
+.xp-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 10px;
+  margin-bottom: 10px;
+  border: 1px solid var(--xp-line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--xp-soft);
+}
+
+.xp-search:focus-within {
+  border-color: #cfc3ef;
+  box-shadow: 0 0 0 3px #7352d614;
+}
+
+.xp-search .icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.xp-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 12px;
+  color: var(--xp-ink);
+}
+
+.xp-project-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.xp-project {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 54px;
+  padding: 6px 8px 6px 6px;
+  border-radius: 11px;
+  text-align: left;
+  border: 1px solid transparent;
+}
+
+.xp-project:hover {
+  background: #f6f3fb;
+}
+
+.xp-project.active {
+  background: #fff;
+  border-color: #d9cdf5;
+  box-shadow: 0 1px 3px rgb(60 40 110 / 0.08);
+}
+
+.xp-project.skeleton {
+  background: linear-gradient(90deg, #f4f2f7 25%, #faf9fc 50%, #f4f2f7 75%);
+  background-size: 200% 100%;
+  animation: xp-shimmer 1.2s infinite linear;
+}
+
+@keyframes xp-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.xp-project img,
+.xp-thumb-none {
+  width: 58px;
+  height: 42px;
+  flex: none;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #f1eef6;
+  border: 1px solid #ece8f2;
+}
+
+.xp-thumb-none {
+  display: grid;
+  place-items: center;
+  color: #b5aec2;
+}
+
+.xp-thumb-none .icon {
+  width: 18px;
+}
+
+.xp-project-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.xp-project-text strong {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.xp-project-text small {
+  font-size: 10.5px;
+  color: var(--xp-soft);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.xp-source {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 16px 10px;
+}
+
+.xp-source-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.xp-source-head > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.xp-source-head strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.xp-source-head small {
+  font-size: 10.5px;
+  color: var(--xp-soft);
+}
+
+.xp-whole,
+.xp-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.xp-whole {
+  padding: 6px 10px;
+  border-radius: 9px;
+  background: var(--xp-tint);
+}
+
+.xp-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.xp-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding-right: 6px;
+  border-radius: 8px;
+}
+
+.xp-row:hover {
+  background: #faf8fd;
+}
+
+.xp-row.on {
+  background: #f3effa;
+}
+
+.xp-row.carried {
+  opacity: 0.62;
+}
+
+.xp-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 2px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.xp-pick input {
+  margin: 0 2px 0 0;
+  accent-color: var(--xp-accent);
+}
+
+.xp-pick .icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: #9a92ab;
+}
+
+.xp-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.xp-pick small {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10.5px;
+  color: var(--xp-soft);
+}
+
+.xp-brings {
+  flex: none;
+  min-width: 26px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: #7a7189;
+  background: #f1eef6;
+}
+
+.xp-empty {
+  flex: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  color: var(--xp-soft);
+  text-align: center;
+  font-size: 12px;
+}
+
+.xp-empty .icon {
+  width: 28px;
+  height: 28px;
+  color: #cdc5dc;
+}
+
+.xp-empty.error {
+  color: #b0485b;
+}
+
+.xp-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #e4def0;
+  border-top-color: var(--xp-accent);
+  border-radius: 50%;
+  animation: xp-spin 0.8s linear infinite;
+}
+
+@keyframes xp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.xp-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  align-items: center;
+  padding: 10px 20px;
+  border-top: 1px solid var(--xp-line);
+  background: #fcfbfd;
+}
+
+.xp-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.xp-option .seg {
+  margin: 0;
+}
+
+.xp-option .seg button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 11px;
+}
+
+.xp-option .seg .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.xp-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--xp-soft);
+}
+
+.xp-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 14px 20px;
+  border-top: 1px solid var(--xp-line);
+}
+
+.xp-summary {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11.5px;
+  color: #6c6679;
+}
+
+.xp-summary.error {
+  color: #b0485b;
+}
+
+.xp-renames {
+  font-size: 10.5px;
+  color: var(--xp-due);
+}
+
+.xp-foot .primary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* The link mark on a linked item's row. */
+.link-badge {
+  position: relative;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 6px;
+  color: #8b74d8;
+  background: #f1ecfb;
+}
+
+.link-badge .icon {
+  width: 11px;
+  height: 11px;
+}
+
+.link-badge.update_available {
+  color: var(--xp-due, #c27a12);
+  background: #fdf3e2;
+}
+
+.link-badge.missing,
+.link-badge.error {
+  color: #b0485b;
+  background: #fdf0f2;
+}
+
+.tree-row .tree-name > span.link-badge {
+  overflow: visible;
+  margin-left: 2px;
+}
+
+.tree-name .link-badge .icon {
+  width: 11px;
+  height: 11px;
+}
+
+.link-badge i {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e0951f;
+  box-shadow: 0 0 0 2px #fff;
+}
+
+/* The link's section in Properties. */
+.link-section h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.link-section h3 .icon {
+  width: 13px;
+  height: 13px;
+  color: #8b74d8;
+}
+
+.link-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #3f8a5a;
+  background: #eaf6ee;
+}
+
+.link-state .icon {
+  width: 11px;
+  height: 11px;
+}
+
+.link-state.update_available {
+  color: #a8650c;
+  background: #fdf3e2;
+}
+
+.link-state.missing,
+.link-state.error {
+  color: #b0485b;
+  background: #fdf0f2;
+}
+
+.link-state.checking {
+  color: #8a8696;
+  background: #f4f2f7;
+}
+
+.link-from {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 6px;
+  margin: 0 0 8px;
+  font-size: 11.5px;
+}
+
+.link-from a {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--purple);
+  text-decoration: none;
+  font-size: 10.5px;
+}
+
+.link-from a .icon {
+  width: 11px;
+  height: 11px;
+}
+
+.link-from small {
+  flex-basis: 100%;
+  font-size: 10.5px;
+  color: #8a8696;
+}
+
+.link-due {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #8a5a10;
+  background: #fdf6ea;
+}
+
+.link-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.link-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.link-actions button:disabled {
+  opacity: 0.5;
+}
+
+.link-auto {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 9px 0 2px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.link-auto input {
+  accent-color: #7352d6;
+}
+
+/* Choosing where inserted items go: a crosshair over the view, and the hint above it. */
+.viewport.is-picking .model-canvas {
+  cursor: crosshair;
+}
+
+.place-hint {
+  position: fixed;
+  top: 70px;
+  left: 50%;
+  z-index: 40;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 12px;
+  font-size: 12px;
+  color: #3a3346;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid #e3dcf0;
+  box-shadow: 0 10px 30px #2a1e4a1c;
+}
+
+.place-hint .icon {
+  width: 14px;
+  height: 14px;
+  color: #7352d6;
+}
+
+.place-hint button {
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  background: #f4f2f7;
+}
+
+@media (max-width: 720px) {
+  .xp-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: 170px minmax(0, 1fr);
+  }
+
+  .xp-projects {
+    border-right: 0;
+    border-bottom: 1px solid var(--xp-line);
+  }
+}
+
+/* The app's form defaults (labels as blocks with a floating span, full-width inputs) do not apply here. */
+dialog.xp-dialog label,
+.link-section label.link-auto {
+  margin: 0;
+  color: inherit;
+}
+
+dialog.xp-dialog label > span:not(.copy-field) {
+  float: none;
+  font-size: inherit;
+  color: inherit;
+}
+
+dialog.xp-dialog input[type="checkbox"],
+.link-section label.link-auto input[type="checkbox"] {
+  display: inline-block;
+  flex: none;
+  width: auto;
+  margin: 0;
+  padding: 0;
+}
+
+dialog.xp-dialog .xp-search input {
+  display: block;
+  width: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.link-section label.link-auto {
+  margin: 9px 0 2px;
+}

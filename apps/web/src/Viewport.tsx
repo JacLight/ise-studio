@@ -357,6 +357,8 @@ type Props = {
   onHover3D?: (p: [number, number, number] | null) => void;
   /** Comment pins on the model, the open thread's card, and comment mode. */
   comments?: CommentsView | null;
+  /** Picking a point (world mm): the next click on a part, or on the ground, gives it. */
+  pickPoint?: ((at: [number, number, number]) => void) | null;
   /** Other items picked with it (Shift-click): outlined, and moved with it while it is dragged. */
   also?: string[];
   live: LiveEdit | null;
@@ -2429,6 +2431,13 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       down = null;
       if (!from || Math.hypot(e.clientX - from.x, e.clientY - from.y) > 4) return;
       const r = rayAt(e.clientX, e.clientY);
+      const pick = callbacks.current.pickPoint;
+      if (pick) {
+        const hit = r.intersectObjects(visibleBodies(), false)[0];
+        const p = hit ? hit.point : r.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), new THREE.Vector3());
+        if (p) pick([p.x, p.y, p.z].map((v) => Math.round(v * 100) / 100) as [number, number, number]);
+        return;
+      }
       const cm = callbacks.current.comments;
       if (cm?.tool) return;
       if (cm?.placing) {
@@ -2798,6 +2807,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     return () => observer.disconnect();
   }, []);
   useEffect(() => void host.current?.classList.toggle("is-commenting", !!props.comments?.placing && !props.comments.tool), [props.comments?.placing, props.comments?.tool]);
+  useEffect(() => void host.current?.classList.toggle("is-picking", !!props.pickPoint), [props.pickPoint]);
   useEffect(() => void host.current?.classList.toggle("is-marking", !!props.comments?.tool), [props.comments?.tool]);
 
   // Isolating something (or showing everything again) frames what is now in view.

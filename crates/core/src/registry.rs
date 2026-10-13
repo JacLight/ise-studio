@@ -70,6 +70,13 @@ impl Registry {
             .command::<crate::versions::UpdateVersion>()
             .command::<crate::versions::DeleteVersion>();
         registry
+            .component::<crate::links::Link>()
+            .component::<crate::links::Linked>()
+            .command::<crate::links::Insert>()
+            .command::<crate::links::Update>()
+            .command::<crate::links::Break>()
+            .command::<crate::links::Settings>();
+        registry
     }
 
     pub fn with_plugins(plugins: &[&dyn Plugin]) -> Self {

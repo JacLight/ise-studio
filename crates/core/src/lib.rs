@@ -13,6 +13,7 @@ pub mod derived;
 pub mod error;
 pub mod ids;
 pub mod journal;
+pub mod links;
 pub mod merge;
 pub mod plugin;
 pub mod project;

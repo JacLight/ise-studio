@@ -82,6 +82,68 @@ impl<'a> Tx<'a> {
         id
     }
 
+    /// Creates an entity with an id chosen by the command (one derived from
+    /// others, so every copy that makes "the same" entity names it the same).
+    pub fn create_with(&mut self, id: StableId) -> Result<StableId, CommandError> {
+        if self.exists(id) {
+            return Err(CommandError::new(ErrorCode::InvalidParameters, format!("entity {id} already exists")));
+        }
+        let entity = self.world.spawn(id).id();
+        self.world.resource_mut::<IdIndex>().insert(id, entity);
+        self.ops.push(Op::Create { id });
+        self.created_at = self.ops.len();
+        Ok(id)
+    }
+
+    /// The persistent kinds an entity holds.
+    pub fn kinds_of(&self, id: StableId) -> Vec<&'static str> {
+        let Some(entity) = self.world.resource::<IdIndex>().get(id) else { return Vec::new() };
+        self.registry.component_infos().iter().filter(|i| (i.capture)(self.world, entity).is_some()).map(|i| i.kind).collect()
+    }
+
+    /// Any persistent component by kind, as JSON (None if the entity lacks it).
+    pub fn get_json(&self, id: StableId, kind: &str) -> Result<Option<crate::Value>, CommandError> {
+        let info = self.info(kind)?;
+        Ok(self.world.resource::<IdIndex>().get(id).and_then(|e| (info.capture)(self.world, e)).map(|v| v.to_json()))
+    }
+
+    /// A value as the kind stores it: read as that kind's type and written
+    /// back (defaults filled, numbers in their stored form), so values that
+    /// mean the same compare equal.
+    pub fn normalize(&self, kind: &str, value: crate::Value) -> Result<crate::Value, CommandError> {
+        let info = self.info(kind)?;
+        (info.decode)(value).map(|v| v.to_json()).map_err(|e| CommandError::new(ErrorCode::InvalidParameters, format!("{kind}: {e}")))
+    }
+
+    /// Sets any persistent component by kind from JSON (read as its type).
+    pub fn set_json(&mut self, id: StableId, kind: &str, value: crate::Value) -> Result<(), CommandError> {
+        let info = self.info(kind)?;
+        let entity = self.entity(id)?;
+        let after = (info.decode)(value).map_err(|e| CommandError::new(ErrorCode::InvalidParameters, format!("{kind}: {e}")))?;
+        let before = (info.capture)(self.world, entity);
+        if crate::value::same(before.as_ref(), Some(&after)) {
+            return Ok(());
+        }
+        (info.write)(self.world, entity, Some(&after))?;
+        self.record_set(id, info.kind, before, Some(after));
+        Ok(())
+    }
+
+    /// Takes one persistent component, by kind, off an entity.
+    pub fn remove_json(&mut self, id: StableId, kind: &str) -> Result<(), CommandError> {
+        let info = self.info(kind)?;
+        let entity = self.entity(id)?;
+        if let Some(before) = (info.capture)(self.world, entity) {
+            (info.write)(self.world, entity, None)?;
+            self.record_set(id, info.kind, Some(before), None);
+        }
+        Ok(())
+    }
+
+    fn info(&self, kind: &str) -> Result<&'a crate::registry::ComponentInfo, CommandError> {
+        self.registry.component_info(kind).ok_or_else(|| CommandError::new(ErrorCode::UnsupportedRepresentation, format!("unknown component kind {kind}")))
+    }
+
     pub fn set<T: Persist>(&mut self, id: StableId, value: T) -> Result<(), CommandError> {
         let entity = self.entity(id)?;
         let before = self.world.get::<T>(entity).cloned();

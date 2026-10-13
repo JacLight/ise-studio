@@ -69,6 +69,9 @@
 //        .scad a live parametric shape, .csv/.xlsx a sheet, parameter set or configurations, .forma a new project
 //   node tools/forma.mjs export <id|name|project> <file.ext> | --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]
 //   node tools/forma.mjs bundle [file.forma]   the whole project (history, assets) as one file
+//   node tools/forma.mjs insert --from <project> [ids or names…] [--all] [--copy] [--auto] [--at x,y,z | --origin] [--list] [--dry-run]
+//        items of another project (parts, assemblies, sub-assemblies, boards… or --all), linked to follow it unless --copy
+//   node tools/forma.mjs links [update [id] | break <id> | auto <id> on|off]   this project's links: up to date or not; take, cut, automate
 //   node tools/forma.mjs scan add <file> [--source colmap] | list | info | fit <scan> [kind] [--near x,y,z --within r] | detect
 //        | downsample | outliers | normals | reconstruct [--depth 7] | surface [--poles 8] | shape | export | remove
 //                                            point clouds (XYZ/PLY/PCD/E57) and meshes: add, thin, fit primitives, rebuild surfaces
@@ -1086,6 +1089,108 @@ if (command === "run") {
       shown++;
     }
     if (words.length && !shown) console.log(`nothing in the stock library matches “${query}”`);
+  }
+} else if (command === "insert" || command === "links") {
+  // Items from another project, copied or linked; this project's links.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const q = (extra = {}) => `?${new URLSearchParams({ ...(project ? { project } : {}), user: "forma-ai", ...extra })}`;
+  const call = async (method, path, body) => {
+    const res = await fetch(`${http}${path}`, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+    const text = await res.text();
+    if (!res.ok) throw new Error(text);
+    return JSON.parse(text);
+  };
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const has = (name) => {
+    const i = args.indexOf(name);
+    if (i >= 0) args.splice(i, 1);
+    return i >= 0;
+  };
+  const state = (l) =>
+    l.state === "up_to_date"
+      ? "up to date"
+      : l.state === "update_available"
+        ? `UPDATE AVAILABLE (${[l.changes.created && `+${l.changes.created} new`, l.changes.changed && `${l.changes.changed} changed`, l.changes.removed && `−${l.changes.removed} removed`, l.changes.conflicts && `${l.changes.conflicts} edited here too (source wins)`].filter(Boolean).join(", ") || "source changed"})`
+        : `${l.state}: ${l.message ?? ""}`;
+  try {
+    if (command === "insert") {
+      // forma insert --from <project> [ids or names…] [--all] [--copy] [--auto] [--at x,y,z | --origin] [--list] [--dry-run]
+      const from = flag("--from");
+      const at = flag("--at");
+      const [copy, all, auto, origin, list, dry] = ["--copy", "--all", "--auto", "--origin", "--list", "--dry-run"].map(has);
+      const items = args.slice(1);
+      if (!from) throw new Error("say where from: forma insert --from <project> [ids or names…] [--all] [--copy] [--at x,y,z | --origin]");
+      if (list || (!items.length && !all)) {
+        const t = await call("GET", `/link/tree${q({ from })}`);
+        console.log(`${t.title} (${t.project}) · revision ${t.revision} · ${t.entities} items in all`);
+        const walk = (it, depth) => {
+          console.log(`${"  ".repeat(depth + 1)}${it.name}  [${it.detail || it.kind}]${it.brings ? ` brings ${it.brings}` : ""}  (${it.id})`);
+          for (const c of it.children ?? []) walk(c, depth + 1);
+        };
+        for (const it of t.items) walk(it, 0);
+        if (!list) console.log(`\nPick by name or id: forma insert --from ${from} "${t.items[0]?.name ?? "Name"}" [--copy] [--at x,y,z], or --all for the whole project`);
+      } else {
+        const point = at ? at.split(",").map(Number) : null;
+        if (point && (point.length !== 3 || point.some((v) => !Number.isFinite(v)))) throw new Error("--at takes x,y,z in mm");
+        const body = { from, items, whole: all, copy, auto_update: auto, ...(point ? { at: point } : origin ? { place: "origin" } : {}) };
+        if (dry) {
+          const p = await call("POST", `/link/preview${q()}`, body);
+          console.log(`would bring ${p.entities} items (${Object.entries(p.kinds).map(([k, n]) => `${n} ${k}`).join(", ")})${p.reused ? `, using ${p.reused} already here` : ""}${p.placed ? `, placing ${p.placed}` : ""}`);
+          for (const r of p.renamed ?? []) console.log(`  “${r.from}” is taken here: it would be “${r.to}”`);
+        } else {
+          const r = await call("POST", `/link/insert${q()}`, body);
+          const o = r.output;
+          console.log(`✓ ${o.created} items from “${r.title}” (${r.from}, revision ${r.revision}) ${o.link ? `linked (link ${o.link}${auto ? ", updates by itself" : ""})` : "copied"}`);
+          if (o.roots.length) console.log(`  picked: ${o.roots.join(" ")}`);
+          if (o.placed.length) console.log(`  placed: ${o.placed.join(" ")}`);
+          if (o.reused.length) console.log(`  ${o.reused.length} already here (identical) used instead of copied`);
+          for (const x of o.renamed) console.log(`  renamed “${x.from}” → “${x.to}” (the name is taken here) ${x.id}`);
+        }
+      }
+    } else {
+      // forma links | links update [id] | links break <id> | links auto <id> on|off
+      const sub = args[1] ?? "list";
+      const id = args[2];
+      if (sub === "list") {
+        const links = await call("GET", `/links${q()}`);
+        if (!links.length) console.log("no links: insert with `forma insert --from <project> …` (linked unless --copy)");
+        for (const l of links) {
+          console.log(`${l.id}  from ${l.project} (“${l.title}”) · ${l.whole ? "the whole project" : l.names.join(", ") || "items"} · ${l.items} items · at its revision ${l.revision}${l.source_revision != null ? ` (source at ${l.source_revision})` : ""}`);
+          console.log(`  ${state(l)}${l.auto_update ? " · updates by itself" : ""}`);
+        }
+      } else if (sub === "update") {
+        const out = await call("POST", `/links/update${q()}`, id ? { link: id } : {});
+        for (const u of out) {
+          if (u.error) {
+            console.error(`✗ ${u.project}: ${u.error}`);
+            failed = true;
+            continue;
+          }
+          const o = u.output;
+          if (o.up_to_date) console.log(`✓ ${u.project}: already up to date`);
+          else {
+            console.log(`✓ ${u.project}: ${o.created.length} new, ${o.changed.length} changed, ${o.removed.length} removed`);
+            for (const c of o.conflicts) console.log(`  ${c.id} ${c.kind}: edited here and in ${u.project}; took ${u.project}'s (undo to get yours back)`);
+            if (o.deleted_here) console.log(`  ${o.deleted_here} deleted here stay deleted`);
+          }
+        }
+      } else if (sub === "break") {
+        if (!id) throw new Error("say which link (or an item it brought): forma links break <id>");
+        const o = await call("POST", `/links/break${q()}`, { link: id });
+        console.log(`✓ the ${o.items} items from ${o.project} are a local copy now`);
+      } else if (sub === "auto") {
+        const on = args[3];
+        if (!id || !["on", "off"].includes(on)) throw new Error("forma links auto <id> on|off");
+        await call("POST", `/links/settings${q()}`, { link: id, auto_update: on === "on" });
+        console.log(`✓ ${on === "on" ? "updates by itself when its source changes" : "updates when asked (forma links update)"}`);
+      } else throw new Error("forma links [list] | update [id] | break <id> | auto <id> on|off");
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
   }
 } else if (command === "image") {
   // Pictures (and fonts) shape programs read: add one, or list them.
