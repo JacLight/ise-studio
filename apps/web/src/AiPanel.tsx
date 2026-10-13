@@ -340,7 +340,7 @@ export function AiPanel(props: {
                 : "Runs real engine commands · AI model not connected yet"
               : "Your canvas. Your intent."}
           </span>
-          {props.claude && full && (
+          {props.claude && (
             <>
               <IconButton icon="paperclip" label="Attach a picture or PDF (or paste, or drop one here)" onClick={() => fileInput.current?.click()} />
               <input
