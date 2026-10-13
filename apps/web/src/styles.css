@@ -14266,6 +14266,268 @@ a.button .icon {
   max-width: 320px;
 }
 
+/* ---- Simulation: material, more holds and loads, results ---- */
+.material-block {
+  margin-bottom: 10px;
+  border-radius: 9px;
+  background: #f8f6fb;
+}
+
+.material-head {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1px 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: 11px;
+  color: #3e3849;
+  cursor: pointer;
+}
+
+.material-head span {
+  color: #8a8398;
+}
+
+.material-head small {
+  grid-column: 2;
+  color: #8a8398;
+  font-variant-numeric: tabular-nums;
+}
+
+.material-body {
+  display: grid;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.material-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 6px;
+  font-size: 10.5px;
+  color: #8a8398;
+}
+
+.material-grid label {
+  display: contents;
+}
+
+.material-grid label.edited span {
+  color: #5b3fc4;
+  font-weight: 650;
+}
+
+.material-grid input {
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  margin: 0;
+  padding: 0 5px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.material-grid small {
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.material-grid label:nth-of-type(even) span {
+  padding-left: 6px;
+}
+
+.material-source {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.45;
+  color: #8a8398;
+}
+
+.stress-more {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  border-radius: 9px;
+  background: #f8f6fb;
+}
+
+.stress-item .moved-axis {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #8a8398;
+}
+
+.stress-item .moved-axis input {
+  width: 42px;
+}
+
+.stress-item.fatigue-spec {
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+
+.stress-item.fatigue-spec input {
+  width: 58px;
+}
+
+.layer-switch {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.layer-switch button {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 10.5px;
+}
+
+.marker-key {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.marker-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px #d8d2e4;
+}
+
+.marker-dot.red {
+  background: #e0452f;
+}
+
+.marker-dot.blue {
+  background: #2b59c3;
+}
+
+.section-cut {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.section-cut .segmented button {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 10.5px;
+}
+
+.section-cut input[type="range"] {
+  flex: 1;
+  min-width: 90px;
+  accent-color: #6d4ae0;
+}
+
+.section-cut small {
+  color: #8a8398;
+  font-variant-numeric: tabular-nums;
+}
+
+.probe {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #8a8398;
+}
+
+.probe input {
+  width: 54px;
+  height: 24px;
+  margin: 0;
+  padding: 0 5px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.probe .secondary {
+  height: 24px;
+  margin-left: auto;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.probe-out {
+  font-variant-numeric: tabular-nums;
+}
+
+.reactions {
+  display: grid;
+  gap: 3px;
+  font-size: 10.5px;
+}
+
+.reactions div {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: #f8f6fb;
+  color: #3e3849;
+}
+
+.reactions small {
+  text-align: right;
+  color: #8a8398;
+  font-variant-numeric: tabular-nums;
+}
+
+.export-row {
+  display: flex;
+  gap: 6px;
+}
+
+.export-row .secondary {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 28px;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.converge table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.converge th {
+  padding: 3px 4px;
+  text-align: left;
+  font-weight: 600;
+  color: #8a8398;
+}
+
+.converge td {
+  padding: 3px 4px;
+  border-top: 1px solid #eee9f5;
+  color: #3e3849;
+}
+
+.converge td small {
+  color: #8a8398;
+}
+
 /* The drawing's sheet size picker. */
 .drawing-select {
   display: inline-flex;

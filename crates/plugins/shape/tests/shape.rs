@@ -2497,7 +2497,7 @@ fn a_sharp_inside_corner_is_called_singular_not_given_a_number() {
 /// A curved face picked on a program's part at `point`, facing `normal` (kept as fractions of the part's bounds, as the app keeps it).
 fn curved_pick(e: &runtime::Evaluated, point: [f64; 3], normal: [f64; 3]) -> de_shape::fea::FacePick {
     let frac = std::array::from_fn(|k| if e.bounds_max[k] > e.bounds_min[k] { (point[k] - e.bounds_min[k]) / (e.bounds_max[k] - e.bounds_min[k]) } else { 0.5 });
-    de_shape::fea::FacePick { at: frac, probe: frac, normal, part: None, curved: true }
+    de_shape::fea::FacePick { at: frac, probe: frac, normal, part: None, curved: true, near: None }
 }
 
 /// The corners of a face's triangles.
