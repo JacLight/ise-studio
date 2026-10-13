@@ -108,9 +108,11 @@ function physical(m: THREE.Material): THREE.Material {
     roughnessMap: m.roughnessMap,
     metalnessMap: m.metalnessMap,
     normalMap: m.normalMap,
-    emissive: m.emissive.clone(),
-    emissiveMap: m.emissiveMap,
-    emissiveIntensity: m.emissiveIntensity,
+    // A part's look has no glow of its own: what glows in the view is its
+    // selection or hover highlight, which a render leaves out.
+    emissive: m.userData.look ? 0x000000 : m.emissive.clone(),
+    emissiveMap: m.userData.look ? null : m.emissiveMap,
+    emissiveIntensity: m.userData.look ? 0 : m.emissiveIntensity,
     side: THREE.DoubleSide,
   });
   const hsl = { h: 0, s: 0, l: 0 };
