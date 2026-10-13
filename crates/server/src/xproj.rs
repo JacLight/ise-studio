@@ -482,6 +482,9 @@ fn find(state: &Entities, what: &str) -> Result<StableId, String> {
         .filter(|(_, c)| name_of(c).to_lowercase() == want)
         .map(|(id, c)| (*id, top_instance(c) || placed_part(c) || c.contains_key("pcb.board")))
         .collect();
+    // An instance and the definition it shows, both called "Forearm": the instance (it says where).
+    let shown: HashSet<StableId> = named.iter().filter_map(|(id, _)| instance_of(&state[id]).map(|i| i.of)).collect();
+    let named: Vec<(StableId, bool)> = named.into_iter().filter(|(id, _)| !shown.contains(id)).collect();
     // Placed things first: "Robot arm" is the arm as placed, not its definition.
     let top: Vec<StableId> = named.iter().filter(|(_, t)| *t).map(|(id, _)| *id).collect();
     match (top.as_slice(), named.as_slice()) {
@@ -898,7 +901,23 @@ pub async fn insert(State(server): State<Arc<Server>>, Query(query): Q, axum::Js
         let params = insert_parameters(&src, &body.items, body.whole, !body.copy, body.auto_update, place, &server.engine).map_err(|e| fail(StatusCode::UNPROCESSABLE_ENTITY, e))?;
         let out = commit_as(&app, &actor(query.get("user")), "link.insert", params.clone()).map_err(|e| fail(StatusCode::UNPROCESSABLE_ENTITY, e))?;
         copy_picture_index(&server, &body.from, &name, &params);
-        Ok(json!({ "from": src.name, "title": src.title, "revision": src.revision, "output": out }))
+        // What to show: what was placed (a board by its 3D model).
+        let here = |s: &str| out["ids"].get(s).cloned();
+        let mut show: Vec<Value> = out["placed"].as_array().cloned().unwrap_or_default();
+        let roots: Vec<StableId> = serde_json::from_value(params["roots"].clone()).unwrap_or_default();
+        for r in &roots {
+            let c = &src.state[r];
+            let shown = match c.get("pcb.board").and_then(|b| b["model"].as_str()) {
+                Some(model) => here(model),
+                None if top_instance(c) || placed_part(c) => here(&r.to_string()),
+                None => None,
+            };
+            show.extend(shown);
+        }
+        if body.whole {
+            show.extend(src.state.iter().filter(|(_, c)| top_instance(c) || placed_part(c)).filter_map(|(id, _)| here(&id.to_string())));
+        }
+        Ok(json!({ "from": src.name, "title": src.title, "revision": src.revision, "output": out, "show": show }))
     })
     .await
 }
@@ -1084,6 +1103,12 @@ return box(100, 10, 10);
         // The board's 3D model stands for the board.
         assert_eq!(pick(&s, &[a.model.to_string()]).unwrap().roots, vec![a.board]);
         assert!(pick(&s, &["Nothing like it".to_string()]).unwrap_err().contains("nothing called"));
+        // An instance named as its definition is that instance; two things truly sharing a name are refused.
+        let mut s2 = s.clone();
+        s2.get_mut(&a.link).unwrap().get_mut("shape.program").unwrap()["name"] = json!("Forearm");
+        assert_eq!(find(&s2, "Forearm").unwrap(), a.fore);
+        s2.get_mut(&a.upper).unwrap().get_mut("assembly.instance").unwrap()["name"] = json!("Forearm");
+        assert!(find(&s2, "forearm").unwrap_err().contains("names 2 things"));
     }
 
     #[test]

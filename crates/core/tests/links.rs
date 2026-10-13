@@ -222,6 +222,12 @@ fn inserting_twice_never_collides_and_reuses_identical_materials() {
     assert!(renamed.iter().any(|r| r["from"] == "Bolt" && r["to"] == "Bolt (Source)"));
     // Five parts and one material, all distinct ids.
     assert_eq!(t.entity_count(), 3 + 2 + 1);
+
+    // A linked material counts as one already here too.
+    let mut t = Project::new("dst", registry());
+    insert(&mut t, &s, true);
+    let c = insert(&mut t, &s, false);
+    assert_eq!((c["created"].clone(), c["reused"].as_array().unwrap().len()), (json!(2), 1));
 }
 
 #[test]

@@ -310,7 +310,8 @@ fn reusable(tx: &Tx, comps: &BTreeMap<String, Value>, reuse: &[String], index: &
         let mut found = HashMap::new();
         let ids: Vec<StableId> = tx.world().resource::<IdIndex>().iter().map(|(id, _)| id).collect();
         for id in ids {
-            let kinds = tx.kinds_of(id);
+            // (A link's mark is not part of what it is: a linked material counts.)
+            let kinds: Vec<&str> = tx.kinds_of(id).into_iter().filter(|k| *k != Linked::KIND).collect();
             if let [k] = kinds[..]
                 && reuse.iter().any(|r| r == k)
                 && let Some(v) = tx.get_json(id, k)?
