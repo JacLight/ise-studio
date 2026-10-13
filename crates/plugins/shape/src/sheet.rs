@@ -133,6 +133,8 @@ pub fn unit_factor(u: &str) -> Option<(f64, &'static str)> {
         "in" | "\"" | "inch" => (25.4, "in"),
         "ft" | "'" => (304.8, "ft"),
         "deg" | "°" => (1.0, "°"),
+        "%" => (0.01, "%"),
+        "number" | "plain" | "-" => (1.0, ""),
         _ => return None,
     })
 }
@@ -178,7 +180,7 @@ pub enum Kind {
 pub fn number(s: &str, unit: Option<&str>) -> Option<(f64, Kind)> {
     match literal(s, unit) {
         Literal::Number(v, u) => Some((v, match u {
-            "" => Kind::Plain,
+            "" | "%" => Kind::Plain,
             "°" => Kind::Angle,
             _ => Kind::Length,
         })),
@@ -208,6 +210,7 @@ fn shown(v: f64, unit: &str) -> String {
     match unit {
         "" => s,
         "°" => format!("{s}°"),
+        "%" => format!("{s} %"),
         u => format!("{s} {u}"),
     }
 }
@@ -403,6 +406,42 @@ pub fn display_formula(world: &World, stored: &str) -> String {
 
 // ---- Evaluation ------------------------------------------------------------------------------
 
+/// The unit a formula's result is in when its cell sets none ("" for a plain
+/// number), from what it reads: a length plus a length is a length, a length
+/// over a number a length, a length over a length a plain ratio, and what
+/// goes into sin, cos, sqrt, pow… comes out a plain number (`=h * sin(Shoulder.angle)`
+/// is not an angle); asin, acos and atan give angles. Numbers typed in the
+/// formula count as plain.
+fn unit_of(e: &Expr, unit: &dyn Fn(Option<StableId>, &str) -> Option<&'static str>) -> Option<&'static str> {
+    let first = |args: &[Expr]| args.iter().find_map(|a| unit_of(a, unit));
+    match e {
+        Expr::Num(_) => None,
+        Expr::Ref(id, key) => unit(*id, key),
+        Expr::Neg(a) => unit_of(a, unit),
+        Expr::Bin(op, a, b) => {
+            let (ua, ub) = (unit_of(a, unit), unit_of(b, unit));
+            match op {
+                '+' | '-' => ua.or(ub),
+                '*' => match (ua, ub) {
+                    (Some(u), None) | (None, Some(u)) => Some(u),
+                    _ => None,
+                },
+                '/' => match (ua, ub) {
+                    (Some(u), None) => Some(u),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+        Expr::Call(f, args) => match f.as_str() {
+            "min" | "max" | "abs" | "round" | "floor" | "ceil" | "sum" | "average" | "avg" | "hypot" => first(args),
+            "mod" => args.first().and_then(|a| unit_of(a, unit)),
+            "asin" | "acos" | "atan" | "atan2" => Some("°"),
+            _ => None,
+        },
+    }
+}
+
 /// Works out every cell of a sheet, reading other entities' resolved values.
 pub fn evaluate(world: &World, sheet: &Sheet) -> SheetValues {
     let aliases = sheet.alias_map();
@@ -422,8 +461,6 @@ pub fn evaluate(world: &World, sheet: &Sheet) -> SheetValues {
             }
             let r = (|| {
                 let e = parse_formula(f, sheet, aliases)?;
-                let mut refs = Vec::new();
-                e.refs(&mut refs);
                 let v = e.eval(&|id, key| match id {
                     None => number(world, sheet, aliases, key, memo, visiting).map(|(v, _)| v).map_err(|m| if m.contains(" refers to itself") || m.starts_with(key) { m } else { format!("{key}: {m}") }),
                     Some(id) => {
@@ -436,7 +473,7 @@ pub fn evaluate(world: &World, sheet: &Sheet) -> SheetValues {
                 }
                 let unit = match cell.unit.as_deref().and_then(unit_factor) {
                     Some((_, u)) => u,
-                    None => refs.iter().find_map(|(id, key)| ref_unit(world, sheet, aliases, *id, key, memo, visiting)).unwrap_or(""),
+                    None => unit_of(&e, &|id, key| ref_unit(world, sheet, aliases, id, key, memo, visiting)).unwrap_or(""),
                 };
                 Ok((v, unit))
             })();
@@ -594,8 +631,12 @@ fn apply_edits(tx: &mut Tx, id: Option<StableId>, mut sheet: Sheet, cells: &BTre
             }
             continue;
         }
-        let (_, shown) = unit_factor(u).ok_or_else(|| bad(format!("unit “{u}”: use mm, cm, m, in, ft or deg")))?;
-        sheet.cells.entry(at).or_default().unit = Some(if shown == "°" { "deg".into() } else { shown.into() });
+        let (_, shown) = unit_factor(u).ok_or_else(|| bad(format!("unit “{u}”: use mm, cm, m, in, ft, deg, % or number")))?;
+        sheet.cells.entry(at).or_default().unit = Some(match shown {
+            "°" => "deg".into(),
+            "" => "number".into(),
+            s => s.into(),
+        });
     }
     sheet.cells.retain(|_, c| !c.input.is_empty() || c.alias.is_some() || c.unit.is_some());
     if sheet.cells.len() > 50_000 {
