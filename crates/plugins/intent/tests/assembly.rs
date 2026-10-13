@@ -137,3 +137,66 @@ fn collisions_are_checked_in_each_instance_s_configuration() {
     let r: RequirementResult = p.get::<RequirementResult>(req).unwrap().clone();
     assert!(r.passed, "the Short pin stops below it: {}", r.summary);
 }
+
+/// Two storeys, each a 4 × 3 m slab 200 thick with a bottom mesh of Ø12 bars
+/// (40 cover) cast in it; the ground floor's X bars run to `end` (the slab
+/// stops at 4000). `embedded` declares the bars embedded in their slab.
+fn storeys(end: f64, embedded: bool) -> (Project, StableId, StableId) {
+    let mut p = project();
+    let source = format!(
+        r#"const parts = [];
+        for (const [n, lv] of [["Ground slab", level("Ground", 0)], ["First slab", level("First", 3000)]]) {{
+          const z = lv.elevation - 200 + 40;
+          const host = {embedded} ? n : undefined;
+          parts.push(...slab(n, {{ outline: [[0, 0], [4000, 0], [4000, 3000], [0, 3000]], thickness: 200, level: lv }}));
+          const x1 = n === "Ground slab" ? {end} : 3960;
+          parts.push(...rebar(`${{n}} X`, {{ path: [[40, 40, z], [x1, 40, z]], diameter: 12, count: 15, spacing: 200, direction: [0, 1, 0], level: lv, embedded: host }}));
+          parts.push(...rebar(`${{n}} Y`, {{ path: [[40, 40, z + 12], [40, 2960, z + 12]], diameter: 12, count: 20, spacing: 200, direction: [1, 0, 0], level: lv, embedded: host }}));
+        }}
+        return parts;"#
+    );
+    let concrete = id(&run(&mut p, "solid.material.create", json!({ "name": "Concrete", "density": { "value": 2400, "unit": "kg/m3" } })).unwrap(), "id");
+    let steel = id(&run(&mut p, "solid.material.create", json!({ "name": "Steel", "density": { "value": 7850, "unit": "kg/m3" } })).unwrap(), "id");
+    let building = id(&run(&mut p, "shape.create", json!({ "name": "Building", "source": source, "params": [], "display_tolerance": 1, "materials": { "Concrete": concrete, "Steel": steel } })).unwrap(), "id");
+    let req = id(&run(&mut p, "intent.requirement.create", json!({ "name": "Nothing collides", "rule": { "kind": "no_collisions", "parts": [building] } })).unwrap(), "id");
+    (p, building, req)
+}
+
+#[test]
+fn rebar_cast_in_its_slab_is_no_collision_unless_it_pokes_out() {
+    // Not declared: every mesh overlaps its slab.
+    let (p, _, req) = storeys(3960.0, false);
+    let r: RequirementResult = p.get::<RequirementResult>(req).unwrap().clone();
+    assert!(!r.passed);
+    assert_eq!(r.violations.len(), 4, "{}", r.summary);
+    let i = de_assembly::interference::report(p.world(), None, 0.0).unwrap();
+    assert_eq!(i.overlaps.iter().filter(|c| !c.embedded && !c.fastener && !c.joined).count(), 4);
+
+    // Declared embedded in their slabs: meant.
+    let (p, _, req) = storeys(3960.0, true);
+    let r: RequirementResult = p.get::<RequirementResult>(req).unwrap().clone();
+    assert!(r.passed, "{}: {:?}", r.summary, r.violations);
+    assert!(r.summary.contains("4 embedded in their hosts"), "{}", r.summary);
+    let i = de_assembly::interference::report(p.world(), None, 0.0).unwrap();
+    assert_eq!(i.overlaps.len(), 4, "{:#?}", i.overlaps);
+    assert!(i.overlaps.iter().all(|c| c.embedded && c.outside == 0.0), "{:#?}", i.overlaps);
+    assert!(i.notes[0].contains("0 not meant"), "{:?}", i.notes);
+
+    // The ground floor's X bars run 100 mm past the slab's edge: no cover, they poke out.
+    let (p, _, req) = storeys(4100.0, true);
+    let r: RequirementResult = p.get::<RequirementResult>(req).unwrap().clone();
+    assert!(!r.passed);
+    assert_eq!(r.violations.len(), 1, "{:?}", r.violations);
+    assert_eq!(r.violations[0].names, ["Building › Ground slab X", "Building › Ground slab"]);
+    assert_eq!(r.summary, "1 embedded part pokes out of its host");
+    // Where: from the slab's edge at x = 4000 to the bars' ends at 4100.
+    let region = r.violations[0].region.unwrap();
+    assert!((region[0] - 4000.0).abs() < 1.0 && (region[3] - 4100.0).abs() < 1.0, "{region:?}");
+    let i = de_assembly::interference::report(p.world(), None, 0.0).unwrap();
+    let bad: Vec<_> = i.overlaps.iter().filter(|c| !c.embedded).collect();
+    assert_eq!(bad.len(), 1, "{:#?}", i.overlaps);
+    // 15 bars × 100 mm of octagonal Ø12 (2√2·6² mm²) out of the slab.
+    let out = 15.0 * 100.0 * 2.0 * 2f64.sqrt() * 36.0;
+    assert!((bad[0].outside - out).abs() < 0.05 * out, "{}", bad[0].outside);
+    assert!(i.notes.iter().any(|n| n.contains("Ground slab X is embedded in Building › Ground slab but")), "{:?}", i.notes);
+}

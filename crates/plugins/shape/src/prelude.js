@@ -567,10 +567,21 @@ class Part {
  * single Solid; every part stays separate (its own mesh, mass, cut list line
  * and fabrication file). Names must be unique within the assembly.
  *   part("Left side", panel, { material: "Birch ply", process: "cnc_router" })
+ * A part embedded in another by design (rebar cast in a slab, an insert
+ * moulded into a boss, an overmould) names what holds it; interference
+ * checks then count that overlap as meant, and flag the part only where it
+ * pokes out of its host:
+ *   part("Mesh", bars, { material: "Steel", embedded: "Slab" })   // or ["Slab", "Beam"]
  */
-function part(name, solid, { material, process, stock: bought, ifc } = {}) {
+function part(name, solid, { material, process, stock: bought, ifc, embedded } = {}) {
   if (typeof name !== "string" || !name.trim()) throw new TypeError("part() needs a name");
   asSolid(solid);
+  if (embedded !== undefined && embedded !== null) {
+    const hosts = (Array.isArray(embedded) ? embedded : [embedded]).map((h) => (typeof h === "string" ? h.trim() : ""));
+    if (!hosts.length || hosts.some((h) => !h)) throw new TypeError(`part ${name}: embedded is the name of the part it is embedded in (or a list of names)`);
+    if (hosts.includes(name.trim())) throw new Error(`part ${name}: a part cannot be embedded in itself`);
+    __declared.embedded[name.trim()] = hosts;
+  }
   // What it is as a building element: "IfcWall", or { class, level, psets, … } (see bim.js).
   if (ifc !== undefined) __bimElement(name.trim(), ifc);
   if (bought !== undefined) {
@@ -587,7 +598,7 @@ function part(name, solid, { material, process, stock: bought, ifc } = {}) {
 
 // ---- Stock items and connectors ------------------------------------------------
 
-const __declared = { stock: null, parts: {}, connectors: [] };
+const __declared = { stock: null, parts: {}, connectors: [], embedded: {} };
 const __optText = (where, what, v) => {
   if (v === undefined || v === null) return undefined;
   if (typeof v !== "string" || !v.trim()) throw new TypeError(`${where}: ${what} is text`);
@@ -844,6 +855,18 @@ function __leaveOut(list) {
   return { list: kept, off, report };
 }
 
+/** Embedded parts that are there, with the hosts that are; a host that is no part is an error. */
+function __embeddedDeclared(names, off) {
+  const out = {};
+  for (const [n, hosts] of Object.entries(__declared.embedded)) {
+    if (!names || !names.has(n)) continue;
+    for (const h of hosts) if (!names.has(h) && !off.has(h)) throw new Error(`part ${n}: embedded in "${h}", but there is no part "${h}"`);
+    const kept = hosts.filter((h) => names.has(h));
+    if (kept.length) out[n] = kept;
+  }
+  return out;
+}
+
 function __result(out, p) {
   let list = null;
   let off = new Set();
@@ -875,6 +898,7 @@ function __result(out, p) {
     parts: Object.fromEntries(Object.entries(__declared.parts).filter(([n]) => names && names.has(n))),
     connectors: __declared.connectors.filter((c) => c.part === undefined || !off.has(c.part)),
     bim: __bimDeclared(names),
+    embedded: __embeddedDeclared(names, off),
   };
   const m = __mechanism;
   const mechanism = m.bodies.length || m.meshes.length || m.joints.length ? m : undefined;

@@ -91,9 +91,18 @@ pub struct PartView {
     /// The instance this shape is placed by, inside an assembly (to tell a
     /// screw or a PEM standoff, whose overlap with what holds it is meant).
     pub instance: Option<StableId>,
+    /// What it is declared embedded in, by name (rebar in its slab: see
+    /// `de_assembly::embedded`), from its part and the instances above it.
+    pub hosts: Vec<String>,
 }
 
 impl PartView {
+    /// Whether the host name `host` names this part (its part, its shape, or an instance above it).
+    pub fn named(&self, host: &str) -> bool {
+        let shape = self.shape.as_ref().map(|(_, program)| program.name.as_str());
+        de_assembly::embedded::names(host, self.part.as_deref(), shape, &self.path)
+    }
+
     pub fn is_box(&self) -> bool {
         self.shape.is_none() && self.members.is_empty()
     }
@@ -143,6 +152,7 @@ pub fn part(world: &World, id: StableId) -> Result<PartView, String> {
             members: Vec::new(),
             path: Vec::new(),
             instance: None,
+            hosts: Vec::new(),
         });
     }
     if world.get::<de_assembly::Instance>(entity).is_some() || world.get::<de_assembly::AssemblyDef>(entity).is_some() {
@@ -164,6 +174,7 @@ pub fn part(world: &World, id: StableId) -> Result<PartView, String> {
         members: Vec::new(),
         path: Vec::new(),
         instance: None,
+        hosts: Vec::new(),
     })
 }
 
@@ -207,6 +218,7 @@ fn compound(world: &World, id: StableId, entity: de_core::bevy_ecs::entity::Enti
             members: Vec::new(),
             path,
             instance: o.path.last().copied(),
+            hosts: de_assembly::embedded::on_path(world, &o.path),
         });
     }
     if members.is_empty() {
@@ -226,6 +238,7 @@ fn compound(world: &World, id: StableId, entity: de_core::bevy_ecs::entity::Enti
         members,
         path: vec![name],
         instance: None,
+        hosts: Vec::new(),
     })
 }
 
@@ -264,6 +277,7 @@ pub fn expand(ps: Vec<PartView>) -> Vec<PartView> {
                 members: Vec::new(),
                 path: p.path.clone(),
                 instance: p.instance,
+                hosts: p.hosts.iter().cloned().chain(de_assembly::embedded::of_part(&parts.declared, Some(&q.name))).collect(),
             });
         }
     }
