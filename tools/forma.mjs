@@ -24,6 +24,7 @@
 //   node tools/forma.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]'] [--tool connector]
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
+//   node tools/forma.mjs pcb route|drag|cleanup|optimize …   the interactive router: pad to pad (walkaround/shove), drag a track or via, tidy copper
 //   node tools/forma.mjs pcb import <file> [--format f] [--name n] [--board id] [companions…]   a board/schematic from KiCad, Eagle, EasyEDA, Altium, CADSTAR, Fabmaster, PADS, gEDA
 //   node tools/forma.mjs pcb exports <id> | export <id> <file name | kicad_sch | ipc2581 | odb | d356 | …> [--out path]   files for other EDA tools
 //   node tools/forma.mjs sch export <schematic> netlist|bom|svg|pdf [--format kicad|orcad|cadstar|spice] [--out f]   schematic files; sch find|erc|buses|sheets <schematic>
@@ -517,10 +518,42 @@ if (command === "run") {
       }
       const s = await get("/pcb/kicad");
       console.log(`KiCad libraries in ${s.root}\n  footprints: ${s.footprints ?? "not downloaded yet"}\n  symbols:    ${s.symbols ?? "not downloaded yet"}\n  ${s.licence}`);
+    } else if (sub === "route" || sub === "drag" || sub === "cleanup" || sub === "optimize") {
+      // The interactive router from the shell: lay a route pad to pad, drag a track or via, tidy copper.
+      const point = (v) => (/^-?[\d.]+,-?[\d.]+$/.test(v) ? v.split(",").map(Number) : v);
+      const mode = flag("--mode");
+      const layer = flag("--layer");
+      const index = flag("--index");
+      const kind = flag("--kind");
+      const [, , board, a, b] = args;
+      let op;
+      let params;
+      if (sub === "route") {
+        if (!board || !a || !b) throw new Error("usage: forma pcb route <board> <from: U1.3 | x,y> <to: R4.1 | x,y> [--mode walkaround|shove|highlight] [--layer top]");
+        op = "pcb.route.interactive";
+        params = { board, from: point(a), to: point(b), ...(mode ? { mode } : {}), ...(layer ? { layer } : {}) };
+      } else if (sub === "drag") {
+        if (!board || !a || !b) throw new Error("usage: forma pcb drag <board> <track or via id> <x,y> [--index n] [--kind segment|corner|arc|via] [--mode shove|highlight]");
+        op = "pcb.route.drag";
+        params = { board, target: a, to: point(b), ...(index ? { index: Number(index) } : {}), ...(kind ? { kind } : {}), ...(mode ? { mode } : {}) };
+      } else {
+        if (!board) throw new Error(`usage: forma pcb ${sub} <board>`);
+        op = sub === "cleanup" ? "pcb.route.cleanup" : "pcb.route.optimize";
+        params = { board };
+      }
+      const r = await engine.commit(op, params);
+      if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
+      const o = r.value.output;
+      if (sub === "route" || sub === "drag") {
+        console.log(`${o.ok ? "✓" : "✗"} ${sub === "route" ? `${o.net ?? "no net"}: ${o.tracks.length} track(s), ${o.vias.length} via(s)` : "dragged"} in ${o.mode}${o.reached === false ? ", stopped short" : ""}; pushed ${o.pushed_tracks} track(s), ${o.pushed_vias} via(s) (rev ${r.value.revision})`);
+        for (const c of o.collisions) console.log(`  ✗ ${c.layer ?? ""} too close to ${c.with}: ${c.gap} mm (needs ${c.need}) at ${c.at.map((x) => x.toFixed(2)).join(", ")}`);
+        for (const n of o.notes) console.log(`  · ${n}`);
+        failed = !o.ok;
+      } else console.log(`✓ ${JSON.stringify(o)} (rev ${r.value.revision})`);
     } else if (["lib", "logo", "assign", "variant", "block"].includes(sub)) {
       failed = await pcbLib(sub, args, { engine, get, http, q });
     } else {
-      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | import <file> [--format f] | exports <id> | export <id> <name|kind> [--out path] | library [update] | lib … | logo <image> | assign <schematic> | variant <schematic> … | block …");
+      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | import <file> [--format f] | exports <id> | export <id> <name|kind> [--out path] | library [update] | lib … | logo <image> | assign <schematic> | variant <schematic> … | block … | route <board> <from> <to> [--mode shove] | drag <board> <item> <x,y> | cleanup <board> | optimize <board>");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
