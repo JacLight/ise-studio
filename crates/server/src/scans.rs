@@ -643,6 +643,6 @@ mod tests {
         let r: Value = serde_json::from_slice(&reply).unwrap();
         assert_eq!(r["solid"], json!(true));
         assert!(r["triangles"].as_u64().unwrap() > 12);
-        let _ = std::fs::remove_dir_all(&dir);
+        // The folder is shared with other tests in this process (the asset store is set once): leave it to them.
     }
 }
