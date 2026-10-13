@@ -546,9 +546,11 @@ class Part {
  * and fabrication file). Names must be unique within the assembly.
  *   part("Left side", panel, { material: "Birch ply", process: "cnc_router" })
  */
-function part(name, solid, { material, process, stock: bought } = {}) {
+function part(name, solid, { material, process, stock: bought, ifc } = {}) {
   if (typeof name !== "string" || !name.trim()) throw new TypeError("part() needs a name");
   asSolid(solid);
+  // What it is as a building element: "IfcWall", or { class, level, psets, … } (see bim.js).
+  if (ifc !== undefined) __bimElement(name.trim(), ifc);
   if (bought !== undefined) {
     if (process !== undefined && process !== "buy") throw new Error(`part ${name}: a stock part is bought (process "buy")`);
     process = "buy";
@@ -850,12 +852,15 @@ function __result(out, p) {
     stock: __declared.stock ?? undefined,
     parts: Object.fromEntries(Object.entries(__declared.parts).filter(([n]) => names && names.has(n))),
     connectors: __declared.connectors.filter((c) => c.part === undefined || !off.has(c.part)),
+    bim: __bimDeclared(names),
   };
   const m = __mechanism;
   const mechanism = m.bodies.length || m.meshes.length || m.joints.length ? m : undefined;
-  if (out instanceof Solid) return JSON.stringify({ solid: out.h, metrics: __metrics, mechanism, left_out, declared });
+  // Flat patterns of sheet-metal parts (sheet_metal.js).
+  const sheet = __sheetResult(names, out instanceof Solid);
+  if (out instanceof Solid) return JSON.stringify({ solid: out.h, metrics: __metrics, mechanism, left_out, declared, sheet });
   list = out.flat(Infinity);
-  return JSON.stringify({ parts: list.map((x) => ({ name: x.name, h: x.solid.h, material: x.material ?? null, process: x.process ?? null })), metrics: __metrics, mechanism, left_out, declared });
+  return JSON.stringify({ parts: list.map((x) => ({ name: x.name, h: x.solid.h, material: x.material ?? null, process: x.process ?? null })), metrics: __metrics, mechanism, left_out, declared, sheet });
 }
 
 /**
@@ -864,7 +869,25 @@ function __result(out, p) {
  * view meshes it to `tolerance`, exact exports pass its own B-rep through.
  */
 function importStep(sha, { material, process } = {}) {
-  const bodies = JSON.parse(__n.importStep(sha, tolerance));
+  return __importedParts(JSON.parse(__n.importStep(sha, tolerance)), material, process);
+}
+
+/** The bodies of an imported IGES file (surfaces that close are sewn into solids), as importStep. */
+function importIges(sha, opts = {}) {
+  return importStep(sha, opts);
+}
+
+/**
+ * The bodies of an imported mesh file (STL, OBJ, PLY, glTF, 3MF), as parts
+ * named as in the file. Triangles stay triangles: exact exports carry them
+ * as flat faces, and say so.
+ */
+function importMesh(sha, { material, process } = {}) {
+  return __importedParts(JSON.parse(__n.importMesh(sha)), material, process);
+}
+
+/** Imported bodies as parts (the file's colours are listed where it was imported: materials are given, not guessed). */
+function __importedParts(bodies, material, process) {
   const seen = new Map();
   return bodies.map(([name, h]) => {
     // Bodies with the same name get numbered, as part names must be unique.

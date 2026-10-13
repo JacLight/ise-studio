@@ -67,6 +67,9 @@
 #include <IFSelect_ReturnStatus.hxx>
 #include <Interface_Static.hxx>
 #include <Poly_Triangulation.hxx>
+#include <IGESCAFControl_Reader.hxx>
+#include <IGESCAFControl_Writer.hxx>
+#include <Quantity_Color.hxx>
 #include <STEPCAFControl_Reader.hxx>
 #include <STEPCAFControl_Writer.hxx>
 #include <STEPControl_StepModelType.hxx>
@@ -119,6 +122,7 @@ namespace {
 struct Arena {
   std::vector<TopoDS_Shape> shapes;
   std::vector<std::string> names;  // for shapes read from a file
+  std::vector<double> colors;      // r, g, b per shape read from a file (-1: none)
   std::string error;
   std::vector<double> mesh_positions;
   std::vector<int> mesh_triangles;
@@ -896,17 +900,19 @@ int occ_mesh(void* p, int h, double deflection, const double** positions, int* n
   });
 }
 
-// ---- STEP ----------------------------------------------------------------------
+// ---- STEP and IGES ---------------------------------------------------------------
 
-/// Writes shapes to a STEP file (AP214, millimetres), each named, so a shop
-/// sees "Left side", "Stretcher", … rather than anonymous solids.
-int occ_write_step(void* p, const int* hs, const char* const* names, int n, const char* path) {
+/// Writes shapes to a STEP (AP214) or IGES file in millimetres, each named,
+/// so a shop sees "Left side", "Stretcher", … rather than anonymous solids.
+/// `colors` (r, g, b in 0…1 per shape, sRGB; negative for none) may be null.
+int occ_write_cad(void* p, const int* hs, const char* const* names, const double* colors, int n, const char* path, int iges) {
   Arena* a = static_cast<Arena*>(p);
   return guard(a, [&] {
     Handle(XCAFApp_Application) app = XCAFApp_Application::GetApplication();
     Handle(TDocStd_Document) doc;
     app->NewDocument("MDTV-XCAF", doc);
     Handle(XCAFDoc_ShapeTool) tool = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
+    Handle(XCAFDoc_ColorTool) paint = XCAFDoc_DocumentTool::ColorTool(doc->Main());
     // Parts carry the names Forma gives them, nothing auto-generated ("SOLID", "COMPOUND").
     XCAFDoc_ShapeTool::SetAutoNaming(false);
     for (int i = 0; i < n; i++) {
@@ -919,29 +925,126 @@ int occ_write_step(void* p, const int* hs, const char* const* names, int n, cons
       TopoDS_Shape only;
       for (TopExp_Explorer e(part, TopAbs_SOLID); e.More(); e.Next()) solids++, only = e.Current();
       if (solids == 1) part = only;
+      // A placed part's placement goes into its geometry: a located shape
+      // would go in as an unnamed product ("Open CASCADE STEP translator …").
+      const size_t painted = a->painted.size();
+      if (!part.Location().IsIdentity()) {
+        const TopoDS_Shape placed = part;
+        const TopoDS_Shape unplaced = part.Located(TopLoc_Location());
+        BRepBuilderAPI_Transform xf(unplaced, placed.Location().Transformation(), true);
+        part = xf.Shape();
+        // Paint follows the geometry into its placed copy (faces by their images).
+        for (size_t k = 0; k < painted; k++) {
+          auto entry = a->painted[k];
+          const TopoDS_Shape& shape = std::get<0>(entry);
+          if (shape.ShapeType() != TopAbs_FACE) {
+            bool same = shape.IsPartner(placed);
+            for (TopExp_Explorer e(shape, TopAbs_SOLID); !same && e.More(); e.Next()) same = e.Current().IsPartner(placed);
+            if (same) a->painted.push_back({part, std::get<1>(entry), std::get<2>(entry)});
+            continue;
+          }
+          for (TopExp_Explorer e(unplaced, TopAbs_FACE); e.More(); e.Next())
+            if (shape.IsPartner(e.Current())) a->painted.push_back({xf.ModifiedShape(e.Current()), std::get<1>(entry), std::get<2>(entry)});
+        }
+      }
       TDF_Label l = tool->AddShape(part, false, false);
       TDataStd_Name::Set(l, TCollection_ExtendedString(names[i], true));
-      apply_paint(a, tool, XCAFDoc_DocumentTool::ColorTool(doc->Main()), l, part);
+      if (colors && colors[3 * i] >= 0)
+        paint->SetColor(l, Quantity_Color(colors[3 * i], colors[3 * i + 1], colors[3 * i + 2], Quantity_TOC_sRGB), XCAFDoc_ColorGen);
+      // What the program painted (the part, or single faces) wins over its material's look.
+      apply_paint(a, tool, paint, l, part);
+      a->painted.resize(painted);
     }
-    Interface_Static::SetCVal("write.step.unit", "MM");
-    Interface_Static::SetCVal("write.step.schema", "AP214IS");
-    STEPCAFControl_Writer w;
-    w.SetNameMode(true);
-    if (!w.Transfer(doc, STEPControl_AsIs)) throw Standard_Failure("could not translate the shapes to STEP");
-    if (w.Write(path) != IFSelect_RetDone) throw Standard_Failure("could not write the STEP file");
+    if (iges) {
+      Interface_Static::SetCVal("write.iges.unit", "MM");
+      IGESCAFControl_Writer w;
+      w.SetNameMode(true);
+      w.SetColorMode(true);
+      if (!w.Transfer(doc)) throw Standard_Failure("could not translate the shapes to IGES");
+      if (!w.Write(path)) throw Standard_Failure("could not write the IGES file");
+    } else {
+      Interface_Static::SetCVal("write.step.unit", "MM");
+      Interface_Static::SetCVal("write.step.schema", "AP214IS");
+      STEPCAFControl_Writer w;
+      w.SetNameMode(true);
+      w.SetColorMode(true);
+      if (!w.Transfer(doc, STEPControl_AsIs)) throw Standard_Failure("could not translate the shapes to STEP");
+      if (w.Write(path) != IFSelect_RetDone) throw Standard_Failure("could not write the STEP file");
+    }
     app->Close(doc);
     return 0;
   });
 }
 
+int occ_write_step(void* p, const int* hs, const char* const* names, int n, const char* path) {
+  return occ_write_cad(p, hs, names, nullptr, n, path, 0);
+}
+
 namespace {
-void collect(const Handle(XCAFDoc_ShapeTool) & tool, const TDF_Label& l, const TopLoc_Location& at, const std::string& prefix, Arena* a) {
+/// The colour a label carries (surface, else generic), if any.
+bool label_color(const TDF_Label& l, Quantity_Color& c) {
+  return XCAFDoc_ColorTool::GetColor(l, XCAFDoc_ColorSurf, c) || XCAFDoc_ColorTool::GetColor(l, XCAFDoc_ColorGen, c);
+}
+
+/// A body's own colour (set on it as a sub-shape), else its first coloured face's.
+bool shape_color(const Handle(XCAFDoc_ColorTool) & paint, const TopoDS_Shape& s, Quantity_Color& c) {
+  if (paint->GetColor(s, XCAFDoc_ColorSurf, c) || paint->GetColor(s, XCAFDoc_ColorGen, c)) return true;
+  for (TopExp_Explorer e(s, TopAbs_FACE); e.More(); e.Next())
+    if (paint->GetColor(e.Current(), XCAFDoc_ColorSurf, c) || paint->GetColor(e.Current(), XCAFDoc_ColorGen, c)) return true;
+  return false;
+}
+
+void push_body(Arena* a, const TopoDS_Shape& s, const std::string& name, bool has, const Quantity_Color& c) {
+  a->shapes.push_back(s);
+  a->names.push_back(name);
+  a->colors.resize(a->shapes.size() * 3, -1.0);
+  if (has) {
+    Standard_Real r, g, b;
+    c.Values(r, g, b, Quantity_TOC_sRGB);
+    size_t i = a->colors.size() - 3;
+    a->colors[i] = r, a->colors[i + 1] = g, a->colors[i + 2] = b;
+  }
+}
+
+/// Faces with no solid around them (IGES carries surfaces, and some STEP
+/// files do too) are sewn, and made solids where they close.
+static TopoDS_Shape closed(const TopoDS_Shape& s) {
+  if (TopExp_Explorer(s, TopAbs_SOLID).More() || !TopExp_Explorer(s, TopAbs_FACE).More()) return s;
+  BRepBuilderAPI_Sewing sew(1e-3);
+  sew.Add(s);
+  sew.Perform();
+  TopoDS_Shape sewn = sew.SewedShape();
+  BRep_Builder b;
+  TopoDS_Compound out;
+  b.MakeCompound(out);
+  int made = 0;
+  for (TopExp_Explorer e(sewn, TopAbs_SHELL); e.More(); e.Next()) {
+    BRepBuilderAPI_MakeSolid ms(TopoDS::Shell(e.Current()));
+    if (!ms.IsDone()) continue;
+    TopoDS_Solid solid = ms.Solid();
+    // Outward faces: a solid of negative volume is turned inside out.
+    GProp_GProps g;
+    BRepGProp::VolumeProperties(solid, g);
+    if (g.Mass() < 0) {
+      solid.Reverse();
+      BRepGProp::VolumeProperties(solid, g);
+    }
+    if (g.Mass() > 0 && BRepCheck_Analyzer(solid).IsValid()) b.Add(out, solid), made++;
+  }
+  return made ? TopoDS_Shape(out) : s;
+}
+
+void collect(const Handle(XCAFDoc_ShapeTool) & tool, const Handle(XCAFDoc_ColorTool) & paint, const TDF_Label& l, const TopLoc_Location& at, const std::string& prefix,
+             bool inherited, const Quantity_Color& inherit, Arena* a) {
   Handle(TDataStd_Name) nm;
   std::string name;
   if (l.FindAttribute(TDataStd_Name::GetID(), nm)) {
     TCollection_AsciiString s(nm->Get(), '_');
     name = s.ToCString();
   }
+  // Colours pass down an assembly: the nearest one set wins.
+  Quantity_Color color = inherit;
+  bool has = label_color(l, color) || inherited;
   TDF_Label ref = l;
   TopLoc_Location loc = at;
   if (XCAFDoc_ShapeTool::IsReference(l)) {
@@ -951,6 +1054,8 @@ void collect(const Handle(XCAFDoc_ShapeTool) & tool, const TDF_Label& l, const T
       TCollection_AsciiString s(nm->Get(), '_');
       name = s.ToCString();
     }
+    Quantity_Color own;
+    if (!label_color(l, own) && label_color(ref, own)) color = own, has = true;
   }
   // A component named like the assembly holding it adds nothing to the path.
   std::string last = prefix.substr(prefix.rfind(" / ") == std::string::npos ? 0 : prefix.rfind(" / ") + 3);
@@ -958,48 +1063,74 @@ void collect(const Handle(XCAFDoc_ShapeTool) & tool, const TDF_Label& l, const T
   if (XCAFDoc_ShapeTool::IsAssembly(ref)) {
     TDF_LabelSequence comps;
     XCAFDoc_ShapeTool::GetComponents(ref, comps);
-    for (int i = 1; i <= comps.Length(); i++) collect(tool, comps.Value(i), loc, full, a);
+    for (int i = 1; i <= comps.Length(); i++) collect(tool, paint, comps.Value(i), loc, full, has, color, a);
     return;
   }
   TopoDS_Shape s = XCAFDoc_ShapeTool::GetShape(ref);
   if (s.IsNull()) return;
-  s = s.Moved(loc);
   // One entry per solid (a part file may hold several bodies).
   int k = 0;
   for (TopExp_Explorer e(s, TopAbs_SOLID); e.More(); e.Next(), k++) {
-    a->shapes.push_back(e.Current());
-    a->names.push_back(full.empty() ? "Imported body" : full);
+    Quantity_Color own = color;
+    bool mine = shape_color(paint, e.Current(), own);
+    push_body(a, e.Current().Moved(loc), full.empty() ? "Imported body" : full, mine || has, own);
   }
   if (k == 0) {
-    a->shapes.push_back(s);
-    a->names.push_back(full.empty() ? "Imported shape" : full);
+    Quantity_Color own = color;
+    bool mine = shape_color(paint, s, own);
+    TopoDS_Shape c = closed(s);
+    if (TopExp_Explorer(c, TopAbs_SOLID).More())
+      for (TopExp_Explorer e(c, TopAbs_SOLID); e.More(); e.Next()) push_body(a, e.Current().Moved(loc), full.empty() ? "Imported body" : full, mine || has, own);
+    else
+      push_body(a, s.Moved(loc), full.empty() ? "Imported shape" : full, mine || has, own);
   }
 }
 }  // namespace
 
-/// Reads a STEP file (any units; converted to millimetres). Returns the
-/// number of bodies; they are the arena's shapes from index `*first` on, with
-/// names from occ_name().
-int occ_read_step(void* p, const char* path, int* first) {
+/// Reads a STEP or IGES file (any units; converted to millimetres). Returns
+/// the number of bodies; they are the arena's shapes from index `*first` on,
+/// with names from occ_name() and colours from occ_color().
+int occ_read_cad(void* p, const char* path, int iges, int* first) {
   Arena* a = static_cast<Arena*>(p);
   return guard(a, [&] {
     Handle(XCAFApp_Application) app = XCAFApp_Application::GetApplication();
     Handle(TDocStd_Document) doc;
     app->NewDocument("MDTV-XCAF", doc);
-    STEPCAFControl_Reader r;
-    r.SetNameMode(true);
-    if (r.ReadFile(path) != IFSelect_RetDone) throw Standard_Failure("not a readable STEP file");
-    if (!r.Transfer(doc)) throw Standard_Failure("could not translate the STEP file");
+    if (iges) {
+      IGESCAFControl_Reader r;
+      r.SetNameMode(true);
+      r.SetColorMode(true);
+      if (r.ReadFile(path) != IFSelect_RetDone) throw Standard_Failure("not a readable IGES file");
+      if (!r.Transfer(doc)) throw Standard_Failure("could not translate the IGES file");
+    } else {
+      STEPCAFControl_Reader r;
+      r.SetNameMode(true);
+      r.SetColorMode(true);
+      if (r.ReadFile(path) != IFSelect_RetDone) throw Standard_Failure("not a readable STEP file");
+      if (!r.Transfer(doc)) throw Standard_Failure("could not translate the STEP file");
+    }
     Handle(XCAFDoc_ShapeTool) tool = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
+    Handle(XCAFDoc_ColorTool) paint = XCAFDoc_DocumentTool::ColorTool(doc->Main());
     TDF_LabelSequence free;
     tool->GetFreeShapes(free);
-    // Names line up with shapes from here on.
+    // Names and colours line up with shapes from here on.
     a->names.resize(a->shapes.size());
+    a->colors.resize(a->shapes.size() * 3, -1.0);
     *first = (int)a->shapes.size();
-    for (int i = 1; i <= free.Length(); i++) collect(tool, free.Value(i), TopLoc_Location(), "", a);
+    for (int i = 1; i <= free.Length(); i++) collect(tool, paint, free.Value(i), TopLoc_Location(), "", false, Quantity_Color(), a);
     app->Close(doc);
     return (int)a->shapes.size() - *first;
   });
+}
+
+int occ_read_step(void* p, const char* path, int* first) { return occ_read_cad(p, path, 0, first); }
+
+/// A read body's colour (sRGB, 0…1) into `out`: 1 if it has one, else 0.
+int occ_color(void* p, int h, double* out) {
+  Arena* a = static_cast<Arena*>(p);
+  if (h < 0 || 3 * h + 2 >= (int)a->colors.size() || a->colors[3 * h] < 0) return 0;
+  for (int k = 0; k < 3; k++) out[k] = a->colors[3 * h + k];
+  return 1;
 }
 
 const char* occ_name(void* p, int h) {

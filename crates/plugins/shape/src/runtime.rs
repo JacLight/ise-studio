@@ -14,7 +14,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-const PRELUDE: &str = include_str!("prelude.js");
+/// The vocabulary: the prelude, then the sheet-metal tools built on it.
+const PRELUDE: &str = concat!(include_str!("prelude.js"), "\n", include_str!("sheet_metal.js"));
+/// Building information vocabulary (levels, walls, doors, spaces…), after the prelude.
+const BIM_PRELUDE: &str = include_str!("bim.js");
 pub(crate) const SCAD: &str = include_str!("scad.js");
 const MEMORY_LIMIT: usize = 512 * 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(10);
@@ -54,6 +57,18 @@ pub struct Evaluated {
     pub left_out: LeftOut,
     /// Stock items and connectors the program declared.
     pub declared: crate::stock::Declared,
+    /// Sheet-metal parts' flat patterns and bend tables (see sheet_metal.js).
+    pub sheets: Vec<SheetPattern>,
+}
+
+/// A sheet-metal part as the shop cuts it: the flat blank (T thick, its
+/// corner at the origin, bend allowances included) and its bend table,
+/// flat size and checks as sheet_metal.js worked them out.
+pub struct SheetPattern {
+    /// The part it unfolds (empty for a program returning one solid).
+    pub part: String,
+    pub flat: Manifold,
+    pub data: serde_json::Value,
 }
 
 /// What a configuration left out of a program's result (see
@@ -169,6 +184,7 @@ pub(crate) fn run_program<'f>(
         ctx.globals().set("__tolerance", tolerance).map_err(|e| e.to_string())?;
         ctx.globals().set("__inputs", if inputs.is_empty() { "{}" } else { inputs }).map_err(|e| e.to_string())?;
         run(&ctx, PRELUDE, "prelude")?;
+        run(&ctx, BIM_PRELUDE, "bim")?;
         // OpenSCAD files are read by an interpreter that only programs using it load.
         if source.contains("openscad(") {
             run(&ctx, SCAD, "openscad")?;
@@ -222,11 +238,16 @@ pub fn evaluate_in(source: &str, params: &[(String, f64)], tolerance: f64, input
         }
         (None, None) => Err("the program must return a Solid or a list of parts".into()),
     };
+    let mut sheets = Vec::new();
+    for (part, s) in output.sheet.unwrap_or_default() {
+        sheets.push(SheetPattern { part, flat: take(s.flat)?, data: s.data });
+    }
     result.map(|mut e| {
         e.metrics = output.metrics;
         e.mechanism = output.mechanism;
         e.left_out = output.left_out.unwrap_or_default();
         e.declared = output.declared;
+        e.sheets = sheets;
         e
     })
 }
@@ -246,6 +267,15 @@ pub(crate) struct Output {
     /// Stock items and connectors.
     #[serde(default)]
     pub(crate) declared: crate::stock::Declared,
+    /// Sheet-metal flat patterns, by part name.
+    #[serde(default)]
+    pub(crate) sheet: Option<std::collections::BTreeMap<String, SheetSpec>>,
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct SheetSpec {
+    pub(crate) flat: u32,
+    pub(crate) data: serde_json::Value,
 }
 
 /// A measured fact a program reports with metric(): area, keys, seats…
@@ -332,6 +362,7 @@ pub(crate) fn finish_parts(list: Vec<(String, Option<String>, Option<String>, Ma
         mechanism: None,
         left_out: LeftOut::default(),
         declared: Default::default(),
+        sheets: Vec::new(),
     })
 }
 
@@ -389,6 +420,7 @@ pub(crate) fn finish(solid: Manifold) -> Result<Evaluated, String> {
         mechanism: None,
         left_out: LeftOut::default(),
         declared: Default::default(),
+        sheets: Vec::new(),
     })
 }
 
@@ -779,11 +811,30 @@ fn install_native<'js>(ctx: &Ctx<'js>, arena: &Rc<RefCell<Arena>>, tolerance: f6
             "importStep",
             Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String, tolerance: f64| -> rquickjs::Result<String> {
                 let bodies = crate::assets::meshes(&sha, tolerance).map_err(|e| throw(&ctx, format!("importStep: {e}")))?;
-                let list: Vec<(String, u32)> = bodies.into_iter().map(|(n, m)| (n, push_solid(&arena, m))).collect();
+                let list: Vec<(String, u32, Option<String>)> = bodies.into_iter().map(|(n, m, c)| (n, push_solid(&arena, m), c.map(crate::assets::hex))).collect();
                 Ok(serde_json::to_string(&list).unwrap())
             })?,
         )?;
     }
+
+    {
+        let arena = arena.clone();
+        native.set(
+            "importMesh",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String| -> rquickjs::Result<String> {
+                let bodies = crate::assets::mesh_bodies(&sha).map_err(|e| throw(&ctx, format!("importMesh: {e}")))?;
+                let list: Vec<(String, u32, Option<String>)> = bodies.into_iter().map(|(n, m, c)| (n, push_solid(&arena, m), c.map(crate::assets::hex))).collect();
+                Ok(serde_json::to_string(&list).unwrap())
+            })?,
+        )?;
+    }
+
+    native.set(
+        "ifcData",
+        Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String| -> rquickjs::Result<String> {
+            crate::assets::ifc_json(&sha).map(|j| (*j).clone()).map_err(|e| throw(&ctx, format!("importIfc: {e}")))
+        })?,
+    )?;
 
     {
         let arena = arena.clone();

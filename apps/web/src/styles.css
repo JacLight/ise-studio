@@ -14223,6 +14223,311 @@ a.button .icon {
 .fit-checks b { font-weight: 650; }
 .fit-checks small { color: var(--muted); }
 
+/* Render mode: the path-traced image over the model; the view underneath still orbits. */
+.render-view {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+.render-view .render-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.render-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel, #fff) 92%, transparent);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.12);
+  pointer-events: auto;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.render-bar .render-samples {
+  color: var(--muted, #6b7280);
+  font-variant-numeric: tabular-nums;
+  min-width: 9ch;
+}
+.render-bar select {
+  font: inherit;
+}
+.render-error {
+  color: #c62828;
+  white-space: normal;
+  max-width: 320px;
+}
+
+/* ---- Simulation: material, more holds and loads, results ---- */
+.material-block {
+  margin-bottom: 10px;
+  border-radius: 9px;
+  background: #f8f6fb;
+}
+
+.material-head {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1px 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: 11px;
+  color: #3e3849;
+  cursor: pointer;
+}
+
+.material-head span {
+  color: #8a8398;
+}
+
+.material-head small {
+  grid-column: 2;
+  color: #8a8398;
+  font-variant-numeric: tabular-nums;
+}
+
+.material-body {
+  display: grid;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.material-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 6px;
+  font-size: 10.5px;
+  color: #8a8398;
+}
+
+.material-grid label {
+  display: contents;
+}
+
+.material-grid label.edited span {
+  color: #5b3fc4;
+  font-weight: 650;
+}
+
+.material-grid input {
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  margin: 0;
+  padding: 0 5px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.material-grid small {
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.material-grid label:nth-of-type(even) span {
+  padding-left: 6px;
+}
+
+.material-source {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.45;
+  color: #8a8398;
+}
+
+.stress-more {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  border-radius: 9px;
+  background: #f8f6fb;
+}
+
+.stress-item .moved-axis {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #8a8398;
+}
+
+.stress-item .moved-axis input {
+  width: 42px;
+}
+
+.stress-item.fatigue-spec {
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+
+.stress-item.fatigue-spec input {
+  width: 58px;
+}
+
+.layer-switch {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.layer-switch button {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 10.5px;
+}
+
+.marker-key {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.marker-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px #d8d2e4;
+}
+
+.marker-dot.red {
+  background: #e0452f;
+}
+
+.marker-dot.blue {
+  background: #2b59c3;
+}
+
+.section-cut {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.section-cut .segmented button {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 10.5px;
+}
+
+.section-cut input[type="range"] {
+  flex: 1;
+  min-width: 90px;
+  accent-color: #6d4ae0;
+}
+
+.section-cut small {
+  color: #8a8398;
+  font-variant-numeric: tabular-nums;
+}
+
+.probe {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #8a8398;
+}
+
+.probe input {
+  width: 54px;
+  height: 24px;
+  margin: 0;
+  padding: 0 5px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.probe .secondary {
+  height: 24px;
+  margin-left: auto;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.probe-out {
+  font-variant-numeric: tabular-nums;
+}
+
+.reactions {
+  display: grid;
+  gap: 3px;
+  font-size: 10.5px;
+}
+
+.reactions div {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: #f8f6fb;
+  color: #3e3849;
+}
+
+.reactions small {
+  text-align: right;
+  color: #8a8398;
+  font-variant-numeric: tabular-nums;
+}
+
+.export-row {
+  display: flex;
+  gap: 6px;
+}
+
+.export-row .secondary {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 28px;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.converge table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.converge th {
+  padding: 3px 4px;
+  text-align: left;
+  font-weight: 600;
+  color: #8a8398;
+}
+
+.converge td {
+  padding: 3px 4px;
+  border-top: 1px solid #eee9f5;
+  color: #3e3849;
+}
+
+.converge td small {
+  color: #8a8398;
+}
+
 /* The drawing's sheet size picker. */
 .drawing-select {
   display: inline-flex;
@@ -14989,5 +15294,195 @@ a.button .icon {
   }
   .view-tools {
     top: 168px;
+  }
+}
+
+/* ---- Building: levels, schedules, plans ---- */
+.building .download {
+  margin-top: 0;
+  padding: 0 12px;
+  height: 30px;
+}
+
+.bim-body {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  padding: 8px 16px 16px;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.bim-levels,
+.bim-schedule,
+.bim-drawing {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+
+.bim-levels h3 {
+  margin: 2px 0 10px;
+  font-size: 13px;
+  color: #2d2836;
+}
+
+.bim-levels h3 span {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  color: #8a8398;
+}
+
+.bim-level {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border: 1px solid #efedf3;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.bim-level-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #2d2836;
+}
+
+.bim-level-head span,
+.bim-level-els {
+  font-size: 11px;
+  color: #8a8398;
+}
+
+.bim-level-els {
+  margin: 3px 0 4px;
+}
+
+.bim-space {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: #4b4458;
+  padding: 1px 0;
+}
+
+.bim-zone {
+  font-size: 11px;
+  color: #6f6880;
+  margin: 4px 2px;
+}
+
+.bim-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.bim-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.bim-filters .scope-chip {
+  height: 26px;
+  padding: 0 10px;
+}
+
+.bim-controls select {
+  height: 28px;
+  border: 1px solid #ebe8f1;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 11.5px;
+  color: #4b4458;
+  padding: 0 6px;
+}
+
+.bim-table-wrap,
+.bim-sheet-wrap {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #efedf3;
+  border-radius: 10px;
+  background: #fff;
+  transition: opacity 0.15s;
+}
+
+.bim-table-wrap.loading,
+.bim-sheet-wrap.loading {
+  opacity: 0.55;
+}
+
+.bim-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+  color: #3a3445;
+}
+
+.bim-table th {
+  position: sticky;
+  top: 0;
+  background: #faf9fc;
+  text-align: left;
+  font-weight: 600;
+  font-size: 10.5px;
+  color: #7c7689;
+  padding: 7px 8px;
+  border-bottom: 1px solid #efedf3;
+  white-space: nowrap;
+}
+
+.bim-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #f5f3f8;
+  white-space: nowrap;
+}
+
+.bim-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.bim-table tfoot td {
+  font-weight: 650;
+  background: #faf9fc;
+  border-top: 1px solid #efedf3;
+}
+
+.bim-type {
+  color: #8a8398;
+}
+
+.bim-tag {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: #f4effe;
+  color: #5b3fc4;
+  font-size: 10px;
+}
+
+.bim-sheet {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.bim-error {
+  padding: 0 16px;
+  color: #b4433c;
+}
+
+@media (max-width: 1100px) {
+  .bim-body {
+    grid-template-columns: 1fr;
+    overflow: auto;
   }
 }

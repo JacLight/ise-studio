@@ -1,0 +1,11 @@
+[package]
+name = "de-bim"
+description = "Building information: IFC classes, spatial structure, property sets, quantities, schedules, IFC4 read and write"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true

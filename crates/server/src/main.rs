@@ -8,6 +8,8 @@
 //! Clients pick a project with `?project=<name>` on `/ws` and `/export`.
 
 mod ai;
+mod bim;
+mod formats;
 mod data;
 mod assembly_api;
 mod exact_files;
@@ -16,11 +18,15 @@ mod machines;
 mod meshes;
 mod pcb;
 mod pcb_library;
+mod pcb_tools;
 mod pcb_libs;
 mod pcb_schematic;
 mod peers;
 mod pictures;
 mod share;
+mod render;
+mod sheet_metal;
+mod simulate;
 mod sourcing;
 mod stock;
 
@@ -932,7 +938,7 @@ async fn session(app: Arc<App>, socket: WebSocket, user_id: String) {
                         reply(request_id, Ok(json!({ "stopped": true })))
                     }
                     AiMessage::View { request_id, action, target, value, to } => {
-                        const ACTIONS: &[&str] = &["select", "frame", "isolate", "show_all", "hide", "show", "color", "camera", "explode", "projection", "display", "section", "measure"];
+                        const ACTIONS: &[&str] = &["select", "frame", "isolate", "show_all", "hide", "show", "color", "camera", "explode", "projection", "display", "section", "measure", "render"];
                         let known = target.is_none_or(|id| app.project.lock().unwrap().entity(id).is_some());
                         if !ACTIONS.contains(&action.as_str()) {
                             reply(request_id, Err(CommandError::new(ErrorCode::InvalidParameters, format!("unknown view action {action} (use {})", ACTIONS.join(", ")))))
@@ -1094,7 +1100,7 @@ impl Source {
         match (&self.program, self.boxed) {
             (Some(program), _) => fabricate::items(program, tolerance),
             (None, Some([w, d, h])) => {
-                Ok(vec![fabricate::Item { name: self.name.clone(), material: None, process: None, solid: manifold_csg::Manifold::cube(w, d, h, false), volume_mm3: w * d * h, key: String::new() }])
+                Ok(vec![fabricate::Item { name: self.name.clone(), material: None, process: None, solid: manifold_csg::Manifold::cube(w, d, h, false), volume_mm3: w * d * h, key: String::new(), flat: None }])
             }
             _ => Err("not a part".into()),
         }
@@ -1110,8 +1116,8 @@ impl Source {
         }
     }
 
-    /// The exact named shapes of this source, placed: for a whole-design STEP.
-    fn exact(&self, maker: &mut fabricate::StepMaker, out: &mut Vec<(String, de_occt::Shape)>, faceted: &mut Vec<String>) -> Result<(), String> {
+    /// The exact named shapes of this source, placed, each with its material's colour: for a whole-design STEP or IGES.
+    fn exact(&self, maker: &mut fabricate::StepMaker, out: &mut Vec<(String, de_occt::Shape, Option<[f64; 3]>)>, faceted: &mut Vec<String>) -> Result<(), String> {
         for m in &self.members {
             m.exact(maker, out, faceted)?;
         }
@@ -1135,13 +1141,14 @@ impl Source {
                 faceted.extend(f.into_iter().map(|f| format!("{}: {f}", self.name)));
                 for (name, s) in parts {
                     let placed = place(maker, s)?;
-                    out.push((label(&name), placed));
+                    let color = self.look(maker.material(p, &name).as_deref()).map(|l| l.color);
+                    out.push((label(&name), placed, color));
                 }
             }
             (None, Some([w, d, h])) => {
                 let b = maker.arena().cube(w, d, h, false)?;
                 let placed = place(maker, b)?;
-                out.push((label(&self.name), placed));
+                out.push((label(&self.name), placed, self.look(None).map(|l| l.color)));
             }
             _ => {}
         }
@@ -1212,11 +1219,13 @@ fn assembly_package(folder: &str, members: &[Source], tolerance: f64, step_of: &
 /// - `/export/<id>.stl`: the whole part or assembly, where it sits in the project.
 /// - `/export/<id>.stl?part=<name>` and `.dxf?part=<name>`: one part of an
 ///   assembly, at the origin; the DXF is laid flat with one layer per cut depth.
-/// - `/export/<id>.step`: exact B-rep (OpenCascade), every part named; with
-///   `?part=<name>` one part at the origin; parts carry their colours (their
-///   material's, or what the program painted) and painted faces their names.
+/// - `/export/<id>.step` and `.igs`: exact B-rep (OpenCascade), every part
+///   named and coloured by its material; with `?part=<name>` one part at the origin.
+/// - `/export/<id>.obj`, `.ply`, `.glb`: every part as a mesh, placed, coloured
+///   by its material (glTF: one node per part); `?part=<name>` one part at the origin.
 /// - `/export/<id>.stpz` (compressed STEP) and `.brep` (OpenCascade BREP, one
-///   compound, no names): the same exact shapes.
+///   compound, no names): the same exact shapes. Exact exports carry each
+///   part's colour: what the program painted, else its material's look.
 /// - `/export/<id>.zip`: the fabrication package (every distinct part's STL,
 ///   STEP and, for sheet parts, DXF, plus a cut list); `/export/project.zip`
 ///   does the same for every part.
@@ -1228,7 +1237,7 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
     };
     let project_name = query.get("project").cloned().unwrap_or_else(|| server.default.clone());
     let Some((stem, ext)) = file.rsplit_once('.') else {
-        return fail(StatusCode::BAD_REQUEST, "expected /export/<part id>.<stl|dxf|zip>".into());
+        return fail(StatusCode::BAD_REQUEST, "expected /export/<part id>.<step|igs|stl|obj|ply|glb|3mf|dxf|zip>".into());
     };
     let ext = ext.to_string();
     let tolerance = query.get("tolerance").and_then(|t| t.parse::<f64>().ok()).unwrap_or(0.005);
@@ -1292,26 +1301,9 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
                 let name = if sources.len() == 1 { sources[0].name.clone() } else { project_name.clone() };
                 Ok((format!("{} fabrication.zip", fabricate::file_name(&name)), "application/zip", fabricate::zip(&files)))
             }
-            "step" | "stp" => {
-                // Exact B-rep, every part named. One part (at the origin) or the whole design, placed.
-                let s = &sources[0];
-                let mut maker = fabricate::StepMaker::new(tolerance);
-                if let Some(name) = &part {
-                    let program = s.program.as_ref().ok_or("pick a part of a shape")?;
-                    let bytes = maker.part_step(program, name)?;
-                    return Ok((format!("{}.step", fabricate::file_name(name)), "model/step", bytes));
-                }
-                let mut shapes = Vec::new();
-                let mut faceted = Vec::new();
-                s.exact(&mut maker, &mut shapes, &mut faceted)?;
-                if shapes.is_empty() {
-                    return Err("nothing to export".into());
-                }
-                if !faceted.is_empty() {
-                    eprintln!("step export of {}: faceted where the program built geometry itself: {}", s.name, faceted.join("; "));
-                }
-                Ok((format!("{}.step", fabricate::file_name(&s.name)), "model/step", maker.step(&shapes)?))
-            }
+            "step" | "stp" => formats::cad_file(&sources[0], part.as_deref(), tolerance, de_occt::CadFormat::Step),
+            "iges" | "igs" => formats::cad_file(&sources[0], part.as_deref(), tolerance, de_occt::CadFormat::Iges),
+            "obj" | "ply" | "glb" => formats::mesh_file(&sources[0], &ext, part.as_deref(), tolerance),
             "stl" | "dxf" => {
                 let s = &sources[0];
                 if !s.members.is_empty() {
@@ -1334,7 +1326,7 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
                         };
                         let base = fabricate::file_name(&item.name);
                         if ext == "dxf" {
-                            Ok((format!("{base}.dxf"), "image/vnd.dxf", fabricate::dxf(&item.name, &item.solid).into_bytes()))
+                            Ok((format!("{base}.dxf"), "image/vnd.dxf", item.cut_file().into_bytes()))
                         } else {
                             Ok((format!("{base}.stl"), "model/stl", de_shape::stl_of(&fabricate::at_origin(&item.solid), &format!("Forma {}", item.name), [0.0; 3])))
                         }
@@ -1651,78 +1643,6 @@ fn measure_definition(project: &Project, sid: StableId, part: Option<&str>, dept
     Err("this item has no solid to measure (yet)".into())
 }
 
-#[derive(serde::Deserialize)]
-struct StressRequest {
-    #[serde(flatten)]
-    study: de_shape::fea::Study,
-    /// One part of an assembly.
-    #[serde(default)]
-    part: Option<String>,
-    /// Other parts studied with it, pressing on it where they touch (["all"]: every other part).
-    #[serde(default)]
-    parts: Vec<String>,
-}
-
-/// A part's material by name: its own, else the shape's.
-fn part_material(project: &Project, sid: StableId, part: Option<&str>) -> Option<String> {
-    let own = part.and_then(|n| project.get::<ShapeSolid>(sid)?.stats.parts.iter().find(|p| p.name == n)?.material.clone());
-    own.or_else(|| {
-        let m = project.get::<de_solid::MaterialRef>(sid)?;
-        project.get::<de_solid::Material>(m.0).map(|m| m.name.clone())
-    })
-}
-
-/// A stress study: supports, loads and resolution in the body; the part's
-/// own material sets its stiffness and yield strength. With `parts`, those
-/// parts are studied with it, each in its own material, in contact where
-/// they touch (`contacts` says how each pair acts; frictionless if unsaid).
-async fn stress(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>, axum::Json(req): axum::Json<StressRequest>) -> axum::response::Response {
-    let fail = |code: StatusCode, message: String| (code, message).into_response();
-    let app = match server.project(query.get("project")) {
-        Ok(app) => app,
-        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
-    };
-    let found = {
-        let project = app.project.lock().unwrap();
-        serde_json::from_value::<StableId>(json!(id)).ok().and_then(|sid| {
-            let e = project.entity(sid)?;
-            let program = de_shape::resolved_program(project.world(), e)?;
-            let all: Vec<String> = project.get::<ShapeSolid>(sid).map(|s| s.stats.parts.iter().map(|p| p.name.clone()).collect()).unwrap_or_default();
-            // The studied part first, then the others (each once).
-            let mut names: Vec<String> = req.part.iter().cloned().collect();
-            for n in &req.parts {
-                let more: Vec<String> = if n == "all" { all.clone() } else { vec![n.clone()] };
-                for m in more {
-                    if !names.contains(&m) {
-                        names.push(m);
-                    }
-                }
-            }
-            let materials: Vec<(String, Option<String>)> = names.iter().map(|n| (n.clone(), part_material(&project, sid, Some(n)))).collect();
-            Some((program, part_material(&project, sid, req.part.as_deref()), materials))
-        })
-    };
-    let Some((program, material, materials)) = found else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
-    if materials.len() > 1 {
-        if let Some((name, _)) = materials.iter().find(|(_, m)| m.is_none()) {
-            return fail(StatusCode::UNPROCESSABLE_ENTITY, format!("give “{name}” a material first: its stiffness comes from it"));
-        }
-        let parts: Vec<(String, String)> = materials.into_iter().map(|(n, m)| (n, m.unwrap_or_default())).collect();
-        let material = parts[0].1.clone();
-        return match tokio::task::spawn_blocking(move || de_shape::assembly_stress(&program, &parts, &req.study).map(|r| (r, material))).await {
-            Ok(Ok((r, material))) => axum::Json(json!({ "result": r, "material": material })).into_response(),
-            Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
-            Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-        };
-    }
-    let Some(material) = material else { return fail(StatusCode::UNPROCESSABLE_ENTITY, "give the part a material first: its stiffness and strength come from it".into()) };
-    match tokio::task::spawn_blocking(move || de_shape::stress_study(&program, req.part.as_deref(), &material, &req.study).map(|r| (r, material))).await {
-        Ok(Ok((r, material))) => axum::Json(json!({ "result": r, "material": material })).into_response(),
-        Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
-        Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-    }
-}
-
 /// The other parts of an assembly touching a part: the ones a stress study can take with it.
 async fn touching(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
     let fail = |code: StatusCode, message: String| (code, message).into_response();
@@ -1738,43 +1658,6 @@ async fn touching(State(server): State<Arc<Server>>, Path(id): Path<String>, Que
     let Some(program) = program else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
     match tokio::task::spawn_blocking(move || de_shape::touching_parts(&program, &part)).await {
         Ok(Ok(parts)) => axum::Json(json!({ "parts": parts })).into_response(),
-        Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
-        Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-    }
-}
-
-#[derive(serde::Deserialize)]
-struct ThermalRequest {
-    #[serde(flatten)]
-    study: de_shape::fea::ThermalStudy,
-    #[serde(default)]
-    part: Option<String>,
-}
-
-/// Steady temperatures through a part, in its own material.
-async fn thermal(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>, axum::Json(req): axum::Json<ThermalRequest>) -> axum::response::Response {
-    let fail = |code: StatusCode, message: String| (code, message).into_response();
-    let app = match server.project(query.get("project")) {
-        Ok(app) => app,
-        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
-    };
-    let found = {
-        let project = app.project.lock().unwrap();
-        serde_json::from_value::<StableId>(json!(id)).ok().and_then(|sid| {
-            let e = project.entity(sid)?;
-            let program = de_shape::resolved_program(project.world(), e)?;
-            let part_material = req.part.as_ref().and_then(|n| project.get::<ShapeSolid>(sid)?.stats.parts.iter().find(|p| &p.name == n)?.material.clone());
-            let material = part_material.or_else(|| {
-                let m = project.get::<de_solid::MaterialRef>(sid)?;
-                project.get::<de_solid::Material>(m.0).map(|m| m.name.clone())
-            });
-            Some((program, material))
-        })
-    };
-    let Some((program, material)) = found else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
-    let Some(material) = material else { return fail(StatusCode::UNPROCESSABLE_ENTITY, "give the part a material first: how well it conducts heat comes from it".into()) };
-    match tokio::task::spawn_blocking(move || de_shape::thermal_study(&program, req.part.as_deref(), &material, &req.study).map(|r| (r, material))).await {
-        Ok(Ok((r, material))) => axum::Json(json!({ "result": r, "material": material })).into_response(),
         Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
         Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
@@ -1845,65 +1728,17 @@ async fn study(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(
             .collect();
         let holds: Vec<Value> = spec.holds.iter().map(|h| json!({ "face": de_shape::resolve_face(&program, spec.part.as_deref(), &h.face) })).collect();
         let heats: Vec<Value> = spec.heats.iter().map(|h| json!({ "face": de_shape::resolve_face(&program, spec.part.as_deref(), &h.face) })).collect();
-        json!({ "spec": spec, "supports": supports, "loads": loads, "holds": holds, "heats": heats })
+        let face = |p: &de_shape::fea::FacePick| de_shape::resolve_face(&program, spec.part.as_deref(), p);
+        let sliding: Vec<Option<de_shape::fea::Face>> = spec.sliding.iter().map(face).collect();
+        let elastic: Vec<Value> = spec.elastic_supports.iter().map(|x| json!({ "face": face(&x.face) })).collect();
+        let displacements: Vec<Value> = spec.displacements.iter().map(|x| json!({ "face": face(&x.face) })).collect();
+        let bearings: Vec<Value> = spec.bearing_loads.iter().map(|x| json!({ "face": face(&x.face) })).collect();
+        let remotes: Vec<Value> = spec.remote_loads.iter().map(|x| json!({ "face": face(&x.face) })).collect();
+        json!({ "spec": spec, "supports": supports, "loads": loads, "holds": holds, "heats": heats, "sliding": sliding, "elastic_supports": elastic, "displacements": displacements, "bearing_loads": bearings, "remote_loads": remotes })
     })
     .await;
     match out {
         Ok(v) => axum::Json(v).into_response(),
-        Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-    }
-}
-
-#[derive(serde::Deserialize)]
-struct ModesRequest {
-    supports: Vec<de_shape::fea::Face>,
-    #[serde(default)]
-    part: Option<String>,
-    #[serde(default = "default_mode_count")]
-    count: usize,
-    #[serde(default = "default_mode_resolution")]
-    resolution: usize,
-}
-fn default_mode_count() -> usize {
-    4
-}
-fn default_mode_resolution() -> usize {
-    48
-}
-
-/// Natural frequencies of a part held at its supports, in its own material.
-async fn modes(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>, axum::Json(req): axum::Json<ModesRequest>) -> axum::response::Response {
-    let fail = |code: StatusCode, message: String| (code, message).into_response();
-    let app = match server.project(query.get("project")) {
-        Ok(app) => app,
-        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
-    };
-    let found = {
-        let project = app.project.lock().unwrap();
-        serde_json::from_value::<StableId>(json!(id)).ok().and_then(|sid| {
-            let e = project.entity(sid)?;
-            let program = de_shape::resolved_program(project.world(), e)?;
-            let stats = &project.get::<ShapeSolid>(sid)?.stats;
-            // Material name, and density from the part's mass and volume.
-            let (material, mass, volume) = match &req.part {
-                Some(n) => {
-                    let k = stats.parts.iter().position(|p| &p.name == n)?;
-                    let mass = de_shape::part_masses(project.world(), e).ok()?.get(k).copied().flatten();
-                    (stats.parts[k].material.clone(), mass, stats.parts[k].volume_mm3)
-                }
-                None => {
-                    let m = project.get::<de_solid::MaterialRef>(sid).and_then(|m| project.get::<de_solid::Material>(m.0)).map(|m| m.name.clone());
-                    (m, project.get::<MassProperties>(sid).and_then(|m| m.mass_kg), stats.volume_mm3)
-                }
-            };
-            Some((program, material, mass.map(|kg| kg / (volume * 1e-9))))
-        })
-    };
-    let Some((program, material, density)) = found else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
-    let (Some(material), Some(density)) = (material, density) else { return fail(StatusCode::UNPROCESSABLE_ENTITY, "give the part a material first: its stiffness and mass come from it".into()) };
-    match tokio::task::spawn_blocking(move || de_shape::vibration_study(&program, req.part.as_deref(), &material, density, &req.supports, req.count, req.resolution)).await {
-        Ok(Ok(m)) => axum::Json(m).into_response(),
-        Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
         Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
@@ -2302,96 +2137,6 @@ async fn team_join(State(server): State<Arc<Server>>, axum::Json(body): axum::Js
     }
 }
 
-/// `POST /import/<file name>?project=…&user=…` with a STEP file as the body:
-/// stores it by content, checks it reads, and adds it to the project as a
-/// shape whose parts are the file's bodies (named as in the file).
-async fn import(
-    State(server): State<Arc<Server>>,
-    Path(file): Path<String>,
-    Query(query): Query<HashMap<String, String>>,
-    body: axum::body::Bytes,
-) -> axum::response::Response {
-    let fail = |code: StatusCode, message: String| (code, message).into_response();
-    let lower = file.to_lowercase();
-    if [".scad", ".csv", ".tsv", ".xlsx", ".xlsm"].iter().any(|x| lower.ends_with(x)) {
-        return match server.project(query.get("project")) {
-            Ok(app) => data::import_data(app, &file, &query, &body).await,
-            Err(e) => fail(StatusCode::BAD_REQUEST, e),
-        };
-    }
-    if !exact_files::importable(&lower) {
-        return fail(StatusCode::BAD_REQUEST, "Forma imports STEP (.step, .stp, compressed .stpz), OpenCascade BREP (.brep), OpenSCAD (.scad) and tables (.csv, .xlsx)".into());
-    }
-    // Stored as STEP whatever it came as (compressed STEP unpacked, BREP translated).
-    let body = match exact_files::to_step(&lower, &body) {
-        Ok(b) => axum::body::Bytes::from(b),
-        Err(e) => return fail(StatusCode::UNPROCESSABLE_ENTITY, format!("{file} could not be read: {e}")),
-    };
-    let app = match server.project(query.get("project")) {
-        Ok(app) => app,
-        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
-    };
-    use sha2::Digest;
-    let sha: String = sha2::Sha256::digest(&body).iter().map(|b| format!("{b:02x}")).collect();
-    let dir = server.dir.join("assets");
-    let stored = dir.join(format!("{sha}.step"));
-    if !stored.exists() {
-        if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&stored, &body)) {
-            return fail(StatusCode::INTERNAL_SERVER_ERROR, format!("could not store the file: {e}"));
-        }
-    }
-    // Read it once now: a file that does not read is refused, not stored as a broken part.
-    let check = {
-        let stored = stored.clone();
-        tokio::task::spawn_blocking(move || -> Result<(usize, [f64; 6]), String> {
-            let mut a = de_occt::Arena::new();
-            let bodies = a.read_step(&stored)?;
-            if bodies.is_empty() {
-                return Err("the file has no solid bodies".into());
-            }
-            let mut b = [f64::INFINITY, f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
-            for (_, s) in &bodies {
-                let x = a.bounds(*s)?;
-                for k in 0..3 {
-                    b[k] = b[k].min(x[k]);
-                    b[k + 3] = b[k + 3].max(x[k + 3]);
-                }
-            }
-            Ok((bodies.len(), b))
-        })
-        .await
-        .unwrap_or_else(|e| Err(e.to_string()))
-    };
-    let (count, bounds) = match check {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = std::fs::remove_file(&stored);
-            return fail(StatusCode::UNPROCESSABLE_ENTITY, format!("{file} could not be read: {e}"));
-        }
-    };
-    // Show it about as finely as its size calls for (a bolt to ±0.01 mm, a building to ±5).
-    let size = (0..3).map(|k| bounds[k + 3] - bounds[k]).fold(0.0, f64::max);
-    let shown = (size / 4000.0).clamp(0.005, 5.0);
-    let name = exact_files::stem(&file).replace(['_', '-'], " ");
-    let source = format!(
-        "// Imported from “{file}” ({count} {}). The geometry is the file's own exact B-rep:\n// the view meshes it, STEP exports pass it through untouched.\nreturn importStep(\"{sha}\");",
-        if count == 1 { "body" } else { "bodies" }
-    );
-    let user = query.get("user").filter(|u| !u.is_empty()).cloned().unwrap_or_else(|| "local".into());
-    let actor = Actor { user_id: user, session_id: StableId::new().to_string() };
-    let revision = app.project.lock().unwrap().revision();
-    let message = json!({
-        "type": "commit", "request_id": 1, "operation": "shape.create", "expected_revision": revision,
-        "parameters": { "name": name, "description": format!("Imported from {file}."), "source": source, "params": [], "display_tolerance": shown }
-    });
-    let reply: Value = serde_json::from_str(&app.handle(&actor, &message.to_string())).unwrap_or_default();
-    if reply["ok"] == true {
-        (StatusCode::OK, axum::Json(json!({ "id": reply["value"]["output"]["id"], "bodies": count, "sha": sha }))).into_response()
-    } else {
-        fail(StatusCode::UNPROCESSABLE_ENTITY, reply["error"]["message"].as_str().unwrap_or("the import failed").to_string())
-    }
-}
-
 /// Rebuilds a project from its log: changes made here, and peers' changes
 /// re-merged exactly as they were (so every copy rebuilds what it held).
 fn load(name: &str, path: &PathBuf, registry: Arc<Registry>, engine: &str) -> std::io::Result<Project> {
@@ -2519,10 +2264,25 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/machines/jcz/status", axum::routing::post(machines::status))
         .route("/gears/{id}", axum::routing::post(gear_check))
         .route("/drawing/{file}", get(drawing))
+        .route("/bim/{id}", get(bim::structure))
+        .route("/ifc/{file}", get(bim::ifc))
+        .route("/schedule/{id}", get(bim::schedule))
+        .route("/plan/{file}", get(bim::plan))
         .route("/motion/{id}", get(motion))
         .route("/assembly-motion/{id}", get(assembly_motion))
         .route("/connectors/{id}", get(connectors))
         .route("/fit/{id}", get(fit_report))
+        .route("/stress/{id}", axum::routing::post(simulate::stress))
+        .route("/modes/{id}", axum::routing::post(simulate::modes))
+        .route("/buckle/{id}", axum::routing::post(simulate::buckle))
+        .route("/converge/{id}", axum::routing::post(simulate::converge))
+        .route("/inp/{id}", axum::routing::post(simulate::inp))
+        .route("/simulate/{id}", axum::routing::post(simulate::simulate))
+        .route("/results/{key}/fatigue", axum::routing::post(simulate::results_fatigue))
+        .route("/results/{key}/{what}", get(simulate::results))
+        .route("/frame", axum::routing::post(simulate::frame))
+        .route("/plate/{id}", axum::routing::post(simulate::plate))
+        .route("/materials", get(simulate::materials))
         .route("/check-geometry/{id}", get(exact_files::check))
         .route("/surfaces/{id}", get(exact_files::surfaces))
         .route("/assembly-dof/{id}", get(assembly_api::dof))
@@ -2535,12 +2295,13 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/robot/{tip}/reach", get(assembly_api::reach))
         .route("/robot/{tip}/trajectory", get(assembly_api::trajectory))
         .route("/measure/{id}", get(measure_report))
-        .route("/stress/{id}", axum::routing::post(stress))
-        .route("/modes/{id}", axum::routing::post(modes))
         .route("/study/{id}", get(study))
         .route("/touching/{id}", get(touching))
         .route("/motion-stress/{id}", get(motion_stress))
-        .route("/thermal/{id}", axum::routing::post(thermal))
+        .route("/thermal/{id}", axum::routing::post(simulate::thermal))
+        .route("/sheet-metal/{id}", get(sheet_metal::pattern))
+        .route("/render", axum::routing::post(render::request))
+        .route("/render/{job}", axum::routing::post(render::deliver).layer(axum::extract::DefaultBodyLimit::max(256 * 1024 * 1024)))
         .route("/bom/{id}", get(sourcing::bom))
         .route("/bom/{id}/file", get(sourcing::line_file))
         .route("/rfq/{file}", get(sourcing::rfq))
@@ -2580,6 +2341,14 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/kicad/footprint/{id}", get(pcb_library::footprint))
         .route("/pcb/kicad/symbol/{id}", get(pcb_library::symbol))
         .route("/pcb/verify-footprints", get(pcb_library::verify))
+        .route("/pcb/calc", get(pcb_tools::calc_list))
+        .route("/pcb/calc/{name}", get(pcb_tools::calc))
+        .route("/pcb/gerbview", axum::routing::post(pcb_tools::gerbview_post).layer(axum::extract::DefaultBodyLimit::max(128 * 1024 * 1024)))
+        .route("/pcb/gerbview/pdf", axum::routing::post(pcb_tools::gerbview_pdf).layer(axum::extract::DefaultBodyLimit::max(128 * 1024 * 1024)))
+        .route("/pcb/{id}/panel", get(pcb_tools::panel_show))
+        .route("/pcb/{id}/panel.zip", get(pcb_tools::panel_zip))
+        .route("/pcb/{id}/gerbview", get(pcb_tools::board_gerbview))
+        .route("/pcb/{id}/board.glb", get(pcb_tools::board_glb))
         .route("/pcb/libs", get(pcb_libs::index))
         .route("/pcb/libs/symbol/preview", axum::routing::post(pcb_libs::symbol_preview))
         .route("/pcb/libs/symbol/{id}", get(pcb_libs::symbol))
@@ -2602,6 +2371,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/settings", get(pcb::settings_get).post(pcb::settings_post))
         .route("/pcb/{id}", get(pcb::show))
         .route("/pcb/{id}/3d", get(pcb::scene3d))
+        .route("/pcb/{id}/router", axum::routing::post(pcb::router))
         .route("/pcb/{id}/bom.json", get(pcb::bom_json))
         .route("/pcb/{id}/fab.zip", get(pcb::zip))
         .route("/pcb/{id}/gerber-check", get(pcb::gerber_check))
@@ -2609,7 +2379,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/{id}/file/{name}", get(pcb::file))
         .route("/pcb/{id}/exports", get(pcb::exports))
         .route("/pcb/schematic/{id}/file/{name}", get(pcb::schematic_file))
-        .route("/import/{file}", axum::routing::post(import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
+        .route("/import/{file}", axum::routing::post(formats::import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
         .route("/images", get(pictures::list))
         .route("/images/{file}", get(pictures::get).post(pictures::add).layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)))
         .route("/ai/attachments/{file}", get(pictures::attachment).post(pictures::attach).layer(axum::extract::DefaultBodyLimit::max(40 * 1024 * 1024)))
@@ -2640,7 +2410,7 @@ mod tests {
         dir
     }
 
-    fn server_in(dir: &std::path::Path) -> Arc<Server> {
+    pub(crate) fn server_in(dir: &std::path::Path) -> Arc<Server> {
         let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &de_draft::DraftPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let ai = Arc::new(ai::AiConfig { repo: root.clone(), port: 0, claude: None, model: None });
@@ -2663,7 +2433,7 @@ mod tests {
         })
     }
 
-    async fn serve(server: Arc<Server>) -> SocketAddr {
+    pub(crate) async fn serve(server: Arc<Server>) -> SocketAddr {
         let web = server.web.clone();
         let app = router(server, &web);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

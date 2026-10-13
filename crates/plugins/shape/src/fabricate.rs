@@ -2,9 +2,11 @@
 //!
 //! Every part leaves as its own file. Sheet parts (router, laser, plate) get a
 //! layered DXF: the part is laid flat on its thinnest axis and cut at every
-//! depth where its section changes, one layer per depth. Everything gets an
-//! STL. A package bundles all files with a cut list, identical parts merged
-//! into one line with a quantity.
+//! depth where its section changes, one layer per depth. Sheet-metal parts
+//! built with sheet() get their flat pattern instead: the blank with its bend
+//! lines (see `sheet`), plus a bend table. Everything gets an STL. A package
+//! bundles all files with a cut list, identical parts merged into one line
+//! with a quantity.
 
 use crate::{ShapeProgram, evaluated_at, stl_of};
 
@@ -14,11 +16,13 @@ pub struct StepMaker {
     tolerance: f64,
     /// program key → (its parts by name, faceted notes) or why it failed.
     done: std::collections::HashMap<String, Result<(Vec<(String, de_occt::Shape)>, Vec<String>), String>>,
+    /// program key → each part's material name (for colour in the file).
+    materials: std::collections::HashMap<String, Vec<(String, Option<String>)>>,
 }
 
 impl StepMaker {
     pub fn new(tolerance: f64) -> StepMaker {
-        StepMaker { arena: de_occt::Arena::new(), tolerance, done: Default::default() }
+        StepMaker { arena: de_occt::Arena::new(), tolerance, done: Default::default(), materials: Default::default() }
     }
 
     /// The exact parts of a program (evaluated the first time it is asked for).
@@ -31,6 +35,7 @@ impl StepMaker {
             let entry = match r {
                 Ok((arena, exact)) => {
                     self.arena = arena;
+                    self.materials.insert(key.clone(), exact.parts.iter().map(|p| (p.name.clone(), p.material.clone())).collect());
                     Ok((exact.parts.into_iter().map(|p| (p.name, p.shape)).collect(), exact.faceted))
                 }
                 Err((arena, e)) => {
@@ -47,23 +52,40 @@ impl StepMaker {
         &mut self.arena
     }
 
+    /// The material name of a program's part (once its parts are made).
+    pub fn material(&self, program: &ShapeProgram, part: &str) -> Option<String> {
+        self.materials.get(&program_key(program))?.iter().find(|(n, _)| n == part).and_then(|(_, m)| m.clone())
+    }
+
     /// STEP bytes for named shapes in this maker's arena.
     pub fn step(&mut self, parts: &[(String, de_occt::Shape)]) -> Result<Vec<u8>, String> {
+        let parts: Vec<_> = parts.iter().map(|(n, s)| (n.clone(), *s, None)).collect();
+        self.file(&parts, de_occt::CadFormat::Step)
+    }
+
+    /// STEP or IGES bytes for named, optionally coloured shapes in this maker's arena.
+    pub fn file(&mut self, parts: &[(String, de_occt::Shape, Option<[f64; 3]>)], format: de_occt::CadFormat) -> Result<Vec<u8>, String> {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!("forma-{}-{}.step", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
-        self.arena.write_step(parts, &path)?;
-        let bytes = std::fs::read(&path).map_err(|e| e.to_string());
+        let ext = if format == de_occt::CadFormat::Iges { "igs" } else { "step" };
+        let path = std::env::temp_dir().join(format!("forma-{}-{}.{ext}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        let written = self.arena.write_cad(parts, &path, format);
+        let bytes = written.and_then(|_| std::fs::read(&path).map_err(|e| e.to_string()));
         let _ = std::fs::remove_file(&path);
         bytes
     }
 
     /// One part of a program as its own STEP file (at the origin, like its STL).
     pub fn part_step(&mut self, program: &ShapeProgram, part: &str) -> Result<Vec<u8>, String> {
+        self.part_file(program, part, None, de_occt::CadFormat::Step)
+    }
+
+    /// One part of a program as its own STEP or IGES file, at the origin.
+    pub fn part_file(&mut self, program: &ShapeProgram, part: &str, color: Option<[f64; 3]>, format: de_occt::CadFormat) -> Result<Vec<u8>, String> {
         let (parts, _) = self.parts(program)?;
         let shape = parts.iter().find(|(n, _)| n == part).map(|(_, s)| *s).ok_or_else(|| format!("no part {part}"))?;
         let b = self.arena.bounds(shape)?;
         let at_origin = self.arena.translate(shape, [-b[0], -b[1], -b[2]])?;
-        self.step(&[(part.to_string(), at_origin)])
+        self.file(&[(part.to_string(), at_origin, color)], format)
     }
 }
 use manifold_csg::Manifold;
@@ -84,6 +106,19 @@ pub struct Item {
     /// Which program and part this is ("<program key>#<part>"), so its exact
     /// STEP can be made from the same program. Empty for plain boxes.
     pub key: String,
+    /// A sheet-metal part's flat pattern (built with sheet()).
+    pub flat: Option<crate::sheet_metal::FlatPattern>,
+}
+
+impl Item {
+    /// The file the cutter takes: the flat pattern with bend lines for a
+    /// sheet-metal part, else the part laid flat in depth layers.
+    pub fn cut_file(&self) -> String {
+        match &self.flat {
+            Some(f) => crate::sheet_metal::dxf(f),
+            None => dxf(&self.name, &self.solid),
+        }
+    }
 }
 
 /// A key naming a program with its parameter values (same program, same key).
@@ -103,20 +138,28 @@ pub fn program_key(program: &ShapeProgram) -> String {
 pub fn items(program: &ShapeProgram, tolerance: f64) -> Result<Vec<Item>, String> {
     let e = evaluated_at(program, tolerance)?;
     let key = program_key(program);
+    let flat = |part: &str, name: &str| -> Result<Option<crate::sheet_metal::FlatPattern>, String> {
+        e.sheets.iter().find(|s| s.part == part).map(|s| crate::sheet_metal::FlatPattern::from_parts(name, &s.flat, &s.data)).transpose()
+    };
     if e.parts.is_empty() {
-        return Ok(vec![Item { name: program.name.clone(), material: None, process: None, solid: e.solid.translate(0.0, 0.0, 0.0), volume_mm3: e.volume, key: format!("{key}#{}", program.name) }]);
+        let flat = flat("", &program.name)?;
+        let process = flat.as_ref().map(|_| "sheet_metal".to_string());
+        return Ok(vec![Item { name: program.name.clone(), material: None, process, solid: e.solid.translate(0.0, 0.0, 0.0), volume_mm3: e.volume, key: format!("{key}#{}", program.name), flat }]);
     }
-    Ok(e.parts
+    e.parts
         .iter()
-        .map(|p| Item {
-            name: p.name.clone(),
-            material: p.material.clone(),
-            process: p.process.clone(),
-            solid: p.solid.translate(0.0, 0.0, 0.0),
-            volume_mm3: p.volume,
-            key: format!("{key}#{}", p.name),
+        .map(|p| {
+            Ok(Item {
+                name: p.name.clone(),
+                material: p.material.clone(),
+                process: p.process.clone(),
+                solid: p.solid.translate(0.0, 0.0, 0.0),
+                volume_mm3: p.volume,
+                key: format!("{key}#{}", p.name),
+                flat: flat(&p.name, &p.name)?,
+            })
         })
-        .collect())
+        .collect()
 }
 
 /// Sizes along x, y, z.
@@ -272,7 +315,15 @@ pub fn package(
 ) -> (Vec<(String, Vec<u8>)>, Vec<Line>) {
     let mut lines: Vec<(Line, usize)> = Vec::new();
     for (i, item) in items.iter().enumerate() {
-        let dims = dimensions(&item.solid);
+        // A sheet-metal part is ordered as its flat blank.
+        let dims = match &item.flat {
+            Some(f) => {
+                let mut d = [f.size[0], f.size[1], f.thickness];
+                d.sort_by(|a, b| b.total_cmp(a));
+                d
+            }
+            None => dimensions(&item.solid),
+        };
         let (material, density) = material_of(item.material.as_deref());
         let process = item.process.clone().unwrap_or_default();
         let same = |l: &Line| {
@@ -306,10 +357,18 @@ pub fn package(
         let stl = format!("{base}.stl");
         files.push((stl.clone(), stl_of(&at_origin(&item.solid), &format!("Forma {}", item.name), [0.0; 3])));
         line.files.push(stl);
-        if is_sheet(item.process.as_deref()) {
+        if is_sheet(item.process.as_deref()) || item.flat.is_some() {
             let dxf_path = format!("{base}.dxf");
-            files.push((dxf_path.clone(), dxf(&item.name, &item.solid).into_bytes()));
+            files.push((dxf_path.clone(), item.cut_file().into_bytes()));
             line.files.push(dxf_path);
+        }
+        if let Some(f) = &item.flat {
+            let path = format!("{base} bends.csv");
+            files.push((path.clone(), crate::sheet_metal::bend_table_csv(f).into_bytes()));
+            line.files.push(path);
+            for c in f.checks.iter().filter(|c| c.severity != "info") {
+                notes.push(format!("{}: {} {}: {}", item.name, c.severity, c.code, c.message));
+            }
         }
         match step_of(item) {
             Some(Ok(bytes)) => {

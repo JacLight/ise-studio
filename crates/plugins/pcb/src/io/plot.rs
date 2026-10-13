@@ -361,6 +361,24 @@ fn sch_draw(s: &mut String, d: &Draw) {
             let rot = if angle.abs() < 1.0 { String::new() } else { format!(r#" transform="rotate({} {} {})""#, f(-angle), f(at[0]), f(at[1])) };
             let _ = write!(s, r#"<text x="{}" y="{}" font-family="Helvetica, Arial, sans-serif" font-size="{}" text-anchor="{anchor}" dominant-baseline="central" fill="{}"{rot}>{}</text>"#, f(at[0]), f(at[1]), f(*size), ink(i), super::xml::escape(t));
         }
+        Draw::Styled { p, w, color, fill, dash, closed } => {
+            let tag = if *closed { "polygon" } else { "polyline" };
+            let fill = fill.clone().unwrap_or_else(|| "none".into());
+            let dash = if dash.is_empty() { String::new() } else { format!(r#" stroke-dasharray="{dash}""#) };
+            let _ = write!(s, r#"<{tag} points="{}" fill="{}" stroke="{}" stroke-width="{}" stroke-linejoin="round"{dash}/>"#, pts(p), super::xml::escape(&fill), super::xml::escape(color), f(*w));
+        }
+        Draw::Rich { at, s: t, size, angle, anchor, color, bold, italic } => {
+            if t.is_empty() {
+                return;
+            }
+            let rot = if angle.abs() < 1.0 { String::new() } else { format!(r#" transform="rotate({} {} {})""#, f(-angle), f(at[0]), f(at[1])) };
+            let weight = if *bold { r#" font-weight="bold""# } else { "" };
+            let style = if *italic { r#" font-style="italic""# } else { "" };
+            let _ = write!(s, r#"<text x="{}" y="{}" font-family="Helvetica, Arial, sans-serif" font-size="{}" text-anchor="{anchor}" dominant-baseline="central" fill="{}"{weight}{style}{rot}>{}</text>"#, f(at[0]), f(at[1]), f(*size), super::xml::escape(color), super::xml::escape(t));
+        }
+        Draw::Image { at, size, mime, data } => {
+            let _ = write!(s, r#"<image x="{}" y="{}" width="{}" height="{}" href="data:{};base64,{}"/>"#, f(at[0]), f(at[1]), f(size[0]), f(size[1]), super::xml::escape(mime), data);
+        }
     }
 }
 

@@ -17,6 +17,7 @@ pub mod exact;
 pub mod fea;
 pub mod fabricate;
 pub mod fillet;
+pub mod formats;
 pub mod gears;
 pub mod image;
 pub mod library;
@@ -25,6 +26,7 @@ pub mod mechanism;
 pub mod params;
 pub mod pathfinder;
 pub mod pattern;
+pub mod plan;
 pub mod project;
 pub mod paramtable;
 pub mod relief;
@@ -32,10 +34,12 @@ pub mod render;
 pub mod runtime;
 pub mod scad;
 pub mod sheet;
+pub mod sheet_metal;
 pub mod sketch;
 pub mod sketch_tools;
 pub mod solver;
 pub mod stock;
+pub mod studies;
 pub mod surfacing;
 pub mod sweep;
 pub mod table;
@@ -333,10 +337,17 @@ impl Command for SetStudy {
         if tx.get::<ShapeProgram>(self.target).is_none() {
             return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{} is not a shape", self.target)));
         }
+        let mut study = self.study;
+        // Faces given by a point near them are pinned to where they sit on the part as it is.
+        if studies::has_near(&study) {
+            let program = tx.world().resource::<IdIndex>().get(self.target).and_then(|e| resolved_program(tx.world(), e));
+            let program = program.ok_or_else(|| CommandError::new(ErrorCode::UnresolvedReference, format!("{} has no shape to find faces on", self.target)))?;
+            study = studies::pin_study(&program, &study).map_err(|e| CommandError::new(ErrorCode::InvalidParameters, e))?;
+        }
         let mut studies = tx.get::<ShapeStudies>(self.target).cloned().unwrap_or_default();
-        studies.0.retain(|s| s.part != self.study.part);
-        if !self.study.is_empty() {
-            studies.0.push(self.study);
+        studies.0.retain(|s| s.part != study.part);
+        if !study.is_empty() {
+            studies.0.push(study);
         }
         if studies.0.is_empty() {
             tx.remove::<ShapeStudies>(self.target)?;
@@ -651,6 +662,23 @@ pub fn resolve_face(program: &ShapeProgram, part: Option<&str>, pick: &fea::Face
     };
     let at = |f: [f64; 3]| [0, 1, 2].map(|k| lo[k] + f[k] * (hi[k] - lo[k]));
     let flatten = |tris: &[[[f64; 3]; 3]]| tris.iter().flat_map(|t| t.iter().flat_map(|p| p.iter().copied())).collect();
+    // Given by a point near it (mm): the face there, its middle by area.
+    if let Some(near) = pick.near {
+        if pick.curved {
+            let (tris, point, normal) = smooth_face(&e, part, near, pick.normal)?;
+            return Some(fea::Face { point, normal, triangles: flatten(&tris), part: pick.part.clone(), curved: true });
+        }
+        let tris = flat_face(&e, part, near, pick.normal)?;
+        let (mut point, mut area) = ([0.0; 3], 0.0);
+        for t in &tris {
+            let (u, v) = ([0, 1, 2].map(|k| t[1][k] - t[0][k]), [0, 1, 2].map(|k| t[2][k] - t[0][k]));
+            let a = ((u[1] * v[2] - u[2] * v[1]).powi(2) + (u[2] * v[0] - u[0] * v[2]).powi(2) + (u[0] * v[1] - u[1] * v[0]).powi(2)).sqrt() / 2.0;
+            (0..3).for_each(|k| point[k] += a * (t[0][k] + t[1][k] + t[2][k]) / 3.0);
+            area += a;
+        }
+        let point = point.map(|c| c / area.max(1e-300));
+        return Some(fea::Face { point, normal: pick.normal, triangles: flatten(&tris), part: pick.part.clone(), curved: false });
+    }
     if pick.curved {
         // Its point and normal come from where the probe lands now (the surface may have moved).
         let (tris, point, normal) = smooth_face(&e, part, at(pick.probe), pick.normal)?;
@@ -702,6 +730,10 @@ pub struct ShapeStats {
     /// Stock items and connectors the program declared (see `stock`).
     #[serde(skip_serializing_if = "stock::Declared::is_empty")]
     pub declared: stock::Declared,
+    /// Sheet-metal parts by name ("" for a program returning one solid):
+    /// thickness, material, K-factor, flat size, bend table and checks.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub sheet_metal: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// One part of an assembly, in millimeters (program coordinates).
@@ -1368,6 +1400,7 @@ pub(crate) fn stats_of(e: &runtime::Evaluated) -> ShapeStats {
         linkage: e.mechanism.as_ref().is_some_and(|m| m.get("joints").and_then(serde_json::Value::as_array).is_some_and(|j| !j.is_empty())),
         left_out: e.left_out.clone(),
         declared: e.declared.clone(),
+        sheet_metal: e.sheets.iter().map(|s| (s.part.clone(), s.data.clone())).collect(),
     }
 }
 

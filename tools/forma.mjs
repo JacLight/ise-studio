@@ -10,13 +10,25 @@
 //   node tools/forma.mjs check-geometry <id> [part]   the exact kernel's check of each part: valid, self-intersections, tolerances
 //   node tools/forma.mjs surfaces <id> [part] [--pull x,y,z] [--min deg]   surface analysis: continuity across every seam (gap, crease, curvature jump), tightest bend, draft
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
+//   node tools/forma.mjs set-study <shape id> study.json [--part X]   save a part's stress/heat study (faces as { normal, near: [x, y, z] })
+//   node tools/forma.mjs stress|fatigue|modes|buckle|heat|converge|inp <shape id> [--part X] [--count N] [--resolutions 32,48,64]
+//                                             run the part's saved study (inp: a CalculiX deck on stdout)
+//   node tools/forma.mjs probe <key> x,y,z · section <key> x,y,z nx,ny,nz · path <key> x,y,z x,y,z [n] · csv <key>
+//                                             read a stress result back (the key a stress run prints)
+//   node tools/forma.mjs frame frame.json     a frame of beams (joints, members with sections, supports, loads)
+//   node tools/forma.mjs plate <shape id> plate.json [--part X]   a flat sheet part as a plate (edges clamped or simply held, pressure)
+//   node tools/forma.mjs materials [search]   the material library with sources, and the project's materials
 //   node tools/forma.mjs dof <assembly | top>   what can still move (and how), mobility, redundant and conflicting joints
 //   node tools/forma.mjs interference <assembly | instance | top> [clearance mm]   parts that overlap (volume, where), touch, or come close
 //   node tools/forma.mjs exploded <view>      a saved exploded view's steps and trails
 //   node tools/forma.mjs study <study> [fps] [--out frames.json]   play a motion study: what moves, clashes, binding; frames to a file
 //   node tools/forma.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]'] [--tool connector]
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
+//   node tools/forma.mjs render [--width 1920] [--height 1080] [--samples 256] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open)
+//   node tools/forma.mjs flat [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
+//   node tools/forma.mjs pcb calc|panel|gerbview|glb …   board calculators, panelization, the Gerber viewer, the board as glTF
+//   node tools/forma.mjs pcb route|drag|cleanup|optimize …   the interactive router: pad to pad (walkaround/shove), drag a track or via, tidy copper
 //   node tools/forma.mjs pcb import <file> [--format f] [--name n] [--board id] [companions…]   a board/schematic from KiCad, Eagle, EasyEDA, Altium, CADSTAR, Fabmaster, PADS, gEDA
 //   node tools/forma.mjs pcb exports <id> | export <id> <file name | kicad_sch | ipc2581 | odb | d356 | …> [--out path]   files for other EDA tools
 //   node tools/forma.mjs sch export <schematic> netlist|bom|svg|pdf [--format kicad|orcad|cadstar|spice] [--out f]   schematic files; sch find|erc|buses|sheets <schematic>
@@ -41,12 +53,17 @@
 //   node tools/forma.mjs measure <part> [other part] [--part name]   volume, area, mass, centre of mass,
 //   node tools/forma.mjs drawing <id> [--sheet A3] [--part Name] [--page N] [--pdf f] [--svg f] [--dxf f] [--zip f]   the engineering drawing: sheets, dimensions, the checker's findings; saves files
 //        moments of inertia (kg·mm² about the centre of mass); with two: centre to centre and the gap per axis
+//   node tools/forma.mjs bim [id|project]     the building: levels and what stands on each, spaces, zones, grids
+//   node tools/forma.mjs schedule [id|project] [--class wall,door] [--level name] [--by level,class] [--csv] [--psets] [--out f.csv]
+//   node tools/forma.mjs ifc export [id|project] [file.ifc]  ·  ifc import <file.ifc>
+//   node tools/forma.mjs plan [id|project] --level name [--cut 1200] | --section x|y <mm> [--looking east] | --elevation south
+//        [--sheet A3] [--scale 100] [--pdf file.pdf] [--dxf file.dxf]
 //   node tools/forma.mjs sheet <sheet>        a spreadsheet as a grid: what each cell shows, aliases, errors
 //   node tools/forma.mjs draft                draft objects, dimensions with their values, layers, working planes, arrays
-//   node tools/forma.mjs import <file> [--as sheet|parameters|configurations] [--target id] [--sheet name]
-//        .step/.stp, .scad (a live parametric shape), .csv/.xlsx (a sheet, a parameter set or a shape's
-//        configurations), .forma (a whole project bundle, as a new project)
-//   node tools/forma.mjs export <id|name> <file.step|stl|3mf|dxf|scad|zip|csv|xlsx>   write a file
+//   node tools/forma.mjs import <file> [--name N] [--as sheet|parameters|configurations] [--target id] [--sheet name]
+//        STEP/IGES (exact, also .stpz, .brep) and STL/OBJ/PLY/glTF/GLB/3MF (mesh) become a shape, DXF/SVG a sketch,
+//        .scad a live parametric shape, .csv/.xlsx a sheet, parameter set or configurations, .forma a new project
+//   node tools/forma.mjs export <id|name|project> <file.ext> | --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]
 //   node tools/forma.mjs bundle [file.forma]   the whole project (history, assets) as one file
 //
 // steps.json is an array of { "operation": "...", "parameters": { ... } }.
@@ -54,8 +71,10 @@
 // path (e.g. "$0.id"), and { "$file": "path.js" } inlines a file's text (paths
 // are relative to steps.json; several files can be joined with an array).
 
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, extname, join, resolve } from "node:path";
+import { request as httpRequest } from "node:http";
 import { pcbLib } from "./forma-pcblib.mjs";
 
 const args = process.argv.slice(2);
@@ -229,6 +248,223 @@ if (command === "run") {
     for (const n of r.notes) console.log(`  ! ${n}`);
     failed = !r.ok;
   }
+} else if (command === "render") {
+  // A photoreal PNG of the model as the person's view shows it; with no view open, a headless browser renders it.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const opt = (name, fallback) => {
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 ? args.splice(i, 2)[1] : fallback;
+  };
+  const width = Number(opt("width", 1920));
+  const height = Number(opt("height", Math.round((width * 9) / 16)));
+  const samples = Number(opt("samples", 256));
+  const out = opt("out", `render-${width}x${height}.png`);
+  const q = new URLSearchParams({ ...(project ? { project } : {}), width, height, samples });
+  // A render can take minutes: no header timeout (fetch gives up after five).
+  const { request } = await import("node:http");
+  const ask = () =>
+    new Promise((done, fail) => {
+      const r = request(`${http}/render?${q}`, { method: "POST" }, (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const body = Buffer.concat(chunks);
+          done({ status: res.statusCode, ok: res.statusCode === 200, text: async () => body.toString(), arrayBuffer: async () => body });
+        });
+      });
+      r.on("error", fail);
+      r.end();
+    });
+  let res = await ask();
+  let chrome = null;
+  if (res.status === 409) {
+    // No view open: start a headless browser on the project and ask again once it has loaded.
+    const { spawn } = await import("node:child_process");
+    const { existsSync, mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const paths = [process.env.CHROME, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium", "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"].filter(Boolean);
+    const exe = paths.find((p) => existsSync(p));
+    if (!exe) {
+      console.error("✗ no view is open and no Chrome or Chromium to render in headless (set CHROME to its path)");
+      process.exit(1);
+    }
+    const page = `${http}/${project ? `?project=${encodeURIComponent(project)}` : ""}`;
+    chrome = spawn(exe, ["--headless=new", `--user-data-dir=${mkdtempSync(`${tmpdir()}/forma-render-`)}`, "--enable-unsafe-swiftshader", `--window-size=${Math.min(width, 1920)},${Math.min(height, 1080)}`, "--hide-scrollbars", page], { stdio: "ignore" });
+    for (let i = 0; i < 30 && res.status === 409; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      res = await ask();
+    }
+  }
+  if (!res.ok) {
+    console.error(`✗ ${await res.text()}`);
+    failed = true;
+  } else {
+    const png = Buffer.from(await res.arrayBuffer());
+    writeFileSync(out, png);
+    console.log(`✓ ${out}: ${width} × ${height} px, ${samples} samples, ${(png.length / 1024).toFixed(0)} KB${chrome ? " (rendered headless)" : ""}`);
+  }
+  chrome?.kill();
+} else if (command === "flat") {
+  // Sheet-metal flat patterns: every sheet part, or one with its bend table and checks; files on request.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const files = {};
+  for (const ext of ["dxf", "svg", "csv"]) {
+    const i = args.indexOf(`--${ext}`);
+    if (i >= 0) files[ext] = args.splice(i, 2)[1];
+  }
+  const [, id = "project", part] = args;
+  const q = new URLSearchParams({ ...(project ? { project } : {}), ...(part ? { part } : {}) });
+  const res = await fetch(`${http}/sheet-metal/${id}?${q}`);
+  if (!res.ok) {
+    console.error(`✗ ${await res.text()}`);
+    failed = true;
+  } else if (id === "project") {
+    const list = await res.json();
+    if (!list.length) console.log("no sheet-metal parts (build them with sheet() or sheetProfile(); see the prelude)");
+    for (const s of list) console.log(`${s.errors ? "✗" : "✓"} ${s.part} (${s.shape}, ${s.id}): ${s.thickness} mm ${s.material}, flat ${s.flat.join(" × ")} mm, ${s.bends} bends${s.errors ? `, ${s.errors} errors` : ""}${s.warnings ? `, ${s.warnings} warnings` : ""}`);
+    failed = list.some((s) => s.errors);
+  } else {
+    const f = await res.json();
+    const errors = f.checks.filter((c) => c.severity === "error");
+    console.log(`${errors.length ? "✗" : "✓"} ${f.part}: ${f.thickness} mm ${f.material}, K ${f.k} at R${f.radius}; flat blank ${f.size.map((v) => v.toFixed(2)).join(" × ")} mm, ${(f.area / 100).toFixed(1)} cm², cut ${f.cut_length.toFixed(0)} mm in ${f.pierces} outline${f.pierces > 1 ? "s" : ""}`);
+    if (f.bends.length) console.log("  order bend  dir   angle  R      K     BA      BD      length  from → to");
+    for (const b of [...f.bends].sort((a, b) => a.order - b.order)) {
+      console.log(`  ${String(b.order).padStart(5)} ${b.id.padEnd(5)} ${(b.dir + (b.hem ? "*" : "")).padEnd(5)} ${String(b.angle).padStart(5)}° ${String(b.radius).padEnd(6)} ${String(b.k).padEnd(5)} ${b.allowance.toFixed(3).padStart(7)} ${b.deduction.toFixed(3).padStart(7)} ${b.length.toFixed(1).padStart(7)}  ${b.from} → ${b.to}`);
+    }
+    if (f.bends.some((b) => b.hem)) console.log("  (* hem)");
+    for (const c of f.checks) console.log(`  ${c.severity.padEnd(7)} ${c.code}: ${c.message}`);
+    for (const [ext, path] of Object.entries(files)) {
+      const r = await fetch(`${http}/sheet-metal/${id}?${new URLSearchParams({ ...Object.fromEntries(q), format: ext })}`);
+      if (!r.ok) {
+        console.error(`✗ ${ext}: ${await r.text()}`);
+        failed = true;
+        continue;
+      }
+      const bytes = Buffer.from(await r.arrayBuffer());
+      writeFileSync(path, bytes);
+      console.log(`  wrote ${path} (${bytes.length} bytes)`);
+    }
+    failed ||= errors.length > 0;
+  }
+} else if (["stress", "fatigue", "modes", "buckle", "heat", "converge", "inp", "probe", "section", "path", "csv", "frame", "materials", "set-study", "plate"].includes(command)) {
+  // Simulation: a part's saved study run as kept, results read back, frames, materials.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const part = flag("--part");
+  const count = flag("--count");
+  const resolutions = flag("--resolutions");
+  const [, id, ...rest] = args;
+  const q = new URLSearchParams({ ...(project ? { project } : {}), ...(part ? { part } : {}) });
+  const n = (v, d = 2) => (v == null || !Number.isFinite(v) ? String(v) : Number(v.toFixed(d)).toString());
+  const v3 = (v) => `[${v.map((x) => n(x, 2)).join(", ")}]`;
+  // A study can take minutes: plain node:http, which (unlike fetch) never gives up waiting for the answer.
+  const get = (path, init = {}) =>
+    new Promise((done, fail) => {
+      const req = httpRequest(`${http}${path}`, { method: init.method ?? "GET", headers: init.headers ?? {} }, (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const body = Buffer.concat(chunks);
+          if (res.statusCode >= 400) return fail(new Error(body.toString() || `HTTP ${res.statusCode}`));
+          done({ text: async () => body.toString(), json: async () => JSON.parse(body.toString()), arrayBuffer: async () => body });
+        });
+      });
+      req.on("error", fail);
+      req.setTimeout(0);
+      if (init.body) req.write(init.body);
+      req.end();
+    });
+  try {
+    if (command === "set-study") {
+      // forma set-study <shape id> study.json [--part X]: save a study (faces as { normal, near: [x, y, z] }).
+      const study = JSON.parse(readFileSync(rest[0], "utf8"));
+      const r = await engine.commit("shape.set_study", { target: id, study: { ...study, part: part ?? study.part ?? null } });
+      if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
+      console.log(`✓ study saved on ${id}${part ? ` (${part})` : ""}`);
+    } else if (command === "materials") {
+      const m = await (await get(`/materials?${q}`)).json();
+      const words = rest.join(" ").toLowerCase();
+      for (const x of m.library.filter((x) => !words || x.name.toLowerCase().includes(words))) {
+        console.log(`${x.name} (${x.family}): E ${n(x.e / 1000, 1)} GPa, ν ${x.nu}, ρ ${x.density} kg/m³, yield ${x.yield_strength} MPa, UTS ${x.uts} MPa, Et ${x.tangent_modulus} MPa, fatigue ${x.fatigue_strength ?? "—"} MPa @ ${x.fatigue_cycles.toExponential(0)}${x.endurance_limit ? " (limit)" : ""}, k ${x.conductivity} W/m·K, c ${x.specific_heat} J/kg·K, α ${n(x.expansion * 1e6, 1)} µm/m·K\n    source: ${x.source}`);
+      }
+      for (const x of m.project) console.log(`project material ${x.id} “${x.name}”${x.set ? ` — set here: ${JSON.stringify(x.set)}` : ""}${x.properties ? "" : " — no figures (unknown name: set its properties)"}`);
+    } else if (command === "plate") {
+      // forma plate <shape id> plate.json [--part X]: a flat sheet as a plate ({ supports: [{ face: { normal, near }, hold: "clamped" | "simple" }], pressure, loads, resolution }).
+      const body = { ...JSON.parse(readFileSync(rest[0], "utf8")), ...(part ? { part } : {}) };
+      const r = await (await get(`/plate/${id}?${q}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+      const x = r.result;
+      console.log(`${x.safety >= 1 ? "✓" : "✗"} ${r.material} sheet ${n(x.thickness, 2)} mm: sags ${n(x.max_sag, 4)} mm at most (at ${v3(x.max_sag_at)}), bending stress ${n(x.max_stress, 1)} MPa at most (at ${v3(x.max_stress_at)}), safety ×${n(x.safety)}`);
+      for (const t of x.notes) console.log(`  ! ${t}`);
+    } else if (command === "frame") {
+      const f = JSON.parse(readFileSync(id, "utf8"));
+      const r = await (await get(`/frame`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(f) })).json();
+      console.log(`${r.safety >= 1 ? "✓" : "✗"} frame: safety ×${n(r.safety)} (${n(r.max_stress, 1)} MPa at most), moves ${n(r.max_displacement, 3)} mm at most, ${n(r.mass, 3)} kg${r.buckling != null ? `, lowest buckling ×${n(r.buckling)}` : ""}`);
+      r.members.forEach((m, i) => console.log(`  member ${i + 1} (${m.a}→${m.b}, ${n(m.length, 0)} mm, ${m.material}): ${n(m.axial, 0)} N axial, ${n(m.max_stress, 1)} MPa, ×${n(m.safety)}${m.buckling_factor != null ? `, buckles ×${n(m.buckling_factor)}` : ""}`));
+      for (const [node, f] of r.reactions) console.log(`  support at joint ${node}: ${v3(f.slice(0, 3))} N, ${v3(f.slice(3))} N·mm`);
+      for (const x of r.notes) console.log(`  ! ${x}`);
+    } else if (["probe", "section", "path", "csv"].includes(command)) {
+      // forma probe <key> x,y,z · section <key> x,y,z nx,ny,nz · path <key> x,y,z x,y,z [points] · csv <key>
+      const key = id;
+      if (command === "csv") process.stdout.write(await (await get(`/results/${key}/csv`)).text());
+      else if (command === "probe") {
+        const p = await (await get(`/results/${key}/probe?at=${rest[0]}`)).json();
+        console.log(`at ${v3(p.at)}: von Mises ${n(p.von_mises, 2)} MPa, principal ${v3(p.principal)} MPa, stress [xx yy zz xy yz zx] ${v3(p.stress)}, moves ${v3(p.displacement.map((x) => x * 1000))} µm, safety ×${n(p.safety)}${p.plastic_strain != null ? `, plastic strain ${n(p.plastic_strain, 5)}` : ""}`);
+      } else if (command === "section") {
+        const s = await (await get(`/results/${key}/section?point=${rest[0]}&normal=${rest[1]}`)).json();
+        console.log(`section through ${v3(s.point)} square to ${v3(s.normal)}: ${s.cells.length} cubes, ${n(s.area, 1)} mm² cut, up to ${n(s.max, 1)} MPa, force across ${v3(s.force)} N`);
+      } else {
+        const p = await (await get(`/results/${key}/path?a=${rest[0]}&b=${rest[1]}&points=${rest[2] ?? 21}`)).json();
+        console.log("distance_mm,von_mises_mpa,dx_um,dy_um,dz_um");
+        for (const s of p.samples) console.log(`${n(s.distance, 2)},${n(s.probe.von_mises, 2)},${s.probe.displacement.map((x) => n(x * 1000, 2)).join(",")}`);
+      }
+    } else {
+      if (!id) throw new Error(`say which shape: forma ${command} <shape id> [--part Name]`);
+      q.set("kind", command);
+      if (count) q.set("count", count);
+      if (resolutions) q.set("resolutions", resolutions);
+      const res = await get(`/simulate/${id}?${q}`, { method: "POST" });
+      if (command === "inp") process.stdout.write(await res.text());
+      else {
+        const r = await res.json();
+        if (command === "stress" || command === "fatigue") {
+          const x = r.result;
+          console.log(`${x.safety >= 1 ? "✓" : "✗"} ${r.material}: safety ×${n(x.safety)} against yield (${n(x.max_stress, 1)} MPa at ${v3(x.max_stress_at)}, yield ${n(x.yield_strength, 0)} MPa); moves ${n(x.max_displacement, 4)} mm at most (at ${v3(x.max_displacement_at)}); ${x.elements} cubes of ${n(x.cell, 2)} mm`);
+          for (const p of x.parts ?? []) console.log(`  ${p.name}: ${n(p.max_stress, 1)} MPa, ${n(p.max_displacement, 4)} mm, ×${n(p.safety)}${p.floating ? " (not held: slides away)" : ""}`);
+          for (const rc of x.reactions ?? []) console.log(`  ${rc.name} holds with ${v3(rc.force)} N, ${v3(rc.moment)} N·mm about ${v3(rc.at)}`);
+          for (const b of x.bolts ?? []) console.log(`  bolt in ${b.part}: preload ${n(b.preload, 0)} N, now ${n(b.force, 0)} N`);
+          if (x.plastic) console.log(`  yielded: ${x.plastic.yielded} cubes, plastic strain up to ${n(x.plastic.max_strain, 5)} at ${v3(x.plastic.at)}${x.plastic.settled ? "" : " (not settled)"}`);
+          if (r.fatigue) console.log(`  fatigue: Goodman ×${n(r.fatigue.min_factor)} at ${v3(r.fatigue.at)}, life ${r.fatigue.life === null || r.fatigue.life > 1e15 ? "unlimited" : r.fatigue.life.toExponential(2) + " cycles"} (σa ${n(r.fatigue.amplitude, 1)}, σm ${n(r.fatigue.mean, 1)} MPa, Se ${n(r.fatigue.strength, 1)} MPa)`);
+          for (const t of [...x.notes, ...(r.fatigue?.notes ?? [])]) console.log(`  ! ${t}`);
+          console.log(`  result key ${r.key} (forma probe|section|path|csv ${r.key} …)`);
+          failed = x.safety < 1;
+        } else if (command === "modes") {
+          r.modes.forEach((m, i) => console.log(`  mode ${i + 1}: ${n(m.frequency, 1)} Hz (${n(m.frequency * 60, 0)} rpm), mostly ${m.direction}`));
+          console.log(`  mass ${n(r.mass, 4)} kg${r.prestress ? ", prestressed" : ""}`);
+          for (const t of r.notes) console.log(`  ! ${t}`);
+        } else if (command === "buckle") {
+          r.modes.forEach((m, i) => console.log(`  buckling mode ${i + 1}: ×${n(m.factor)} the loads, mostly ${m.direction}`));
+          console.log(`  largest stress ${n(r.max_stress, 1)} MPa (yields at ×${n(r.yield_factor)})`);
+          for (const t of r.notes) console.log(`  ! ${t}`);
+        } else if (command === "heat") {
+          if (r.times) console.log(`  after ${n(r.times.at(-1), 1)} s: ${n(r.last.min, 1)}–${n(r.last.max, 1)} °C (hottest through time ${n(Math.max(...r.max), 1)} °C)`);
+          else console.log(`  ${n(r.min, 1)}–${n(r.max, 1)} °C; ${n(r.heat_in, 2)} W in, ${n(r.to_holds, 2)} W to held faces, ${n(r.to_air, 2)} W to air`);
+          for (const t of r.notes) console.log(`  ! ${t}`);
+        } else if (command === "converge") {
+          console.log("  resolution  cube_mm  cubes   max_stress_MPa  change  max_move_mm  change  seconds");
+          for (const row of r.rows) console.log(`  ${String(row.resolution).padEnd(10)}  ${n(row.cell, 3).padEnd(7)}  ${String(row.elements).padEnd(6)}  ${n(row.max_stress, 2).padEnd(14)}  ${row.stress_change == null ? "—     " : n(row.stress_change * 100, 1) + " %"}  ${n(row.max_displacement, 5).padEnd(11)}  ${row.displacement_change == null ? "—     " : n(row.displacement_change * 100, 1) + " %"}  ${n(row.seconds, 1)}`);
+          if (r.displacement_limit != null) console.log(`  movement extrapolated to fine cubes: ${n(r.displacement_limit, 5)} mm`);
+          for (const t of r.notes) console.log(`  ! ${t}`);
+          failed = !r.converged;
+        }
+      }
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
 } else if (command === "check-geometry") {
   // The exact kernel's check of every part (as FreeCAD's Check geometry).
   const [, id, part] = args;
@@ -375,6 +611,110 @@ if (command === "run") {
       }
       for (const u of c.unreadable) console.log(`  ✗ ${u}`);
       failed = !c.ok;
+    } else if (sub === "calc") {
+      // Board calculators: no name lists them; key=value words set inputs.
+      const [, , id, ...rest] = args;
+      if (!id) {
+        const r = await get("/pcb/calc");
+        for (const c of r.calculators) console.log(`${c.id.padEnd(11)} ${c.title}: ${c.inputs.map((i) => `${i.key}=${i.default}${i.unit ? ` ${i.unit}` : ""}${i.options ? ` (${i.options.join("|")})` : ""}`).join(", ") || "no inputs"}`);
+      } else {
+        const params = Object.fromEntries(rest.filter((w) => w.includes("=")).map((w) => [w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1)]));
+        const r = await get(`/pcb/calc/${encodeURIComponent(id)}?${q(params)}`);
+        console.log(`${r.title} (${Object.entries(r.inputs).map(([k, v]) => `${k}=${v}`).join(" ")})`);
+        for (const x of r.results) console.log(`  ${String(x.label).padEnd(40)} ${x.value} ${x.unit}`);
+        if (r.bands) console.log(`  bands: ${r.bands.map((b) => b.colour).join(", ")}`);
+        if (r.values) console.log(`  ${r.values.join("  ")}`);
+        for (const t of [r.table, r.levels].filter(Boolean)) {
+          console.log(`  ${t.columns.join(" | ")}`);
+          for (const row of t.rows) console.log(`  ${row.join(" | ")}`);
+        }
+        for (const n of r.notes ?? []) console.log(`  · ${n}`);
+        if (r.source) console.log(`  (${r.source})`);
+      }
+    } else if (sub === "panel") {
+      // A panel of the board: layout and checks; --out writes its fab package.
+      const out = flag("--out");
+      const fab = flag("--fab");
+      const [, , board, ...rest] = args;
+      if (!board) throw new Error("usage: forma pcb panel <board id> [rows=2 cols=3 separation=mousebites|vscore|tabs frame=rails-tb|rails-lr|frame|none gap=2 tab_width=3 tabs=1 rail=5 fiducials=true tooling=true …] [--fab jlcpcb] [--out panel.zip]");
+      const params = { ...Object.fromEntries(rest.filter((w) => w.includes("=")).map((w) => [w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1)])), ...(fab ? { fab } : {}) };
+      const r = await get(`/pcb/${board}/panel?${q(params)}`);
+      const p = r.panel;
+      const bad = r.readback.filter((x) => !x.ok);
+      console.log(`${p.problems.length || bad.length ? "✗" : "✓"} ${p.spec.rows} × ${p.spec.cols} panel of ${r.board.name}: ${p.size.map((v) => v.toFixed(2)).join(" × ")} mm, ${p.spec.separation}, frame ${p.spec.frame}`);
+      console.log(`  ${p.tabs.length} tabs, ${p.bites.length} mouse bites, ${p.vcuts.length} V-cuts, ${p.fiducials.length} fiducials, ${p.tooling.length} tooling holes; substrate ${p.area.toFixed(1)} mm² in ${p.outline.length} contour(s)`);
+      for (const x of p.problems) console.log(`  ✗ ${x}`);
+      for (const x of p.notes) console.log(`  · ${x}`);
+      for (const x of r.readback) console.log(`  ${x.ok ? "✓" : "✗"} ${x.file}: ${x.ok ? (x.holes != null ? `${x.holes} holes` : `${x.objects} objects (${x.function})`) : x.error}`);
+      if (out) {
+        const { writeFileSync } = await import("node:fs");
+        const res = await fetch(`${http}/pcb/${board}/panel.zip?${q(params)}`);
+        if (!res.ok) throw new Error(await res.text());
+        writeFileSync(out, Buffer.from(await res.arrayBuffer()));
+        console.log(`  wrote ${out}`);
+      }
+      failed = p.problems.length > 0 || bad.length > 0;
+    } else if (sub === "gerbview") {
+      // Read any Gerber/Excellon files or zips (or a board's own package with --board): layers, apertures, nets;
+      // --compare older files to see what changed; --pdf writes the layers as a PDF.
+      const { writeFileSync } = await import("node:fs");
+      const compare = flag("--compare");
+      const pdf = flag("--pdf");
+      const board = flag("--board");
+      const paths = args.slice(2);
+      const upload = (list) => list.map((f) => ({ name: f.split("/").pop(), data: readFileSync(f).toString("base64") }));
+      let files;
+      if (board) {
+        const zip = await fetch(`${http}/pcb/${board}/fab.zip?${q()}`);
+        if (!zip.ok) throw new Error(await zip.text());
+        files = [{ name: "board.zip", data: Buffer.from(await zip.arrayBuffer()).toString("base64") }];
+      } else {
+        if (!paths.length) throw new Error("usage: forma pcb gerbview <files or zip…> | --board <id> [--compare <older files or zip>] [--pdf out.pdf]");
+        files = upload(paths);
+      }
+      const post = async (path, body) => {
+        const res = await fetch(`${http}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+        if (!res.ok) throw new Error(await res.text());
+        return res;
+      };
+      const toBoard = flag("--to-board");
+      if (toBoard) {
+        // Steps that rebuild a board (outline, tracks, vias) from the files: run them with ./forma run.
+        const s = await (await post("/pcb/gerbview", { files, to_board: flag("--name") ?? "From Gerbers" })).json();
+        writeFileSync(toBoard, JSON.stringify(s.steps, null, 1));
+        console.log(`wrote ${toBoard}: ${s.steps.length} steps (run them with ./forma run ${toBoard})`);
+        for (const n of s.notes) console.log(`  · ${n}`);
+      }
+      const r = await (await post("/pcb/gerbview", { files, summary: true, ...(compare ? { against: upload(compare.split(",")) } : {}) })).json();
+      console.log(`${r.layers.length} layers, ${r.size.join(" × ")} mm, ${r.nets} nets, ${r.parts} parts${r.job ? ", job file" : ""}`);
+      for (const l of r.layers) console.log(`  ${l.function.padEnd(22)} ${l.file}${l.guessed ? " (layer guessed from its name)" : ""}: ${l.kind === "drill" ? l.tools.map(([t, d, h, s]) => `T${t} ø${d}×${h}${s ? `+${s} slots` : ""}`).join(", ") : `${l.objects} objects, ${l.apertures} apertures, ${l.nets} nets`}`);
+      for (const [f, e] of r.unreadable) console.log(`  ✗ ${f}: ${e}`);
+      if (r.other.length) console.log(`  other files: ${r.other.join(", ")}`);
+      if (r.compare) {
+        console.log("Compared with the earlier files:");
+        for (const d of r.compare) {
+          console.log(`  ${d.same ? "=" : "≠"} ${d.function.padEnd(22)} ${d.before ?? "(none)"} → ${d.after ?? "(none)"}${d.same ? "" : d.holes_added.length || d.holes_removed.length ? `: ${d.holes_added.length} holes added, ${d.holes_removed.length} removed` : `: +${d.added} mm², −${d.removed} mm²`}`);
+          for (const h of [...d.holes_added.map((x) => `+ ${x}`), ...d.holes_removed.map((x) => `− ${x}`)].slice(0, 8)) console.log(`      ${h}`);
+        }
+      }
+      if (pdf) {
+        const looks = r.layers.filter((l) => !l.function.startsWith("Paste")).map((l) => ({ file: l.file }));
+        const res = await post("/pcb/gerbview/pdf", { files, looks, background: "#ffffff" });
+        writeFileSync(pdf, Buffer.from(await res.arrayBuffer()));
+        console.log(`wrote ${pdf}`);
+      }
+      failed = r.unreadable.length > 0;
+    } else if (sub === "glb") {
+      // The populated board as binary glTF.
+      const board = args[2];
+      if (!board) throw new Error("usage: forma pcb glb <board id> [--out board.glb]");
+      const out = flag("--out") ?? "board.glb";
+      const res = await fetch(`${http}/pcb/${board}/board.glb?${q()}`);
+      if (!res.ok) throw new Error(await res.text());
+      const { writeFileSync } = await import("node:fs");
+      const bytes = Buffer.from(await res.arrayBuffer());
+      writeFileSync(out, bytes);
+      console.log(`wrote ${out} (${(bytes.length / 1024).toFixed(0)} kB)`);
     } else if (sub === "import") {
       // A board and/or schematic from another EDA tool, told apart by content.
       const format = flag("--format");
@@ -422,10 +762,42 @@ if (command === "run") {
       }
       const s = await get("/pcb/kicad");
       console.log(`KiCad libraries in ${s.root}\n  footprints: ${s.footprints ?? "not downloaded yet"}\n  symbols:    ${s.symbols ?? "not downloaded yet"}\n  ${s.licence}`);
+    } else if (sub === "route" || sub === "drag" || sub === "cleanup" || sub === "optimize") {
+      // The interactive router from the shell: lay a route pad to pad, drag a track or via, tidy copper.
+      const point = (v) => (/^-?[\d.]+,-?[\d.]+$/.test(v) ? v.split(",").map(Number) : v);
+      const mode = flag("--mode");
+      const layer = flag("--layer");
+      const index = flag("--index");
+      const kind = flag("--kind");
+      const [, , board, a, b] = args;
+      let op;
+      let params;
+      if (sub === "route") {
+        if (!board || !a || !b) throw new Error("usage: forma pcb route <board> <from: U1.3 | x,y> <to: R4.1 | x,y> [--mode walkaround|shove|highlight] [--layer top]");
+        op = "pcb.route.interactive";
+        params = { board, from: point(a), to: point(b), ...(mode ? { mode } : {}), ...(layer ? { layer } : {}) };
+      } else if (sub === "drag") {
+        if (!board || !a || !b) throw new Error("usage: forma pcb drag <board> <track or via id> <x,y> [--index n] [--kind segment|corner|arc|via] [--mode shove|highlight]");
+        op = "pcb.route.drag";
+        params = { board, target: a, to: point(b), ...(index ? { index: Number(index) } : {}), ...(kind ? { kind } : {}), ...(mode ? { mode } : {}) };
+      } else {
+        if (!board) throw new Error(`usage: forma pcb ${sub} <board>`);
+        op = sub === "cleanup" ? "pcb.route.cleanup" : "pcb.route.optimize";
+        params = { board };
+      }
+      const r = await engine.commit(op, params);
+      if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
+      const o = r.value.output;
+      if (sub === "route" || sub === "drag") {
+        console.log(`${o.ok ? "✓" : "✗"} ${sub === "route" ? `${o.net ?? "no net"}: ${o.tracks.length} track(s), ${o.vias.length} via(s)` : "dragged"} in ${o.mode}${o.reached === false ? ", stopped short" : ""}; pushed ${o.pushed_tracks} track(s), ${o.pushed_vias} via(s) (rev ${r.value.revision})`);
+        for (const c of o.collisions) console.log(`  ✗ ${c.layer ?? ""} too close to ${c.with}: ${c.gap} mm (needs ${c.need}) at ${c.at.map((x) => x.toFixed(2)).join(", ")}`);
+        for (const n of o.notes) console.log(`  · ${n}`);
+        failed = !o.ok;
+      } else console.log(`✓ ${JSON.stringify(o)} (rev ${r.value.revision})`);
     } else if (["lib", "logo", "assign", "variant", "block"].includes(sub)) {
       failed = await pcbLib(sub, args, { engine, get, http, q });
     } else {
-      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | import <file> [--format f] | exports <id> | export <id> <name|kind> [--out path] | library [update] | lib … | logo <image> | assign <schematic> | variant <schematic> … | block …");
+      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | import <file> [--format f] | exports <id> | export <id> <name|kind> [--out path] | calc [name key=value…] | panel <board> [key=value…] [--out panel.zip] | gerbview <files…>|--board <id> [--compare old] [--pdf out.pdf] [--to-board steps.json] | glb <board> [--out f.glb] | library [update] | lib … | logo <image> | assign <schematic> | variant <schematic> … | block … | route <board> <from> <to> [--mode shove] | drag <board> <item> <x,y> | cleanup <board> | optimize <board>");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
@@ -997,8 +1369,7 @@ if (command === "run") {
   }
 } else if (command === "import" || command === "export" || command === "bundle") {
   const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
-  const { readFileSync: read, writeFileSync: write } = await import("node:fs");
-  const { basename } = await import("node:path");
+  const [read, write] = [readFileSync, writeFileSync];
   const flag = (name) => {
     const i = args.indexOf(name);
     return i >= 0 ? args.splice(i, 2)[1] : null;
@@ -1007,13 +1378,16 @@ if (command === "run") {
   const projectName = project ?? snap.project_id;
   try {
     if (command === "import") {
+      // STEP/IGES (exact), STL/OBJ/PLY/glTF/GLB/3MF (mesh) become a shape; DXF/SVG a sketch;
+      // .scad a live shape; .csv/.xlsx a sheet, parameter set or configurations; .forma a project.
       const as = flag("--as");
       const target = flag("--target");
       const sheet = flag("--sheet");
+      const named = flag("--name");
       const path = args[1];
-      if (!path) throw new Error("say which file: forma import <file>");
+      if (!path) throw new Error("say which file: forma import <file> [--name N] [--as sheet|parameters|configurations]");
       const bytes = read(path);
-      const name = basename(path);
+      const name = named ? `${named}${extname(path)}` : basename(path);
       if (name.toLowerCase().endsWith(".forma")) {
         const res = await fetch(`${http}/projects/import`, { method: "POST", body: bytes });
         if (!res.ok) throw new Error(await res.text());
@@ -1024,23 +1398,44 @@ if (command === "run") {
         const res = await fetch(`${http}/import/${encodeURIComponent(name)}?${q}`, { method: "POST", body: bytes });
         if (!res.ok) throw new Error(await res.text());
         const r = await res.json();
-        console.log(`✓ ${r.operation ?? "import"} → ${JSON.stringify(r.output ?? r)}`);
+        if (r.kind === "sketch") {
+          const c = r.counts;
+          console.log(`✓ ${basename(path)} → sketch “${r.name}” (${r.id}): ${c.lines} lines, ${c.arcs} arcs, ${c.circles} circles, ${c.curves} curves; ${r.size.map((v) => v.toFixed(1)).join(" × ")} mm. Use it in a program: sketch("${r.name}").extrude(3)`);
+        } else if (r.kind === "shape") {
+          console.log(`✓ ${basename(path)} → shape ${r.id}: ${r.bodies} ${r.bodies === 1 ? "body" : "bodies"}, ${r.exact ? "exact" : "mesh (faceted)"}; program reads ${r.format === "step" ? "importStep" : r.format === "iges" ? "importIges" : "importMesh"}("${r.sha}")`);
+          if (r.colors?.length) console.log(`  colours in the file: ${r.colors.map((c) => `${c.part} ${c.color}`).join(", ")}`);
+        } else console.log(`✓ ${r.operation ?? "import"} → ${JSON.stringify(r.output ?? r)}`);
       }
     } else if (command === "export") {
-      const [, what, out] = args;
-      if (!what || !out) throw new Error("forma export <id|name> <file.step|stl|3mf|dxf|scad|zip|csv|xlsx>");
+      // forma export <id|name|project> <file.ext>, or --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]
+      const format = flag("--format");
+      const part = flag("--part");
+      const outFlag = flag("--out");
+      const [, what, given] = args;
+      const ext = (format ?? given?.split(".").pop() ?? "").toLowerCase().replace(/^\./, "");
+      if (!what || !ext) throw new Error("forma export <id|name|project> <file.step|…> | --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]");
       const name = (e) => {
         const c = e.components;
         return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["shape.sheet"]?.name ?? c["shape.parameter_set"]?.name ?? c["assembly.definition"]?.name;
       };
-      const found = snap.entities.filter((e) => e.id === what || name(e)?.toLowerCase() === what.toLowerCase());
-      if (found.length !== 1) throw new Error(found.length ? `“${what}” matches ${found.length} things: use an id` : `nothing called “${what}”`);
-      const ext = out.split(".").pop().toLowerCase();
+      // An id, or a name (what is placed first).
+      const named = snap.entities.filter((e) => e.id === what || name(e)?.toLowerCase() === what.toLowerCase());
+      const placed = named.filter((e) => e.components["assembly.instance"] || e.components["solid.placement"]);
+      const found = what === "project" ? [{ id: "project" }] : placed.length ? placed : named;
+      if (found.length !== 1) throw new Error(found.length ? `“${what}” matches ${found.length} things: use an id (${found.map((e) => e.id).join(", ")})` : `nothing called “${what}”`);
       const route = ext === "csv" || ext === "xlsx" ? "table" : "export";
-      const res = await fetch(`${http}/${route}/${found[0].id}.${ext}?project=${encodeURIComponent(projectName)}`);
+      const q = new URLSearchParams({ project: projectName, ...(part ? { part } : {}) });
+      const res = await fetch(`${http}/${route}/${found[0].id}.${ext === "iges" ? "igs" : ext}?${q}`);
       if (!res.ok) throw new Error(await res.text());
-      write(out, Buffer.from(await res.arrayBuffer()));
-      console.log(`✓ wrote ${out}`);
+      const bytes = Buffer.from(await res.arrayBuffer());
+      const suggested = res.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? `${found[0].id}.${ext}`;
+      const out = given && !format ? given : outFlag;
+      const target = out ? resolve(out) : join(homedir(), "Downloads", "Forma exports", suggested);
+      const path = out && existsSync(target) && statSync(target).isDirectory() ? join(target, suggested) : target;
+      mkdirSync(dirname(path), { recursive: true });
+      write(path, bytes);
+      const size = bytes.length >= 1048576 ? `${(bytes.length / 1048576).toFixed(1)} MB` : `${(bytes.length / 1024).toFixed(1)} KB`;
+      console.log(`✓ ${path} (${size})`);
     } else {
       const out = args[1] ?? `${projectName}.forma`;
       const res = await fetch(`${http}/projects/${encodeURIComponent(projectName)}/bundle`);
@@ -1048,6 +1443,116 @@ if (command === "run") {
       const bytes = Buffer.from(await res.arrayBuffer());
       write(out, bytes);
       console.log(`✓ wrote ${out} (${(bytes.length / 1024).toFixed(0)} KB): the whole project with its history and assets; import it elsewhere with forma import ${out}`);
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
+} else if (command === "bim" || command === "schedule" || command === "ifc" || command === "plan") {
+  // Building information: the structure, schedules, IFC in and out, plans/sections/elevations.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const flag = (name, takes = true) => {
+    const i = args.indexOf(name);
+    if (i < 0) return null;
+    return takes ? args.splice(i, 2)[1] : (args.splice(i, 1), true);
+  };
+  const q = new URLSearchParams(project ? { project } : {});
+  const write = async (res, out) => {
+    const { writeFileSync } = await import("node:fs");
+    const name = out ?? decodeURIComponent((res.headers.get("content-disposition") ?? "").match(/filename="([^"]+)"/)?.[1] ?? "forma-output");
+    writeFileSync(name, Buffer.from(await res.arrayBuffer()));
+    return name;
+  };
+  try {
+    if (command === "bim") {
+      const id = args[1] ?? "project";
+      const res = await fetch(`${http}/bim/${encodeURIComponent(id)}?${q}`);
+      if (!res.ok) throw new Error(await res.text());
+      const b = await res.json();
+      console.log(`${b.building?.name || b.project} on ${b.site?.name ?? "its site"}: ${b.elements} elements, ${b.openings} openings`);
+      for (const l of b.levels) {
+        const els = Object.entries(l.elements).map(([c, n]) => `${n} ${c.replace(/^Ifc/, "")}`).join(", ");
+        console.log(`  ${l.name.padEnd(16)} +${(l.elevation / 1000).toFixed(3)} m${l.height ? `, ${l.height} mm high` : ""}: ${els || "nothing"}`);
+        for (const s of l.spaces) console.log(`      ${s.name}${s.long_name ? ` (${s.long_name})` : ""}: ${s.area_m2} m², ${s.height} mm high`);
+      }
+      const loose = b.classes && Object.entries(b.classes).length ? `classes: ${Object.entries(b.classes).map(([c, n]) => `${c} ${n}`).join(", ")}` : "";
+      if (loose) console.log(`  ${loose}`);
+      for (const z of b.zones) console.log(`  zone ${z.name}: ${z.spaces.join(", ")}`);
+      for (const g of b.grids) console.log(`  grid ${g.name}${g.level ? ` (${g.level})` : ""}: ${g.axes.join(" ")}`);
+      for (const g of b.groups) console.log(`  ${g.class} ${g.name}${g.level ? ` (${g.level})` : ""}`);
+      if (b.untagged.length) console.log(`  ! no IFC class (written as proxies): ${b.untagged.join(", ")}`);
+      for (const n of b.notes) console.log(`  ! ${n}`);
+    } else if (command === "schedule") {
+      const cls = flag("--class"), lvl = flag("--level"), by = flag("--by"), csv = flag("--csv", false), psets = flag("--psets", false), out = flag("--out");
+      const id = args[1] ?? "project";
+      if (cls) q.set("class", cls);
+      if (lvl) q.set("level", lvl);
+      if (by) q.set("group", by);
+      if (psets) q.set("psets", "1");
+      q.set("format", csv || out ? "csv" : "json");
+      const res = await fetch(`${http}/schedule/${encodeURIComponent(id)}?${q}`);
+      if (!res.ok) throw new Error(await res.text());
+      if (out) console.log(`✓ wrote ${await write(res, out)}`);
+      else if (csv) process.stdout.write(await res.text());
+      else {
+        const { schedule: s } = await res.json();
+        const fmt = (v, u) => (u === "m²" || u === "m³" ? v.toFixed(2) : u === "kg" ? v.toFixed(1) : String(Math.round(v * 100) / 100));
+        const cols = s.columns.filter((c) => s.rows.some((r) => r.quantities[c] !== undefined)).slice(0, 8);
+        if (s.group_by.length) {
+          const main = ["Length", "NetSideArea", "NetArea", "NetFloorArea", "Area", "NetVolume", "Volume", "TotalLength", "Weight", "Openings"];
+          for (const g of [...s.groups, s.total]) console.log(`${g.key.join(" · ").padEnd(36)} ${String(g.count).padStart(4)}  ${Object.entries(g.sums).filter(([k]) => main.includes(k)).sort(([a], [b]) => main.indexOf(a) - main.indexOf(b)).map(([k, v]) => `${k} ${fmt(v, s.units[k])}${s.units[k] ? ` ${s.units[k]}` : ""}`).join(", ")}`);
+        } else {
+          for (const r of s.rows) console.log(`${(r.level ?? "—").padEnd(14)} ${r.class.replace(/^Ifc/, "").padEnd(18)} ${r.name.padEnd(28)} ${r.tag ? `[${r.tag}] ` : ""}${r.type ?? ""}  ${cols.filter((c) => r.quantities[c] !== undefined).map((c) => `${c} ${fmt(r.quantities[c], s.units[c])}`).join(", ")}`);
+          console.log(`Total: ${s.total.count} items; ${Object.entries(s.total.sums).filter(([k]) => cols.includes(k)).map(([k, v]) => `${k} ${fmt(v, s.units[k])}${s.units[k] ? ` ${s.units[k]}` : ""}`).join(", ")}`);
+        }
+      }
+    } else if (command === "ifc") {
+      const [, action, a, b] = args;
+      if (action === "export") {
+        const id = a && !a.endsWith(".ifc") ? a : "project";
+        const out = a?.endsWith(".ifc") ? a : b;
+        const res = await fetch(`${http}/ifc/${encodeURIComponent(id)}.ifc?${q}`);
+        if (!res.ok) throw new Error(await res.text());
+        console.log(`✓ wrote ${await write(res, out)} (IFC4)`);
+      } else if (action === "import" && a) {
+        const { readFileSync } = await import("node:fs");
+        const { basename } = await import("node:path");
+        const res = await fetch(`${http}/import/${encodeURIComponent(basename(a))}?${q}`, { method: "POST", body: readFileSync(a) });
+        if (!res.ok) throw new Error(await res.text());
+        const r = await res.json();
+        console.log(`✓ imported ${a} as shape ${r.id}`);
+      } else throw new Error("forma ifc export [id|project] [file.ifc] | forma ifc import <file.ifc>");
+    } else if (command === "plan") {
+      const lvl = flag("--level"), cut = flag("--cut"), sheet = flag("--sheet"), scale = flag("--scale"), pdf = flag("--pdf"), dxf = flag("--dxf"), looking = flag("--looking"), side = flag("--elevation");
+      const si = args.indexOf("--section");
+      const section = si >= 0 ? args.splice(si, 3).slice(1) : null;
+      const id = args[1] ?? "project";
+      if (section) {
+        q.set("view", "section");
+        q.set("axis", section[0]);
+        q.set("at", section[1]);
+        if (looking) q.set("looking", looking);
+      } else if (side) {
+        q.set("view", "elevation");
+        q.set("side", side);
+      } else {
+        q.set("view", "plan");
+        if (lvl) q.set("level", lvl);
+        if (cut) q.set("cut", cut);
+      }
+      if (sheet) q.set("sheet", sheet);
+      if (scale) q.set("scale", scale);
+      const res = await fetch(`${http}/plan/${encodeURIComponent(id)}?${q}`);
+      if (!res.ok) throw new Error(await res.text());
+      const d = await res.json();
+      console.log(`✓ ${d.texts.find((t) => t.bold && t.size >= 3.5)?.text ?? "drawing"}: ${d.scale_text} on ${d.width}×${d.height} mm, ${d.strokes.length} lines, ${d.fills.length} filled, ${d.texts.length} texts`);
+      for (const w of d.warnings) console.log(`  ! ${w}`);
+      for (const [ext, out] of [["pdf", pdf], ["dxf", dxf]]) {
+        if (!out) continue;
+        const r = await fetch(`${http}/plan/${encodeURIComponent(id)}.${ext}?${q}`);
+        if (!r.ok) throw new Error(await r.text());
+        console.log(`✓ wrote ${await write(r, out === true || out === "-" ? undefined : out)}`);
+      }
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
@@ -1198,7 +1703,7 @@ if (command === "run") {
     failed = true;
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | check-geometry <id> [part] | surfaces <id> [part] | measure <part> [other] | sheet <name> | draft | import <file> | export <id> <file> | bundle [file] | view <action> [what] | image add <file> | image list | look [what] [--view v] | drawing <id> | dof | interference | exploded | study | robot | pcb … | simulate <schematic>  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | flat [id] [part] | render [--width] | get <id> | tree | list | check | ops | bim | schedule | ifc export|import | plan | check-geometry <id> [part] | surfaces <id> [part] | measure <part> [other] | sheet <name> | draft | view <action> [what] | import <file> [--name N] | export <id> <file> | --format <fmt> [--part P] [--out path] | bundle [file] | image add <file> | image list | look [what] [--view v]  [--project name] [--url ws://…]");
   failed = true;
 }
 

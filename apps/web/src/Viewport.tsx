@@ -17,6 +17,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { attachTumble, attachWalk, type Tumble } from "./tumble";
 import { pcbLooks } from "./pcb3d";
+import type { RenderSource } from "./render";
 import { type DisplayMode, type SectionPlane, type ViewName, ViewTools } from "./viewTools";
 import { ViewToolbar } from "./ViewToolbar";
 import type { EntityView, MeshData } from "./engine";
@@ -139,6 +140,10 @@ export type StressView = {
   oscillate?: boolean;
   /** The most stressed spot, re-solved finer (part coordinates); `singular`: a sharp inside corner. */
   peak?: { at: [number, number, number]; singular: boolean };
+  /** Spots to mark (part coordinates): the largest stress, the largest movement. */
+  markers?: { at: [number, number, number]; color: string; label?: string }[];
+  /** Cut the result open: cubes past `at` (mm) along the axis are left out, so the inside shows. */
+  section?: { axis: 0 | 1 | 2; at: number } | null;
 };
 
 export type ContactView = {
@@ -199,6 +204,13 @@ function heat(t: number, out: THREE.Color) {
   const x = Math.max(0, Math.min(1, t)) * (stops.length - 1);
   const i = Math.min(Math.floor(x), stops.length - 2);
   return out.copy(stops[i]).lerp(stops[i + 1], x - i);
+}
+
+/** A result cut open: the cubes whose centres lie past the cut left out, so the faces left show the inside. */
+function cutAway(r: NonNullable<StressView["result"]>, section: StressView["section"]): NonNullable<StressView["result"]> {
+  if (!section) return r;
+  const keep = r.cells.map(([c]) => r.origin[section.axis] + (c[section.axis] + 0.5) * r.cell <= section.at);
+  return { ...r, cells: r.cells.filter((_, i) => keep[i]), cell_parts: r.cell_parts?.length ? r.cell_parts.filter((_, i) => keep[i]) : r.cell_parts };
 }
 
 /** The stress map: the outside faces of the solved cubes, coloured by stress, displaced if asked (see-through when `ghost`). */
@@ -327,6 +339,8 @@ export type ViewportHandle = {
   setWireframe: (on: boolean) => void;
   setTurntable: (on: boolean) => void;
   snapshot: () => string | null;
+  /** What a photoreal render starts from: the parts as shown and the live camera. */
+  renderSource: () => RenderSource | null;
   resize: () => void;
   /** Glides to a comment pin, turning to face the surface it is on. */
   framePin: (id: string) => void;
@@ -2880,7 +2894,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       }
       let swing: { mesh: THREE.Mesh; base: Float32Array; delta: Float32Array } | undefined;
       if (view.result) {
-        const r = view.result;
+        const r = cutAway(view.result, view.section);
         const amount = (size * 0.06) / Math.max(r.max_displacement, 1e-9);
         if (view.oscillate) {
           // The shape at rest and fully swung; the frame loop moves between them.
@@ -2901,6 +2915,17 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
           group.add(stressMesh(r, view.deform ? (view.deform * size * 0.04) / Math.max(r.max_displacement, 1e-9) : 0));
         }
         part.body.visible = false;
+      }
+      for (const mk of view.result && !view.oscillate ? view.markers ?? [] : []) {
+        // A ring and a dot, always on top.
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.Float32BufferAttribute(mk.at, 3));
+        const ring = new THREE.Points(g, new THREE.PointsMaterial({ color: "#ffffff", size: 12, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.95 }));
+        ring.renderOrder = 963;
+        group.add(ring);
+        const dot = new THREE.Points(g, new THREE.PointsMaterial({ color: mk.color, size: 7, sizeAttenuation: false, depthTest: false }));
+        dot.renderOrder = 964;
+        group.add(dot);
       }
       if (view.peak && view.result && !view.oscillate && view.layer !== "contact") {
         // A ring of points round the peak, always on top, so it is found at a glance.
@@ -3069,6 +3094,11 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       [t.gizmo.root.visible, t.push.root.visible] = shown;
       t.invalidate();
       return url;
+    },
+    renderSource() {
+      const t = three.current;
+      if (!t) return null;
+      return { objects: [...t.parts.values()].map((p) => p.group), camera: t.camera };
     },
     resize() {
       three.current?.invalidate();
