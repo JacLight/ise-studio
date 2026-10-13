@@ -1353,7 +1353,7 @@ export function useSketchEditor(props: {
           ) : (
             <>
               <label className="check">
-                <input type="checkbox" checked={pat.full} onChange={(e) => setPat({ ...pat, full: e.target.checked })} />
+                <input type="checkbox" checked={pat.full} title="Spread the copies evenly all the way round" onChange={(e) => setPat({ ...pat, full: e.target.checked })} />
                 Full circle
               </label>
               <label>
@@ -1368,7 +1368,7 @@ export function useSketchEditor(props: {
             <input type="checkbox" checked={pat.linked} onChange={(e) => setPat({ ...pat, linked: e.target.checked })} />
             Linked
           </label>
-          <button type="submit" className="primary">
+          <button type="submit" className="primary" title="Make the copies of the selected curves">
             {patternSpec ? `Make ${patternSpec.count - 1} ${patternSpec.count === 2 ? "copy" : "copies"}` : "Make copies"}
           </button>
         </form>
@@ -1464,10 +1464,10 @@ export function useSketchEditor(props: {
       </div>
       <div className="spline-toggles">
         <label className="check">
-          <input type="checkbox" checked={polygons} onChange={(e) => setPolygons(e.target.checked)} /> Control polygons always
+          <input type="checkbox" checked={polygons} title="Show every B-spline's control points and polygon, not only the selected one's" onChange={(e) => setPolygons(e.target.checked)} /> Control polygons always
         </label>
         <label className="check">
-          <input type="checkbox" checked={combs} onChange={(e) => setCombs(e.target.checked)} /> Curvature comb
+          <input type="checkbox" checked={combs} title="Draw curvature combs on the B-splines: longer teeth bend more, a flip shows an inflection" onChange={(e) => setCombs(e.target.checked)} /> Curvature comb
         </label>
       </div>
     </div>
@@ -1490,10 +1490,10 @@ export function useSketchEditor(props: {
         <div className="sketch-panel constraint-list" role="group" aria-label="Constraints">
           <strong>Constraints ({g.constraints.length})</strong>
           <div className="sel-group">
-            <button type="button" className="secondary" disabled={!s?.conflicts.length} onClick={() => selectAll(s!.conflicts)}>
+            <button type="button" className="secondary" disabled={!s?.conflicts.length} title="Select the constraints that fight each other, and what they hold" onClick={() => selectAll(s!.conflicts)}>
               Conflicting {s?.conflicts.length ? `(${s.conflicts.length})` : ""}
             </button>
-            <button type="button" className="secondary" disabled={!s?.redundant?.length && !s?.partially_redundant?.length} onClick={() => selectAll([...(s?.redundant ?? []), ...(s?.partially_redundant ?? [])])}>
+            <button type="button" className="secondary" disabled={!s?.redundant?.length && !s?.partially_redundant?.length} title="Select the constraints that repeat what others already hold" onClick={() => selectAll([...(s?.redundant ?? []), ...(s?.partially_redundant ?? [])])}>
               Redundant {(s?.redundant?.length ?? 0) + (s?.partially_redundant?.length ?? 0) || ""}
             </button>
             <button
@@ -1532,7 +1532,7 @@ export function useSketchEditor(props: {
                   <button type="button" className="mini" title={off ? "Switched off: switch on" : "Switch off (kept, not solved)"} onClick={() => void changeConstraint(i, off ? "on" : "off")}>
                     {off ? "off" : "on"}
                   </button>
-                  <button type="button" className="mini" title="Remove" aria-label="Remove constraint" onClick={() => void changeConstraint(i, "remove")}>
+                  <button type="button" className="mini" title="Remove this constraint" aria-label="Remove constraint" onClick={() => void changeConstraint(i, "remove")}>
                     ✕
                   </button>
                 </li>
@@ -1571,7 +1571,7 @@ export function useSketchEditor(props: {
             </ul>
           )}
           {v?.open_ends?.length ? (
-            <button type="button" className="secondary" onClick={() => setSelection(new Set(v.open_ends))}>
+            <button type="button" className="secondary" title="Select the curve ends that meet nothing (gaps that keep an outline open)" onClick={() => setSelection(new Set(v.open_ends))}>
               Select open ends
             </button>
           ) : null}
@@ -1609,7 +1609,7 @@ export function useSketchEditor(props: {
           <input type="checkbox" checked={copyFrom.linked} onChange={(e) => setCopyFrom({ ...copyFrom, linked: e.target.checked })} />
           Linked (carbon copy)
         </label>
-        <button type="submit" className="primary" disabled={!copyFrom.from}>
+        <button type="submit" className="primary" disabled={!copyFrom.from} title="Copy the picked sketch's curves and constraints into this one">
           Copy in
         </button>
       </form>
@@ -1684,10 +1684,10 @@ export function useSketchEditor(props: {
       {tool === "fillet" && (
         <div className="sketch-options" role="group" aria-label="Fillet options">
           <div className="seg-toggle">
-            <button type="button" className={corner === "round" ? "on" : ""} aria-pressed={corner === "round"} onClick={() => setCorner("round")}>
+            <button type="button" className={corner === "round" ? "on" : ""} aria-pressed={corner === "round"} title="Round the corner with an arc of this radius" onClick={() => setCorner("round")}>
               <Icon name="fillet" /> Round
             </button>
-            <button type="button" className={corner === "chamfer" ? "on" : ""} aria-pressed={corner === "chamfer"} onClick={() => setCorner("chamfer")}>
+            <button type="button" className={corner === "chamfer" ? "on" : ""} aria-pressed={corner === "chamfer"} title="Cut the corner off straight, this far back along each curve" onClick={() => setCorner("chamfer")}>
               <span aria-hidden="true">⌐</span> Chamfer
             </button>
           </div>
@@ -1718,6 +1718,7 @@ export function useSketchEditor(props: {
                 <input
                   type="checkbox"
                   checked={proj.picked.has(p.id)}
+                  title={`Project the edges of ${p.name}`}
                   onChange={(e) => {
                     const next = new Set(proj.picked);
                     if (e.target.checked) next.add(p.id);
@@ -1731,7 +1732,7 @@ export function useSketchEditor(props: {
             ))}
           </div>
           {parts.length > 1 && (
-            <button type="button" className="secondary" onClick={() => setProj({ ...proj, picked: new Set(parts.filter((p) => p.visible).map((p) => p.id)) })}>
+            <button type="button" className="secondary" title="Pick every part shown in the view to project" onClick={() => setProj({ ...proj, picked: new Set(parts.filter((p) => p.visible).map((p) => p.id)) })}>
               All visible parts
             </button>
           )}
@@ -1752,6 +1753,7 @@ export function useSketchEditor(props: {
           <button
             type="button"
             className="primary"
+            title="Project the picked parts' edges onto the sketch plane as curves"
             disabled={!proj.picked.size}
             onClick={async () => {
               if (!editing) return;
@@ -1770,10 +1772,10 @@ export function useSketchEditor(props: {
         </div>
       )}
       <div className="sketch-actions">
-        <button type="button" className="primary" onClick={() => make("extrude")} disabled={!solved?.loops.length}>
+        <button type="button" className="primary" title="Make a part from the closed outlines, pushed out along the plane's normal (depth to change after)" onClick={() => make("extrude")} disabled={!solved?.loops.length}>
           <Icon name="cube" /> Extrude
         </button>
-        <button type="button" className="secondary" onClick={() => make("revolve")} disabled={!solved?.loops.length}>
+        <button type="button" className="secondary" title="Make a part by turning the closed outlines about the sketch's vertical axis (x is the radius)" onClick={() => make("revolve")} disabled={!solved?.loops.length}>
           <Icon name="rotate" /> Revolve
         </button>
         <button type="button" className={`secondary ${projectOpen ? "on" : ""}`} aria-pressed={projectOpen} title="Project parts' edges onto the sketch plane" onClick={() => setProjectOpen((v) => !v)}>
@@ -1802,7 +1804,7 @@ export function useSketchEditor(props: {
             <Icon name="cube" /> On a face
           </button>
         )}
-        <button type="button" className="secondary" onClick={finish}>
+        <button type="button" className="secondary" title="Finish editing this sketch (Esc with nothing selected)" onClick={finish}>
           Done
         </button>
       </div>
@@ -1869,7 +1871,7 @@ export function PlaneMenu(props: { onPick: (p: keyof typeof PLANES, offset: numb
     <div className="plane-menu floating" role="menu" aria-label="Sketch on which plane">
       <strong>New sketch on…</strong>
       {(Object.keys(PLANES) as (keyof typeof PLANES)[]).map((k) => (
-        <button key={k} type="button" role="menuitem" onClick={() => props.onPick(k, off)}>
+        <button key={k} type="button" role="menuitem" title={`Start a sketch on the ${k} plane: ${PLANES[k].label.toLowerCase()}, moved by the offset`} onClick={() => props.onPick(k, off)}>
           <span className={`plane-chip plane-${k.toLowerCase()}`}>{k}</span>
           {PLANES[k].label}
         </button>
@@ -1885,7 +1887,7 @@ export function PlaneMenu(props: { onPick: (p: keyof typeof PLANES, offset: numb
           On a face of a part…
         </button>
       )}
-      <button type="button" className="plane-cancel" onClick={props.onClose}>
+      <button type="button" className="plane-cancel" title="Close without starting a sketch" onClick={props.onClose}>
         Cancel
       </button>
     </div>

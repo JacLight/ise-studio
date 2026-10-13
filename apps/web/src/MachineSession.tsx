@@ -129,14 +129,14 @@ export function MachineSession() {
   return <section aria-label="Machine session controls">
     <h3 className="panel-section">Machine session · this computer</h3>
     <p className="small muted">One connection is shared across projects. Simulation is the default and sends no hardware commands. Physical operation requires the attached computer’s machine configuration.</p>
-    <label className="small">Controller family<br /><select disabled={locked} value={family} onChange={event => resetSelection(event.target.value as Family, backend)}>
+    <label className="small">Controller family<br /><select disabled={locked} value={family} title="The kind of controller the machine runs (locked while connected)" onChange={event => resetSelection(event.target.value as Family, backend)}>
       {families.map(([id, label]) => <option value={id} key={id}>{label}</option>)}
     </select></label>{" "}
-    <label className="small">Connection<br /><select disabled={locked} value={backend} onChange={event => resetSelection(family, event.target.value as Backend)}>
+    <label className="small">Connection<br /><select disabled={locked} value={backend} title="Simulation sends no hardware commands; physical drives the attached machine (locked while connected)" onChange={event => resetSelection(family, event.target.value as Backend)}>
       <option value="simulation">Simulation · no hardware</option><option value="physical">Physical machine</option>
     </select></label>
     <p className="small"><strong>{backend === "simulation" ? "SIMULATION" : "PHYSICAL MACHINE"}</strong> · {phase}. Machine setup remains unverified.</p>
-    <p><button type="button" className="secondary" disabled={!!busy} onClick={example}>Download simulation example</button></p>
+    <p><button type="button" className="secondary" disabled={!!busy} title="Download a sample simulation bundle for this controller family, to upload below" onClick={example}>Download simulation example</button></p>
     <label className="small">Connection configuration or simulation bundle<br />
       <input ref={configInput} type="file" accept=".json,application/json" disabled={locked} onChange={event => void selectConfiguration(event.target.files?.[0])} />
     </label>
@@ -147,18 +147,18 @@ export function MachineSession() {
           : "Configuration requires profile, source_file, selector, identity and startup_review. File paths refer to the attached computer."}</p>
       <label className="small"><input type="checkbox" checked={physicalReviewed} disabled={locked} onChange={event => setPhysicalReviewed(event.target.checked)} /> I have reviewed this physical machine’s connection configuration.</label>
     </>}
-    <p><button type="button" className="secondary" disabled={locked || (backend === "physical" && (!physicalReviewed || !Object.keys(configuration).length))} onClick={() => void action("connect")}>Connect {backend}</button>{" "}
-      <button type="button" className="secondary" disabled={!!busy} onClick={() => void action("status")}>Refresh session status</button>{" "}
-      <button type="button" className="secondary" disabled={!!busy || !controls.disconnect} onClick={() => void action("close")}>Disconnect</button></p>
+    <p><button type="button" className="secondary" disabled={locked || (backend === "physical" && (!physicalReviewed || !Object.keys(configuration).length))} title={backend === "physical" ? "Connect to the physical machine with the uploaded configuration" : "Start a simulated machine session (no hardware)"} onClick={() => void action("connect")}>Connect {backend}</button>{" "}
+      <button type="button" className="secondary" disabled={!!busy} title="Ask the session for its current state, without sending a machine command" onClick={() => void action("status")}>Refresh session status</button>{" "}
+      <button type="button" className="secondary" disabled={!!busy || !controls.disconnect} title="Close the machine session on this computer" onClick={() => void action("close")}>Disconnect</button></p>
     <label className="small">Job JSON file<br /><input ref={jobInput} type="file" accept=".json,application/json" disabled={!!busy || !controls.replaceJob} onChange={event => void selectJob(event.target.files?.[0])} /></label>
     {jobName && <p className="small muted">Selected: {jobName}</p>}
-    <p><button type="button" className="secondary" disabled={!!busy || !controls.prepare || !job} onClick={() => void action("prepare")}>Prepare session job</button></p>
+    <p><button type="button" className="secondary" disabled={!!busy || !controls.prepare || !job} title="Check and load the selected job into the session; it does not start it" onClick={() => void action("prepare")}>Prepare session job</button></p>
     {backend === "physical" && <label className="small"><input type="checkbox" checked={startReviewed} disabled={!!busy || !!snapshot?.worker_active} onChange={event => setStartReviewed(event.target.checked)} /> Machine area, material and job settings are checked; authorize this physical Start.</label>}
     <p>
-      <button type="button" className="secondary" disabled={!!busy || !controls.start || (backend === "physical" && !startReviewed)} onClick={() => void action("start")}>Start {backend}</button>{" "}
-      <button type="button" className="secondary" disabled={!!busy || !controls.pause} onClick={() => void action("pause")}>Pause</button>{" "}
-      <button type="button" className="secondary" disabled={!!busy || !controls.resume} onClick={() => void action("resume")}>Resume</button>{" "}
-      <button type="button" className="secondary" disabled={!!busy || !controls.stop} onClick={() => void action("abort")}>Stop job</button>
+      <button type="button" className="secondary" disabled={!!busy || !controls.start || (backend === "physical" && !startReviewed)} title={backend === "physical" ? "Run the prepared job on the physical machine" : "Run the prepared job in simulation"} onClick={() => void action("start")}>Start {backend}</button>{" "}
+      <button type="button" className="secondary" disabled={!!busy || !controls.pause} title="Pause the running job" onClick={() => void action("pause")}>Pause</button>{" "}
+      <button type="button" className="secondary" disabled={!!busy || !controls.resume} title="Carry on with the paused job" onClick={() => void action("resume")}>Resume</button>{" "}
+      <button type="button" className="secondary" disabled={!!busy || !controls.stop} title="Abort the running job" onClick={() => void action("abort")}>Stop job</button>
     </p>
     <div aria-live="polite">
       {busy && <p className="small">{busy} request in progress…</p>}

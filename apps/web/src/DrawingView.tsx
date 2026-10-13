@@ -876,7 +876,7 @@ export function DrawingView(props: {
           </div>
           <label className="drawing-select" title={extraSheet ? "This sheet's size" : "Sheet 1 (and sheets without their own size)"}>
             <span>Sheet</span>
-            <select value={sheetSize} onChange={(e) => (extraSheet ? void setSheetSpec({ size: e.target.value as SheetSize }) : setSheet(e.target.value as SheetSize))}>
+            <select title="Paper size of this sheet, with a title block to match" value={sheetSize} onChange={(e) => (extraSheet ? void setSheetSpec({ size: e.target.value as SheetSize }) : setSheet(e.target.value as SheetSize))}>
               {SHEETS.map((s) => (
                 <option key={s} value={s}>
                   {s.replace("_", " ")}
@@ -1257,7 +1257,7 @@ function ToleranceForm(props: { dim: DimSpec; onApply: (d: DimSpec) => void; onR
             ["fit", "Fit"],
           ] as const
         ).map(([k, label]) => (
-          <button key={k} type="button" className={kind === k ? "active" : ""} aria-pressed={kind === k} onClick={() => setKind(k)}>
+          <button title={{ none: "No tolerance on this dimension: the general tolerance applies", symmetric: "Plus or minus one value", limits: "Separate upper and lower deviations", fit: "An ISO 286 fit class, such as H7 or g6" }[k]} key={k} type="button" className={kind === k ? "active" : ""} aria-pressed={kind === k} onClick={() => setKind(k)}>
             {label}
           </button>
         ))}
@@ -1276,13 +1276,13 @@ function ToleranceForm(props: { dim: DimSpec; onApply: (d: DimSpec) => void; onR
         </label>
       )}
       <label className="pop-check">
-        <input type="checkbox" checked={diameter} onChange={(e) => setDiameter(e.target.checked)} /> Diameter (⌀)
+        <input title="Mark the value as a diameter (⌀)" type="checkbox" checked={diameter} onChange={(e) => setDiameter(e.target.checked)} /> Diameter (⌀)
       </label>
       <div className="pop-actions">
-        <button type="button" className="pop-danger" onClick={props.onRemove}>
+        <button title="Remove this dimension from the drawing" type="button" className="pop-danger" onClick={props.onRemove}>
           <Icon name="trash" /> Remove
         </button>
-        <button type="submit" className="pop-primary" disabled={bad}>
+        <button title="Apply the tolerance to this dimension (Enter)" type="submit" className="pop-primary" disabled={bad}>
           Apply
         </button>
       </div>
@@ -1321,10 +1321,10 @@ function HoleFitForm(props: { diameter: number; fit: string; thread: ThreadSpec 
       </div>
       {thread && <NumberField label="Thread depth (0: the hole's)" value={depth} onChange={setDepth} />}
       <div className="pop-actions">
-        <button type="button" className="pop-danger" onClick={props.onHide}>
+        <button title="Hide this hole's callout on the drawing" type="button" className="pop-danger" onClick={props.onHide}>
           Hide callout
         </button>
-        <button type="submit" className="pop-primary">
+        <button title="Apply the fit or thread to this hole's callout (Enter)" type="submit" className="pop-primary">
           Apply
         </button>
       </div>
@@ -1365,7 +1365,7 @@ function AutoForm(props: { mark: AutoMark; tolerance: Tolerance | null; onApply:
               ["fit", "Fit"],
             ] as const
           ).map(([k, label]) => (
-            <button key={k} type="button" className={kind === k ? "active" : ""} aria-pressed={kind === k} onClick={() => setKind(k)}>
+            <button title={{ none: "No tolerance on this dimension: the general tolerance applies", symmetric: "Plus or minus one value", limits: "Separate upper and lower deviations", fit: "An ISO 286 fit class, such as H7 or g6" }[k]} key={k} type="button" className={kind === k ? "active" : ""} aria-pressed={kind === k} onClick={() => setKind(k)}>
               {label}
             </button>
           ))}
@@ -1385,11 +1385,11 @@ function AutoForm(props: { mark: AutoMark; tolerance: Tolerance | null; onApply:
         </label>
       )}
       <div className="pop-actions">
-        <button type="button" className="pop-danger" onClick={props.onHide}>
+        <button title="Hide this dimension on the drawing" type="button" className="pop-danger" onClick={props.onHide}>
           Hide it
         </button>
         {sized && (
-          <button type="submit" className="pop-primary" disabled={bad}>
+          <button title="Apply the tolerance to this dimension (Enter)" type="submit" className="pop-primary" disabled={bad}>
             Apply
           </button>
         )}
@@ -1434,13 +1434,13 @@ function FrameForm(props: { datums: string[]; initial?: FrameSpec; onApply: (f: 
       <div className="pop-row">
         <NumberField label="Tolerance (mm)" value={tolerance} onChange={setTolerance} step={0.005} />
         <label className="pop-check">
-          <input type="checkbox" checked={zone} onChange={(e) => setZone(e.target.checked)} /> ⌀ zone
+          <input title="Cylindrical tolerance zone: the value is a diameter (⌀)" type="checkbox" checked={zone} onChange={(e) => setZone(e.target.checked)} /> ⌀ zone
         </label>
       </div>
       <div className="pop-row">
         <label className="pop-field">
           <span>Material condition</span>
-          <select className="pop-select" value={modifier} onChange={(e) => setModifier(e.target.value as "" | "mmc" | "lmc")}>
+          <select title="Material condition: the tolerance applies at maximum (Ⓜ) or least (Ⓛ) material" className="pop-select" value={modifier} onChange={(e) => setModifier(e.target.value as "" | "mmc" | "lmc")}>
             <option value="">None</option>
             <option value="mmc">Ⓜ Maximum material</option>
             <option value="lmc">Ⓛ Least material</option>
@@ -1467,7 +1467,7 @@ function FrameForm(props: { datums: string[]; initial?: FrameSpec; onApply: (f: 
       )}
       <div className="pop-actions">
         {props.onRemove ? (
-          <button type="button" className="pop-danger" onClick={props.onRemove}>
+          <button title="Remove this tolerance frame from the drawing" type="button" className="pop-danger" onClick={props.onRemove}>
             <Icon name="trash" /> Remove
           </button>
         ) : (
@@ -1478,7 +1478,7 @@ function FrameForm(props: { datums: string[]; initial?: FrameSpec; onApply: (f: 
             Auto place
           </button>
         )}
-        <button type="submit" className="pop-primary" disabled={!(tolerance > 0) || needs}>
+        <button title={init ? "Update the tolerance frame (Enter)" : "Add the tolerance frame to the drawing (Enter)"} type="submit" className="pop-primary" disabled={!(tolerance > 0) || needs}>
           {init ? "Update" : "Add frame"}
         </button>
       </div>
@@ -1517,7 +1517,7 @@ function DatumForm(props: { datum: DatumSpec; taken: string[]; references: numbe
         </div>
       )}
       <div className="pop-actions">
-        <button type="button" className="pop-danger" onClick={props.onRemove}>
+        <button title="Remove this datum symbol from the drawing" type="button" className="pop-danger" onClick={props.onRemove}>
           <Icon name="trash" /> Remove
         </button>
         {props.onReset && (
@@ -1525,7 +1525,7 @@ function DatumForm(props: { datum: DatumSpec; taken: string[]; references: numbe
             Auto place
           </button>
         )}
-        <button type="submit" className="pop-primary" disabled={letter === props.datum.letter}>
+        <button title={`Rename datum ${props.datum.letter} to ${letter}, and every frame that refers to it (Enter)`} type="submit" className="pop-primary" disabled={letter === props.datum.letter}>
           Rename
         </button>
       </div>
@@ -1544,14 +1544,14 @@ function DetailForm(props: { detail: DetailSpec; letter?: string; dims: number; 
       </div>
       <div className="segmented small" role="group" aria-label="Detail scale">
         {DETAIL_SCALES.map((s) => (
-          <button key={s.label} type="button" className={(props.detail.scale ?? null) === s.value ? "active" : ""} onClick={() => props.onScale(s.value)}>
+          <button title={s.value ? `Draw this detail at ${s.label}` : "The largest standard scale that finds room on the sheet"} key={s.label} type="button" className={(props.detail.scale ?? null) === s.value ? "active" : ""} onClick={() => props.onScale(s.value)}>
             {s.label}
           </button>
         ))}
       </div>
       <div className="pop-sub">Dimension it with the Dimension tool: values are true size.</div>
       <div className="pop-actions">
-        <button type="button" className="pop-danger" onClick={props.onRemove}>
+        <button title="Remove this detail view from the drawing" type="button" className="pop-danger" onClick={props.onRemove}>
           <Icon name="trash" /> Remove
         </button>
         {props.onReset ? (

@@ -83,7 +83,7 @@ export function MaterialProperties(props: { material: string | null; version: un
   };
   return (
     <div className="material-block">
-      <button type="button" className="material-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+      <button type="button" className="material-head" aria-expanded={open} title={open ? "Hide the material's figures" : "Show and edit the material's figures: stiffness, strength, density"} onClick={() => setOpen(!open)}>
         <span>Material</span>
         <b>{p ? p.name : props.material}</b>
         <small>{p ? `${show(p.e / 1000, 1)} GPa · yield ${show(p.yield_strength, 0)} MPa${p.edited?.length ? " · edited" : " · typical"}` : "no figures: set them"}</small>
@@ -124,7 +124,7 @@ export function MaterialProperties(props: { material: string | null; version: un
           </div>
           {p && <p className="material-source">{p.source}</p>}
           {own?.set && (
-            <button type="button" className="link-button" onClick={() => void props.run("solid.material.set_properties", { target: own.id, properties: null }).then(() => setTick((t) => t + 1))}>
+            <button type="button" className="link-button" title="Drop your edited figures and use the material's typical ones" onClick={() => void props.run("solid.material.set_properties", { target: own.id, properties: null }).then(() => setTick((t) => t + 1))}>
               Back to typical figures
             </button>
           )}

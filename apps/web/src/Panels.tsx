@@ -108,13 +108,13 @@ function ProjectSwitcher() {
   return (
     <div className="project-switcher">
       <h3 className="panel-section">Projects</h3>
-      <button type="button" className="secondary all-projects" onClick={() => setHome(true)}>
+      <button title="Open the projects home: every project, to open, start or import" type="button" className="secondary all-projects" onClick={() => setHome(true)}>
         <Icon name="grid" /> All projects
       </button>
       {home && <ProjectsHome onClose={() => setHome(false)} />}
       {list === null && <p className="small muted">Loading…</p>}
       {list?.map((p) => (
-        <button type="button" key={p.name} className={`list-row ${current(p) ? "active" : ""}`} onClick={() => !current(p) && open(p.name, p.default)}>
+        <button title={current(p) ? "The project open now" : `Open ${p.info?.title || projectTitle(p.default ? null : p.name)}`} type="button" key={p.name} className={`list-row ${current(p) ? "active" : ""}`} onClick={() => !current(p) && open(p.name, p.default)}>
           <Icon name="layers" />
           <span>
             {p.info?.title || projectTitle(p.default ? null : p.name)}
@@ -131,7 +131,7 @@ function ProjectSwitcher() {
         }}
       >
         <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="New project name" aria-label="New project name" />
-        <button type="submit" className="secondary" disabled={!slug}>
+        <button title={slug ? `Start a new empty project named ${slug}` : "Type a name to start a new project"} type="submit" className="secondary" disabled={!slug}>
           <Icon name="plus" /> Create
         </button>
       </form>
@@ -154,19 +154,19 @@ export function ProjectBody(props: {
       </div>
       <ProjectSwitcher />
       <MachineConnection />
-      <button type="button" className="list-row" onClick={props.onStorage}>
+      <button title="Where the project is kept: this computer or cloud storage" type="button" className="list-row" onClick={props.onStorage}>
         <Icon name="cloud" />
         <span>Project storage</span>
       </button>
-      <button type="button" className="list-row" onClick={props.onHistory}>
+      <button title="Every change made to the project, newest first" type="button" className="list-row" onClick={props.onHistory}>
         <Icon name="history" />
         <span>Change history</span>
       </button>
-      <button type="button" className="list-row" onClick={props.onRestore}>
+      <button title="Show every hidden panel and toolbar again (Esc)" type="button" className="list-row" onClick={props.onRestore}>
         <Icon name="eye" />
         <span>Restore all controls</span>
       </button>
-      <button type="button" className="list-row" onClick={props.onFocus}>
+      <button title="Hide every panel and toolbar to see only the model (F)" type="button" className="list-row" onClick={props.onFocus}>
         <Icon name="expand" />
         <span>Hide entire interface</span>
         <kbd>F</kbd>
@@ -257,7 +257,7 @@ export function ObjectsBody(props: {
       {presets.length > 0 && (
         <div className="presets">
           {presets.map((p) => (
-            <button
+            <button title={`Add ${p.name} to the project's materials, ${p.density} kg/m³`}
               type="button"
               key={p.name}
               className="chip"
@@ -493,14 +493,14 @@ export function PropertiesBody(props: PropertiesProps) {
                 </div>
               );
             })}
-            <button type="button" className="secondary finish-add" onClick={props.onEdges}>
+            <button title="Round or bevel picked edges of this part (E)" type="button" className="secondary finish-add" onClick={props.onEdges}>
               <Icon name="fillet" /> Round or bevel edges <kbd>E</kbd>
             </button>
             <div className="finish-add-row">
-              <button type="button" className="secondary finish-add" onClick={() => props.onFaceTool("shell")}>
+              <button title="Hollow the part out to a wall thickness, leaving picked faces open (H)" type="button" className="secondary finish-add" onClick={() => props.onFaceTool("shell")}>
                 <Icon name="shell" /> Shell <kbd>H</kbd>
               </button>
-              <button type="button" className="secondary finish-add" onClick={() => props.onFaceTool("draft")}>
+              <button title="Taper picked faces so the part releases from a mould (D)" type="button" className="secondary finish-add" onClick={() => props.onFaceTool("draft")}>
                 <Icon name="draft" /> Draft <kbd>D</kbd>
               </button>
             </div>
@@ -538,7 +538,7 @@ export function PropertiesBody(props: PropertiesProps) {
           <header>
             <h3>Pivot</h3>
             <span className="section-note">{pivotName(props.pivot)}</span>
-            <button type="button" className="lock active" onClick={props.onTogglePivot}>
+            <button title="Finish placing the pivot (P)" type="button" className="lock active" onClick={props.onTogglePivot}>
               <Icon name="check" /> Done
             </button>
           </header>
@@ -712,7 +712,7 @@ export function PropertiesBody(props: PropertiesProps) {
         )}
       </p>
 
-      <button type="button" className="delete-part" onClick={props.onDelete}>
+      <button title="Delete this part from the project (Delete)" type="button" className="delete-part" onClick={props.onDelete}>
         <Icon name="trash" /> Delete part
       </button>
     </div>
@@ -778,7 +778,7 @@ function MakeSections(props: {
               const active = props.selectedPart === p.name;
               return (
                 <div key={p.name} className={`part-row ${active ? "active" : ""}`}>
-                  <button type="button" ref={active ? picked : undefined} className="part-pick" onClick={() => props.onSelectPart(active ? null : p.name)}>
+                  <button title={active ? `Deselect ${p.name}` : `Select ${p.name} to see and change it`} type="button" ref={active ? picked : undefined} className="part-pick" onClick={() => props.onSelectPart(active ? null : p.name)}>
                     <span className="row-ball" style={{ "--ball": materialLook(matName).color } as React.CSSProperties} aria-hidden />
                     <span className="part-text">
                       <strong>{p.name}</strong>
@@ -833,7 +833,7 @@ function MakeSections(props: {
           ))}
         </div>
         {parts.length > 0 && (
-          <a className="download primary" href={projectUrl(`/export/${part.id}.zip?tolerance=${accuracy}`)} download>
+          <a title="Everything to make it, in one zip: STEP and STL per part, DXF cut files for sheet parts, and a cut list" className="download primary" href={projectUrl(`/export/${part.id}.zip?tolerance=${accuracy}`)} download>
             <Icon name="download" /> Fabrication package
             <small>
               STEP + STL per part{sheet > 0 ? ` · ${sheet} DXF cut files` : ""} · cut list
@@ -970,10 +970,10 @@ export function HistoryBody(props: {
         </div>
       ))}
       <div className="row-buttons">
-        <button type="button" className="secondary" onClick={props.onUndo}>
+        <button title="Undo the latest change you made (⌘Z)" type="button" className="secondary" onClick={props.onUndo}>
           <Icon name="undo" /> Undo my latest
         </button>
-        <button type="button" className="secondary" onClick={props.onRedo}>
+        <button title="Redo the change you undid (⇧⌘Z)" type="button" className="secondary" onClick={props.onRedo}>
           <Icon name="redo" /> Redo
         </button>
       </div>
@@ -995,24 +995,24 @@ export function ViewsBody(props: {
   return (
     <>
       {(["iso", "front", "back", "left", "right", "top", "bottom"] as ViewName[]).map((v) => (
-        <button type="button" key={v} className={`list-row ${props.view === v ? "active" : ""}`} onClick={() => props.onView(v)}>
+        <button title={`Look at the model from the ${v === "iso" ? "isometric corner" : v} (${({ iso: 0, front: 1, top: 2, right: 3, back: 4, bottom: 5, left: 6 } as Record<string, number>)[v]})`} type="button" key={v} className={`list-row ${props.view === v ? "active" : ""}`} onClick={() => props.onView(v)}>
           <Icon name="cube" />
           <span>{v[0].toUpperCase() + v.slice(1)}</span>
         </button>
       ))}
-      <button type="button" className="list-row" onClick={props.onFit}>
+      <button title="Zoom to fit every part in the view (Home)" type="button" className="list-row" onClick={props.onFit}>
         <Icon name="fit" />
         <span>Fit all parts</span>
       </button>
-      <button type="button" className="list-row" onClick={props.onWireframe}>
+      <button title={props.wireframe ? "Show the parts as shaded solids again" : "Show only the parts' edges, see-through"} type="button" className="list-row" onClick={props.onWireframe}>
         <Icon name="grid" />
         <span>{props.wireframe ? "Solid shading" : "Wireframe"}</span>
       </button>
-      <button type="button" className={`list-row ${props.turntable ? "active" : ""}`} onClick={props.onTurntable}>
+      <button title={props.turntable ? "Stop the model turning" : "Turn the model slowly round, like on a turntable"} type="button" className={`list-row ${props.turntable ? "active" : ""}`} onClick={props.onTurntable}>
         <Icon name="rotate" />
         <span>{props.turntable ? "Stop turntable" : "Turntable"}</span>
       </button>
-      <button type="button" className={`list-row ${props.rendering ? "active" : ""}`} onClick={props.onRender}>
+      <button title={props.rendering ? "Stop the photoreal render and go back to the live view" : "Render the view photoreal, with light and shadows"} type="button" className={`list-row ${props.rendering ? "active" : ""}`} onClick={props.onRender}>
         <Icon name="spark" />
         <span>{props.rendering ? "Stop rendering" : "Render (photoreal)"}</span>
       </button>

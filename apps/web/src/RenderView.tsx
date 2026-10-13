@@ -61,24 +61,24 @@ export function RenderView(props: { source: () => RenderSource | null; name: str
       <div className="render-bar" role="toolbar" aria-label="Render">
         <strong>Render</strong>
         <span className="render-samples">{samples < 0 ? "Preparing the scene…" : `${samples} samples`}</span>
-        <select value={size} onChange={(e) => setSize(Number(e.target.value))} aria-label="Image size">
+        <select value={size} onChange={(e) => setSize(Number(e.target.value))} aria-label="Image size" title="Size of the saved PNG">
           {SIZES.map((s, i) => (
             <option key={s.label} value={i}>
               {s.label}
             </option>
           ))}
         </select>
-        <select value={quality} onChange={(e) => setQuality(Number(e.target.value))} aria-label="Samples">
+        <select value={quality} onChange={(e) => setQuality(Number(e.target.value))} aria-label="Samples" title="Samples per pixel for the saved PNG: more is smoother and slower">
           {[64, 128, 256, 512, 1024].map((q) => (
             <option key={q} value={q}>
               {q} samples
             </option>
           ))}
         </select>
-        <button type="button" className="primary" onClick={save} disabled={saving !== null}>
+        <button type="button" className="primary" title="Render the picture at the chosen size and samples, and download it as a PNG" onClick={save} disabled={saving !== null}>
           {saving === null ? "Save PNG" : `Rendering ${saving}/${quality}…`}
         </button>
-        <button type="button" className="secondary" onClick={props.onClose}>
+        <button type="button" className="secondary" title="Leave the render and go back to the model" onClick={props.onClose}>
           Close
         </button>
         {error && <span className="render-error">{error}</span>}

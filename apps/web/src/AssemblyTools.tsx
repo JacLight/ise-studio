@@ -171,7 +171,7 @@ export function MateBuilder(props: { scope: string | null; entities: ReadonlyMap
             </label>
           )}
           <div className="row-buttons">
-            <button
+            <button title="Join the moving part to the one that stays with this mate"
               type="button"
               className="primary"
               onClick={() => {
@@ -189,14 +189,14 @@ export function MateBuilder(props: { scope: string | null; entities: ReadonlyMap
             >
               <Icon name="link" /> Mate
             </button>
-            <button type="button" className="secondary" onClick={() => setPicks((p) => p.slice(0, 1))}>
+            <button title="Pick the moving part's face again (Esc)" type="button" className="secondary" onClick={() => setPicks((p) => p.slice(0, 1))}>
               Back
             </button>
           </div>
         </div>
       )}
       {step < 2 && (
-        <button type="button" className="aj-cancel" onClick={props.onCancel}>
+        <button title="Stop making the mate (Esc steps back a pick first)" type="button" className="aj-cancel" onClick={props.onCancel}>
           Cancel · Esc
         </button>
       )}
@@ -262,7 +262,7 @@ export function DofSummary(props: { scope: string | null; stamp: string; onRepor
   const redundant = report.groups.flatMap((g) => g.redundant_joints);
   return (
     <div className={`at-dof ${bad ? "bad" : free.length ? "free" : "ok"}`}>
-      <button type="button" className="at-dof-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+      <button title={open ? "Hide what can still move" : "Show what can still move, part by part"} type="button" className="at-dof-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
         <span className="at-dof-dot" />
         <span>
           {bad ? "Cannot all hold" : free.length ? `${report.free} freedom${report.free === 1 ? "" : "s"} left` : "Fully defined"}
@@ -308,12 +308,12 @@ export function DofSummary(props: { scope: string | null; stamp: string; onRepor
 type CouplingKind = "gear" | "belt" | "rack_pinion" | "screw" | "cam" | "ratio";
 type CouplingData = { name: string; kind: CouplingKind; assembly?: string; driver: string; follower: string; ratio: number; offset: number; profile?: [number, number][] };
 export const couplingOf = (e: EntityView | undefined) => e?.components["assembly.coupling"] as CouplingData | undefined;
-const COUPLINGS: { kind: CouplingKind; label: string; fields: { key: string; label: string }[] }[] = [
-  { kind: "gear", label: "Gears", fields: [{ key: "t1", label: "Driver teeth" }, { key: "t2", label: "Follower teeth" }] },
-  { kind: "belt", label: "Belt", fields: [{ key: "t1", label: "Driver teeth" }, { key: "t2", label: "Follower teeth" }] },
-  { kind: "rack_pinion", label: "Rack", fields: [{ key: "radius", label: "Pinion radius (mm)" }] },
-  { kind: "screw", label: "Screw", fields: [{ key: "lead", label: "Lead (mm/turn)" }] },
-  { kind: "ratio", label: "Ratio", fields: [{ key: "ratio", label: "Follower per driver" }] },
+const COUPLINGS: { kind: CouplingKind; label: string; tip: string; fields: { key: string; label: string }[] }[] = [
+  { kind: "gear", label: "Gears", tip: "Meshing gears: the follower turns the other way by the teeth ratio", fields: [{ key: "t1", label: "Driver teeth" }, { key: "t2", label: "Follower teeth" }] },
+  { kind: "belt", label: "Belt", tip: "Pulleys on a belt: the follower turns the same way by the teeth ratio", fields: [{ key: "t1", label: "Driver teeth" }, { key: "t2", label: "Follower teeth" }] },
+  { kind: "rack_pinion", label: "Rack", tip: "Rack and pinion: a turn slides the rack by the pinion's circumference", fields: [{ key: "radius", label: "Pinion radius (mm)" }] },
+  { kind: "screw", label: "Screw", tip: "Lead screw: each turn moves the nut by the lead", fields: [{ key: "lead", label: "Lead (mm/turn)" }] },
+  { kind: "ratio", label: "Ratio", tip: "Any fixed ratio: the follower moves this much per unit of the driver", fields: [{ key: "ratio", label: "Follower per driver" }] },
 ];
 
 export function Couplings(props: { scope: string | null; joints: EntityView[]; entities: ReadonlyMap<string, EntityView>; run: Run }) {
@@ -358,7 +358,7 @@ export function Couplings(props: { scope: string | null; joints: EntityView[]; e
         <div className="aj-form at-form">
           <div className="seg-toggle" role="group" aria-label="Kind of coupling">
             {COUPLINGS.map((k) => (
-              <button key={k.kind} type="button" className={form.kind === k.kind ? "on" : ""} onClick={() => setForm({ ...form, kind: k.kind })}>
+              <button title={k.tip} key={k.kind} type="button" className={form.kind === k.kind ? "on" : ""} onClick={() => setForm({ ...form, kind: k.kind })}>
                 {k.label}
               </button>
             ))}
@@ -367,7 +367,7 @@ export function Couplings(props: { scope: string | null; joints: EntityView[]; e
             {(["driver", "follower"] as const).map((role) => (
               <label key={role}>
                 <span>{role === "driver" ? "Driver" : "Follower"}</span>
-                <select value={form[role]} onChange={(e) => setForm({ ...form, [role]: e.target.value })}>
+                <select title={role === "driver" ? "The joint that drives the other" : "The joint that follows the driver"} value={form[role]} onChange={(e) => setForm({ ...form, [role]: e.target.value })}>
                   {moving.map((j) => (
                     <option key={j.id} value={j.id}>
                       {paramsOf(j).name}
@@ -384,7 +384,7 @@ export function Couplings(props: { scope: string | null; joints: EntityView[]; e
             ))}
           </div>
           <div className="row-buttons">
-            <button
+            <button title="Make the coupling: the follower moves whenever the driver does"
               type="button"
               className="primary"
               onClick={async () => {
@@ -396,7 +396,7 @@ export function Couplings(props: { scope: string | null; joints: EntityView[]; e
             >
               <Icon name="link" /> Couple
             </button>
-            <button type="button" className="secondary" onClick={() => setForm(null)}>
+            <button title="Close without making a coupling" type="button" className="secondary" onClick={() => setForm(null)}>
               Cancel
             </button>
           </div>
@@ -438,7 +438,7 @@ export function PatternSection(props: { entity: EntityView; entities: ReadonlyMa
           </span>
         </p>
         <div className="row-buttons">
-          <button type="button" className="secondary" onClick={() => props.onSelect(p.seed)}>
+          <button title="Select the instance this pattern copies" type="button" className="secondary" onClick={() => props.onSelect(p.seed)}>
             Select the seed
           </button>
         </div>
@@ -494,10 +494,10 @@ export function PatternSection(props: { entity: EntityView; entities: ReadonlyMa
       {form && (
         <div className="aj-form at-form">
           <div className="seg-toggle" role="group" aria-label="Kind of pattern">
-            <button type="button" className={form.kind === "linear" ? "on" : ""} onClick={() => setForm({ ...form, kind: "linear" })}>
+            <button title="Copies in a straight line, evenly spaced" type="button" className={form.kind === "linear" ? "on" : ""} onClick={() => setForm({ ...form, kind: "linear" })}>
               <Icon name="patternLinear" /> In a row
             </button>
-            <button type="button" className={form.kind === "circular" ? "on" : ""} onClick={() => setForm({ ...form, kind: "circular" })}>
+            <button title="Copies spread round an axis through the assembly's origin" type="button" className={form.kind === "circular" ? "on" : ""} onClick={() => setForm({ ...form, kind: "circular" })}>
               <Icon name="patternCircular" /> Round an axis
             </button>
           </div>
@@ -521,14 +521,14 @@ export function PatternSection(props: { entity: EntityView; entities: ReadonlyMa
           <div className="seg-toggle" role="group" aria-label={form.kind === "linear" ? "Direction" : "Axis"}>
             <span className="at-seg-label">{form.kind === "linear" ? "Along" : "Round"}</span>
             {AXES.map((a, k) => (
-              <button key={a.label} type="button" className={form.axis === k ? "on" : ""} onClick={() => setForm({ ...form, axis: k })}>
+              <button title={form.kind === "linear" ? `Copies along the ${a.label} axis` : `Copies round the ${a.label} axis`} key={a.label} type="button" className={form.axis === k ? "on" : ""} onClick={() => setForm({ ...form, axis: k })}>
                 {a.label}
               </button>
             ))}
           </div>
           {form.kind === "circular" && <p className="aj-kind-hint">Round the axis through the assembly's origin.</p>}
           <div className="row-buttons">
-            <button
+            <button title="Make the copies; they follow the seed when it moves"
               type="button"
               className="primary"
               onClick={async () => {
@@ -542,7 +542,7 @@ export function PatternSection(props: { entity: EntityView; entities: ReadonlyMa
             >
               <Icon name={form.kind === "linear" ? "patternLinear" : "patternCircular"} /> Make copies
             </button>
-            <button type="button" className="secondary" onClick={() => setForm(null)}>
+            <button title="Close without making a pattern" type="button" className="secondary" onClick={() => setForm(null)}>
               Cancel
             </button>
           </div>
@@ -734,7 +734,7 @@ export function Player(props: { played: Played; unit: string; name: string; view
       <div className={`gear-verdict ${played.clashes.length || played.binds_at !== null ? "bad" : "ok"}`}>
         {played.clashes.length > 0 ? (
           played.clashes.map((c) => (
-            <button key={`${c.a_id}${c.b_id}`} type="button" className="clash-jump" onClick={() => (setPlaying(false), setAt(((c.range?.[0] ?? c.at) - first) / Math.max(1e-9, span - first) * last))}>
+            <button title={`Jump to where ${c.a} first hits ${c.b}`} key={`${c.a_id}${c.b_id}`} type="button" className="clash-jump" onClick={() => (setPlaying(false), setAt(((c.range?.[0] ?? c.at) - first) / Math.max(1e-9, span - first) * last))}>
               {c.a} hits {c.b} from {n1(c.range?.[0] ?? c.at, 2)} to {n1(c.range?.[1] ?? c.at, 2)} {props.unit}
             </button>
           ))
@@ -774,7 +774,7 @@ export function Player(props: { played: Played; unit: string; name: string; view
         <button type="button" className="secondary" disabled={!!exporting} onClick={exportVideo} title="Record the motion as a WebM video">
           <Icon name="download" /> Video
         </button>
-        <button type="button" className="secondary" onClick={props.onDone}>
+        <button title="Close the player and put the parts back" type="button" className="secondary" onClick={props.onDone}>
           Done
         </button>
       </div>
@@ -786,12 +786,12 @@ export function Player(props: { played: Played; unit: string; name: string; view
 // ---- The assembly's studio: poses, exploded views, motion, robot, interference -----------
 
 type Tab = "poses" | "explode" | "motion" | "robot" | "clash";
-const TABS: { tab: Tab; label: string }[] = [
-  { tab: "poses", label: "Poses" },
-  { tab: "explode", label: "Exploded" },
-  { tab: "motion", label: "Motion" },
-  { tab: "robot", label: "Robot" },
-  { tab: "clash", label: "Interference" },
+const TABS: { tab: Tab; label: string; tip: string }[] = [
+  { tab: "poses", label: "Poses", tip: "Named joint values to come back to: home, park, reach" },
+  { tab: "explode", label: "Exploded", tip: "Saved exploded views: the parts pulled apart in steps" },
+  { tab: "motion", label: "Motion", tip: "Motion studies: several joints on one timeline, checked for clashes" },
+  { tab: "robot", label: "Robot", tip: "Arm kinematics: reach a point, the reach envelope, paths through poses" },
+  { tab: "clash", label: "Interference", tip: "Check every pair of parts for overlaps and near misses" },
 ];
 
 type PoseData = { name: string; assembly?: string; values: Record<string, number[]> };
@@ -809,7 +809,7 @@ export function AssemblyStudio(props: { scope: string; frame: Transform; entitie
       </header>
       <div className="seg-toggle at-tabs" role="tablist">
         {TABS.map((t) => (
-          <button key={t.tab} type="button" role="tab" aria-selected={tab === t.tab} className={tab === t.tab ? "on" : ""} onClick={() => setTab((x) => (x === t.tab ? null : t.tab))}>
+          <button title={t.tip} key={t.tab} type="button" role="tab" aria-selected={tab === t.tab} className={tab === t.tab ? "on" : ""} onClick={() => setTab((x) => (x === t.tab ? null : t.tab))}>
             {t.label}
           </button>
         ))}
@@ -865,7 +865,7 @@ function Poses({ scope, entities, run }: StudioProps) {
       })}
       <div className="at-inline">
         <input value={name} placeholder="Pose name (home, reach…)" onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && name.trim() && run("assembly.pose.create", { assembly: scope, name: name.trim() }).then((o) => o && setName(""))} />
-        <button type="button" className="primary" disabled={!name.trim()} onClick={() => run("assembly.pose.create", { assembly: scope, name: name.trim() }).then((o) => o && setName(""))}>
+        <button title="Save the joints' current values as a named pose (Enter)" type="button" className="primary" disabled={!name.trim()} onClick={() => run("assembly.pose.create", { assembly: scope, name: name.trim() }).then((o) => o && setName(""))}>
           Save pose
         </button>
       </div>
@@ -936,7 +936,7 @@ function Exploded({ scope, frame, entities, run, view }: StudioProps) {
         return (
           <div key={e.id} className={`at-row ${open?.id === e.id ? "on" : ""}`}>
             <Icon name="explode" />
-            <button type="button" className="at-row-main at-link" onClick={() => (open?.id === e.id ? close() : show(e.id))}>
+            <button title={open?.id === e.id ? "Close the exploded view and put the parts back" : `Play ${v.name}: the parts pulled apart step by step`} type="button" className="at-row-main at-link" onClick={() => (open?.id === e.id ? close() : show(e.id))}>
               <strong>{v.name}</strong>
               <small>{v.steps.length === 1 ? "1 step" : `${v.steps.length} steps`}</small>
             </button>
@@ -956,7 +956,7 @@ function Exploded({ scope, frame, entities, run, view }: StudioProps) {
             <output className="gear-turn-angle">{open.r.steps[Math.round(at)]?.name}</output>
           </div>
           <div className="row-buttons">
-            <button type="button" className="secondary" onClick={close}>
+            <button title="Close the exploded view and put the parts back" type="button" className="secondary" onClick={close}>
               Done
             </button>
           </div>
@@ -964,11 +964,11 @@ function Exploded({ scope, frame, entities, run, view }: StudioProps) {
       )}
       {error && <p className="print-note bad">{error}</p>}
       <div className="at-inline">
-        <label className="at-spread">
+        <label title="How far the parts are pulled apart: 1 is the usual spacing, 2 twice as far" className="at-spread">
           <span>Spread</span>
           <input value={spread} inputMode="decimal" onChange={(e) => setSpread(e.target.value)} />
         </label>
-        <button
+        <button title="Pull the parts apart automatically, by the spread given, into a new saved view"
           type="button"
           className="primary"
           onClick={async () => {
@@ -1012,7 +1012,7 @@ function Studies({ scope, entities, run, view }: StudioProps) {
         return (
           <div key={e.id} className={`at-row ${playing?.id === e.id ? "on" : ""}`}>
             <Icon name="play" />
-            <button type="button" className="at-row-main at-link" onClick={() => (playing?.id === e.id ? (setPlaying(null), view.poses(null)) : open(e.id, s.name))}>
+            <button title={playing?.id === e.id ? "Stop the study and put the parts back" : `Play ${s.name} and check every pair of parts on the way`} type="button" className="at-row-main at-link" onClick={() => (playing?.id === e.id ? (setPlaying(null), view.poses(null)) : open(e.id, s.name))}>
               <strong>{s.name}</strong>
               <small>
                 {n1(s.duration, 1)} s · {s.tracks.length === 1 ? "1 joint" : `${s.tracks.length} joints`}{busy === e.id ? " · playing it through…" : ""}
@@ -1034,7 +1034,7 @@ function Studies({ scope, entities, run, view }: StudioProps) {
               const p = comp<PoseData>(e, "assembly.pose")!;
               const k = chosen.indexOf(e.id);
               return (
-                <button key={e.id} type="button" className={`at-chip ${k >= 0 ? "on" : ""}`} onClick={() => setChosen((c) => [...c, e.id])}>
+                <button title={`Add ${p.name} as the next pose the study moves through`} key={e.id} type="button" className={`at-chip ${k >= 0 ? "on" : ""}`} onClick={() => setChosen((c) => [...c, e.id])}>
                   {k >= 0 && <em>{chosen.map((x, i) => (x === e.id ? i + 1 : null)).filter(Boolean).join(",")}</em>}
                   {p.name}
                 </button>
@@ -1042,11 +1042,11 @@ function Studies({ scope, entities, run, view }: StudioProps) {
             })}
           </div>
           <div className="at-inline">
-            <label className="at-spread">
+            <label title="Seconds the motion takes from each pose to the next" className="at-spread">
               <span>Seconds each</span>
               <input value={gap} inputMode="decimal" onChange={(e) => setGap(e.target.value)} />
             </label>
-            <button
+            <button title="Make a motion study through the chosen poses, in the order clicked"
               type="button"
               className="primary"
               disabled={chosen.length < 2}
@@ -1062,7 +1062,7 @@ function Studies({ scope, entities, run, view }: StudioProps) {
               New study
             </button>
             {chosen.length > 0 && (
-              <button type="button" className="secondary" onClick={() => setChosen([])}>
+              <button title="Forget the chosen poses" type="button" className="secondary" onClick={() => setChosen([])}>
                 Clear
               </button>
             )}
@@ -1132,7 +1132,7 @@ function Robot({ scope, frame, entities, run, view }: StudioProps) {
     <div className="at-tab">
       <label className="prop-field">
         <span>End of the arm</span>
-        <select value={tip ?? ""} onChange={(e) => (setTip(e.target.value), setReach(null), setIk(null), setPath(null), setTarget(["", "", ""]))}>
+        <select title="The part at the end of the arm: the chain runs from the ground out to it" value={tip ?? ""} onChange={(e) => (setTip(e.target.value), setReach(null), setIk(null), setPath(null), setTarget(["", "", ""]))}>
           {held.map((m) => (
             <option key={m.id} value={m.id}>
               {instance(m)!.name}
@@ -1172,7 +1172,7 @@ function Robot({ scope, frame, entities, run, view }: StudioProps) {
             ))}
           </div>
           <div className="row-buttons">
-            <button
+            <button title="Check whether the arm's tip can reach the point, without moving it"
               type="button"
               className="secondary"
               onClick={async () => {
@@ -1186,7 +1186,7 @@ function Robot({ scope, frame, entities, run, view }: StudioProps) {
             >
               Can it reach?
             </button>
-            <button type="button" className="primary" onClick={() => run("assembly.robot.move_to", { tip, to: tv }).then(() => setIk(null))}>
+            <button title="Set the arm's joints so its tip reaches the point" type="button" className="primary" onClick={() => run("assembly.robot.move_to", { tip, to: tv }).then(() => setIk(null))}>
               Move there
             </button>
           </div>
@@ -1194,11 +1194,11 @@ function Robot({ scope, frame, entities, run, view }: StudioProps) {
           <div className="at-sub">
             <span>Reach envelope</span>
             {reach ? (
-              <button type="button" className="aj-add" onClick={() => setReach(null)}>
+              <button title="Hide the cloud of points the tip can reach" type="button" className="aj-add" onClick={() => setReach(null)}>
                 Hide
               </button>
             ) : (
-              <button type="button" className="aj-add" onClick={() => getJson<Reach>(`/robot/${tip}/reach?samples=2500`).then(setReach, (e) => setError(String(e.message)))}>
+              <button title="Show the cloud of points the tip can reach within the joints' limits" type="button" className="aj-add" onClick={() => getJson<Reach>(`/robot/${tip}/reach?samples=2500`).then(setReach, (e) => setError(String(e.message)))}>
                 Show
               </button>
             )}
@@ -1218,7 +1218,7 @@ function Robot({ scope, frame, entities, run, view }: StudioProps) {
                   const p = comp<PoseData>(e, "assembly.pose")!;
                   const k = chosen.indexOf(e.id);
                   return (
-                    <button key={e.id} type="button" className={`at-chip ${k >= 0 ? "on" : ""}`} onClick={() => setChosen((c) => [...c, e.id])}>
+                    <button title={`Add ${p.name} as the next pose the arm moves through`} key={e.id} type="button" className={`at-chip ${k >= 0 ? "on" : ""}`} onClick={() => setChosen((c) => [...c, e.id])}>
                       {k >= 0 && <em>{chosen.map((x, i) => (x === e.id ? i + 1 : null)).filter(Boolean).join(",")}</em>}
                       {p.name}
                     </button>
@@ -1226,7 +1226,7 @@ function Robot({ scope, frame, entities, run, view }: StudioProps) {
                 })}
               </div>
               <div className="row-buttons">
-                <button
+                <button title="Play the arm moving through the chosen poses, in the order clicked"
                   type="button"
                   className="primary"
                   disabled={!chosen.length}
@@ -1243,7 +1243,7 @@ function Robot({ scope, frame, entities, run, view }: StudioProps) {
                   <Icon name="play" /> Move through them
                 </button>
                 {chosen.length > 0 && (
-                  <button type="button" className="secondary" onClick={() => setChosen([])}>
+                  <button title="Forget the chosen poses" type="button" className="secondary" onClick={() => setChosen([])}>
                     Clear
                   </button>
                 )}
@@ -1282,11 +1282,11 @@ function Interference({ scope, frame, view, onSelect }: StudioProps) {
   return (
     <div className="at-tab">
       <div className="at-inline">
-        <label className="at-spread">
+        <label title="Pairs closer than this many millimetres are listed as near misses" className="at-spread">
           <span>Near (mm)</span>
           <input value={clearance} inputMode="decimal" onChange={(e) => setClearance(e.target.value)} />
         </label>
-        <button type="button" className="primary" disabled={busy} onClick={go}>
+        <button title="Check every pair of parts for overlaps, touching and gaps under the Near distance" type="button" className="primary" disabled={busy} onClick={go}>
           <Icon name="collide" /> {busy ? "Checking every pair…" : r ? "Check again" : "Check interference"}
         </button>
       </div>
@@ -1301,7 +1301,7 @@ function Interference({ scope, frame, view, onSelect }: StudioProps) {
           <ul className="aj-pairs">
             {[...r.overlaps.filter((o) => !o.joined && !o.fastener), ...r.near, ...r.overlaps.filter((o) => o.joined || o.fastener)].slice(0, 40).map((o) => (
               <li key={`${o.a_path.join()}|${o.b_path.join()}`}>
-                <button type="button" onClick={() => o.a_path[0] && onSelect(o.a_path[0])}>
+                <button title={`Select ${o.a}`} type="button" onClick={() => o.a_path[0] && onSelect(o.a_path[0])}>
                   <span className={`aj-dot ${o.volume > 0 ? (o.joined || o.fastener ? "joined" : "hit") : "near"}`} />
                   <span>
                     {o.a} – {o.b}

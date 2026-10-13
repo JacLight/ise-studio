@@ -113,7 +113,7 @@ export function RequirementsPanel(props: {
                 <strong>{req.name}</strong>
                 <div className="req-targets">
                   {targetsOf(req.rule).slice(0, 3).map((id) => (
-                    <button type="button" key={id} className="target-chip" onClick={() => props.onSelectPart(id)}>
+                    <button type="button" key={id} className="target-chip" title={`Select ${name(id)}, a part this requirement checks`} onClick={() => props.onSelectPart(id)}>
                       {name(id)}
                     </button>
                   ))}
@@ -177,7 +177,7 @@ export function RequirementsPanel(props: {
             )}
 
             {!blocked && !r?.passed && e.result?.fix && !preview && (
-              <button type="button" className="fix" onClick={() => props.onFix(e.result!.fix!)}>
+              <button type="button" className="fix" title={`Change the design so ${req.name} passes: ${e.result.fix.label}`} onClick={() => props.onFix(e.result!.fix!)}>
                 <Icon name="spark" />
                 <span>{e.result.fix.label}</span>
               </button>
@@ -190,7 +190,7 @@ export function RequirementsPanel(props: {
         <h3>Add a requirement</h3>
         <div className="kind-grid">
           {KINDS.map((k) => (
-            <button type="button" key={k.kind} className="kind" onClick={() => props.onCreate(k.kind)}>
+            <button type="button" key={k.kind} className="kind" title={`Add a requirement: ${k.detail.toLowerCase()} (it starts from the design as it is, so it passes)`} onClick={() => props.onCreate(k.kind)}>
               <span className="kind-icon">
                 <Icon name={k.icon} />
               </span>
@@ -211,7 +211,7 @@ export function RequirementsPanel(props: {
               <div>
                 <p>{f.message}</p>
                 {f.fix && (
-                  <button type="button" className="fix small-fix" onClick={() => props.onFix(f.fix!)}>
+                  <button type="button" className="fix small-fix" title={`Change the design: ${f.fix.label}`} onClick={() => props.onFix(f.fix!)}>
                     <Icon name="spark" /> <span>{f.fix.label}</span>
                   </button>
                 )}

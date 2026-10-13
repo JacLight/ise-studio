@@ -505,14 +505,14 @@ export function StockBrowser(props: {
 
       <div className="stock-body">
         <nav className="stock-cats" aria-label="Categories">
-          <button type="button" className={category === null ? "active" : ""} onClick={() => setCategory(null)}>
+          <button type="button" className={category === null ? "active" : ""} title="Show parts from every category" onClick={() => setCategory(null)}>
             <span>All parts</span>
             <small>{[...counts.values()].reduce((a, b) => a + b, 0) || ""}</small>
           </button>
           {catalogue?.categories
             .filter((c) => catalogue.families.some((f) => f.category === c))
             .map((c) => (
-              <button type="button" key={c} className={category === c ? "active" : ""} onClick={() => setCategory(category === c ? null : c)} disabled={!counts.get(c)}>
+              <button type="button" key={c} className={category === c ? "active" : ""} title={category === c ? "Show parts from every category" : `Show only ${c.toLowerCase()} (${counts.get(c) ?? 0})`} onClick={() => setCategory(category === c ? null : c)} disabled={!counts.get(c)}>
                 <span>{c}</span>
                 <small>{counts.get(c) ?? 0}</small>
               </button>
@@ -541,6 +541,7 @@ export function StockBrowser(props: {
                 type="button"
                 key={f.id}
                 className={`stock-card ${familyId === f.id ? "active" : ""}`}
+                title={`${f.name}${f.standard ? ` (${f.standard})` : ""}: click to see its sizes, double-click to insert`}
                 onClick={() => choose(f, sizes[0])}
                 onDoubleClick={() => void insert()}
                 aria-pressed={familyId === f.id}
@@ -584,6 +585,7 @@ export function StockBrowser(props: {
                           key={g.key}
                           aria-selected={group === g.key}
                           className={group === g.key ? "active" : ""}
+                          title={`${g.key} sizes (${g.sizes.length})`}
                           onClick={() => {
                             setGroup(g.key);
                             const same = g.sizes.find((s) => s.name.slice(s.name.indexOf("×")) === size.name.slice(size.name.indexOf("×")));
@@ -679,7 +681,7 @@ export function StockBrowser(props: {
                       <dt>Buy from</dt>
                       <dd className="stock-sources">
                         {size.sources.map((s, i) => (
-                          <a key={i} href={s.url} target="_blank" rel="noreferrer noopener">
+                          <a key={i} href={s.url} target="_blank" rel="noreferrer noopener" title={`Open ${s.supplier}${s.sku ? ` part ${s.sku}` : " search"} in a new tab`}>
                             <strong>{s.supplier}</strong>
                             <span>{s.sku ?? "search"}</span>
                             <Icon name="external" />
@@ -695,7 +697,7 @@ export function StockBrowser(props: {
               <footer className="stock-insert">
                 <label>
                   <span>Into</span>
-                  <select value={parent} onChange={(e) => setParent(e.target.value)}>
+                  <select value={parent} title="Where the part goes: the project itself or one of its assemblies" onChange={(e) => setParent(e.target.value)}>
                     <option value="">The project</option>
                     {assemblies.map((a) => (
                       <option key={a.id} value={a.id}>
@@ -704,7 +706,7 @@ export function StockBrowser(props: {
                     ))}
                   </select>
                 </label>
-                <button type="button" className="primary" disabled={busy || !!size.error} onClick={() => void insert()}>
+                <button type="button" className="primary" disabled={busy || !!size.error} title={`Put a ${family.name} ${size.name} in the model (Enter from the search box)`} onClick={() => void insert()}>
                   {busy ? <span className="stock-spinner small" /> : <Icon name="plus" />}
                   Insert {size.name}
                 </button>

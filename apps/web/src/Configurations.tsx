@@ -327,6 +327,7 @@ export function ConfigSection(props: {
                         <input
                           type="checkbox"
                           checked={on}
+                          title={`${kind} ${on ? "on" : "off"} in ${r.name}: untick to leave it out of this configuration`}
                           aria-label={`${kind} in ${r.name}`}
                           onChange={() => {
                             const suppress = on ? [...(r.suppress ?? []), key] : (r.suppress ?? []).filter((s) => s !== key);
@@ -424,6 +425,7 @@ export function ConfigSection(props: {
           <button
             type="button"
             className="secondary finish-add"
+            title="Add a configuration, starting as a copy of the active one"
             onClick={() => {
               const base = table.rows.find((r) => r.name === table.active) ?? table.rows[table.rows.length - 1];
               const values = Object.fromEntries(table.params.map((k) => [k, base?.values[k] ?? current(k)]));

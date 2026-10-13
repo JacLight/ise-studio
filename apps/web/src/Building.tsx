@@ -160,11 +160,11 @@ export function BuildingView(props: { entities: ReadonlyMap<string, EntityView>;
     <div className="bom building">
       <div className="bom-bar">
         <div className="bom-scope">
-          <button type="button" className={`scope-chip ${scope === "project" ? "on" : ""}`} onClick={() => setUseSelection(false)}>
+          <button type="button" className={`scope-chip ${scope === "project" ? "on" : ""}`} title="Quantities, schedule and drawings for the whole project" onClick={() => setUseSelection(false)}>
             <Icon name="layers" /> Whole project
           </button>
           {picked && (
-            <button type="button" className={`scope-chip ${scope !== "project" ? "on" : ""}`} onClick={() => setUseSelection(true)}>
+            <button type="button" className={`scope-chip ${scope !== "project" ? "on" : ""}`} title={`Quantities, schedule and drawings for ${picked.name} only`} onClick={() => setUseSelection(true)}>
               <Icon name="cube" /> {picked.name}
             </button>
           )}
@@ -223,7 +223,7 @@ export function BuildingView(props: { entities: ReadonlyMap<string, EntityView>;
             <div className="bim-controls">
               <div className="bim-filters">
                 {FILTERS.map((f, i) => (
-                  <button key={f.label} type="button" className={`scope-chip ${filter === i ? "on" : ""}`} onClick={() => setFilter(i)}>
+                  <button key={f.label} type="button" className={`scope-chip ${filter === i ? "on" : ""}`} title={f.classes ? `Schedule only ${f.label.toLowerCase()} (${f.classes.split(",").join(", ")})` : "Schedule every element"} onClick={() => setFilter(i)}>
                     {f.label}
                   </button>
                 ))}
@@ -309,10 +309,10 @@ export function BuildingView(props: { entities: ReadonlyMap<string, EntityView>;
               </select>
               {view && (
                 <>
-                  <a className="download" href={projectUrl(`/plan/${scope}.pdf?${view.query}`)} download>
+                  <a className="download" href={projectUrl(`/plan/${scope}.pdf?${view.query}`)} download title={`Download the drawing ${view.label} as a PDF`}>
                     <Icon name="download" /> PDF
                   </a>
-                  <a className="download" href={projectUrl(`/plan/${scope}.dxf?${view.query}`)} download>
+                  <a className="download" href={projectUrl(`/plan/${scope}.dxf?${view.query}`)} download title={`Download the drawing ${view.label} as a DXF, for other CAD`}>
                     <Icon name="download" /> DXF
                   </a>
                 </>
