@@ -1477,13 +1477,14 @@ pub fn resolve_uses(tx: &Tx, source: &str, existing: &BTreeMap<String, StableId>
             _ => return Err(CommandError::new(ErrorCode::InvalidParameters, format!("more than one sketch is called “{name}”; rename one"))),
         }
     }
+    out.extend(crate::canvas::resolve_uses(tx, source, existing)?);
     Ok(out)
 }
 
 /// What a program reads from its sketches, as the runtime receives it (JSON).
 pub fn inputs(world: &World, uses: &BTreeMap<String, StableId>) -> Result<String, String> {
     let mut m = serde_json::Map::new();
-    for (name, id) in uses {
+    for (name, id) in uses.iter().filter(|(n, _)| !n.starts_with(crate::canvas::USE_PREFIX)) {
         let e = world.resource::<IdIndex>().get(*id).ok_or_else(|| format!("sketch “{name}” was deleted"))?;
         let sketch = world.get::<Sketch>(e).ok_or_else(|| format!("“{name}” is not a sketch"))?;
         let solved = world.get::<SolvedSketch>(e).ok_or_else(|| format!("sketch “{name}” has no valid solution"))?;

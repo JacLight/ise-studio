@@ -21,6 +21,7 @@ const tolerance = globalThis.__tolerance;
 delete globalThis.__tolerance;
 const __inputs = JSON.parse(globalThis.__inputs || "{}");
 const __sketches = __inputs.sketches ?? {};
+const __canvases = __inputs.canvases ?? {};
 const __finishes = __inputs.finishes ?? [];
 /**
  * The configuration the shape is evaluated in ("Basic", "M8×30"), or null
@@ -1048,6 +1049,181 @@ function sketch(name) {
   if (!data) throw new Error(`no sketch called “${name}” is linked to this program`);
   if (!data.loops.length) throw new Error(`sketch “${name}” has no closed outline yet${data.open ? ` (${data.open} open chain${data.open > 1 ? "s" : ""})` : ""}`);
   return new SketchRef(name, data);
+}
+
+// ---- Canvases: reference pictures placed in the model ---------------------------
+
+const __VIEW_PLANES = {
+  front: { x: [1, 0, 0], y: [0, 0, 1] },
+  back: { x: [-1, 0, 0], y: [0, 0, 1] },
+  left: { x: [0, -1, 0], y: [0, 0, 1] },
+  right: { x: [0, 1, 0], y: [0, 0, 1] },
+  top: { x: [1, 0, 0], y: [0, 1, 0] },
+  bottom: { x: [-1, 0, 0], y: [0, 1, 0] },
+};
+
+const __m3 = (m, p) => {
+  const w = m[6] * p[0] + m[7] * p[1] + m[8];
+  return [(m[0] * p[0] + m[1] * p[1] + m[2]) / w, (m[3] * p[0] + m[4] * p[1] + m[5]) / w];
+};
+
+/**
+ * A canvas: a reference picture placed on a plane of the model and
+ * calibrated (`./forma canvas add`). Its outlines come out in the plane's
+ * own millimetres, so they land exactly on the photo:
+ *   const side = canvas("Side");      // .plane {origin, x, y}, .normal, .view, .mmPerPx, .pixels
+ *   side.silhouette()                 // the object's outline (Profile, plane mm): what stands out from the backdrop
+ *   side.trace({ channel: "brightness", threshold: 0.3, region: [u0, v0, u1, v1] })   // dark features inside it
+ *   side.spans({ x: 40 })             // where the outline crosses x = 40: [[y0, y1], …]
+ *   side.toPlane([u, v]), side.toWorld([u, v]), side.toPixel([x, y] | [x, y, z])   // pixels ↔ mm
+ *   side.extrude(30), side.place(solid)   // solids built in plane coordinates (+Z toward the viewer) onto the plane
+ */
+class CanvasRef {
+  constructor(name, data) {
+    this.name = name;
+    this.id = data.id;
+    this.image = data.image;
+    this.pixels = data.pixels;
+    this.plane = data.plane;
+    this.normal = data.normal;
+    this.view = data.view ?? null;
+    this.mmPerPx = data.mmPerPx;
+    this.crop = data.crop ?? null;
+    this.sized = !!data.sized;
+    this.__data = data;
+    this.__json = JSON.stringify(data);
+    this.__cache = new Map();
+    Object.freeze(this);
+  }
+  /** A pixel [u, v] (from the picture's top-left) in plane mm. */
+  toPlane(p) {
+    return __m3(this.__data.toPlane, p);
+  }
+  /** A pixel [u, v] in the world (mm). */
+  toWorld(p) {
+    const [x, y] = this.toPlane(p);
+    const { origin: o, x: ax, y: ay } = this.plane;
+    return [0, 1, 2].map((k) => o[k] + ax[k] * x + ay[k] * y);
+  }
+  /** A plane point [x, y] or a world point [x, y, z] as the pixel it falls on. */
+  toPixel(p) {
+    let q = p;
+    if (p.length === 3) {
+      const { origin: o, x: ax, y: ay } = this.plane;
+      const d = [p[0] - o[0], p[1] - o[1], p[2] - o[2]];
+      q = [__dot(d, ax), __dot(d, ay)];
+    }
+    return __m3(this.__data.toPixel, q);
+  }
+  /**
+   * Outlines traced from the picture, in plane mm (a Profile). Options:
+   * channel ("object", default: what stands out from the backdrop;
+   * "brightness": dark is ink; "red" | "green" | "blue" | "alpha"),
+   * threshold (0.5), invert, smooth (px, 1), minArea (mm²), simplify (mm),
+   * holes (true), largest (only the biggest outline and its holes),
+   * region ([u0, v0, u1, v1] pixels: only there).
+   */
+  trace(options = {}) {
+    const key = JSON.stringify(options);
+    if (!this.__cache.has(key)) {
+      const loops = JSON.parse(__n.canvasTrace(this.__json, JSON.stringify({ simplify: this.mmPerPx * 0.75, ...options }), tolerance));
+      this.__cache.set(key, polygons(loops));
+    }
+    return this.__cache.get(key);
+  }
+  /** The object's outline: the largest shape standing out from the backdrop, small holes filled (holes: true keeps real openings). */
+  silhouette(options = {}) {
+    return this.trace({ largest: true, ...options });
+  }
+  /** Where a line across the silhouette (or `profile`) runs inside it: { x } or { y } in plane mm → [[from, to], …]. */
+  spans(at, { profile, ...options } = {}) {
+    return profileSpans(profile ?? this.silhouette(options), at);
+  }
+  /** Moves a solid built in plane coordinates (XY, +Z toward the viewer) onto the canvas's plane. */
+  place(solid) {
+    const [rx, ry, rz] = planeRotation(this.plane.x, this.plane.y);
+    return asSolid(solid).rotate(rx, ry, rz).translate(this.plane.origin);
+  }
+  /** The silhouette (or `profile`) extruded `depth` mm toward the viewer from `from` mm. */
+  extrude(depth, { from = 0, profile, ...options } = {}) {
+    let s = (profile ?? this.silhouette(options)).extrude(depth);
+    if (from) s = s.translate(0, 0, from);
+    return this.place(s);
+  }
+}
+
+/** A canvas placed in the project, by name (`./forma canvas list`). */
+function canvas(name) {
+  const data = __canvases[name];
+  if (!data) throw new Error(`no canvas called “${name}” is linked to this program (./forma canvas list)`);
+  return new CanvasRef(name, data);
+}
+
+/**
+ * Where a straight line across a profile runs inside it: `{ x: 40 }` (a
+ * vertical line) or `{ y: 12 }` (a horizontal one) → [[from, to], …] along
+ * the line, in order. Reads a traced view's height or width at a station.
+ */
+function profileSpans(profile, at) {
+  const vertical = typeof at.x === "number";
+  const c = vertical ? at.x : at.y;
+  if (typeof c !== "number") throw new Error("profileSpans: give { x } or { y }");
+  const [i, j] = vertical ? [0, 1] : [1, 0];
+  const hits = [];
+  for (const loop of asProfile(profile).loops) {
+    for (let k = 0; k < loop.length; k++) {
+      const a = loop[k];
+      const b = loop[(k + 1) % loop.length];
+      if ((a[i] <= c && c < b[i]) || (b[i] <= c && c < a[i])) hits.push(a[j] + ((c - a[i]) / (b[i] - a[i])) * (b[j] - a[j]));
+    }
+  }
+  hits.sort((p, q) => p - q);
+  const out = [];
+  for (let k = 0; k + 1 < hits.length; k += 2) out.push([hits[k], hits[k + 1]]);
+  return out;
+}
+
+/**
+ * A body from views (the visual hull): each view's outline pushed straight
+ * through the model along its line of sight, and the pushes intersected.
+ * Two views (side and top) give the body's plan and elevation; a third (the
+ * end) rounds off what two leave square. A starting body to refine (cuts,
+ * pockets, shells, fillets, lofted sections), never the finished part.
+ *   fromViews([canvas("Side"), canvas("Top"), canvas("Front")])
+ *   fromViews({ front: sideProfile, top: topProfile })      // profiles in the named view's plane (front: x→X, y→Z; top: x→X, y→Y; left: x→−Y, y→Z; right: x→Y, y→Z)
+ *   fromViews([{ profile, plane: { origin, x, y } }, …])
+ * Canvases give their silhouettes (options: `silhouette: { … }` passed to each).
+ */
+function fromViews(views, { silhouette = {} } = {}) {
+  const list = [];
+  const add = (v, name) => {
+    if (v instanceof CanvasRef) list.push({ profile: v.silhouette(silhouette), plane: v.plane, what: v.name });
+    else if (v instanceof Profile) {
+      const pl = __VIEW_PLANES[name];
+      if (!pl) throw new Error(`fromViews: “${name}” is not a view (front, back, left, right, top, bottom); give { profile, plane } instead`);
+      list.push({ profile: v, plane: { origin: [0, 0, 0], ...pl }, what: name });
+    } else if (v && v.profile) {
+      const pl = typeof v.plane === "string" ? { origin: [0, 0, 0], ...__VIEW_PLANES[v.plane] } : v.plane ?? { origin: [0, 0, 0], ...__VIEW_PLANES[name] };
+      if (!pl || !pl.x) throw new Error(`fromViews: ${name ?? "a view"} needs its plane`);
+      list.push({ profile: asProfile(v.profile), plane: { origin: pl.origin ?? [0, 0, 0], x: pl.x, y: pl.y }, what: name ?? "view" });
+    } else throw new Error("fromViews: each view is a canvas, a profile (by view name) or { profile, plane }");
+  };
+  if (Array.isArray(views)) views.forEach((v, i) => add(v, `view ${i + 1}`));
+  else for (const [k, v] of Object.entries(views)) add(v, k);
+  if (list.length < 2) throw new Error("fromViews: give at least two views");
+  // Deep enough to pass through everything the other views span.
+  let reach = 1;
+  for (const v of list) {
+    const b = v.profile.bounds;
+    reach += Math.hypot(...v.plane.origin) + Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1]) + Math.hypot(...b.min) + Math.hypot(...b.max);
+  }
+  const solids = list.map((v) => {
+    const [rx, ry, rz] = planeRotation(v.plane.x, v.plane.y);
+    return v.profile.extrude(2 * reach).translate(0, 0, -reach).rotate(rx, ry, rz).translate(v.plane.origin);
+  });
+  const body = solids[0].intersect(...solids.slice(1));
+  if (!(body.volume > 0)) throw new Error(`fromViews: the views do not overlap (${list.map((v) => v.what).join(", ")}): check their calibration and where each canvas's origin sits`);
+  return body;
 }
 
 // ---- Profiles ----------------------------------------------------------------

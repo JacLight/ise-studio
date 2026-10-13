@@ -9,6 +9,7 @@
 pub mod assets;
 pub mod cache;
 pub mod cam;
+pub mod canvas;
 pub mod configs;
 pub mod curves;
 pub mod decor;
@@ -35,6 +36,7 @@ pub mod runtime;
 pub mod scad;
 pub mod sheet;
 pub mod sheet_metal;
+pub mod silhouette;
 pub mod sketch;
 pub mod sketch_tools;
 pub mod solver;
@@ -78,6 +80,9 @@ impl Plugin for ShapePlugin {
             .component::<ParameterSet>()
             .component::<ShapeConfigurations>()
             .component::<sketch::Sketch>()
+            .component::<canvas::Canvas>()
+            .command::<canvas::CreateCanvas>()
+            .command::<canvas::UpdateCanvas>()
             .component::<library::StockFamily>()
             .command::<library::InsertStock>()
             .command::<sketch::CreateSketch>()
@@ -281,7 +286,8 @@ pub struct EdgePick {
 /// its sketches, solved, and its edge finishes.
 pub fn program_inputs(world: &World, program: &ShapeProgram) -> Result<String, String> {
     let sketches = sketch::inputs(world, &program.uses)?;
-    Ok(format!(r#"{{"sketches":{sketches},"finishes":{}}}"#, serde_json::to_string(&program.finishes).unwrap()))
+    let canvases = canvas::inputs(world, &program.uses)?;
+    Ok(format!(r#"{{"sketches":{sketches},"canvases":{canvases},"finishes":{}}}"#, serde_json::to_string(&program.finishes).unwrap()))
 }
 
 /// Resolved inputs with other edge finishes (for previews).

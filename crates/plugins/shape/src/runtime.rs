@@ -455,6 +455,12 @@ pub(crate) fn install_pictures<'js>(ctx: &Ctx<'js>, native: &Object<'js>) -> rqu
             crate::decor::grid(&sha, &channel, nx.max(0.0) as usize, ny.max(0.0) as usize).map_err(|e| throw(&ctx, format!("image: {e}")))
         })?,
     )?;
+    native.set(
+        "canvasTrace",
+        Function::new(ctx.clone(), |ctx: Ctx<'js>, canvas: String, options: String, tolerance: f64| -> rquickjs::Result<String> {
+            crate::canvas::trace_json(&canvas, &options, tolerance).map_err(|e| throw(&ctx, e))
+        })?,
+    )?;
     Ok(())
 }
 

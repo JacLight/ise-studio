@@ -46,6 +46,12 @@
 //   node tools/forma.mjs image list           the pictures and fonts in the project
 //   node tools/forma.mjs look [what] [--view iso|front|top|…|az,el] [--size 1000x750] [--out file.png]
 //        a picture of the model (or one thing in it) drawn by the engine, saved to look/…png
+//   node tools/forma.mjs canvas add <photo|picture id> [--plane front|back|left|right|top|bottom] [--object WxH --align 'left bottom'
+//        | --calibrate u1,v1,u2,v2,mm | --width mm | --scale mm/px] [--at x,y,z] [--anchor u,v] [--rotate deg | --level u1,v1,u2,v2]
+//        [--flip] [--aspect k] [--crop l,t,r,b] [--perspective u1,v1,…,u4,v4,WxH] [--opacity 0.5] [--through] [--name N]
+//        | list | update <canvas> [same] [--reset crop,…] | remove <canvas>   reference pictures placed and calibrated in the model
+//   node tools/forma.mjs canvas match [<canvas>|all] [--of <thing>] [--out f.png]  ·  look --overlay <canvas> [what]
+//        the model drawn square to the canvas over its photo: silhouette IoU, outline distance, regions of extra/missing material
 //   node tools/forma.mjs ops [filter]         the commands the engine accepts, with schemas
 //   node tools/forma.mjs view <action> [what] show something in the person's view (not saved):
 //        select L26 · frame L26 · isolate L26 · show_all · hide L19 · show L19
@@ -1126,6 +1132,184 @@ if (command === "run") {
     for (const e of list) console.log(`${e.id}  ${e.name} (${e.kind.toUpperCase()}${e.width ? `, ${e.width} × ${e.height} px` : ""})`);
   } else {
     console.error("usage: forma image add <file> … | forma image list");
+    failed = true;
+  }
+} else if (command === "canvas" || (command === "look" && args.includes("--overlay"))) {
+  // Reference pictures placed in the model: add, list, change, remove, and compare the model with them.
+  // `look --overlay <canvas> [what]` is `canvas match <canvas> --of what`.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  let sub = file;
+  let rest = args.slice(2);
+  if (command === "look") {
+    const i = args.indexOf("--overlay");
+    const which = args.splice(i, 2)[1];
+    const o = args.indexOf("--out");
+    const out = o >= 0 ? args.splice(o, 2) : [];
+    const v = args.indexOf("--view");
+    if (v >= 0) args.splice(v, 2);
+    const what = args.slice(1).join(" ").trim();
+    sub = "match";
+    rest = [which, ...(what ? ["--of", what] : []), ...out];
+  }
+  const flag = (name) => {
+    const i = rest.indexOf(name);
+    return i >= 0 ? rest.splice(i, 2)[1] : undefined;
+  };
+  const bool = (name) => {
+    const i = rest.indexOf(name);
+    return i >= 0 ? (rest.splice(i, 1), true) : false;
+  };
+  const nums = (s, n, what) => {
+    const v = String(s).split(",").map((x) => Number(x.trim()));
+    if ((n && v.length !== n) || v.some((x) => !Number.isFinite(x))) throw new Error(`${what}: give ${n ?? "the"} numbers separated by commas`);
+    return v;
+  };
+  const canvases = async () => (await engine.snapshot).entities.filter((e) => e.components["shape.canvas"]).map((e) => ({ id: e.id, ...e.components["shape.canvas"] }));
+  const pick = async (what) => {
+    const all = await canvases();
+    const hit = all.filter((c) => c.id === what || c.name === what || c.name.toLowerCase() === String(what).toLowerCase());
+    if (hit.length !== 1) throw new Error(hit.length ? `“${what}” matches ${hit.length} canvases: use an id` : `no canvas called “${what}” (forma canvas list)`);
+    return hit[0];
+  };
+  // The settings shared by add and update, from flags.
+  const settings = () => {
+    const s = {};
+    const v = (name) => flag(name);
+    let x;
+    if ((x = v("--name")) !== undefined) s.name = x;
+    if ((x = v("--plane")) !== undefined) s.plane = x;
+    if ((x = v("--offset")) !== undefined) s.offset = Number(x);
+    if ((x = v("--at")) !== undefined) s.at = nums(x, 3, "--at x,y,z");
+    if ((x = v("--anchor")) !== undefined) s.anchor = nums(x, 2, "--anchor u,v");
+    if ((x = v("--scale")) !== undefined) s.scale = Number(x);
+    if ((x = v("--width")) !== undefined) s.width = Number(x);
+    if ((x = v("--height")) !== undefined) s.height = Number(x);
+    if ((x = v("--calibrate")) !== undefined) {
+      const c = nums(x, 5, "--calibrate u1,v1,u2,v2,mm");
+      s.calibrate = { a: [c[0], c[1]], b: [c[2], c[3]], distance: c[4] };
+    }
+    const ow = v("--object-width"), oh = v("--object-height"), ob = v("--object"), al = v("--align");
+    if (ob !== undefined || ow !== undefined || oh !== undefined) {
+      const o = {};
+      if (ob !== undefined) {
+        const [w, h] = ob.split(/[x×]/).map((t) => (t.trim() === "" || t.trim() === "?" ? undefined : Number(t)));
+        if (w !== undefined) o.width = w;
+        if (h !== undefined) o.height = h;
+      }
+      if (ow !== undefined) o.width = Number(ow);
+      if (oh !== undefined) o.height = Number(oh);
+      if (al !== undefined) o.align = al;
+      s.object = o;
+    } else if (al !== undefined) throw new Error("--align goes with --object WxH, --object-width or --object-height");
+    if ((x = v("--aspect")) !== undefined) s.aspect = Number(x);
+    if ((x = v("--rotate")) !== undefined) s.rotation = Number(x);
+    if ((x = v("--level")) !== undefined) {
+      const c = nums(x, 4, "--level u1,v1,u2,v2");
+      s.level = [[c[0], c[1]], [c[2], c[3]]];
+    }
+    if ((x = v("--perspective")) !== undefined) {
+      const m = x.match(/^(.*),\s*([\d.]+)\s*[x×]\s*([\d.]+)$/);
+      if (!m) throw new Error("--perspective u1,v1,u2,v2,u3,v3,u4,v4,WxH (corners top-left, top-right, bottom-right, bottom-left; the rectangle's true size in mm)");
+      const c = nums(m[1], 8, "--perspective corners");
+      s.perspective = { points: [[c[0], c[1]], [c[2], c[3]], [c[4], c[5]], [c[6], c[7]]], width: Number(m[2]), height: Number(m[3]) };
+    }
+    if ((x = v("--crop")) !== undefined) s.crop = nums(x, 4, "--crop left,top,right,bottom");
+    if ((x = v("--opacity")) !== undefined) s.opacity = Number(x);
+    if ((x = v("--background")) !== undefined) s.background = nums(x, 3, "--background r,g,b (0–1)");
+    if ((x = v("--threshold")) !== undefined) s.threshold = Number(x);
+    if ((x = v("--reset")) !== undefined) s.reset = x.split(",").map((t) => t.trim());
+    if (bool("--flip")) s.flip = true;
+    if (bool("--no-flip")) s.flip = false;
+    if (bool("--through")) s.through = true;
+    if (bool("--behind")) s.through = false;
+    if (bool("--hide")) s.visible = false;
+    if (bool("--show")) s.visible = true;
+    return s;
+  };
+  const describe = (out) => {
+    const f = (v) => (Math.round(v * 100) / 100).toString();
+    let line = `✓ canvas “${out.name}” (${out.id}) on the ${out.view ?? "custom"} plane: ${f(out.mm_per_px)} mm per pixel, picture ${f(out.size_mm[0])} × ${f(out.size_mm[1])} mm`;
+    if (out.object_mm) line += `\n  object: ${f(out.object_mm.size[0])} × ${f(out.object_mm.size[1])} mm, from (${f(out.object_mm.min[0])}, ${f(out.object_mm.min[1])}) to (${f(out.object_mm.max[0])}, ${f(out.object_mm.max[1])}) on the plane; pixels ${out.object_px.join(", ")}`;
+    if (!out.sized) line += "\n  ! not sized yet: give --calibrate, --object-width/--object-height, --width or --scale";
+    return line;
+  };
+  const match = async (c, of, outPath) => {
+    const q = new URLSearchParams({ ...(project ? { project } : {}), canvas: c.id, ...(of ? { id: of } : {}) });
+    const res = await fetch(`${http}/look?${q}`);
+    if (!res.ok) throw new Error(await res.text());
+    const m = JSON.parse(res.headers.get("x-forma-match"));
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const slug = c.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "canvas";
+    const path = outPath ?? `look/match-${slug}.png`;
+    if (path.includes("/")) mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, Buffer.from(await res.arrayBuffer()));
+    const f = (v, d = 1) => (Number.isFinite(v) ? v.toFixed(d) : "–");
+    console.log(`${m.iou >= 0.9 ? "✓" : m.iou >= 0.8 ? "~" : "✗"} ${c.name} (${m.view ?? "custom"} view): IoU ${f(m.iou, 3)}  (model covers ${f(m.recall * 100)} % of the photo's object; ${f(m.precision * 100)} % of the model is on it)`);
+    console.log(`  outlines ${f(m.mean_mm, 2)} mm apart on average, worst ${f(m.worst_mm)} mm; photo object ${f(m.photo_size_mm[0])} × ${f(m.photo_size_mm[1])} mm, model ${f(m.model_size_mm[0])} × ${f(m.model_size_mm[1])} mm (plane x × y)`);
+    for (const r of m.regions.slice(0, 8)) {
+      const at = r.at.map((v) => f(v)).join(", ");
+      console.log(`  ${r.kind === "extra" ? "+ extra  " : "- missing"} ${f(r.area_mm2, 0).padStart(6)} mm², up to ${f(r.depth_mm)} mm thick, around (${at}) — plane x ${f(r.bounds[0])}…${f(r.bounds[2])}, y ${f(r.bounds[1])}…${f(r.bounds[3])}`);
+    }
+    console.log(`  overlay: ${path} (read it: the photo, the model over it, red = model where the photo has none, blue = photo where the model has none)`);
+    return m;
+  };
+  try {
+    if (sub === "add") {
+      const src = rest.shift();
+      if (!src) throw new Error("say which picture: forma canvas add <photo.jpg | picture id> --plane front …");
+      const s = settings();
+      let image = src;
+      if (!/^[0-9a-f]{64}$/i.test(src)) {
+        const bytes = readFileSync(src);
+        const res = await fetch(`${http}/images/${encodeURIComponent(basename(src))}${project ? `?project=${encodeURIComponent(project)}` : ""}`, { method: "POST", body: bytes });
+        if (!res.ok) throw new Error(await res.text());
+        image = (await res.json()).id;
+      }
+      const name = s.name ?? basename(src).replace(/\.[a-z0-9]+$/i, "");
+      delete s.name;
+      const r = await engine.commit("canvas.create", { name, image, ...s });
+      if (!r.ok) throw new Error(r.error.message);
+      console.log(describe(r.value.output));
+      console.log(`  in a program: canvas("${name}")`);
+    } else if (sub === "update" || sub === "set" || sub === "calibrate") {
+      const c = await pick(rest.shift());
+      const s = settings();
+      const r = await engine.commit("canvas.update", { target: c.id, ...s });
+      if (!r.ok) throw new Error(r.error.message);
+      console.log(describe(r.value.output));
+    } else if (sub === "remove" || sub === "delete") {
+      const c = await pick(rest.shift());
+      const r = await engine.commit("core.entity.delete", { target: c.id });
+      if (!r.ok) throw new Error(r.error.message);
+      console.log(`✓ removed canvas “${c.name}”`);
+    } else if (sub === "list" || !sub) {
+      const all = await canvases();
+      if (!all.length) console.log("no canvases yet (forma canvas add <photo> --plane front --object-width 165)");
+      for (const c of all) {
+        const o = c.plane.origin.map((v) => Math.round(v * 100) / 100).join(", ");
+        const cal = c.perspective ? `squared up to ${c.perspective.width} × ${c.perspective.height} mm` : c.calibration ? `calibrated ${c.calibration.distance} mm between (${c.calibration.a}) and (${c.calibration.b})` : c.sized ? `${(Math.round(c.scale * 10000) / 10000)} mm/px${c.aspect !== undefined && c.aspect !== 1 ? `, aspect ${Math.round(c.aspect * 1000) / 1000}` : ""}` : "NOT SIZED";
+        console.log(`${c.id}  “${c.name}”  ${c.view ?? "custom"} plane, origin (${o}); ${c.pixels[0]} × ${c.pixels[1]} px, ${cal}; anchor px (${c.anchor.map((v) => Math.round(v)).join(", ")})${c.rotation ? `, turned ${c.rotation}°` : ""}${c.flip ? ", mirrored" : ""}${c.crop ? `, crop ${c.crop.join(",")}` : ""}; opacity ${c.opacity}${c.visible === false ? ", hidden" : ""}${c.through ? ", shown through" : ""}`);
+      }
+    } else if (sub === "match" || sub === "compare") {
+      const which = rest.shift();
+      const of = flag("--of");
+      const out = flag("--out");
+      let ofId = null;
+      if (of) {
+        const s = await engine.snapshot;
+        const nm = (e) => e.components["assembly.instance"]?.name ?? e.components["shape.program"]?.name;
+        const hit = s.entities.filter((e) => e.id === of || nm(e)?.toLowerCase() === of.toLowerCase()).filter((e) => e.components["assembly.instance"] || e.components["solid.placement"]);
+        if (hit.length !== 1) throw new Error(`--of “${of}” matches ${hit.length} placed things`);
+        ofId = hit[0].id;
+      }
+      const list = !which || which === "all" ? await canvases() : [await pick(which)];
+      if (!list.length) throw new Error("no canvases to compare with");
+      for (const c of list) await match(c, ofId, list.length > 1 ? undefined : out);
+    } else {
+      throw new Error("usage: forma canvas add <photo|id> [--plane front|back|left|right|top|bottom] [--object WxH --align 'left bottom' | --calibrate u1,v1,u2,v2,mm | --width mm | --scale mm/px] [--at x,y,z] [--anchor u,v] [--rotate deg | --level u1,v1,u2,v2] [--flip] [--aspect k] [--crop l,t,r,b] [--perspective u1,v1,…,u4,v4,WxH] [--opacity 0.5] [--through] [--name N]\n       | list | update <canvas> [same flags] [--reset crop,perspective,…] | remove <canvas> | match [<canvas>|all] [--of <thing>] [--out f.png]");
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
     failed = true;
   }
 } else if (command === "look") {
