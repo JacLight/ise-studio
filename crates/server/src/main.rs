@@ -2524,6 +2524,7 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/connectors/{id}", get(connectors))
         .route("/fit/{id}", get(fit_report))
         .route("/check-geometry/{id}", get(exact_files::check))
+        .route("/surfaces/{id}", get(exact_files::surfaces))
         .route("/assembly-dof/{id}", get(assembly_api::dof))
         .route("/interference/{id}", get(assembly_api::interference))
         .route("/explode/{id}", get(assembly_api::explode))

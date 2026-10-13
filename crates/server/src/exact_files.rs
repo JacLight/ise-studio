@@ -133,3 +133,71 @@ pub async fn check(State(server): State<Arc<Server>>, Path(id): Path<String>, Qu
         Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
     }
 }
+
+/// `GET /surfaces/<id>?project=…&part=…&pull=x,y,z&min=deg`: surface analysis
+/// of every part, exactly: what each body is (solid or open sheet), the
+/// continuity across every edge two of its faces share (gap, crease angle,
+/// curvature jump), the tightest curvature, and draft against a pull
+/// direction (faces within `min` degrees of square to it).
+pub async fn surfaces(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let fail = |code: StatusCode, message: String| (code, message).into_response();
+    let app = match server.project(query.get("project")) {
+        Ok(app) => app,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let s = {
+        let project = app.project.lock().unwrap();
+        match serde_json::from_value::<StableId>(json!(id)).ok().and_then(|i| source(&project, i)) {
+            Some(s) => s,
+            None => return fail(StatusCode::NOT_FOUND, format!("{id} is not a part")),
+        }
+    };
+    let part = query.get("part").cloned();
+    let pull: Vec<f64> = query.get("pull").map(|p| p.split(',').filter_map(|v| v.trim().parse().ok()).collect()).unwrap_or_else(|| vec![0.0, 0.0, 1.0]);
+    let min: f64 = query.get("min").and_then(|v| v.parse().ok()).unwrap_or(1.0);
+    let r = tokio::task::spawn_blocking(move || -> Result<Value, String> {
+        if pull.len() != 3 {
+            return Err("pull is x,y,z".into());
+        }
+        let l = (pull[0] * pull[0] + pull[1] * pull[1] + pull[2] * pull[2]).sqrt().max(1e-12);
+        let p = [pull[0] / l, pull[1] / l, pull[2] / l];
+        let mut maker = fabricate::StepMaker::new(0.01);
+        let (name, list) = shapes(&s, part.as_deref(), &mut maker)?;
+        let mut parts = Vec::new();
+        for (n, shape) in list {
+            let a = maker.arena();
+            let body = a.body_info(shape)?;
+            let cont = a.continuity(shape, None, 24)?;
+            let mut edges: Vec<Value> = cont["edges"].as_array().cloned().unwrap_or_default();
+            // The worst seams first (by crease, then curvature jump).
+            edges.sort_by(|x, y| {
+                let k = |e: &Value| (e["g1"].as_f64().unwrap_or(0.0), e["g2"].as_f64().unwrap_or(0.0));
+                k(y).partial_cmp(&k(x)).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let smooth = edges.iter().filter(|e| e["g1"].as_f64().unwrap_or(0.0) < 0.1).count();
+            let samples = a.face_samples(shape, 10)?;
+            let tight = samples.iter().map(|q| q.k1.abs().max(q.k2.abs())).fold(0.0f64, f64::max);
+            let mut square = std::collections::BTreeMap::<usize, f64>::new();
+            for q in &samples {
+                let d = (q.n[0] * p[0] + q.n[1] * p[1] + q.n[2] * p[2]).clamp(-1.0, 1.0).asin().to_degrees().abs();
+                let e = square.entry(q.face).or_insert(f64::INFINITY);
+                *e = e.min(d);
+            }
+            let under: Vec<usize> = square.iter().filter(|(_, d)| **d < min).map(|(f, _)| *f).collect();
+            parts.push(json!({
+                "name": n,
+                "body": { "solids": body.solids, "faces": body.faces, "edges": body.edges, "free_edges": body.free_edges, "closed": body.closed },
+                "continuity": { "max": cont["max"], "edges": edges.len(), "smooth": smooth, "worst": edges.iter().take(8).cloned().collect::<Vec<_>>() },
+                "curvature": { "min_radius": if tight > 1e-12 { json!(1.0 / tight) } else { Value::Null } },
+                "draft": { "pull": p, "min": min, "under": under },
+            }));
+        }
+        Ok(json!({ "name": name, "parts": parts }))
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()));
+    match r {
+        Ok(v) => axum::Json(v).into_response(),
+        Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+    }
+}

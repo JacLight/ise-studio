@@ -4,10 +4,18 @@
 // alone in shaded mode; the other modes adjust its materials each frame (so
 // a part that arrives or is repainted follows the mode) and put back exactly
 // what they changed when the mode goes back to shaded.
+//
+// Three more modes analyse surfaces, as a surfacing designer reads them:
+// zebra stripes (light bars reflected in the surface: stripes that run on
+// unbroken across a seam show tangency, G1; stripes that also keep their
+// direction show curvature continuity, G2), a curvature map (blue concave,
+// green flat, red convex, from the mesh's normals), and a draft map for a
+// mould pulled up Z (green releases, red faces back, yellow within a degree
+// of square: needs draft).
 
 import * as THREE from "three";
 
-export type DisplayMode = "shaded" | "edges" | "wireframe" | "hidden" | "xray";
+export type DisplayMode = "shaded" | "edges" | "wireframe" | "hidden" | "xray" | "zebra" | "curvature" | "draft";
 
 export const DISPLAY_MODES: { mode: DisplayMode; label: string }[] = [
   { mode: "shaded", label: "Shaded" },
@@ -17,7 +25,98 @@ export const DISPLAY_MODES: { mode: DisplayMode; label: string }[] = [
   { mode: "xray", label: "X-ray" },
 ];
 
-type Saved = { color: THREE.Color; emissive: THREE.Color; emissiveIntensity: number; transparent: boolean; opacity: number; depthWrite: boolean; colorWrite: boolean };
+/** Surface analysis shading (not in the W cycle). */
+export const ANALYSIS_MODES: { mode: DisplayMode; label: string }[] = [
+  { mode: "zebra", label: "Zebra stripes (continuity)" },
+  { mode: "curvature", label: "Curvature map" },
+  { mode: "draft", label: "Draft angle (pull +Z)" },
+];
+const ANALYSIS = new Set<DisplayMode>(["zebra", "curvature", "draft"]);
+
+/** The fragment colour each analysis mode replaces the lit colour with (view-space normal `normal`). */
+const ANALYSIS_GLSL: Record<string, string> = {
+  zebra: `
+    vec3 rv = reflect(-normalize(vViewPosition), normalize(normal));
+    vec3 rw = normalize((vec4(rv, 0.0) * viewMatrix).xyz);
+    float band = fract(acos(clamp(rw.z, -1.0, 1.0)) / 3.14159265 * 14.0);
+    float w = fwidth(band) * 1.5;
+    float stripe = smoothstep(0.5 - w, 0.5 + w, band) - smoothstep(1.0 - w, 1.0, band);
+    gl_FragColor = vec4(vec3(mix(0.06, 0.97, stripe)), 1.0);`,
+  curvature: `
+    float t = clamp(vCurvature, -1.0, 1.0);
+    vec3 c = t < 0.0 ? mix(vec3(0.15, 0.75, 0.35), vec3(0.15, 0.35, 0.95), -t) : mix(vec3(0.15, 0.75, 0.35), vec3(0.95, 0.2, 0.15), t);
+    float lit = 0.55 + 0.45 * abs(normalize(normal).z);
+    gl_FragColor = vec4(c * lit, 1.0);`,
+  draft: `
+    vec3 nw = normalize((vec4(normalize(normal), 0.0) * viewMatrix).xyz);
+    float a = degrees(asin(clamp(nw.z, -1.0, 1.0)));
+    vec3 c = a > 1.0 ? vec3(0.2, 0.72, 0.3) : a < -1.0 ? vec3(0.85, 0.22, 0.18) : vec3(0.98, 0.8, 0.15);
+    float lit = 0.6 + 0.4 * abs(normalize(normal).z);
+    gl_FragColor = vec4(c * lit, 1.0);`,
+};
+
+function analysisPatch(mode: string) {
+  return (shader: THREE.WebGLProgramParametersWithUniforms) => {
+    if (mode === "curvature") {
+      shader.vertexShader = shader.vertexShader.replace("#include <common>", "#include <common>\nattribute float curvature;\nvarying float vCurvature;").replace("#include <begin_vertex>", "#include <begin_vertex>\nvCurvature = curvature;");
+      shader.fragmentShader = shader.fragmentShader.replace("#include <common>", "#include <common>\nvarying float vCurvature;");
+    }
+    shader.fragmentShader = shader.fragmentShader.replace("#include <dithering_fragment>", `#include <dithering_fragment>\n${ANALYSIS_GLSL[mode]}`);
+  };
+}
+
+/**
+ * Mean curvature per vertex from the mesh (each edge's normal curvature,
+ * (n_i − n_j)·(p_i − p_j)/|p_i − p_j|², averaged round the vertex), scaled
+ * to −1…1 for the colour map: ±1 where the bend radius is a tenth of the
+ * body's size or tighter.
+ */
+const curvatureDone = new WeakSet<THREE.BufferGeometry>();
+function ensureCurvature(g: THREE.BufferGeometry) {
+  if (curvatureDone.has(g) && g.getAttribute("curvature")) return;
+  const pos = g.getAttribute("position") as THREE.BufferAttribute;
+  const nor = g.getAttribute("normal") as THREE.BufferAttribute | undefined;
+  const n = pos.count;
+  const out = new Float32Array(n);
+  if (nor) {
+    const index = g.getIndex();
+    const sum = new Float64Array(n);
+    const cnt = new Uint32Array(n);
+    const tri = index ? index.count / 3 : n / 3;
+    const at = (k: number) => (index ? index.getX(k) : k);
+    const edge = (i: number, j: number) => {
+      const dx = pos.getX(i) - pos.getX(j), dy = pos.getY(i) - pos.getY(j), dz = pos.getZ(i) - pos.getZ(j);
+      const l2 = dx * dx + dy * dy + dz * dz;
+      if (l2 < 1e-18) return;
+      const k = ((nor.getX(i) - nor.getX(j)) * dx + (nor.getY(i) - nor.getY(j)) * dy + (nor.getZ(i) - nor.getZ(j)) * dz) / l2;
+      sum[i] += k, sum[j] += k, cnt[i]++, cnt[j]++;
+    };
+    for (let t = 0; t < tri; t++) {
+      const [a, b, c] = [at(3 * t), at(3 * t + 1), at(3 * t + 2)];
+      edge(a, b), edge(b, c), edge(c, a);
+    }
+    g.computeBoundingSphere();
+    const size = Math.max(1e-6, g.boundingSphere?.radius ?? 1);
+    for (let i = 0; i < n; i++) {
+      const h = cnt[i] ? sum[i] / cnt[i] : 0;
+      out[i] = Math.max(-1, Math.min(1, Math.sign(h) * Math.sqrt(Math.abs(h) * size * 0.1)));
+    }
+  }
+  g.setAttribute("curvature", new THREE.BufferAttribute(out, 1));
+  curvatureDone.add(g);
+}
+
+type Saved = {
+  color: THREE.Color;
+  emissive: THREE.Color;
+  emissiveIntensity: number;
+  transparent: boolean;
+  opacity: number;
+  depthWrite: boolean;
+  colorWrite: boolean;
+  onBeforeCompile: THREE.Material["onBeforeCompile"];
+  customProgramCacheKey: THREE.Material["customProgramCacheKey"];
+};
 
 const EDGE_ANGLE = 30;
 const edgeGeometries = new WeakMap<THREE.BufferGeometry, THREE.EdgesGeometry>();
@@ -126,7 +225,8 @@ export class Display {
   /** Brings every body (and its edges) to the mode; call before each draw. */
   apply(bodies: THREE.Mesh[], materialsOf: (m: THREE.Mesh) => THREE.MeshStandardMaterial[], camera: THREE.Camera) {
     const mode = this.mode;
-    const edges = mode !== "shaded";
+    const analysis = ANALYSIS.has(mode);
+    const edges = mode !== "shaded" && !analysis;
     // Edge lines: one per body, sharing the body's geometry's edges.
     const seen = new Set<THREE.Mesh>();
     if (edges) {
@@ -187,10 +287,21 @@ export class Display {
       this.restore();
       return;
     }
+    if (mode === "curvature") for (const body of bodies) ensureCurvature(body.geometry);
     for (const body of bodies)
       for (const m of materialsOf(body)) {
         if (!this.saved.has(m))
-          this.saved.set(m, { color: m.color.clone(), emissive: m.emissive.clone(), emissiveIntensity: m.emissiveIntensity, transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite, colorWrite: m.colorWrite });
+          this.saved.set(m, {
+            color: m.color.clone(),
+            emissive: m.emissive.clone(),
+            emissiveIntensity: m.emissiveIntensity,
+            transparent: m.transparent,
+            opacity: m.opacity,
+            depthWrite: m.depthWrite,
+            colorWrite: m.colorWrite,
+            onBeforeCompile: m.onBeforeCompile,
+            customProgramCacheKey: m.customProgramCacheKey,
+          });
         let changed = false;
         const set = <K extends keyof THREE.MeshStandardMaterial>(k: K, v: THREE.MeshStandardMaterial[K]) => {
           if (m[k] !== v) {
@@ -198,7 +309,27 @@ export class Display {
             changed = true;
           }
         };
-        if (mode === "wireframe") {
+        if (analysis) {
+          set("colorWrite", true);
+          set("depthWrite", true);
+          set("transparent", false);
+          set("opacity", 1);
+          if (m.userData.analysis !== mode) {
+            m.userData.analysis = mode;
+            m.onBeforeCompile = analysisPatch(mode);
+            m.customProgramCacheKey = () => `analysis-${mode}`;
+            changed = true;
+          }
+        } else if (m.userData.analysis) {
+          const saved = this.saved.get(m)!;
+          m.onBeforeCompile = saved.onBeforeCompile;
+          m.customProgramCacheKey = saved.customProgramCacheKey;
+          delete m.userData.analysis;
+          changed = true;
+        }
+        if (analysis) {
+          // (the shader patch colours it)
+        } else if (mode === "wireframe") {
           // Depth only where the faces are is not drawn: every edge shows, front and back.
           set("colorWrite", false);
           set("depthWrite", false);
@@ -232,6 +363,9 @@ export class Display {
       m.opacity = s.opacity;
       m.depthWrite = s.depthWrite;
       m.colorWrite = s.colorWrite;
+      m.onBeforeCompile = s.onBeforeCompile;
+      m.customProgramCacheKey = s.customProgramCacheKey;
+      delete m.userData.analysis;
       m.needsUpdate = true;
     }
     this.saved.clear();
@@ -239,7 +373,7 @@ export class Display {
 
   /** Bodies hidden in this mode's pass for shadows (wireframe and hidden line cast none). */
   get castsShadows() {
-    return this.mode === "shaded" || this.mode === "edges";
+    return this.mode === "shaded" || this.mode === "edges" || ANALYSIS.has(this.mode);
   }
 }
 
