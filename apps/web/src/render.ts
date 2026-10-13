@@ -10,16 +10,27 @@ import { WebGLPathTracer } from "three-gpu-pathtracer";
 /** What the view shows: its part groups and its camera. */
 export type RenderSource = { objects: THREE.Object3D[]; camera: THREE.PerspectiveCamera };
 
-export type RenderOptions = { width: number; height: number; samples: number };
+/**
+ * The room the model is shown in: "studio", a grey dome with softboxes and a
+ * floor fading into it; "white", a seamless white sweep (floor and backdrop
+ * one pure white, only the model and its soft shadows on it), as a catalogue
+ * product shot.
+ */
+export type Studio = "studio" | "white";
+
+export type RenderOptions = { width: number; height: number; samples: number; studio?: Studio };
 
 /**
  * A studio as an equirectangular HDR, Y up: a soft grey dome brighter
  * overhead, a dark floor bounce, and softboxes (a big key above front left, a
  * fill right, a strip overhead, a rim behind) that metals mirror as clean
  * highlights. `softboxes` scales the softboxes (the live view uses them
- * dimmed, beside its own sun).
+ * dimmed, beside its own sun). `white`: an even white dome all round (the
+ * seamless sweep) with the softboxes over it for shape and highlights.
+ * `userData.floor` is what a white matte floor under it sends back (its
+ * radiance per unit albedo), so a backdrop can be made to match it.
  */
-export function studioEnvironment(width = 1024, softboxes = 1): THREE.DataTexture {
+export function studioEnvironment(width = 1024, softboxes = 1, white = false): THREE.DataTexture {
   const height = width / 2;
   const data = new Float32Array(width * height * 4);
   // Softboxes: centre (azimuth, elevation in degrees), half sizes (degrees), intensity.
@@ -36,7 +47,8 @@ export function studioEnvironment(width = 1024, softboxes = 1): THREE.DataTextur
       // Dome: a cool grey brightening upward; the floor below the horizon dimmer and warm.
       const up = Math.max(0, Math.sin(THREE.MathUtils.degToRad(elevation)));
       let r: number, g: number, b: number;
-      if (elevation >= 0) {
+      if (white) [r, g, b] = [1, 1, 1];
+      else if (elevation >= 0) {
         const k = 0.5 + 0.55 * Math.pow(up, 0.6);
         [r, g, b] = [0.92 * k, 0.95 * k, 1.0 * k];
       } else {
@@ -62,7 +74,19 @@ export function studioEnvironment(width = 1024, softboxes = 1): THREE.DataTextur
       data[i + 3] = 1;
     }
   }
+  // Light on a floor facing up: the radiance above the horizon, cosine weighted (E / π).
+  let floor = 0;
+  for (let y = 0; y < height; y++) {
+    const elevation = THREE.MathUtils.degToRad(90 - (y / (height - 1)) * 180);
+    if (elevation <= 0) continue;
+    const solidAngle = ((2 * Math.PI) / width) * (Math.PI / height) * Math.cos(elevation);
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      floor += ((data[i] + data[i + 1] + data[i + 2]) / 3) * Math.sin(elevation) * solidAngle;
+    }
+  }
   const tex = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, THREE.FloatType);
+  tex.userData.floor = floor / Math.PI;
   tex.mapping = THREE.EquirectangularReflectionMapping;
   tex.colorSpace = THREE.LinearSRGBColorSpace;
   tex.minFilter = THREE.LinearFilter;
@@ -84,9 +108,11 @@ function physical(m: THREE.Material): THREE.Material {
     roughnessMap: m.roughnessMap,
     metalnessMap: m.metalnessMap,
     normalMap: m.normalMap,
-    emissive: m.emissive.clone(),
-    emissiveMap: m.emissiveMap,
-    emissiveIntensity: m.emissiveIntensity,
+    // A part's look has no glow of its own: what glows in the view is its
+    // selection or hover highlight, which a render leaves out.
+    emissive: m.userData.look ? 0x000000 : m.emissive.clone(),
+    emissiveMap: m.userData.look ? null : m.emissiveMap,
+    emissiveIntensity: m.userData.look ? 0 : m.emissiveIntensity,
     side: THREE.DoubleSide,
   });
   const hsl = { h: 0, s: 0, l: 0 };
@@ -123,12 +149,46 @@ function physical(m: THREE.Material): THREE.Material {
   return out;
 }
 
+const split = new WeakMap<THREE.BufferGeometry, THREE.BufferGeometry[]>();
+
+/**
+ * A mesh as (geometry, material) pieces, one per material: a part of several
+ * pieces is one geometry with a group per piece, which the path tracer does
+ * not map to its materials reliably (the floor came out in a part's yellow),
+ * so each group becomes a geometry of its own (the vertex data shared).
+ */
+function pieces(mesh: THREE.Mesh): [THREE.BufferGeometry, THREE.Material | undefined][] {
+  const g = mesh.geometry;
+  if (!Array.isArray(mesh.material)) return [[g, mesh.material]];
+  const index = g.getIndex();
+  const total = index ? index.count : g.getAttribute("position").count;
+  const groups = g.groups.length ? g.groups : [{ start: 0, count: total, materialIndex: 0 }];
+  let parts = split.get(g);
+  if (!parts) {
+    parts = groups.map(({ start, count }) => {
+      const n = Math.max(0, Math.min(count, total - start));
+      const sub = new THREE.BufferGeometry();
+      for (const [name, attribute] of Object.entries(g.attributes)) sub.setAttribute(name, attribute);
+      sub.setIndex(new THREE.BufferAttribute(index ? index.array.slice(start, start + n) : Uint32Array.from({ length: n }, (_, i) => start + i), 1));
+      return sub;
+    });
+    split.set(g, parts);
+  }
+  const materials = mesh.material;
+  return groups.map((group, i) => [parts[i], materials[group.materialIndex ?? 0]]);
+}
+
+/** The white sweep's floor: a matte white, without sheen, so it is one even white from every angle. */
+const WHITE_FLOOR = 0.9;
+
 /**
  * A scene to render: copies of every visible mesh where it sits in the view,
  * physical materials, the studio light, and a large matte floor under the
- * model for soft contact shadows. Z is up, as in the view.
+ * model for soft contact shadows. Z is up, as in the view. In the white
+ * studio the backdrop is exactly what the unshadowed floor sends back, so
+ * floor and backdrop meet without a horizon; `white` is that radiance.
  */
-export function buildRenderScene(source: RenderSource, environment: THREE.Texture): { scene: THREE.Scene; bounds: THREE.Box3 } {
+export function buildRenderScene(source: RenderSource, environment: THREE.Texture, studio: Studio = "studio"): { scene: THREE.Scene; bounds: THREE.Box3; white: number } {
   const scene = new THREE.Scene();
   const materials = new Map<THREE.Material, THREE.Material>();
   const convert = (m: THREE.Material) => {
@@ -146,45 +206,91 @@ export function buildRenderScene(source: RenderSource, environment: THREE.Textur
     root.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh || !visible(mesh) || (mesh as unknown as THREE.InstancedMesh).isInstancedMesh) return;
-      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      // Only shaded surfaces (no overlays, picking proxies or see-through ghosts of the view).
-      if (!mats.some((m) => m instanceof THREE.MeshStandardMaterial && !m.wireframe && m.visible)) return;
-      const copy = new THREE.Mesh(mesh.geometry, Array.isArray(mesh.material) ? mats.map(convert) : convert(mesh.material));
-      mesh.matrixWorld.decompose(copy.position, copy.quaternion, copy.scale);
-      scene.add(copy);
+      // Only shaded surfaces (no overlays, picking proxies or see-through ghosts of the view);
+      // instances drawn as GPU instances have their own materials off, and are parts all the same.
+      const batched = mesh.userData.batched === true;
+      const shaded = (m: THREE.Material | undefined): m is THREE.MeshStandardMaterial => m instanceof THREE.MeshStandardMaterial && !m.wireframe && (m.visible || batched);
+      let added = false;
+      for (const [geometry, m] of pieces(mesh)) {
+        if (!shaded(m)) continue;
+        const copy = new THREE.Mesh(geometry, convert(m));
+        mesh.matrixWorld.decompose(copy.position, copy.quaternion, copy.scale);
+        scene.add(copy);
+        added = true;
+      }
+      if (!added) return;
       if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
       bounds.union(mesh.geometry.boundingBox!.clone().applyMatrix4(mesh.matrixWorld));
     });
   }
+  const sweep = studio === "white";
+  const white = sweep ? WHITE_FLOOR * (environment.userData.floor ?? 1) : 1;
   if (!bounds.isEmpty()) {
     const size = bounds.getSize(new THREE.Vector3());
     const span = Math.max(size.x, size.y, size.z, 1);
     const floor = new THREE.Mesh(
       new THREE.CircleGeometry(span * 40, 96),
-      new THREE.MeshPhysicalMaterial({ color: 0xf3f4f6, roughness: 0.92, metalness: 0 }),
+      sweep
+        ? // Purely Lambertian: no reflection at all (index 1, no specular), and the path
+          // tracer's Disney diffuse is exactly Lambert at roughness 0, so the floor does
+          // not darken toward the horizon (a rough one does, by half at grazing).
+          new THREE.MeshPhysicalMaterial({ color: new THREE.Color().setRGB(WHITE_FLOOR, WHITE_FLOOR, WHITE_FLOOR, THREE.LinearSRGBColorSpace), roughness: 0.02, metalness: 0, ior: 1, specularIntensity: 0 })
+        : new THREE.MeshPhysicalMaterial({ color: 0xf3f4f6, roughness: 0.92, metalness: 0 }),
     );
     floor.position.set((bounds.min.x + bounds.max.x) / 2, (bounds.min.y + bounds.max.y) / 2, bounds.min.z - span * 1e-4);
     scene.add(floor);
   }
   scene.environment = environment;
-  scene.background = environment;
-  scene.backgroundBlurriness = 0.4;
+  if (sweep) scene.background = new THREE.Color().setRGB(white, white, white, THREE.LinearSRGBColorSpace);
+  else {
+    scene.background = environment;
+    scene.backgroundBlurriness = 0.4;
+  }
   // The studio is made Y up; the model is Z up.
   scene.environmentRotation.set(-Math.PI / 2, 0, 0);
   scene.backgroundRotation.set(-Math.PI / 2, 0, 0);
-  return { scene, bounds };
+  return { scene, bounds, white };
 }
 
-/** A camera like the view's, for an image `aspect` wide. */
+/**
+ * A camera like the view's, for an image `aspect` wide: as much of the scene
+ * across as the view shows (a square or upright image widens the angle
+ * rather than cropping the sides).
+ */
 function cameraFor(source: RenderSource, aspect: number) {
   const c = source.camera.clone();
+  if (aspect < c.aspect) {
+    const half = Math.tan(THREE.MathUtils.degToRad(c.fov / 2)) * (c.aspect / aspect);
+    c.fov = THREE.MathUtils.radToDeg(2 * Math.atan(half));
+  }
   c.aspect = aspect;
   c.updateProjectionMatrix();
   return c;
 }
 
-let sharedEnvironment: THREE.DataTexture | null = null;
-const environment = () => (sharedEnvironment ??= studioEnvironment());
+const environments = new Map<Studio, THREE.DataTexture>();
+function environment(studio: Studio) {
+  let e = environments.get(studio);
+  if (!e) environments.set(studio, (e = studio === "white" ? studioEnvironment(1024, 0.55, true) : studioEnvironment()));
+  return e;
+}
+
+/**
+ * Tone mapping for a studio: ACES for the grey studio. The white sweep is
+ * linear, as a product photo is exposed: the unshadowed floor a little over
+ * white so it is pure white once the samples settle, the model's colours
+ * true below it (black plastic stays a readable deep grey, not crushed), and
+ * only highlights brighter than the backdrop clip.
+ */
+function expose(renderer: THREE.WebGLRenderer, studio: Studio, white: number) {
+  if (studio !== "white") {
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.85;
+    return;
+  }
+  renderer.toneMapping = THREE.LinearToneMapping;
+  renderer.toneMappingExposure = 1.06 / white;
+}
 
 /**
  * Progressive render on a canvas: each frame adds samples, a camera move
@@ -202,14 +308,14 @@ export class LiveRender {
   private stopped = false;
   ready = false;
 
-  constructor(private source: RenderSource, onFrame: (samples: number) => void) {
+  constructor(private source: RenderSource, onFrame: (samples: number) => void, studio: Studio = "studio") {
     this.canvas = document.createElement("canvas");
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: false, preserveDrawingBuffer: true });
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.85;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    this.scene = buildRenderScene(source, environment()).scene;
+    const built = buildRenderScene(source, environment(studio), studio);
+    this.scene = built.scene;
+    expose(this.renderer, studio, built.white);
     this.camera = cameraFor(source, 1);
     this.tracer = new WebGLPathTracer(this.renderer);
     this.tracer.tiles.set(2, 2);
@@ -270,15 +376,14 @@ export class LiveRender {
  * have landed, as a PNG. `onProgress` hears the samples so far.
  */
 export async function renderImage(source: RenderSource, options: RenderOptions, onProgress?: (samples: number) => void): Promise<Blob> {
-  const { width, height, samples } = options;
+  const { width, height, samples, studio = "studio" } = options;
   const canvas = document.createElement("canvas");
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true });
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.85;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setPixelRatio(1);
   renderer.setSize(width, height, false);
-  const { scene } = buildRenderScene(source, environment());
+  const { scene, white } = buildRenderScene(source, environment(studio), studio);
+  expose(renderer, studio, white);
   const camera = cameraFor(source, width / height);
   const tracer = new WebGLPathTracer(renderer);
   // Big images in tiles, so each draw call stays short.

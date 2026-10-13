@@ -28,7 +28,7 @@
 //   node tools/forma.mjs study <study> [fps] [--out frames.json]   play a motion study: what moves, clashes, binding; frames to a file
 //   node tools/forma.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]' | controller [json|arduino] [--out f]] [--tool connector]
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
-//   node tools/forma.mjs render [--width 1920] [--height 1080] [--samples 256] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open)
+//   node tools/forma.mjs render [--width 1920] [--height 1080] [--samples 256] [--studio white|studio] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open); white: a seamless white sweep for product shots
 //   node tools/forma.mjs flat [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
 //   node tools/forma.mjs pcb calc|panel|gerbview|glb …   board calculators, panelization, the Gerber viewer, the board as glTF
@@ -61,7 +61,8 @@
 //   node tools/forma.mjs ops [filter]         the commands the engine accepts, with schemas
 //   node tools/forma.mjs view <action> [what] show something in the person's view (not saved):
 //        select L26 · frame L26 · isolate L26 · show_all · hide L19 · show L19
-//        color status|material · camera iso|front|back|left|right|top|bottom
+//        color status|material · camera iso|front|back|left|right|top|bottom · camera az,el[,lens°[,fill]]
+//        render [white|studio]   (render mode; white: the seamless white sweep)
 //        explode Bracket [spread] · explode Bracket off
 //        projection ortho|perspective · display shaded|edges|wireframe|hidden|xray
 //        section x 25 [flip] · section box x0 y0 z0 x1 y1 z1 · section off
@@ -479,6 +480,13 @@ if (command === "run") {
   const height = Number(opt("height", Math.round((width * 9) / 16)));
   const samples = Number(opt("samples", 256));
   const out = opt("out", `render-${width}x${height}.png`);
+  // The room: the grey studio, or the white sweep (pure white backdrop and floor, soft shadows) for catalogue shots.
+  const studio = opt("studio", null);
+  if (studio && !["white", "studio"].includes(studio)) {
+    console.error(`✗ --studio is white or studio, not ${studio}`);
+    process.exit(1);
+  }
+  if (studio) await engine.send("view", { action: "render", target: null, value: JSON.stringify({ studio, open: false }) });
   const q = new URLSearchParams({ ...(project ? { project } : {}), width, height, samples });
   // A render can take minutes: no header timeout (fetch gives up after five).
   const { request } = await import("node:http");
@@ -508,7 +516,7 @@ if (command === "run") {
       console.error("✗ no view is open and no Chrome or Chromium to render in headless (set CHROME to its path)");
       process.exit(1);
     }
-    const page = `${http}/${project ? `?project=${encodeURIComponent(project)}` : ""}`;
+    const page = `${http}/?${new URLSearchParams({ ...(project ? { project } : {}), ...(studio ? { studio } : {}) })}`;
     chrome = spawn(exe, ["--headless=new", `--user-data-dir=${mkdtempSync(`${tmpdir()}/forma-render-`)}`, "--enable-unsafe-swiftshader", `--window-size=${Math.min(width, 1920)},${Math.min(height, 1080)}`, "--hide-scrollbars", page], { stdio: "ignore" });
     for (let i = 0; i < 30 && res.status === 409; i++) {
       await new Promise((r) => setTimeout(r, 1000));
@@ -2546,6 +2554,15 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
     arg = arg.slice(0, how.index).trim();
   }
   if (["color", "camera", "projection", "display", "section"].includes(action)) value = arg;
+  // render [white|studio]: render mode in that room.
+  else if (action === "render" && arg) {
+    if (!["white", "studio"].includes(arg)) {
+      console.error(`✗ view render takes white or studio, not ${arg}`);
+      process.exit(1);
+    }
+    value = JSON.stringify({ studio: arg });
+    arg = "";
+  }
   else if (action === "measure" && arg) {
     // One or two items: their ids (names resolved below, one at a time).
     const s = await engine.snapshot;

@@ -638,7 +638,8 @@ You can drive their view, not just the design. When they ask to see something, s
 ./forma view color status        paint the building by sale status (color material to undo)
 ./forma view camera top          iso, front, back, left, right, top, bottom (glides there, everything framed)
 ./forma view explode Bracket 1.5 pull an assembly's parts apart (spread 0.25–2.5, default 1); `off` puts them back
-./forma view render              photoreal render mode: the view path-traced live (studio light, physical metals, plastics, glass)
+./forma view camera 35,20,20,0.85   any direction: azimuth (0 from the front, 90 from the right), elevation, and optionally the lens's vertical angle (default 36°; 15–25° for product shots with little perspective) and how much of the frame what is shown fills (0.85: a product shot framed tight; left out: framed loosely)
+./forma view render              photoreal render mode: the view path-traced live (studio light, physical metals, plastics, glass); `render white` in the white sweep
 ./forma view projection ortho    orthographic (true elevations) or perspective
 ./forma view display edges       shaded, edges, wireframe, hidden (hidden line) or xray; zebra, curvature or draft (surface analysis)
 ./forma view section x 25        cut at x = 25 mm, cut faces filled and hatched (add `flip` to keep the other side; one plane per axis, together a section box)
@@ -646,7 +647,7 @@ You can drive their view, not just the design. When they ask to see something, s
 ./forma view measure Block Pin    measure one item (mass, inertia) or one to another in their view, with dimension lines
 ```
 
-`./forma render [--width 1920] [--height 1080] [--samples 256] [--out shot.png]` writes a photoreal PNG of the model as their view shows it (set the camera, isolation and explode first); with no view open it renders in a headless browser. Materials render from their names: metals by family (aluminium, steel, stainless, brass, copper), a colour word in the name colours it ("Aluminium 5052 anodised black" renders anodised), glass, acrylic and LED epoxy transmit light.
+`./forma render [--width 1920] [--height 1080] [--samples 256] [--studio white] [--out shot.png]` writes a photoreal PNG of the model as their view shows it (set the camera, isolation and explode first; a square or upright image keeps everything the view shows across); with no view open it renders in a headless browser. `--studio white` is a product shot: a seamless white sweep (floor and backdrop one pure white, the model's soft shadows on it, true colours), as catalogue and listing photos are; the default is the grey studio. For a product shot, isolate the item, choose the view (`view camera 30,22,20,0.85`: a narrow lens keeps it from looking distorted, 0.85 frames it tight), render at 1024 samples or more for a clean image, and look at the result. Materials render from their names: metals by family (aluminium, steel, stainless, brass, copper), a colour word in the name colours it ("Aluminium 5052 anodised black" renders anodised), glass, acrylic and LED epoxy transmit light.
 
 Names work (instances like L26, shapes, assemblies) or ids. These change only that person's view (the person who spoke to you last, also after the engine restarts; before anyone has spoken, every open view of the project); nothing is saved and other people's views stay as they are. The context tells you what their view shows (selection, isolation, hidden items, paint).
 
