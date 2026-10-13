@@ -73,6 +73,7 @@ pub mod verify;
 pub mod wizards;
 // Board objects, zones, placement, stackup and the custom rules language.
 pub mod areas;
+pub mod drc_extra;
 pub mod graphics;
 pub mod multichannel;
 pub mod placement;

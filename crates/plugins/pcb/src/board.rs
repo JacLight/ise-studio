@@ -42,6 +42,17 @@ pub struct BoardView {
     pub ratsnest: Vec<Airwire>,
     pub violations: Vec<Violation>,
     pub stats: Stats,
+    /// Lines, arcs, text, images and dimensions on any layer.
+    pub graphics: Vec<crate::graphics::GraphicView>,
+    /// Keepouts and rule areas.
+    pub areas: Vec<crate::areas::AreaView>,
+    pub teardrops: Vec<crate::teardrops::TeardropView>,
+    pub stackup: crate::stackup::StackupView,
+    /// The custom rules as read (empty when none, or when they do not parse: see the `rules_syntax` violation).
+    pub custom_rules: Vec<crate::rules::Rule>,
+    /// Every piece of copper (pads, tracks, vias, graphics, teardrops) with its layers, for tools.
+    #[serde(skip)]
+    pub cu: Vec<Cu>,
 }
 
 impl BoardView {
@@ -151,11 +162,23 @@ pub struct ViaView {
     pub at: P,
     pub drill: f64,
     pub diameter: f64,
+    /// "through", "blind", "buried", "micro".
+    pub kind: &'static str,
+    /// First and last copper layer it joins.
+    pub from: String,
+    pub to: String,
+    /// Pad diameter per layer where it differs from `diameter` (0: no pad).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub stack: BTreeMap<String, f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ZoneView {
     pub id: StableId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub net: String,
     pub layer: String,
     pub outline: Vec<P>,
@@ -186,6 +209,9 @@ pub struct Hole {
     pub plated: bool,
     /// "R1.2", "via", "H1".
     pub owner: String,
+    /// A blind or buried via's first and last layer (through holes: none).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub span: Option<[String; 2]>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -250,8 +276,8 @@ pub struct Stats {
 #[derive(Clone, Debug)]
 pub struct Cu {
     pub prim: Prim,
-    /// Indices into the board's copper layers.
-    pub layers: u8,
+    /// Indices into the board's copper layers (bit k: layer k).
+    pub layers: u32,
     pub net: Option<String>,
     pub owner: Owner,
     pub bbox: [f64; 4],
@@ -262,14 +288,15 @@ pub enum Owner {
     Pad(usize),
     Track(StableId, usize),
     Via(StableId),
+    Graphic(StableId),
 }
 
 pub fn layer_index(layers: &[String], name: &str) -> Option<usize> {
     layers.iter().position(|l| l == name)
 }
 
-fn all_layers(n: usize) -> u8 {
-    ((1u16 << n) - 1) as u8
+fn all_layers(n: usize) -> u32 {
+    ((1u64 << n) - 1) as u32
 }
 
 /// Derived computation for `pcb.board`.
@@ -357,7 +384,7 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
                     Some(o) => place(c.at, c.rotation, bottom, geom::add(p.at, geom::rotate(o, p.rotation))),
                     None => at,
                 };
-                holes.push(Hole { at, size: d, rotation: rot, plated: p.kind == PadKind::Tht, owner: if p.number.is_empty() { c.reference.clone() } else { format!("{}.{}", c.reference, p.number) } });
+                holes.push(Hole { at, size: d, rotation: rot, plated: p.kind == PadKind::Tht, owner: if p.number.is_empty() { c.reference.clone() } else { format!("{}.{}", c.reference, p.number) }, span: None });
             }
             let corner = match p.shape {
                 PadShape::RoundRect => p.corner.unwrap_or(0.25) * p.size[0].min(p.size[1]),
@@ -398,15 +425,16 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
         components.push(component_view(*cid, c, Some(&fp)));
     }
 
-    for (vid, v) in &items.vias {
-        holes.push(Hole { at: v.at, size: [v.drill, v.drill], rotation: 0.0, plated: true, owner: "via".into() });
-        let _ = vid;
+    for (_, v) in &items.vias {
+        let (lo, hi) = crate::vias::span(&layers, &v.spec);
+        let span = (lo > 0 || hi < nl - 1).then(|| [layers[lo].clone(), layers[hi].clone()]);
+        holes.push(Hole { at: v.at, size: [v.drill, v.drill], rotation: 0.0, plated: true, owner: "via".into(), span });
     }
 
     // Copper for connectivity and clearance.
     let mut cu: Vec<Cu> = Vec::new();
     for (i, p) in pads.iter().enumerate() {
-        let mut mask = 0u8;
+        let mut mask = 0u32;
         for l in &p.layers {
             if let Some(k) = layer_index(&layers, l) {
                 mask |= 1 << k;
@@ -427,11 +455,40 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
         }
     }
     for (vid, v) in &items.vias {
-        let prim = Prim::circle(v.at, v.diameter / 2.0);
-        cu.push(Cu { bbox: prim.bbox(), prim, layers: all_layers(nl), net: v.net.clone(), owner: Owner::Via(*vid) });
+        for (mask, d) in crate::vias::pads(&layers, v) {
+            let prim = Prim::circle(v.at, d / 2.0);
+            cu.push(Cu { bbox: prim.bbox(), prim, layers: mask, net: v.net.clone(), owner: Owner::Via(*vid) });
+        }
+    }
+    let _ = all_layers;
+
+    // Board graphics: copper ones are copper (connectivity, clearance, pours keep clear).
+    let mut graphics = Vec::new();
+    for (gid, g) in &items.graphics {
+        match crate::graphics::resolve(*gid, g) {
+            Ok(gv) => {
+                if let Some(k) = layer_index(&layers, &gv.layer) {
+                    for prim in crate::graphics::copper_prims(&gv) {
+                        cu.push(Cu { bbox: prim.bbox(), prim, layers: 1 << k, net: gv.net.clone(), owner: Owner::Graphic(*gid) });
+                    }
+                }
+                graphics.push(gv);
+            }
+            Err(m) => violations.push(Violation { code: "graphic", severity: "error", message: format!("A graphic on {} cannot be drawn: {m}", g.layer), at: g.anchor(), layer: Some(g.layer.clone()), objects: vec![*gid], refs: vec![g.layer.clone()] }),
+        }
+    }
+    let areas: Vec<crate::areas::AreaView> = items.areas.iter().map(|(id, a)| crate::areas::view(*id, a, &layers)).collect();
+
+    // Teardrops where tracks meet pads and vias.
+    let mut teardrops = Vec::new();
+    if let Some(td) = &board.teardrops {
+        let lines: Vec<(StableId, crate::Track, Vec<P>)> = items.tracks.iter().map(|(id, t)| (*id, t.clone(), line_of(id, t))).collect();
+        let (views, copper) = crate::teardrops::make(td, &layers, &lines, &cu, &pads, board);
+        teardrops = views;
+        cu.extend(copper);
     }
 
-    let zones = fill_zones(board, &items.zones, &outline, &cutouts, &cu, &holes, &layers, &pads);
+    let zones = fill_zones(board, &items.zones, &outline, &cutouts, &cu, &holes, &layers, &pads, &areas);
 
     // Connectivity: union-find over copper of the same net that touches.
     let n = cu.len();
@@ -474,6 +531,7 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
             Owner::Pad(i) => (format!("{}.{}", pads[*i].reference, pads[*i].number), Some(pads[*i].component)),
             Owner::Track(id, _) => (format!("track on {}", c.net.as_deref().unwrap_or("no net")), Some(*id)),
             Owner::Via(id) => (format!("via on {}", c.net.as_deref().unwrap_or("no net")), Some(*id)),
+            Owner::Graphic(id) => (format!("copper graphic on {}", c.net.as_deref().unwrap_or("no net")), Some(*id)),
         }
     };
     let mut shorted: BTreeSet<(String, String)> = BTreeSet::new();
@@ -568,7 +626,21 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
             let arcs = flat.contains_key(id);
             TrackView { id: *id, net: t.net.clone(), layer: t.layer.clone(), width: t.width, points: line_of(id, t), auto: t.auto, reroute: t.reroute, vertices: if arcs { t.points.clone() } else { vec![] }, bulges: if arcs { t.bulges.clone() } else { vec![] } }
         }).collect();
-    let vias: Vec<ViaView> = items.vias.iter().map(|(id, v)| ViaView { id: *id, net: v.net.clone(), at: v.at, drill: v.drill, diameter: v.diameter }).collect();
+    let vias: Vec<ViaView> = items
+        .vias
+        .iter()
+        .map(|(id, v)| {
+            let (lo, hi) = crate::vias::span(&layers, &v.spec);
+            ViaView { id: *id, net: v.net.clone(), at: v.at, drill: v.drill, diameter: v.diameter, kind: v.spec.kind.name(), from: layers[lo].clone(), to: layers[hi].clone(), stack: v.spec.stack.clone(), group: v.spec.group.clone() }
+        })
+        .collect();
+    let (custom_rules, rules_error) = match crate::rules::parse(&board.drc_rules) {
+        Ok(r) => (r.rules, None),
+        Err(m) => (vec![], Some(m)),
+    };
+    if let Some(m) = rules_error {
+        violations.push(Violation { code: "rules_syntax", severity: "error", message: format!("The custom rules do not read: {m}"), at: [bounds[0], bounds[3]], layer: None, objects: vec![id], refs: vec!["rules".into()] });
+    }
 
     let mut view = BoardView {
         id,
@@ -597,9 +669,16 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
         ratsnest,
         violations,
         stats: Stats::default(),
+        graphics,
+        areas,
+        teardrops,
+        stackup: crate::stackup::resolve(board),
+        custom_rules,
+        cu: vec![],
     };
     view.stats = stats(&view, &items);
     crate::drc::check(board, &mut view, &cu);
+    view.cu = cu;
     Ok(view)
 }
 
@@ -759,7 +838,7 @@ fn segs(r: f64) -> i32 {
 /// minus higher-priority pours of other nets; necks thinner than `min_width`
 /// removed; islands that join nothing of the net dropped.
 #[allow(clippy::too_many_arguments)]
-fn fill_zones(board: &Board, zones: &[(StableId, Zone)], outline: &[P], cutouts: &[Vec<P>], cu: &[Cu], holes: &[Hole], layers: &[String], pads: &[PadView]) -> Vec<ZoneView> {
+fn fill_zones(board: &Board, zones: &[(StableId, Zone)], outline: &[P], cutouts: &[Vec<P>], cu: &[Cu], holes: &[Hole], layers: &[String], pads: &[PadView], areas: &[crate::areas::AreaView]) -> Vec<ZoneView> {
     let mut order: Vec<&(StableId, Zone)> = zones.iter().collect();
     order.sort_by(|a, b| b.1.priority.cmp(&a.1.priority).then(a.0.cmp(&b.0)));
     let edge = board.rules.edge_clearance;
@@ -808,6 +887,17 @@ fn fill_zones(board: &Board, zones: &[(StableId, Zone)], outline: &[P], cutouts:
                 cut.push(fill.offset(gap, JoinType::Round, 2.0, segs(gap)));
             }
         }
+        // Keepouts that forbid pours on this layer, and the zone's own cutouts.
+        for a in areas.iter().filter(|a| a.no_pours && a.mask & (1 << li) != 0 && a.outline.len() >= 3) {
+            cut.push(CrossSection::from_polygons(&[a.outline.clone()]));
+        }
+        for c in z.cutouts.iter().filter(|c| c.len() >= 3) {
+            let mut ccw = c.clone();
+            if geom::polygon_area(&ccw) < 0.0 {
+                ccw.reverse();
+            }
+            cut.push(CrossSection::from_polygons(&[ccw]));
+        }
         if !cut.is_empty() {
             shape = shape.difference(&CrossSection::batch_union(&cut));
         }
@@ -832,6 +922,9 @@ fn fill_zones(board: &Board, zones: &[(StableId, Zone)], outline: &[P], cutouts:
         if !relieved.is_empty() {
             let rings: Vec<CrossSection> = relieved.iter().map(|i| pads[*i].prim.section(pad_gap(*i), TOL)).collect();
             shape = shape.difference(&CrossSection::batch_union(&rings));
+        }
+        if let Some(h) = &z.hatch {
+            shape = crate::areas::hatch(&shape, h);
         }
         let half = z.min_width / 2.0;
         if half > 0.0 {
@@ -872,7 +965,7 @@ fn fill_zones(board: &Board, zones: &[(StableId, Zone)], outline: &[P], cutouts:
                 continue;
             }
             let joins = cu.iter().any(|c| c.layers & (1 << li) != 0 && c.net.as_deref() == Some(z.net.as_str()) && geom::gap_to_area(&c.prim, &contours) <= 1e-6);
-            if z.remove_islands && !joins {
+            if z.remove_islands && !joins && z.min_island_area.is_none_or(|limit| piece.area() < limit) {
                 continue;
             }
             islands.push(contours);
@@ -881,7 +974,7 @@ fn fill_zones(board: &Board, zones: &[(StableId, Zone)], outline: &[P], cutouts:
         let fill = if kept.is_empty() { CrossSection::empty() } else { CrossSection::batch_union(&kept) };
         let a = fill.area();
         done.push((z.net.clone(), z.layer.clone(), fill));
-        out.push(ZoneView { id: *zid, net: z.net.clone(), layer: z.layer.clone(), outline: if z.outline.len() >= 3 { z.outline.clone() } else { outline.to_vec() }, fill: islands, priority: z.priority, area: a, reliefs });
+        out.push(ZoneView { id: *zid, name: z.name.clone(), net: z.net.clone(), layer: z.layer.clone(), outline: if z.outline.len() >= 3 { z.outline.clone() } else { outline.to_vec() }, fill: islands, priority: z.priority, area: a, reliefs });
     }
     out
 }

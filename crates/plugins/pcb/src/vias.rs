@@ -280,7 +280,8 @@ impl Command for Stitch {
         let n = view.layers.len();
         let m = mask(0, n - 1);
         // Removed group vias are still in the view's copper: leave them out.
-        let cu: Vec<Cu> = view.cu.iter().filter(|c| !matches!(&c.owner, crate::board::Owner::Via(id) if crate::items(tx.world(), self.board).vias.iter().all(|(v, _)| v != id))).cloned().collect();
+        let alive: Vec<StableId> = crate::items(tx.world(), self.board).vias.iter().map(|(id, _)| *id).collect();
+        let cu: Vec<Cu> = view.cu.iter().filter(|c| !matches!(&c.owner, crate::board::Owner::Via(id) if !alive.contains(id))).cloned().collect();
         let spot = Spot { view: &view, board: &board, cu: &cu };
         let r = diameter / 2.0;
         let mut placed: Vec<P> = Vec::new();

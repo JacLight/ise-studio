@@ -146,7 +146,7 @@ pub fn standard(layers: usize, thickness: f64, outer_oz: f64, inner_oz: f64) -> 
     let cores = kinds.len() - prepregs;
     // Prepreg 0.1 mm (thinner when the board is too thin for it), the cores share the rest.
     let mut pp = 0.1_f64;
-    if cores > 0 && left - pp * prepregs as f64 < 0.1 * cores as f64 {
+    if cores > 0 && left - pp * (prepregs as f64) < 0.1 * (cores as f64) {
         pp = (left / (prepregs + cores) as f64).max(0.02);
     }
     let core = if cores > 0 { ((left - pp * prepregs as f64) / cores as f64).max(0.02) } else { 0.0 };
