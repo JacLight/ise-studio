@@ -6,7 +6,8 @@
 //! - `GET /rfq/<rfq id>.zip` — every supplier's package, a folder each;
 //!   `?supplier=<id>` — one supplier's package; `/rfq/<rfq id>` — the plan as
 //!   JSON (each supplier's lines and a mailto: draft)
-//! - `GET /rates` — process rates in force (the project's or the defaults)
+//! - `GET /rates` — process rates in force (the project's or the defaults),
+//!   and the exchange rates with when, by whom and from where each was set
 
 use crate::{App, Server, bad_request, today};
 use axum::{
@@ -88,7 +89,75 @@ fn title(project: &Project, name: &str) -> String {
 }
 
 fn compute(project: &Project, scope: Scope, options: &bom::Options) -> Result<Bom, String> {
-    bom::compute(project.world(), scope, options, &[&de_pcb::sourcing::PcbBuySource])
+    let mut options = options.clone();
+    options.rate_dates = rate_history(project).into_iter().map(|(code, set)| (code, set.date)).collect();
+    bom::compute(project.world(), scope, &options, &[&de_pcb::sourcing::PcbBuySource])
+}
+
+/// When an exchange rate was last set, and by whom.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RateSet {
+    pub date: String,
+    pub by: String,
+    pub revision: u64,
+}
+
+/// The change that last set each exchange rate in force, from the
+/// project's history (a change's id, or its session's, tells when it was
+/// made). Rates set before the history began have none.
+pub fn rate_history(project: &Project) -> std::collections::BTreeMap<String, RateSet> {
+    let mut out = std::collections::BTreeMap::new();
+    for change in project.journal() {
+        for op in &change.ops {
+            let de_core::Op::Set { kind, before, after, .. } = op else { continue };
+            if *kind != "sourcing.rates" {
+                continue;
+            }
+            let rates = |v: &Option<de_core::value::CompValue>| v.as_ref().map(|v| v.to_json()["exchange"].clone()).unwrap_or(Value::Null);
+            let (was, now) = (rates(before), rates(after));
+            let codes: std::collections::BTreeSet<String> = [&was, &now].iter().filter_map(|m| m.as_object()).flat_map(|m| m.keys().cloned()).collect();
+            for code in codes {
+                if was.get(&code) == now.get(&code) {
+                    continue;
+                }
+                if now.get(&code).is_none() {
+                    out.remove(&code);
+                    continue;
+                }
+                let when = time_of(&change.command_id).or_else(|| time_of(&change.actor.session_id));
+                match when {
+                    Some(ms) => out.insert(code, RateSet { date: date_of(ms), by: change.actor.user_id.clone(), revision: change.revision.0 }),
+                    None => out.remove(&code),
+                };
+            }
+        }
+    }
+    out
+}
+
+/// The time (ms since 1970) a time-ordered id (UUID version 7) was made.
+fn time_of(id: &str) -> Option<u64> {
+    let hex: String = id.chars().filter(|c| *c != '-').collect();
+    if hex.len() != 32 || !hex.chars().all(|c| c.is_ascii_hexdigit()) || hex.as_bytes()[12] != b'7' {
+        return None;
+    }
+    u64::from_str_radix(&hex[..12], 16).ok()
+}
+
+/// A day as YYYY-MM-DD (UTC).
+fn date_of(ms: u64) -> String {
+    let days = (ms / 86_400_000) as i64;
+    // Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
 /// `GET /bom/<id>`: the bill of materials, as JSON (with the process rates
@@ -258,7 +327,9 @@ pub async fn rfq(State(server): State<Arc<Server>>, Path(stem): Path<String>, Qu
     }
 }
 
-/// `GET /rates`: the process rates in force.
+/// `GET /rates`: the process rates in force, and the exchange rates: what
+/// one unit of each currency is worth in the project's, when and by whom it
+/// was set, and where it came from (a reference rate, or by hand).
 pub async fn rates(State(server): State<Arc<Server>>, Query(q): Query<HashMap<String, String>>) -> Response {
     let (_, app) = match app_of(&server, &q) {
         Ok(x) => x,
@@ -267,5 +338,74 @@ pub async fn rates(State(server): State<Arc<Server>>, Query(q): Query<HashMap<St
     let project = app.project.lock().unwrap();
     let r = de_sourcing::rates::rates_of(project.world());
     let table: Vec<Value> = r.table().into_iter().map(|(p, rate, default)| json!({ "process": p, "rate": rate, "default": default })).collect();
-    axum::Json(json!({ "currency": r.currency(), "processes": table })).into_response()
+    let history = rate_history(&project);
+    let options = bom::Options { rate_dates: history.iter().map(|(c, s)| (c.clone(), s.date.clone())).collect(), ..Default::default() };
+    let exchange: Vec<Value> = r
+        .exchange
+        .iter()
+        .map(|(code, rate)| {
+            let set = history.get(code);
+            json!({
+                "currency": code, "rate": rate,
+                "set_on": set.map(|s| s.date.clone()), "by": set.map(|s| s.by.clone()), "revision": set.map(|s| s.revision),
+                "source": r.exchange_source.get(code), "note": bom::rate_note(code, &r, &options),
+            })
+        })
+        .collect();
+    axum::Json(json!({ "currency": r.currency(), "exchange": exchange, "processes": table })).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn body(r: Response) -> String {
+        String::from_utf8(axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap()
+    }
+
+    #[test]
+    fn a_change_id_tells_the_day_it_was_made() {
+        assert_eq!(time_of("01a1349b-83c8-7090-b86f-b624be2910b1").map(date_of).as_deref(), Some("2026-10-13"));
+        assert_eq!(time_of("run-0123456789abcdef0123456789abcdef"), None);
+        assert_eq!(time_of("2b6f0c1e-4f2a-4c3b-9d1e-0123456789ab"), None, "not time-ordered (version 4)");
+        assert_eq!(date_of(0), "1970-01-01");
+        assert_eq!(date_of(951_782_400_000), "2000-02-29");
+    }
+
+    /// A rate set by hand before rates carried dates (robot-arm's EUR 1.15)
+    /// says the day from the history, unchanged; a reference rate says where from.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn exchange_rates_say_when_and_how_they_were_set() {
+        let dir = std::env::temp_dir().join(format!("forma-rates-{}", StableId::new()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let line = json!({ "revision": 1, "base_revision": 0, "command_id": "01a1349b-83c8-7090-b86f-b624be2910b1", "operation": "sourcing.rates.set",
+            "actor": { "user_id": "forma-ai", "session_id": "01a1349b-8095-7220-9767-ed8cb646a3d9" },
+            "ops": [{ "op": "create", "id": "01a1349b-83c8-7090-b86f-b6257fccf216" }, { "op": "set", "id": "01a1349b-83c8-7090-b86f-b6257fccf216", "kind": "sourcing.rates", "before": null, "after": { "exchange": { "EUR": 1.15 } } }] });
+        std::fs::write(dir.join("arm.jsonl"), format!("{line}\n")).unwrap();
+        let server = crate::tests::server_in(&dir);
+        let app = server.project(Some(&"arm".to_string())).unwrap();
+        let spring = r#"stock({ partNumber: "RZ-075NI", manufacturer: "Gutekunst Federn", unitPrice: 6.40, currency: "EUR", pack: 1, massG: 3.5 }); return cylinder(5, 30);"#;
+        app.commit_here("shape.create", json!({ "name": "Spring", "params": [], "source": spring, "placement": { "x": { "value": 0, "unit": "mm" }, "y": { "value": 0, "unit": "mm" }, "z": { "value": 0, "unit": "mm" } } })).unwrap();
+        let q = |extra: &[(&str, &str)]| Query([("project", "arm")].iter().chain(extra).map(|(k, v)| (k.to_string(), v.to_string())).collect::<HashMap<_, _>>());
+
+        let r: Value = serde_json::from_str(&body(rates(State(server.clone()), q(&[])).await).await).unwrap();
+        assert_eq!(r["currency"], "USD");
+        assert_eq!(r["exchange"], json!([{ "currency": "EUR", "rate": 1.15, "set_on": "2026-10-13", "by": "forma-ai", "revision": 1, "source": null, "note": "rate set on 2026-10-13 by hand" }]));
+        let csv = body(bom(State(server.clone()), Path("project".into()), q(&[("format", "csv")])).await).await;
+        assert!(csv.contains("\"list (EUR at 1.15 to USD, rate set on 2026-10-13 by hand)\""), "{csv}");
+        let json: Value = serde_json::from_str(&body(bom(State(server.clone()), Path("project".into()), q(&[])).await).await).unwrap();
+        assert!(json["flags"].as_array().unwrap().iter().any(|f| f["text"].as_str().unwrap().ends_with("converted to USD at 1.15 (rate set on 2026-10-13 by hand)")), "{}", json["flags"]);
+
+        // Refreshed from a reference rate: today, and where it came from.
+        app.commit_here("sourcing.rates.set", json!({ "exchange": { "EUR": 1.1634 }, "source": "ECB reference rate of 2026-10-12" })).unwrap();
+        let r: Value = serde_json::from_str(&body(rates(State(server.clone()), q(&[])).await).await).unwrap();
+        let today = crate::today();
+        assert_eq!((r["exchange"][0]["rate"].clone(), r["exchange"][0]["set_on"].clone(), r["exchange"][0]["by"].clone()), (json!(1.1634), json!(today), json!("local")));
+        assert_eq!(r["exchange"][0]["note"], format!("ECB reference rate of 2026-10-12, set on {today}"));
+        // Removed: gone from the list.
+        app.commit_here("sourcing.rates.set", json!({ "exchange": { "EUR": 0 } })).unwrap();
+        let r: Value = serde_json::from_str(&body(rates(State(server.clone()), q(&[])).await).await).unwrap();
+        assert_eq!(r["exchange"], json!([]));
+        assert!(rate_history(&app.project.lock().unwrap()).is_empty());
+    }
 }

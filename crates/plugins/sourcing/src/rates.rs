@@ -51,6 +51,10 @@ pub struct Rates {
     /// currency given here are converted; others are flagged, not converted.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub exchange: BTreeMap<String, f64>,
+    /// Where an exchange rate came from, by currency ("ECB reference rate of
+    /// 2026-10-10"); a rate without one was set by hand.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub exchange_source: BTreeMap<String, String>,
 }
 
 impl Persist for Rates {
@@ -139,6 +143,10 @@ pub struct SetRates {
     /// in the project's (`{ "EUR": 1.08 }`); 0 removes one.
     #[serde(default)]
     pub exchange: BTreeMap<String, f64>,
+    /// Where these exchange rates come from ("ECB reference rate of
+    /// 2026-10-10"); left out, they were set by hand.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 impl Command for SetRates {
@@ -170,7 +178,12 @@ impl Command for SetRates {
             }
             if rate == 0.0 {
                 rates.exchange.remove(&code);
+                rates.exchange_source.remove(&code);
             } else {
+                match self.source.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                    Some(src) => rates.exchange_source.insert(code.clone(), src.chars().take(120).collect()),
+                    None => rates.exchange_source.remove(&code),
+                };
                 rates.exchange.insert(code, rate);
             }
         }

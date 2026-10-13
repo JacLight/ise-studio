@@ -12,6 +12,8 @@
 //   node tools/forma.mjs check-geometry <id> [part]   the exact kernel's check of each part: valid, self-intersections, tolerances
 //   node tools/forma.mjs surfaces <id> [part] [--pull x,y,z] [--min deg]   surface analysis: continuity across every seam (gap, crease, curvature jump), tightest bend, draft
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
+//   node tools/forma.mjs rates [refresh [EUR GBP…]]   the exchange and process rates in use, with when each exchange rate was set;
+//        refresh: today's ECB reference rates (fetched only then) for the currencies listed or already used
 //   node tools/forma.mjs set-study <shape id> study.json [--part X]   save a part's stress/heat study (faces as { normal, near: [x, y, z] })
 //   node tools/forma.mjs stress|fatigue|modes|buckle|heat|converge|inp <shape id> [--part X] [--count N] [--resolutions 32,48,64]
 //                                             run the part's saved study (inp: a CalculiX deck on stdout)
@@ -330,6 +332,59 @@ if (command === "run") {
   const parts = [`${applied} applied`, skipped && `${skipped} already applied (skipped)`, notRun && `${notRun} before --from not run`].filter(Boolean).join(", ");
   if (failed) console.error(`stopped: ${parts}. Fix the step and run the file again: the steps applied are skipped and it continues from there.`);
   else if (skipped || notRun) console.log(`${steps.length} steps: ${parts}`);
+} else if (command === "rates") {
+  // The rates costs are reckoned with; refresh fetches the ECB's reference rates, only when asked.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const q = project ? `?project=${encodeURIComponent(project)}` : "";
+  const get = async () => {
+    const res = await fetch(`${http}/rates${q}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  };
+  const show = (r) => {
+    console.log(`Costs are in ${r.currency}.`);
+    if (!r.exchange.length) console.log("  no exchange rates: prices in other currencies are flagged, not converted (forma rates refresh EUR, or sourcing.rates.set { exchange: { EUR: … } })");
+    for (const e of r.exchange) console.log(`  1 ${e.currency} = ${e.rate} ${r.currency}   ${e.note}${e.by ? ` (by ${e.by}, revision ${e.revision})` : ""}`);
+    const own = r.processes.filter((p) => !p.default);
+    console.log(`Process rates: ${own.length ? own.map((p) => `${p.process} ${p.rate.per_hour}/h`).join(", ") : "the typical defaults"}${own.length < r.processes.length ? ` (${r.processes.length - own.length} at the defaults: GET /rates lists them)` : ""}`);
+  };
+  try {
+    const sub = file ?? "list";
+    if (sub === "list") show(await get());
+    else if (sub === "refresh") {
+      const r = await get();
+      const asked = args.slice(2).map((c) => c.toUpperCase());
+      const wanted = (asked.length ? asked : r.exchange.map((e) => e.currency)).filter((c) => c !== r.currency);
+      if (!wanted.length) throw new Error("no exchange rates to refresh: name the currencies (forma rates refresh EUR GBP)");
+      const url = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml";
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`the ECB's reference rates could not be fetched (${res.status} ${res.statusText}): nothing changed`);
+      const xml = await res.text();
+      const day = xml.match(/time=['"](\d{4}-\d{2}-\d{2})['"]/)?.[1];
+      const ecb = { EUR: 1 };
+      for (const m of xml.matchAll(/currency=['"]([A-Z]{3})['"]\s+rate=['"]([0-9.]+)['"]/g)) ecb[m[1]] = Number(m[2]);
+      if (!day || Object.keys(ecb).length < 10) throw new Error("the ECB's file did not read as its daily reference rates: nothing changed");
+      if (!ecb[r.currency]) throw new Error(`the ECB publishes no reference rate for ${r.currency} (the project's currency): nothing changed`);
+      const exchange = {};
+      for (const c of wanted) {
+        if (!ecb[c]) {
+          console.log(`  ${c}: the ECB publishes no reference rate for it; left as it is`);
+          continue;
+        }
+        // One unit of c in the project's currency, through the euro.
+        exchange[c] = Number((ecb[r.currency] / ecb[c]).toPrecision(6));
+      }
+      if (!Object.keys(exchange).length) throw new Error("nothing to change");
+      const before = Object.fromEntries(r.exchange.map((e) => [e.currency, e.rate]));
+      const out = await engine.commit("sourcing.rates.set", { exchange, source: `ECB reference rate of ${day}` });
+      if (!out.ok) throw new Error(`${out.error.code} ${out.error.message}`);
+      for (const [c, v] of Object.entries(exchange)) console.log(`✓ 1 ${c} = ${v} ${r.currency}${before[c] != null ? ` (was ${before[c]})` : ""}: ECB reference rate of ${day}`);
+      show(await get());
+    } else throw new Error("forma rates [refresh [EUR GBP…]]");
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
 } else if (command === "check") {
   const r = await engine.send("check");
   const report = r.value;
