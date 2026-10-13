@@ -81,6 +81,7 @@ const PATHS = {
   distV: "M3 4h18 M3 20h18 M7 10h10v4H7z",
   copy: "M8 8h12v12H8z M4 16V4h12",
   list: "M9 6h11 M9 12h11 M9 18h11 M4.5 6h.01 M4.5 12h.01 M4.5 18h.01",
+  building: "M3 21h18 M5 21V10l7-6 7 6v11 M9 21v-6h6v6 M9 11h.01 M15 11h.01",
   truck: "M2 6h12v10H2z M14 9h4l4 4v3h-8z M5 19a2 2 0 1 0 4 0a2 2 0 1 0-4 0 M15 19a2 2 0 1 0 4 0a2 2 0 1 0-4 0",
   tag: "M3 3h8l10 10-8 8L3 13z M7.5 7.5h.01",
   package: "M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z M3 7.5 12 12l9-4.5 M12 12v9 M7.5 5.2l9 4.6",

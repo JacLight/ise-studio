@@ -489,6 +489,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "de-bim"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "de-core"
 version = "0.1.0"
 dependencies = [
@@ -568,6 +577,7 @@ dependencies = [
  "axum",
  "base64",
  "de-assembly",
+ "de-bim",
  "de-core",
  "de-draft",
  "de-intent",
@@ -593,6 +603,7 @@ dependencies = [
 name = "de-shape"
 version = "0.1.0"
 dependencies = [
+ "de-bim",
  "de-core",
  "de-occt",
  "de-scan",

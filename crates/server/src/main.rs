@@ -8,6 +8,7 @@
 //! Clients pick a project with `?project=<name>` on `/ws` and `/export`.
 
 mod ai;
+mod bim;
 mod formats;
 mod data;
 mod assembly_api;
@@ -2264,6 +2265,10 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/machines/jcz/status", axum::routing::post(machines::status))
         .route("/gears/{id}", axum::routing::post(gear_check))
         .route("/drawing/{file}", get(drawing))
+        .route("/bim/{id}", get(bim::structure))
+        .route("/ifc/{file}", get(bim::ifc))
+        .route("/schedule/{id}", get(bim::schedule))
+        .route("/plan/{file}", get(bim::plan))
         .route("/motion/{id}", get(motion))
         .route("/assembly-motion/{id}", get(assembly_motion))
         .route("/connectors/{id}", get(connectors))

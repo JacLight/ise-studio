@@ -143,6 +143,9 @@ pub struct MakeLine {
     pub cost_source: &'static str,
     /// Where it is used (assembly paths), the first few.
     pub used_in: Vec<String>,
+    /// What it is as a building element ("IfcWall", "IfcSlab"), when the program says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ifc_class: Option<String>,
 }
 
 /// A stock item.
@@ -178,6 +181,9 @@ pub struct BuyLine {
     /// "award", "list" (the item's own or a source's price) or "none".
     pub cost_source: &'static str,
     pub used_in: Vec<String>,
+    /// What it is as a building element ("IfcDoor", "IfcWindow"), when the program says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ifc_class: Option<String>,
 }
 
 /// One row of the indented BOM.
@@ -498,6 +504,7 @@ impl<'w> Walker<'w> {
             extended: None,
             cost_source: "none",
             used_in,
+            ifc_class: None,
         };
         self.make.push(MakeAcc { line, cost: material.and_then(|m| m.cost.clone()), density: material.map(|m| m.density.canonical()), pierces: cut_mm.map(|c| c.1).unwrap_or(0) });
         key
@@ -538,8 +545,18 @@ impl<'w> Walker<'w> {
             award: None,
             cost_source: "none",
             used_in,
+            ifc_class: None,
         });
         key
+    }
+
+    /// The IFC class of a line's parts, from the first that has one.
+    fn set_class(&mut self, key: &str, class: String) {
+        if let Some(acc) = self.make.iter_mut().find(|a| a.line.key == key) {
+            acc.line.ifc_class.get_or_insert(class);
+        } else if let Some(l) = self.buy.iter_mut().find(|l| l.key == key) {
+            l.ifc_class.get_or_insert(class);
+        }
     }
 
     /// Bought items other sources say `id` brings, as child rows.
@@ -632,6 +649,9 @@ impl<'w> Walker<'w> {
                         let mass = info.masses.get(i).copied().flatten();
                         (self.add_make(p.name.clone(), id, info.config.clone(), Some(p.name.clone()), mid, p.material.clone(), p.process.clone(), size, p.volume_mm3, mass, Some(&info.program), total, path), "make")
                     };
+                    if let Some(class) = declared.bim.as_ref().and_then(|b| b.elements.get(&p.name)).map(|e| e.class.clone()) {
+                        self.set_class(&key, class);
+                    }
                     match rows.iter_mut().find(|r| r.line.as_deref() == Some(key.as_str())) {
                         Some(r) => {
                             if r.name != p.name {
@@ -916,13 +936,13 @@ fn num(v: Option<f64>, digits: usize) -> String {
 
 /// The flat BOM as CSV: every line, Make then Buy.
 pub fn flat_csv(bom: &Bom) -> String {
-    let mut out = String::from("Item,Class,Part number,Name,Description,Standard,Manufacturer,MPN,Material,Process,Qty per unit,Order qty,Length mm,Width mm,Thickness mm,Volume cm3,Mass each kg,Unit cost,Extended,Currency,Cost source,Supplier,Lead days,Used in\n");
+    let mut out = String::from("Item,Class,Part number,Name,Description,Standard,Manufacturer,MPN,Material,Process,Qty per unit,Order qty,Length mm,Width mm,Thickness mm,Volume cm3,Mass each kg,Unit cost,Extended,Currency,Cost source,Supplier,Lead days,Used in,IFC class\n");
     let cur = &bom.totals.currency;
     let q = bom.totals.quantity;
     for l in &bom.make {
         let _ = writeln!(
             out,
-            "{},Make,,{},,,,,{},{},{},{},{:.2},{:.2},{:.2},{:.2},{},{},{},{},{},{},{},{}",
+            "{},Make,,{},,,,,{},{},{},{},{:.2},{:.2},{:.2},{:.2},{},{},{},{},{},{},{},{},{}",
             l.item,
             csv(&l.name),
             csv(l.material.as_deref().unwrap_or("")),
@@ -941,6 +961,7 @@ pub fn flat_csv(bom: &Bom) -> String {
             csv(l.award.as_ref().map(|a| a.supplier_name.as_str()).unwrap_or("")),
             l.award.as_ref().and_then(|a| a.lead_days).map(|d| d.to_string()).unwrap_or_default(),
             csv(&l.used_in.join("; ")),
+            l.ifc_class.as_deref().unwrap_or(""),
         );
     }
     for l in &bom.buy {
@@ -948,7 +969,7 @@ pub fn flat_csv(bom: &Bom) -> String {
         let t = |f: fn(&Stock) -> Option<&String>| csv(s.and_then(f).map(String::as_str).unwrap_or(""));
         let _ = writeln!(
             out,
-            "{},Buy,{},{},{},{},{},{},,,{},{},{},,,,{},{},{},{},{},{},{},{}",
+            "{},Buy,{},{},{},{},{},{},,,{},{},{},,,,{},{},{},{},{},{},{},{},{}",
             l.item,
             csv(s.map(|s| s.part_number.as_str()).unwrap_or("")),
             csv(&l.name),
@@ -967,6 +988,7 @@ pub fn flat_csv(bom: &Bom) -> String {
             csv(l.award.as_ref().map(|a| a.supplier_name.clone()).or_else(|| s.and_then(|s| s.sources.first()).map(|x| x.supplier.clone())).as_deref().unwrap_or("")),
             l.award.as_ref().and_then(|a| a.lead_days).map(|d| d.to_string()).unwrap_or_default(),
             csv(&l.used_in.join("; ")),
+            l.ifc_class.as_deref().unwrap_or(""),
         );
     }
     out

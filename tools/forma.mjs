@@ -52,6 +52,11 @@
 //   node tools/forma.mjs measure <part> [other part] [--part name]   volume, area, mass, centre of mass,
 //   node tools/forma.mjs drawing <id> [--sheet A3] [--part Name] [--page N] [--pdf f] [--svg f] [--dxf f] [--zip f]   the engineering drawing: sheets, dimensions, the checker's findings; saves files
 //        moments of inertia (kg·mm² about the centre of mass); with two: centre to centre and the gap per axis
+//   node tools/forma.mjs bim [id|project]     the building: levels and what stands on each, spaces, zones, grids
+//   node tools/forma.mjs schedule [id|project] [--class wall,door] [--level name] [--by level,class] [--csv] [--psets] [--out f.csv]
+//   node tools/forma.mjs ifc export [id|project] [file.ifc]  ·  ifc import <file.ifc>
+//   node tools/forma.mjs plan [id|project] --level name [--cut 1200] | --section x|y <mm> [--looking east] | --elevation south
+//        [--sheet A3] [--scale 100] [--pdf file.pdf] [--dxf file.dxf]
 //   node tools/forma.mjs sheet <sheet>        a spreadsheet as a grid: what each cell shows, aliases, errors
 //   node tools/forma.mjs draft                draft objects, dimensions with their values, layers, working planes, arrays
 //   node tools/forma.mjs import <file> [--name N] [--as sheet|parameters|configurations] [--target id] [--sheet name]
@@ -1655,6 +1660,116 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
     console.error(`✗ ${e.message}`);
     failed = true;
   }
+} else if (command === "bim" || command === "schedule" || command === "ifc" || command === "plan") {
+  // Building information: the structure, schedules, IFC in and out, plans/sections/elevations.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const flag = (name, takes = true) => {
+    const i = args.indexOf(name);
+    if (i < 0) return null;
+    return takes ? args.splice(i, 2)[1] : (args.splice(i, 1), true);
+  };
+  const q = new URLSearchParams(project ? { project } : {});
+  const write = async (res, out) => {
+    const { writeFileSync } = await import("node:fs");
+    const name = out ?? decodeURIComponent((res.headers.get("content-disposition") ?? "").match(/filename="([^"]+)"/)?.[1] ?? "forma-output");
+    writeFileSync(name, Buffer.from(await res.arrayBuffer()));
+    return name;
+  };
+  try {
+    if (command === "bim") {
+      const id = args[1] ?? "project";
+      const res = await fetch(`${http}/bim/${encodeURIComponent(id)}?${q}`);
+      if (!res.ok) throw new Error(await res.text());
+      const b = await res.json();
+      console.log(`${b.building?.name || b.project} on ${b.site?.name ?? "its site"}: ${b.elements} elements, ${b.openings} openings`);
+      for (const l of b.levels) {
+        const els = Object.entries(l.elements).map(([c, n]) => `${n} ${c.replace(/^Ifc/, "")}`).join(", ");
+        console.log(`  ${l.name.padEnd(16)} +${(l.elevation / 1000).toFixed(3)} m${l.height ? `, ${l.height} mm high` : ""}: ${els || "nothing"}`);
+        for (const s of l.spaces) console.log(`      ${s.name}${s.long_name ? ` (${s.long_name})` : ""}: ${s.area_m2} m², ${s.height} mm high`);
+      }
+      const loose = b.classes && Object.entries(b.classes).length ? `classes: ${Object.entries(b.classes).map(([c, n]) => `${c} ${n}`).join(", ")}` : "";
+      if (loose) console.log(`  ${loose}`);
+      for (const z of b.zones) console.log(`  zone ${z.name}: ${z.spaces.join(", ")}`);
+      for (const g of b.grids) console.log(`  grid ${g.name}${g.level ? ` (${g.level})` : ""}: ${g.axes.join(" ")}`);
+      for (const g of b.groups) console.log(`  ${g.class} ${g.name}${g.level ? ` (${g.level})` : ""}`);
+      if (b.untagged.length) console.log(`  ! no IFC class (written as proxies): ${b.untagged.join(", ")}`);
+      for (const n of b.notes) console.log(`  ! ${n}`);
+    } else if (command === "schedule") {
+      const cls = flag("--class"), lvl = flag("--level"), by = flag("--by"), csv = flag("--csv", false), psets = flag("--psets", false), out = flag("--out");
+      const id = args[1] ?? "project";
+      if (cls) q.set("class", cls);
+      if (lvl) q.set("level", lvl);
+      if (by) q.set("group", by);
+      if (psets) q.set("psets", "1");
+      q.set("format", csv || out ? "csv" : "json");
+      const res = await fetch(`${http}/schedule/${encodeURIComponent(id)}?${q}`);
+      if (!res.ok) throw new Error(await res.text());
+      if (out) console.log(`✓ wrote ${await write(res, out)}`);
+      else if (csv) process.stdout.write(await res.text());
+      else {
+        const { schedule: s } = await res.json();
+        const fmt = (v, u) => (u === "m²" || u === "m³" ? v.toFixed(2) : u === "kg" ? v.toFixed(1) : String(Math.round(v * 100) / 100));
+        const cols = s.columns.filter((c) => s.rows.some((r) => r.quantities[c] !== undefined)).slice(0, 8);
+        if (s.group_by.length) {
+          const main = ["Length", "NetSideArea", "NetArea", "NetFloorArea", "Area", "NetVolume", "Volume", "TotalLength", "Weight", "Openings"];
+          for (const g of [...s.groups, s.total]) console.log(`${g.key.join(" · ").padEnd(36)} ${String(g.count).padStart(4)}  ${Object.entries(g.sums).filter(([k]) => main.includes(k)).sort(([a], [b]) => main.indexOf(a) - main.indexOf(b)).map(([k, v]) => `${k} ${fmt(v, s.units[k])}${s.units[k] ? ` ${s.units[k]}` : ""}`).join(", ")}`);
+        } else {
+          for (const r of s.rows) console.log(`${(r.level ?? "—").padEnd(14)} ${r.class.replace(/^Ifc/, "").padEnd(18)} ${r.name.padEnd(28)} ${r.tag ? `[${r.tag}] ` : ""}${r.type ?? ""}  ${cols.filter((c) => r.quantities[c] !== undefined).map((c) => `${c} ${fmt(r.quantities[c], s.units[c])}`).join(", ")}`);
+          console.log(`Total: ${s.total.count} items; ${Object.entries(s.total.sums).filter(([k]) => cols.includes(k)).map(([k, v]) => `${k} ${fmt(v, s.units[k])}${s.units[k] ? ` ${s.units[k]}` : ""}`).join(", ")}`);
+        }
+      }
+    } else if (command === "ifc") {
+      const [, action, a, b] = args;
+      if (action === "export") {
+        const id = a && !a.endsWith(".ifc") ? a : "project";
+        const out = a?.endsWith(".ifc") ? a : b;
+        const res = await fetch(`${http}/ifc/${encodeURIComponent(id)}.ifc?${q}`);
+        if (!res.ok) throw new Error(await res.text());
+        console.log(`✓ wrote ${await write(res, out)} (IFC4)`);
+      } else if (action === "import" && a) {
+        const { readFileSync } = await import("node:fs");
+        const { basename } = await import("node:path");
+        const res = await fetch(`${http}/import/${encodeURIComponent(basename(a))}?${q}`, { method: "POST", body: readFileSync(a) });
+        if (!res.ok) throw new Error(await res.text());
+        const r = await res.json();
+        console.log(`✓ imported ${a} as shape ${r.id}`);
+      } else throw new Error("forma ifc export [id|project] [file.ifc] | forma ifc import <file.ifc>");
+    } else if (command === "plan") {
+      const lvl = flag("--level"), cut = flag("--cut"), sheet = flag("--sheet"), scale = flag("--scale"), pdf = flag("--pdf"), dxf = flag("--dxf"), looking = flag("--looking"), side = flag("--elevation");
+      const si = args.indexOf("--section");
+      const section = si >= 0 ? args.splice(si, 3).slice(1) : null;
+      const id = args[1] ?? "project";
+      if (section) {
+        q.set("view", "section");
+        q.set("axis", section[0]);
+        q.set("at", section[1]);
+        if (looking) q.set("looking", looking);
+      } else if (side) {
+        q.set("view", "elevation");
+        q.set("side", side);
+      } else {
+        q.set("view", "plan");
+        if (lvl) q.set("level", lvl);
+        if (cut) q.set("cut", cut);
+      }
+      if (sheet) q.set("sheet", sheet);
+      if (scale) q.set("scale", scale);
+      const res = await fetch(`${http}/plan/${encodeURIComponent(id)}?${q}`);
+      if (!res.ok) throw new Error(await res.text());
+      const d = await res.json();
+      console.log(`✓ ${d.texts.find((t) => t.bold && t.size >= 3.5)?.text ?? "drawing"}: ${d.scale_text} on ${d.width}×${d.height} mm, ${d.strokes.length} lines, ${d.fills.length} filled, ${d.texts.length} texts`);
+      for (const w of d.warnings) console.log(`  ! ${w}`);
+      for (const [ext, out] of [["pdf", pdf], ["dxf", dxf]]) {
+        if (!out) continue;
+        const r = await fetch(`${http}/plan/${encodeURIComponent(id)}.${ext}?${q}`);
+        if (!r.ok) throw new Error(await r.text());
+        console.log(`✓ wrote ${await write(r, out === true || out === "-" ? undefined : out)}`);
+      }
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
 } else if (command === "view") {
   const action = file;
   let arg = args.slice(2).join(" ").trim();
@@ -1800,7 +1915,7 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
     failed = true;
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | flat [id] [part] | render [--width] | get <id> | tree | list | check | ops | check-geometry <id> [part] | measure <part> [other] | sheet <name> | draft | view <action> [what] | import <file> [--name N] | export <id> <file> | --format <fmt> [--part P] [--out path] | bundle [file] | image add <file> | image list | look [what] [--view v]  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | flat [id] [part] | render [--width] | get <id> | tree | list | check | ops | bim | schedule | ifc export|import | plan | check-geometry <id> [part] | measure <part> [other] | sheet <name> | draft | view <action> [what] | import <file> [--name N] | export <id> <file> | --format <fmt> [--part P] [--out path] | bundle [file] | image add <file> | image list | look [what] [--view v]  [--project name] [--url ws://…]");
   failed = true;
 }
 

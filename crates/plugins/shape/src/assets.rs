@@ -127,7 +127,8 @@ pub fn store_import(sha: &str, bytes: &[u8], hint: Option<Kind>) -> Result<PathB
 }
 
 /// Every stored file a program reads: each quoted content hash in its source
-/// (`importStep("<sha>")`, `image("<sha>")`, `relief("<sha>", …)`).
+/// (`importStep("<sha>")`, `importIfc("<sha>")`, `image("<sha>")`, `relief("<sha>", …)`;
+/// an IFC file is a STEP physical file too, stored the same way).
 pub fn referenced(source: &str) -> Vec<String> {
     let mut out = Vec::new();
     let bytes = source.as_bytes();
@@ -148,6 +149,26 @@ pub fn referenced(source: &str) -> Vec<String> {
         i += 1;
     }
     out
+}
+
+/// An imported IFC file read into elements, levels, spaces and the rest, as
+/// JSON for `importIfc` (cached: reading a file is the slow part).
+pub fn ifc_json(sha: &str) -> Result<std::sync::Arc<String>, String> {
+    static CACHE: OnceLock<Mutex<Vec<(String, std::sync::Arc<String>)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(Vec::new()));
+    if let Some((_, j)) = cache.lock().unwrap().iter().find(|(s, _)| s == sha) {
+        return Ok(j.clone());
+    }
+    let bytes = std::fs::read(path(sha)?).map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&bytes);
+    let read = de_bim::ifc_read::read(&text)?;
+    let json = std::sync::Arc::new(serde_json::to_string(&read).map_err(|e| e.to_string())?);
+    let mut c = cache.lock().unwrap();
+    if c.len() >= 4 {
+        c.remove(0);
+    }
+    c.push((sha.to_string(), json.clone()));
+    Ok(json)
 }
 
 /// A body read from an imported file: name, solid, colour (sRGB) if the file gives one.

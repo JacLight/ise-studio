@@ -26,6 +26,7 @@ pub mod mechanism;
 pub mod params;
 pub mod pathfinder;
 pub mod pattern;
+pub mod plan;
 pub mod project;
 pub mod paramtable;
 pub mod relief;
