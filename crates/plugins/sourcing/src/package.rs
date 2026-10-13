@@ -164,7 +164,7 @@ impl<'a> Files<'a> {
                 Ok(match ext {
                     "stl" => de_shape::stl_of(&fabricate::at_origin(&item.solid), &format!("Forma {name}"), [0.0; 3]),
                     "3mf" => fabricate::three_mf(name, &item.solid),
-                    "dxf" => fabricate::dxf(name, &item.solid).into_bytes(),
+                    "dxf" => item.cut_file().into_bytes(),
                     other => return Err(format!("unknown file kind .{other}")),
                 })
             }

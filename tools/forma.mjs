@@ -23,7 +23,10 @@
 //   node tools/forma.mjs study <study> [fps] [--out frames.json]   play a motion study: what moves, clashes, binding; frames to a file
 //   node tools/forma.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]'] [--tool connector]
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
+//   node tools/forma.mjs render [--width 1920] [--height 1080] [--samples 256] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open)
+//   node tools/forma.mjs flat [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
+//   node tools/forma.mjs pcb calc|panel|gerbview|glb …   board calculators, panelization, the Gerber viewer, the board as glTF
 //   node tools/forma.mjs pcb route|drag|cleanup|optimize …   the interactive router: pad to pad (walkaround/shove), drag a track or via, tidy copper
 //   node tools/forma.mjs pcb import <file> [--format f] [--name n] [--board id] [companions…]   a board/schematic from KiCad, Eagle, EasyEDA, Altium, CADSTAR, Fabmaster, PADS, gEDA
 //   node tools/forma.mjs pcb exports <id> | export <id> <file name | kicad_sch | ipc2581 | odb | d356 | …> [--out path]   files for other EDA tools
@@ -54,10 +57,10 @@
 //        moments of inertia (kg·mm² about the centre of mass); with two: centre to centre and the gap per axis
 //   node tools/forma.mjs sheet <sheet>        a spreadsheet as a grid: what each cell shows, aliases, errors
 //   node tools/forma.mjs draft                draft objects, dimensions with their values, layers, working planes, arrays
-//   node tools/forma.mjs import <file> [--as sheet|parameters|configurations] [--target id] [--sheet name]
-//        .step/.stp, .scad (a live parametric shape), .csv/.xlsx (a sheet, a parameter set or a shape's
-//        configurations), .forma (a whole project bundle, as a new project)
-//   node tools/forma.mjs export <id|name> <file.step|stl|3mf|dxf|scad|zip|csv|xlsx>   write a file
+//   node tools/forma.mjs import <file> [--name N] [--as sheet|parameters|configurations] [--target id] [--sheet name]
+//        STEP/IGES (exact, also .stpz, .brep) and STL/OBJ/PLY/glTF/GLB/3MF (mesh) become a shape, DXF/SVG a sketch,
+//        .scad a live parametric shape, .csv/.xlsx a sheet, parameter set or configurations, .forma a new project
+//   node tools/forma.mjs export <id|name|project> <file.ext> | --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]
 //   node tools/forma.mjs bundle [file.forma]   the whole project (history, assets) as one file
 //
 // steps.json is an array of { "operation": "...", "parameters": { ... } }.
@@ -65,8 +68,9 @@
 // path (e.g. "$0.id"), and { "$file": "path.js" } inlines a file's text (paths
 // are relative to steps.json; several files can be joined with an array).
 
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { request as httpRequest } from "node:http";
 import { pcbLib } from "./forma-pcblib.mjs";
 import { pcbBoard, BOARD_SUBS } from "./forma-pcbboard.mjs";
@@ -241,6 +245,104 @@ if (command === "run") {
     if (r.pass && extra !== "all") console.log(`  (${r.pass} passing items hidden; add "all" to list them)`);
     for (const n of r.notes) console.log(`  ! ${n}`);
     failed = !r.ok;
+  }
+} else if (command === "render") {
+  // A photoreal PNG of the model as the person's view shows it; with no view open, a headless browser renders it.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const opt = (name, fallback) => {
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 ? args.splice(i, 2)[1] : fallback;
+  };
+  const width = Number(opt("width", 1920));
+  const height = Number(opt("height", Math.round((width * 9) / 16)));
+  const samples = Number(opt("samples", 256));
+  const out = opt("out", `render-${width}x${height}.png`);
+  const q = new URLSearchParams({ ...(project ? { project } : {}), width, height, samples });
+  // A render can take minutes: no header timeout (fetch gives up after five).
+  const { request } = await import("node:http");
+  const ask = () =>
+    new Promise((done, fail) => {
+      const r = request(`${http}/render?${q}`, { method: "POST" }, (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const body = Buffer.concat(chunks);
+          done({ status: res.statusCode, ok: res.statusCode === 200, text: async () => body.toString(), arrayBuffer: async () => body });
+        });
+      });
+      r.on("error", fail);
+      r.end();
+    });
+  let res = await ask();
+  let chrome = null;
+  if (res.status === 409) {
+    // No view open: start a headless browser on the project and ask again once it has loaded.
+    const { spawn } = await import("node:child_process");
+    const { existsSync, mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const paths = [process.env.CHROME, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium", "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"].filter(Boolean);
+    const exe = paths.find((p) => existsSync(p));
+    if (!exe) {
+      console.error("✗ no view is open and no Chrome or Chromium to render in headless (set CHROME to its path)");
+      process.exit(1);
+    }
+    const page = `${http}/${project ? `?project=${encodeURIComponent(project)}` : ""}`;
+    chrome = spawn(exe, ["--headless=new", `--user-data-dir=${mkdtempSync(`${tmpdir()}/forma-render-`)}`, "--enable-unsafe-swiftshader", `--window-size=${Math.min(width, 1920)},${Math.min(height, 1080)}`, "--hide-scrollbars", page], { stdio: "ignore" });
+    for (let i = 0; i < 30 && res.status === 409; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      res = await ask();
+    }
+  }
+  if (!res.ok) {
+    console.error(`✗ ${await res.text()}`);
+    failed = true;
+  } else {
+    const png = Buffer.from(await res.arrayBuffer());
+    writeFileSync(out, png);
+    console.log(`✓ ${out}: ${width} × ${height} px, ${samples} samples, ${(png.length / 1024).toFixed(0)} KB${chrome ? " (rendered headless)" : ""}`);
+  }
+  chrome?.kill();
+} else if (command === "flat") {
+  // Sheet-metal flat patterns: every sheet part, or one with its bend table and checks; files on request.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const files = {};
+  for (const ext of ["dxf", "svg", "csv"]) {
+    const i = args.indexOf(`--${ext}`);
+    if (i >= 0) files[ext] = args.splice(i, 2)[1];
+  }
+  const [, id = "project", part] = args;
+  const q = new URLSearchParams({ ...(project ? { project } : {}), ...(part ? { part } : {}) });
+  const res = await fetch(`${http}/sheet-metal/${id}?${q}`);
+  if (!res.ok) {
+    console.error(`✗ ${await res.text()}`);
+    failed = true;
+  } else if (id === "project") {
+    const list = await res.json();
+    if (!list.length) console.log("no sheet-metal parts (build them with sheet() or sheetProfile(); see the prelude)");
+    for (const s of list) console.log(`${s.errors ? "✗" : "✓"} ${s.part} (${s.shape}, ${s.id}): ${s.thickness} mm ${s.material}, flat ${s.flat.join(" × ")} mm, ${s.bends} bends${s.errors ? `, ${s.errors} errors` : ""}${s.warnings ? `, ${s.warnings} warnings` : ""}`);
+    failed = list.some((s) => s.errors);
+  } else {
+    const f = await res.json();
+    const errors = f.checks.filter((c) => c.severity === "error");
+    console.log(`${errors.length ? "✗" : "✓"} ${f.part}: ${f.thickness} mm ${f.material}, K ${f.k} at R${f.radius}; flat blank ${f.size.map((v) => v.toFixed(2)).join(" × ")} mm, ${(f.area / 100).toFixed(1)} cm², cut ${f.cut_length.toFixed(0)} mm in ${f.pierces} outline${f.pierces > 1 ? "s" : ""}`);
+    if (f.bends.length) console.log("  order bend  dir   angle  R      K     BA      BD      length  from → to");
+    for (const b of [...f.bends].sort((a, b) => a.order - b.order)) {
+      console.log(`  ${String(b.order).padStart(5)} ${b.id.padEnd(5)} ${(b.dir + (b.hem ? "*" : "")).padEnd(5)} ${String(b.angle).padStart(5)}° ${String(b.radius).padEnd(6)} ${String(b.k).padEnd(5)} ${b.allowance.toFixed(3).padStart(7)} ${b.deduction.toFixed(3).padStart(7)} ${b.length.toFixed(1).padStart(7)}  ${b.from} → ${b.to}`);
+    }
+    if (f.bends.some((b) => b.hem)) console.log("  (* hem)");
+    for (const c of f.checks) console.log(`  ${c.severity.padEnd(7)} ${c.code}: ${c.message}`);
+    for (const [ext, path] of Object.entries(files)) {
+      const r = await fetch(`${http}/sheet-metal/${id}?${new URLSearchParams({ ...Object.fromEntries(q), format: ext })}`);
+      if (!r.ok) {
+        console.error(`✗ ${ext}: ${await r.text()}`);
+        failed = true;
+        continue;
+      }
+      const bytes = Buffer.from(await r.arrayBuffer());
+      writeFileSync(path, bytes);
+      console.log(`  wrote ${path} (${bytes.length} bytes)`);
+    }
+    failed ||= errors.length > 0;
   }
 } else if (["stress", "fatigue", "modes", "buckle", "heat", "converge", "inp", "probe", "section", "path", "csv", "frame", "materials", "set-study", "plate"].includes(command)) {
   // Simulation: a part's saved study run as kept, results read back, frames, materials.
@@ -475,6 +577,110 @@ if (command === "run") {
       }
       for (const u of c.unreadable) console.log(`  ✗ ${u}`);
       failed = !c.ok;
+    } else if (sub === "calc") {
+      // Board calculators: no name lists them; key=value words set inputs.
+      const [, , id, ...rest] = args;
+      if (!id) {
+        const r = await get("/pcb/calc");
+        for (const c of r.calculators) console.log(`${c.id.padEnd(11)} ${c.title}: ${c.inputs.map((i) => `${i.key}=${i.default}${i.unit ? ` ${i.unit}` : ""}${i.options ? ` (${i.options.join("|")})` : ""}`).join(", ") || "no inputs"}`);
+      } else {
+        const params = Object.fromEntries(rest.filter((w) => w.includes("=")).map((w) => [w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1)]));
+        const r = await get(`/pcb/calc/${encodeURIComponent(id)}?${q(params)}`);
+        console.log(`${r.title} (${Object.entries(r.inputs).map(([k, v]) => `${k}=${v}`).join(" ")})`);
+        for (const x of r.results) console.log(`  ${String(x.label).padEnd(40)} ${x.value} ${x.unit}`);
+        if (r.bands) console.log(`  bands: ${r.bands.map((b) => b.colour).join(", ")}`);
+        if (r.values) console.log(`  ${r.values.join("  ")}`);
+        for (const t of [r.table, r.levels].filter(Boolean)) {
+          console.log(`  ${t.columns.join(" | ")}`);
+          for (const row of t.rows) console.log(`  ${row.join(" | ")}`);
+        }
+        for (const n of r.notes ?? []) console.log(`  · ${n}`);
+        if (r.source) console.log(`  (${r.source})`);
+      }
+    } else if (sub === "panel") {
+      // A panel of the board: layout and checks; --out writes its fab package.
+      const out = flag("--out");
+      const fab = flag("--fab");
+      const [, , board, ...rest] = args;
+      if (!board) throw new Error("usage: forma pcb panel <board id> [rows=2 cols=3 separation=mousebites|vscore|tabs frame=rails-tb|rails-lr|frame|none gap=2 tab_width=3 tabs=1 rail=5 fiducials=true tooling=true …] [--fab jlcpcb] [--out panel.zip]");
+      const params = { ...Object.fromEntries(rest.filter((w) => w.includes("=")).map((w) => [w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1)])), ...(fab ? { fab } : {}) };
+      const r = await get(`/pcb/${board}/panel?${q(params)}`);
+      const p = r.panel;
+      const bad = r.readback.filter((x) => !x.ok);
+      console.log(`${p.problems.length || bad.length ? "✗" : "✓"} ${p.spec.rows} × ${p.spec.cols} panel of ${r.board.name}: ${p.size.map((v) => v.toFixed(2)).join(" × ")} mm, ${p.spec.separation}, frame ${p.spec.frame}`);
+      console.log(`  ${p.tabs.length} tabs, ${p.bites.length} mouse bites, ${p.vcuts.length} V-cuts, ${p.fiducials.length} fiducials, ${p.tooling.length} tooling holes; substrate ${p.area.toFixed(1)} mm² in ${p.outline.length} contour(s)`);
+      for (const x of p.problems) console.log(`  ✗ ${x}`);
+      for (const x of p.notes) console.log(`  · ${x}`);
+      for (const x of r.readback) console.log(`  ${x.ok ? "✓" : "✗"} ${x.file}: ${x.ok ? (x.holes != null ? `${x.holes} holes` : `${x.objects} objects (${x.function})`) : x.error}`);
+      if (out) {
+        const { writeFileSync } = await import("node:fs");
+        const res = await fetch(`${http}/pcb/${board}/panel.zip?${q(params)}`);
+        if (!res.ok) throw new Error(await res.text());
+        writeFileSync(out, Buffer.from(await res.arrayBuffer()));
+        console.log(`  wrote ${out}`);
+      }
+      failed = p.problems.length > 0 || bad.length > 0;
+    } else if (sub === "gerbview") {
+      // Read any Gerber/Excellon files or zips (or a board's own package with --board): layers, apertures, nets;
+      // --compare older files to see what changed; --pdf writes the layers as a PDF.
+      const { writeFileSync } = await import("node:fs");
+      const compare = flag("--compare");
+      const pdf = flag("--pdf");
+      const board = flag("--board");
+      const paths = args.slice(2);
+      const upload = (list) => list.map((f) => ({ name: f.split("/").pop(), data: readFileSync(f).toString("base64") }));
+      let files;
+      if (board) {
+        const zip = await fetch(`${http}/pcb/${board}/fab.zip?${q()}`);
+        if (!zip.ok) throw new Error(await zip.text());
+        files = [{ name: "board.zip", data: Buffer.from(await zip.arrayBuffer()).toString("base64") }];
+      } else {
+        if (!paths.length) throw new Error("usage: forma pcb gerbview <files or zip…> | --board <id> [--compare <older files or zip>] [--pdf out.pdf]");
+        files = upload(paths);
+      }
+      const post = async (path, body) => {
+        const res = await fetch(`${http}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+        if (!res.ok) throw new Error(await res.text());
+        return res;
+      };
+      const toBoard = flag("--to-board");
+      if (toBoard) {
+        // Steps that rebuild a board (outline, tracks, vias) from the files: run them with ./forma run.
+        const s = await (await post("/pcb/gerbview", { files, to_board: flag("--name") ?? "From Gerbers" })).json();
+        writeFileSync(toBoard, JSON.stringify(s.steps, null, 1));
+        console.log(`wrote ${toBoard}: ${s.steps.length} steps (run them with ./forma run ${toBoard})`);
+        for (const n of s.notes) console.log(`  · ${n}`);
+      }
+      const r = await (await post("/pcb/gerbview", { files, summary: true, ...(compare ? { against: upload(compare.split(",")) } : {}) })).json();
+      console.log(`${r.layers.length} layers, ${r.size.join(" × ")} mm, ${r.nets} nets, ${r.parts} parts${r.job ? ", job file" : ""}`);
+      for (const l of r.layers) console.log(`  ${l.function.padEnd(22)} ${l.file}${l.guessed ? " (layer guessed from its name)" : ""}: ${l.kind === "drill" ? l.tools.map(([t, d, h, s]) => `T${t} ø${d}×${h}${s ? `+${s} slots` : ""}`).join(", ") : `${l.objects} objects, ${l.apertures} apertures, ${l.nets} nets`}`);
+      for (const [f, e] of r.unreadable) console.log(`  ✗ ${f}: ${e}`);
+      if (r.other.length) console.log(`  other files: ${r.other.join(", ")}`);
+      if (r.compare) {
+        console.log("Compared with the earlier files:");
+        for (const d of r.compare) {
+          console.log(`  ${d.same ? "=" : "≠"} ${d.function.padEnd(22)} ${d.before ?? "(none)"} → ${d.after ?? "(none)"}${d.same ? "" : d.holes_added.length || d.holes_removed.length ? `: ${d.holes_added.length} holes added, ${d.holes_removed.length} removed` : `: +${d.added} mm², −${d.removed} mm²`}`);
+          for (const h of [...d.holes_added.map((x) => `+ ${x}`), ...d.holes_removed.map((x) => `− ${x}`)].slice(0, 8)) console.log(`      ${h}`);
+        }
+      }
+      if (pdf) {
+        const looks = r.layers.filter((l) => !l.function.startsWith("Paste")).map((l) => ({ file: l.file }));
+        const res = await post("/pcb/gerbview/pdf", { files, looks, background: "#ffffff" });
+        writeFileSync(pdf, Buffer.from(await res.arrayBuffer()));
+        console.log(`wrote ${pdf}`);
+      }
+      failed = r.unreadable.length > 0;
+    } else if (sub === "glb") {
+      // The populated board as binary glTF.
+      const board = args[2];
+      if (!board) throw new Error("usage: forma pcb glb <board id> [--out board.glb]");
+      const out = flag("--out") ?? "board.glb";
+      const res = await fetch(`${http}/pcb/${board}/board.glb?${q()}`);
+      if (!res.ok) throw new Error(await res.text());
+      const { writeFileSync } = await import("node:fs");
+      const bytes = Buffer.from(await res.arrayBuffer());
+      writeFileSync(out, bytes);
+      console.log(`wrote ${out} (${(bytes.length / 1024).toFixed(0)} kB)`);
     } else if (sub === "import") {
       // A board and/or schematic from another EDA tool, told apart by content.
       const format = flag("--format");
@@ -559,7 +765,7 @@ if (command === "run") {
     } else if (BOARD_SUBS.includes(sub)) {
       failed = await pcbBoard(sub, args, { engine, get, q });
     } else {
-      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | import <file> [--format f] | exports <id> | export <id> <name|kind> [--out path] | library [update] | lib … | logo <image> | assign <schematic> | variant <schematic> … | block … | route <board> <from> <to> [--mode shove] | drag <board> <item> <x,y> | cleanup <board> | optimize <board>");
+      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | import <file> [--format f] | exports <id> | export <id> <name|kind> [--out path] | calc [name key=value…] | panel <board> [key=value…] [--out panel.zip] | gerbview <files…>|--board <id> [--compare old] [--pdf out.pdf] [--to-board steps.json] | glb <board> [--out f.glb] | library [update] | lib … | logo <image> | assign <schematic> | variant <schematic> … | block … | route <board> <from> <to> [--mode shove] | drag <board> <item> <x,y> | cleanup <board> | optimize <board>");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
@@ -1131,8 +1337,7 @@ if (command === "run") {
   }
 } else if (command === "import" || command === "export" || command === "bundle") {
   const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
-  const { readFileSync: read, writeFileSync: write } = await import("node:fs");
-  const { basename } = await import("node:path");
+  const [read, write] = [readFileSync, writeFileSync];
   const flag = (name) => {
     const i = args.indexOf(name);
     return i >= 0 ? args.splice(i, 2)[1] : null;
@@ -1141,13 +1346,16 @@ if (command === "run") {
   const projectName = project ?? snap.project_id;
   try {
     if (command === "import") {
+      // STEP/IGES (exact), STL/OBJ/PLY/glTF/GLB/3MF (mesh) become a shape; DXF/SVG a sketch;
+      // .scad a live shape; .csv/.xlsx a sheet, parameter set or configurations; .forma a project.
       const as = flag("--as");
       const target = flag("--target");
       const sheet = flag("--sheet");
+      const named = flag("--name");
       const path = args[1];
-      if (!path) throw new Error("say which file: forma import <file>");
+      if (!path) throw new Error("say which file: forma import <file> [--name N] [--as sheet|parameters|configurations]");
       const bytes = read(path);
-      const name = basename(path);
+      const name = named ? `${named}${extname(path)}` : basename(path);
       if (name.toLowerCase().endsWith(".forma")) {
         const res = await fetch(`${http}/projects/import`, { method: "POST", body: bytes });
         if (!res.ok) throw new Error(await res.text());
@@ -1158,23 +1366,44 @@ if (command === "run") {
         const res = await fetch(`${http}/import/${encodeURIComponent(name)}?${q}`, { method: "POST", body: bytes });
         if (!res.ok) throw new Error(await res.text());
         const r = await res.json();
-        console.log(`✓ ${r.operation ?? "import"} → ${JSON.stringify(r.output ?? r)}`);
+        if (r.kind === "sketch") {
+          const c = r.counts;
+          console.log(`✓ ${basename(path)} → sketch “${r.name}” (${r.id}): ${c.lines} lines, ${c.arcs} arcs, ${c.circles} circles, ${c.curves} curves; ${r.size.map((v) => v.toFixed(1)).join(" × ")} mm. Use it in a program: sketch("${r.name}").extrude(3)`);
+        } else if (r.kind === "shape") {
+          console.log(`✓ ${basename(path)} → shape ${r.id}: ${r.bodies} ${r.bodies === 1 ? "body" : "bodies"}, ${r.exact ? "exact" : "mesh (faceted)"}; program reads ${r.format === "step" ? "importStep" : r.format === "iges" ? "importIges" : "importMesh"}("${r.sha}")`);
+          if (r.colors?.length) console.log(`  colours in the file: ${r.colors.map((c) => `${c.part} ${c.color}`).join(", ")}`);
+        } else console.log(`✓ ${r.operation ?? "import"} → ${JSON.stringify(r.output ?? r)}`);
       }
     } else if (command === "export") {
-      const [, what, out] = args;
-      if (!what || !out) throw new Error("forma export <id|name> <file.step|stl|3mf|dxf|scad|zip|csv|xlsx>");
+      // forma export <id|name|project> <file.ext>, or --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]
+      const format = flag("--format");
+      const part = flag("--part");
+      const outFlag = flag("--out");
+      const [, what, given] = args;
+      const ext = (format ?? given?.split(".").pop() ?? "").toLowerCase().replace(/^\./, "");
+      if (!what || !ext) throw new Error("forma export <id|name|project> <file.step|…> | --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]");
       const name = (e) => {
         const c = e.components;
         return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["shape.sheet"]?.name ?? c["shape.parameter_set"]?.name ?? c["assembly.definition"]?.name;
       };
-      const found = snap.entities.filter((e) => e.id === what || name(e)?.toLowerCase() === what.toLowerCase());
-      if (found.length !== 1) throw new Error(found.length ? `“${what}” matches ${found.length} things: use an id` : `nothing called “${what}”`);
-      const ext = out.split(".").pop().toLowerCase();
+      // An id, or a name (what is placed first).
+      const named = snap.entities.filter((e) => e.id === what || name(e)?.toLowerCase() === what.toLowerCase());
+      const placed = named.filter((e) => e.components["assembly.instance"] || e.components["solid.placement"]);
+      const found = what === "project" ? [{ id: "project" }] : placed.length ? placed : named;
+      if (found.length !== 1) throw new Error(found.length ? `“${what}” matches ${found.length} things: use an id (${found.map((e) => e.id).join(", ")})` : `nothing called “${what}”`);
       const route = ext === "csv" || ext === "xlsx" ? "table" : "export";
-      const res = await fetch(`${http}/${route}/${found[0].id}.${ext}?project=${encodeURIComponent(projectName)}`);
+      const q = new URLSearchParams({ project: projectName, ...(part ? { part } : {}) });
+      const res = await fetch(`${http}/${route}/${found[0].id}.${ext === "iges" ? "igs" : ext}?${q}`);
       if (!res.ok) throw new Error(await res.text());
-      write(out, Buffer.from(await res.arrayBuffer()));
-      console.log(`✓ wrote ${out}`);
+      const bytes = Buffer.from(await res.arrayBuffer());
+      const suggested = res.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? `${found[0].id}.${ext}`;
+      const out = given && !format ? given : outFlag;
+      const target = out ? resolve(out) : join(homedir(), "Downloads", "Forma exports", suggested);
+      const path = out && existsSync(target) && statSync(target).isDirectory() ? join(target, suggested) : target;
+      mkdirSync(dirname(path), { recursive: true });
+      write(path, bytes);
+      const size = bytes.length >= 1048576 ? `${(bytes.length / 1048576).toFixed(1)} MB` : `${(bytes.length / 1024).toFixed(1)} KB`;
+      console.log(`✓ ${path} (${size})`);
     } else {
       const out = args[1] ?? `${projectName}.forma`;
       const res = await fetch(`${http}/projects/${encodeURIComponent(projectName)}/bundle`);
@@ -1332,7 +1561,7 @@ if (command === "run") {
     failed = true;
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | check-geometry <id> [part] | measure <part> [other] | sheet <name> | draft | import <file> | export <id> <file> | bundle [file] | view <action> [what] | image add <file> | image list | look [what] [--view v] | drawing <id> | dof | interference | exploded | study | robot | pcb … | simulate <schematic>  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | flat [id] [part] | render [--width] | get <id> | tree | list | check | ops | check-geometry <id> [part] | measure <part> [other] | sheet <name> | draft | view <action> [what] | import <file> [--name N] | export <id> <file> | --format <fmt> [--part P] [--out path] | bundle [file] | image add <file> | image list | look [what] [--view v]  [--project name] [--url ws://…]");
   failed = true;
 }
 

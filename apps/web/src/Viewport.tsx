@@ -17,6 +17,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { attachTumble, attachWalk, type Tumble } from "./tumble";
 import { pcbLooks } from "./pcb3d";
+import type { RenderSource } from "./render";
 import { type DisplayMode, type SectionPlane, type ViewName, ViewTools } from "./viewTools";
 import { ViewToolbar } from "./ViewToolbar";
 import type { EntityView, MeshData } from "./engine";
@@ -338,6 +339,8 @@ export type ViewportHandle = {
   setWireframe: (on: boolean) => void;
   setTurntable: (on: boolean) => void;
   snapshot: () => string | null;
+  /** What a photoreal render starts from: the parts as shown and the live camera. */
+  renderSource: () => RenderSource | null;
   resize: () => void;
   /** Glides to a comment pin, turning to face the surface it is on. */
   framePin: (id: string) => void;
@@ -3091,6 +3094,11 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       [t.gizmo.root.visible, t.push.root.visible] = shown;
       t.invalidate();
       return url;
+    },
+    renderSource() {
+      const t = three.current;
+      if (!t) return null;
+      return { objects: [...t.parts.values()].map((p) => p.group), camera: t.camera };
     },
     resize() {
       three.current?.invalidate();

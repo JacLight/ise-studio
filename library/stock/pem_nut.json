@@ -1,0 +1,178 @@
+{
+ "id": "pem_nut",
+ "name": "Self-clinching nut",
+ "standard": "PEM CLS",
+ "category": "Inserts & pins",
+ "summary": "PEM CLS self-clinching nut for sheet metal (stainless): pressed into a Ø4.22–6.35 mm hole, collar on the sheet face at z = 0, shank down −Z into the sheet.",
+ "keywords": [
+  "PEM",
+  "self-clinching",
+  "clinch nut",
+  "press nut",
+  "press-fit nut",
+  "CLS",
+  "sheet metal nut",
+  "PennEngineering"
+ ],
+ "source": [
+  "common.js",
+  "pem_nut.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Stainless steel 304",
+ "materials": {
+  "Stainless steel 304": 7930
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Thread diameter",
+   "value": 3,
+   "unit": "mm",
+   "min": 2,
+   "max": 5,
+   "step": 0.5
+  },
+  {
+   "key": "shank",
+   "label": "Shank code (0: 0.8 mm sheet, 1: 1.0, 2: 1.4)",
+   "value": 1,
+   "unit": "",
+   "min": 0,
+   "max": 2,
+   "step": 1
+  },
+  {
+   "key": "threads",
+   "label": "True helical thread (1 = on)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "d",
+  "shank"
+ ],
+ "rows": [
+  {
+   "name": "CLS-M2-1",
+   "values": {
+    "d": 2,
+    "shank": 1
+   }
+  },
+  {
+   "name": "CLS-M2-2",
+   "values": {
+    "d": 2,
+    "shank": 2
+   }
+  },
+  {
+   "name": "CLS-M2.5-1",
+   "values": {
+    "d": 2.5,
+    "shank": 1
+   }
+  },
+  {
+   "name": "CLS-M2.5-2",
+   "values": {
+    "d": 2.5,
+    "shank": 2
+   }
+  },
+  {
+   "name": "CLS-M3-0",
+   "values": {
+    "d": 3,
+    "shank": 0
+   }
+  },
+  {
+   "name": "CLS-M3-1",
+   "values": {
+    "d": 3,
+    "shank": 1
+   }
+  },
+  {
+   "name": "CLS-M3-2",
+   "values": {
+    "d": 3,
+    "shank": 2
+   }
+  },
+  {
+   "name": "CLS-M4-0",
+   "values": {
+    "d": 4,
+    "shank": 0
+   }
+  },
+  {
+   "name": "CLS-M4-1",
+   "values": {
+    "d": 4,
+    "shank": 1
+   }
+  },
+  {
+   "name": "CLS-M4-2",
+   "values": {
+    "d": 4,
+    "shank": 2
+   }
+  },
+  {
+   "name": "CLS-M5-1",
+   "values": {
+    "d": 5,
+    "shank": 1
+   }
+  },
+  {
+   "name": "CLS-M5-2",
+   "values": {
+    "d": 5,
+    "shank": 2
+   }
+  }
+ ],
+ "default": "CLS-M3-1",
+ "checks": {
+  "CLS-M3-1": {
+   "size": [
+    6.35,
+    6.35,
+    2.47
+   ],
+   "tolerance": 0.06,
+   "metrics": {
+    "Hole in sheet Ø": 4.22,
+    "Min sheet": 1.0,
+    "Min hole centre to edge": 4.8
+   },
+   "connectors": [
+    "Sheet face",
+    "Thread axis"
+   ],
+   "partNumber": "CLS-M3-1"
+  },
+  "CLS-M4-2": {
+   "size": [
+    7.87,
+    7.87,
+    3.38
+   ],
+   "tolerance": 0.06,
+   "metrics": {
+    "Hole in sheet Ø": 5.41
+   },
+   "partNumber": "CLS-M4-2"
+  }
+ }
+}

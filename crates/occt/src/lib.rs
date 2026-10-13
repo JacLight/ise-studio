@@ -3,7 +3,7 @@
 //! An [`Arena`] holds shapes addressed by [`Shape`] handles, mirroring the
 //! shape-program vocabulary (solids, profiles, booleans, transforms, extrude,
 //! revolve), so the same program can be evaluated exactly. It also reads and
-//! writes STEP: named parts out, named bodies in.
+//! writes STEP and IGES: named, coloured parts out, named, coloured bodies in.
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
@@ -39,6 +39,9 @@ unsafe extern "C" {
     fn occ_mesh(a: *mut c_void, h: c_int, deflection: f64, pos: *mut *const f64, npos: *mut c_int, tri: *mut *const c_int, ntri: *mut c_int) -> c_int;
     fn occ_write_step(a: *mut c_void, hs: *const c_int, names: *const *const c_char, n: c_int, path: *const c_char) -> c_int;
     fn occ_read_step(a: *mut c_void, path: *const c_char, first: *mut c_int) -> c_int;
+    fn occ_write_cad(a: *mut c_void, hs: *const c_int, names: *const *const c_char, colors: *const f64, n: c_int, path: *const c_char, iges: c_int) -> c_int;
+    fn occ_read_cad(a: *mut c_void, path: *const c_char, iges: c_int, first: *mut c_int) -> c_int;
+    fn occ_color(a: *mut c_void, h: c_int, out: *mut f64) -> c_int;
     fn occ_name(a: *mut c_void, h: c_int) -> *const c_char;
     fn occ_edges(a: *mut c_void, h: c_int, deflection: f64, data: *mut *const f64, len: *mut c_int) -> c_int;
     fn occ_blend(a: *mut c_void, h: c_int, kind: c_int, size: f64, idx: *const c_int, n: c_int) -> c_int;
@@ -153,6 +156,22 @@ pub enum Blend {
     Fillet,
     /// Bevelled, by the distance back along each face.
     Chamfer,
+}
+
+/// The exact exchange formats OpenCascade reads and writes here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CadFormat {
+    Step,
+    Iges,
+}
+
+/// A body read from a STEP or IGES file.
+#[derive(Clone, Debug)]
+pub struct CadBody {
+    pub name: String,
+    pub shape: Shape,
+    /// sRGB, 0…1, when the file colours it.
+    pub color: Option<[f64; 3]>,
 }
 
 /// A triangulated shape: positions (x, y, z per vertex) and triangle indices.
@@ -446,6 +465,36 @@ impl Arena {
         let r = unsafe { occ_write_step(self.0, hs.as_ptr(), ptrs.as_ptr(), hs.len() as c_int, p.as_ptr()) };
         if r < 0 { Err(self.error()) } else { Ok(()) }
     }
+    /// Writes named shapes, each with an optional colour (sRGB, 0…1), to a
+    /// STEP (AP214) or IGES file in millimetres.
+    pub fn write_cad(&mut self, parts: &[(String, Shape, Option<[f64; 3]>)], path: &std::path::Path, format: CadFormat) -> Result<(), String> {
+        let names: Vec<CString> = parts.iter().map(|(n, _, _)| CString::new(n.replace('\0', "")).unwrap()).collect();
+        let ptrs: Vec<*const c_char> = names.iter().map(|n| n.as_ptr()).collect();
+        let hs: Vec<c_int> = parts.iter().map(|(_, s, _)| s.0).collect();
+        let colors: Vec<f64> = parts.iter().flat_map(|(_, _, c)| c.map(|c| c.map(|v| v.clamp(0.0, 1.0))).unwrap_or([-1.0; 3])).collect();
+        let p = CString::new(path.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
+        let iges = matches!(format, CadFormat::Iges) as c_int;
+        let r = unsafe { occ_write_cad(self.0, hs.as_ptr(), ptrs.as_ptr(), colors.as_ptr(), hs.len() as c_int, p.as_ptr(), iges) };
+        if r < 0 { Err(self.error()) } else { Ok(()) }
+    }
+    /// Reads a STEP or IGES file: every body, named (assembly paths joined
+    /// with " / ") and coloured as the file has it. Surfaces that close are
+    /// sewn into solids (IGES files usually carry faces, not solids).
+    pub fn read_cad(&mut self, path: &std::path::Path, format: CadFormat) -> Result<Vec<CadBody>, String> {
+        let p = CString::new(path.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
+        let mut first = 0;
+        let n = unsafe { occ_read_cad(self.0, p.as_ptr(), matches!(format, CadFormat::Iges) as c_int, &mut first) };
+        if n < 0 {
+            return Err(self.error());
+        }
+        Ok((first..first + n)
+            .map(|h| {
+                let mut c = [0.0; 3];
+                let color = (unsafe { occ_color(self.0, h, c.as_mut_ptr()) } == 1).then_some(c);
+                CadBody { name: unsafe { CStr::from_ptr(occ_name(self.0, h)) }.to_string_lossy().into_owned(), shape: Shape(h), color }
+            })
+            .collect())
+    }
     /// Reads a STEP file: every body, named (assembly paths joined with " / ").
     pub fn read_step(&mut self, path: &std::path::Path) -> Result<Vec<(String, Shape)>, String> {
         let p = CString::new(path.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
@@ -701,6 +750,33 @@ mod tests {
         assert!((r.volume(read[1].1) - std::f64::consts::PI * 16.0 * 15.0).abs() < 1e-6);
         let m = r.mesh(read[1].1, 0.01).unwrap();
         assert!(m.triangles.len() > 30);
+    }
+
+    #[test]
+    fn step_and_iges_round_trip_keep_names_colours_and_volume() {
+        for format in [CadFormat::Step, CadFormat::Iges] {
+            let mut a = Arena::new();
+            let b = a.cube(30.0, 20.0, 10.0, false).unwrap();
+            let c = a.cylinder(15.0, 4.0, 4.0, false).unwrap();
+            let c = a.translate(c, [50.0, 0.0, 0.0]).unwrap();
+            let red = [0.8, 0.2, 0.1];
+            let path = std::env::temp_dir().join(format!("forma-occt-cad-{}-{format:?}", std::process::id()));
+            a.write_cad(&[("Base plate".into(), b, Some(red)), ("Pin".into(), c, None)], &path, format).unwrap();
+            let mut r = Arena::new();
+            let read = r.read_cad(&path, format).unwrap();
+            let _ = std::fs::remove_file(&path);
+            let names: Vec<&str> = read.iter().map(|b| b.name.as_str()).collect();
+            assert_eq!(read.len(), 2, "{format:?}: {names:?}");
+            let plate = read.iter().find(|b| b.name == "Base plate").unwrap_or_else(|| panic!("{format:?}: names {names:?}"));
+            let pin = read.iter().find(|b| b.name == "Pin").unwrap_or_else(|| panic!("{format:?}: names {names:?}"));
+            assert!((r.volume(plate.shape) - 6000.0).abs() < 1e-3, "{format:?} plate {}", r.volume(plate.shape));
+            assert!((r.volume(pin.shape) - std::f64::consts::PI * 16.0 * 15.0).abs() < 1e-3, "{format:?} pin {}", r.volume(pin.shape));
+            let got = plate.color.unwrap_or_else(|| panic!("{format:?}: the plate's colour"));
+            assert!(got.iter().zip(red).all(|(g, w)| (g - w).abs() < 0.01), "{format:?} colour {got:?}");
+            assert!(pin.color.is_none(), "{format:?}: an uncoloured part stays uncoloured");
+            let bounds = r.bounds(pin.shape).unwrap();
+            assert!((bounds[0] - 46.0).abs() < 1e-3, "{format:?}: placed where it was");
+        }
     }
 }
 

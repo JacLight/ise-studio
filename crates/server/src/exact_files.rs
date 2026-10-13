@@ -13,14 +13,14 @@ use serde_json::{Value, json};
 use std::{collections::HashMap, io::Read, io::Write, sync::Arc};
 
 /// The exact shapes to write: one part of a shape (at the origin) or the whole design, placed.
-fn shapes(s: &Source, part: Option<&str>, maker: &mut fabricate::StepMaker) -> Result<(String, Vec<(String, de_occt::Shape)>), String> {
+fn shapes(s: &Source, part: Option<&str>, maker: &mut fabricate::StepMaker) -> Result<(String, Vec<(String, de_occt::Shape, Option<[f64; 3]>)>), String> {
     if let Some(name) = part {
         let program = s.program.as_ref().ok_or("pick a part of a shape")?;
         let (parts, _) = maker.parts(program)?;
         let shape = parts.iter().find(|(n, _)| n == name).map(|(_, s)| *s).ok_or_else(|| format!("no part {name}"))?;
         let b = maker.arena().bounds(shape)?;
         let at_origin = maker.arena().translate(shape, [-b[0], -b[1], -b[2]])?;
-        return Ok((name.to_string(), vec![(name.to_string(), at_origin)]));
+        return Ok((name.to_string(), vec![(name.to_string(), at_origin, None)]));
     }
     let mut out = Vec::new();
     let mut faceted = Vec::new();
@@ -39,13 +39,13 @@ pub fn export(s: &Source, part: Option<&str>, ext: &str, tolerance: f64) -> Resu
     let base = fabricate::file_name(&name);
     if ext == "brep" || ext == "brp" {
         let path = temp("brep");
-        let only: Vec<de_occt::Shape> = list.iter().map(|(_, s)| *s).collect();
+        let only: Vec<de_occt::Shape> = list.iter().map(|(_, s, _)| *s).collect();
         maker.arena().write_brep(&only, &path)?;
         let bytes = std::fs::read(&path).map_err(|e| e.to_string());
         let _ = std::fs::remove_file(&path);
         return Ok((format!("{base}.brep"), "application/octet-stream", bytes?));
     }
-    let step = maker.step(&list)?;
+    let step = maker.file(&list, de_occt::CadFormat::Step)?;
     let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     gz.write_all(&step).map_err(|e| e.to_string())?;
     Ok((format!("{base}.stpz"), "application/gzip", gz.finish().map_err(|e| e.to_string())?))
@@ -119,7 +119,7 @@ pub async fn check(State(server): State<Arc<Server>>, Path(id): Path<String>, Qu
         let (name, list) = shapes(&s, part.as_deref(), &mut maker)?;
         let mut parts = Vec::new();
         let mut ok = true;
-        for (n, shape) in list {
+        for (n, shape, _) in list {
             let report = maker.arena().check_geometry(shape)?;
             ok &= report["valid"] == true && report["boolean_ready"] == true;
             parts.push(json!({ "name": n, "report": report }));

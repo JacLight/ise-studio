@@ -592,7 +592,7 @@ fn check_drill(v: &BoardView, name: &str, d: &reader::DrillFile) -> DrillCheck {
 }
 
 /// Chains the profile's strokes into closed loops.
-fn loops(g: &GerberFile) -> (Vec<Vec<P>>, usize) {
+pub fn loops(g: &GerberFile) -> (Vec<Vec<P>>, usize) {
     let mut segs: Vec<(P, P)> = Vec::new();
     for o in &g.objects {
         if let Shape::Stroke { pts, .. } = &o.shape {

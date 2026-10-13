@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AiPanel } from "./AiPanel";
+import { RenderView } from "./RenderView";
+import { renderImage } from "./render";
 import { type Proposal, interpret } from "./assistant";
 import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
 import { StockBrowser } from "./StockBrowser";
 import { EDA_DROP, PcbWorkspace, importEdaFile } from "./Pcb";
+import { Board3DBar } from "./Board3DBar";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
 import { type Bench, Workbench } from "./Bom";
 import { RequirementsPanel } from "./RequirementsPanel";
@@ -22,6 +25,7 @@ import { Icon } from "./icons";
 import { sketchOf } from "./sketchModel";
 import { ComponentTree, InstanceBody, ParameterSets, StackingPlan, parameterSet, stackingSubject } from "./Components";
 import { type AiMode, type Group, type PanelKind, type UiPrefs, loadPrefs, savePrefs } from "./ui";
+import { IMPORT_ACCEPT, IMPORT_FORMATS, type ImportReply, importSummary, importable } from "./fileFormats";
 import { ProjectsHome } from "./ProjectsHome";
 import { VersionsSection, openVersion } from "./Versions";
 import { type CommentPin, type CommentsView, type MarkupTool, type PinAnchor, type Stroke, type ThreadMarks, CommentsPanel, DraftCard, ThreadCard, colorFor, initialsOf, pinsFor, placeName, useThreads } from "./Comments";
@@ -99,6 +103,9 @@ export function App({ engine }: { engine: Engine }) {
   const [view, setView] = useState<ViewName>("perspective");
   const [wireframe, setWireframe] = useState(false);
   const [turntable, setTurntable] = useState(false);
+  // Render mode: the view path-traced over the model.
+  const [rendering, setRendering] = useState(false);
+  const renderSource = useCallback(() => viewport.current?.renderSource() ?? null, []);
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -223,6 +230,25 @@ export function App({ engine }: { engine: Engine }) {
               setExplode({ id: target, spread: Math.min(2.5, Math.max(0.25, Number(value) || 1)), open: true });
             }
             break;
+          case "render": {
+            // A render asked for from ./forma render: made here, sent back to the engine.
+            const job = value ? (JSON.parse(value) as { job?: string; width?: number; height?: number; samples?: number; open?: boolean }) : {};
+            if (!job.job) {
+              setRendering(true);
+              break;
+            }
+            const source = viewport.current?.renderSource();
+            const back = (body: BodyInit, error?: string) =>
+              fetch(projectUrl(`/render/${job.job}${error ? `?error=${encodeURIComponent(error)}` : ""}`), { method: "POST", body }).catch(() => undefined);
+            if (!source) {
+              back("", "the view is not ready");
+              break;
+            }
+            renderImage(source, { width: job.width ?? 1920, height: job.height ?? 1080, samples: job.samples ?? 256 })
+              .then((png) => back(png))
+              .catch((e) => back("", String(e)));
+            break;
+          }
           case "camera":
             if (value && ["perspective", "iso", "front", "back", "left", "right", "top", "bottom"].includes(value)) {
               setView(value as ViewName);
@@ -1044,9 +1070,10 @@ export function App({ engine }: { engine: Engine }) {
   }, [selected, edger, sketcher.editing, faceTool, openFaceTool]);
 
 
-  /** A STEP file in: stored by the engine, added as a part named after the file, then selected. */
-  const importStep = useCallback(
+  /** A file in: stored by the engine, added as a part (or, for a drawing, a sketch) named after the file, then selected. */
+  const importFile = useCallback(
     async (file: File) => {
+      if (/\.dwg$/i.test(file.name)) return notify("DWG cannot be read here (closed format): save it as DXF and drop that");
       if (/\.forma$/i.test(file.name)) {
         notify(`Opening ${file.name} as a new project…`);
         const res = await fetch("/projects/import", { method: "POST", body: file });
@@ -1072,13 +1099,15 @@ export function App({ engine }: { engine: Engine }) {
         }
         return;
       }
-      if (!/\.(step|stp|stpz|stepz|step\.gz|stp\.gz|brep|brp)$/i.test(file.name)) return notify("Forma imports STEP (.step, .stp, compressed .stpz), BREP (.brep), OpenSCAD (.scad), tables (.csv, .xlsx) and project files (.forma)");
+      if (!importable(file.name)) return notify(`Forma imports ${IMPORT_FORMATS} files`);
       notify(`Importing ${file.name}…`);
       try {
         const res = await fetch(projectUrl(`/import/${encodeURIComponent(file.name)}?user=${encodeURIComponent(state.userId)}`), { method: "POST", body: file });
         if (!res.ok) return notify(await res.text());
-        const out = (await res.json()) as { id: string; bodies: number };
-        notify(`Imported ${file.name}: ${out.bodies} ${out.bodies === 1 ? "body" : "bodies"}`);
+        const out = (await res.json()) as ImportReply;
+        notify(importSummary(file.name, out));
+        // A drawing is a sketch: listed with the others, ready to open and extrude.
+        if (out.kind === "sketch") return setPanel("objects");
         // The reply and the live update that brings the part can come in either order.
         selectWhenReady(out.id);
         setPanel("properties");
@@ -1089,7 +1118,7 @@ export function App({ engine }: { engine: Engine }) {
     [notify, state.userId, selectWhenReady],
   );
 
-  // Drop a STEP file anywhere on the canvas to import it.
+  // Drop a file (STEP, IGES, a mesh, a drawing) anywhere on the canvas to import it.
   useEffect(() => {
     const over = (e: DragEvent) => {
       if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
@@ -1109,7 +1138,7 @@ export function App({ engine }: { engine: Engine }) {
         void importEdaFile(f, (op, p, done) => run(op, p).then((out) => (out && done && notify(done), out))).then((made) => made && setPcbOpen(true));
         return;
       }
-      importStep(f);
+      importFile(f);
     };
     window.addEventListener("dragover", over);
     window.addEventListener("drop", drop);
@@ -1117,7 +1146,7 @@ export function App({ engine }: { engine: Engine }) {
       window.removeEventListener("dragover", over);
       window.removeEventListener("drop", drop);
     };
-  }, [importStep, run, notify, state.ai.available, setPrefs]);
+  }, [importFile, run, notify, state.ai.available, setPrefs]);
 
   /** Steps that keep saved groups tidy when items leave them: shrink the group, or drop it below two. */
   const regroupSteps = useCallback(
@@ -1523,6 +1552,7 @@ export function App({ engine }: { engine: Engine }) {
           onGeometryPick={geometryPick}
           onTurnInstance={async (id, at, rotation) => (await run("assembly.instance.update", { target: id, at, rotation })) !== null}
         />
+        {rendering && <RenderView source={renderSource} name={projectTitle()} onClose={() => setRendering(false)} />}
         <div className="view-caption">
           <span>{projectTitle().toUpperCase()}</span>
           <span>
@@ -1531,20 +1561,20 @@ export function App({ engine }: { engine: Engine }) {
         </div>
         {state.connection === "online" && parts.length === 0 && !sketcher.editing && !planeMenu && (
           <div className="empty-hint">
-            <p>Start with a part, ask Forma AI, or drop a STEP file here.</p>
+            <p>Start with a part, ask Forma AI, or drop a file here: STEP, IGES, STL, OBJ, PLY, glTF, 3MF, or a DXF/SVG drawing.</p>
             <div className="empty-actions">
               <button type="button" className="primary" onClick={addPart}>
                 Add box part
               </button>
               <label className="secondary import-step">
-                Import STEP
+                Import file
                 <input
                   type="file"
-                  accept=".step,.stp,.STEP,.STP,.stpz,.stepz,.gz,.brep,.brp,.scad,.csv,.xlsx,.forma"
-                  aria-label="Import STEP file"
+                  accept={IMPORT_ACCEPT}
+                  aria-label="Import a file"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f) importStep(f);
+                    if (f) importFile(f);
                     e.target.value = "";
                   }}
                 />
@@ -1766,7 +1796,7 @@ export function App({ engine }: { engine: Engine }) {
               onSelect={(id) => setSelected(id)}
               onAdd={addPart}
               run={run}
-              onImport={importStep}
+              onImport={importFile}
               parameters={[...state.entities.values()].some((e) => parameterSet(e)) ? <ParameterSets entities={state.entities} run={run} /> : undefined}
               sketches={
                 [...state.entities.values()].some((e) => sketchOf(e)) ? (
@@ -1954,6 +1984,8 @@ export function App({ engine }: { engine: Engine }) {
               view={view}
               wireframe={wireframe}
               turntable={turntable}
+              rendering={rendering}
+              onRender={() => setRendering(!rendering)}
               onView={(v) => {
                 setView(v);
                 viewport.current?.view(v);
@@ -2023,6 +2055,7 @@ export function App({ engine }: { engine: Engine }) {
           }}
         />
       )}
+      <Board3DBar snapshot={() => viewport.current?.snapshot() ?? null} hidden={pcbOpen || !!focus} />
       {stockOpen && (
         <StockBrowser
           entities={state.entities}

@@ -20,6 +20,12 @@ importers:
       three:
         specifier: 0.186.1
         version: 0.186.1
+      three-gpu-pathtracer:
+        specifier: 0.0.25
+        version: 0.0.25(three-mesh-bvh@0.9.15(three@0.186.1))(three@0.186.1)(xatlas-web@0.1.0)
+      three-mesh-bvh:
+        specifier: 0.9.15
+        version: 0.9.15(three@0.186.1)
     devDependencies:
       '@types/qrcode':
         specifier: 1.5.5
@@ -531,6 +537,18 @@ packages:
     resolution: {integrity: sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A==}
     engines: {node: '>=8'}
 
+  three-gpu-pathtracer@0.0.25:
+    resolution: {integrity: sha512-cyJCZdRi3/C5hKQu9txz9u3Jf/emd4ykHyOsPJxYiFD3mUYeZ0ZuP8lgeOYiMb/nwE2AoSoMX1gN8fDAaL4QWQ==}
+    peerDependencies:
+      three: '>=0.185.0'
+      three-mesh-bvh: '>=0.9.15'
+      xatlas-web: ^0.1.0
+
+  three-mesh-bvh@0.9.15:
+    resolution: {integrity: sha512-9xdEDkCzFoT8VPFH9DznwFSdbaIEjMvM106Iqq7TJurrIheUKDcdW4prfJTCxryih4XS/UxWs0H3K4MLMRFyOQ==}
+    peerDependencies:
+      three: '>= 0.159.0'
+
   three@0.186.1:
     resolution: {integrity: sha512-blFeqb49wRCSGUGj7gtpfnSGHy2lwDk94RhUmS1c/hTby70kvChbWpkJ4Pm1390LqzzvTmzgXKHPEafJwCb8jA==}
 
@@ -595,6 +613,9 @@ packages:
   wrap-ansi@6.2.0:
     resolution: {integrity: sha512-r6lPcBGxZXlIcymEu7InxDMhdW0KDxpLgoFLcguasxCaJ/SOIZwINatK9KY/tf+ZrlywOKU0UDj3ATXUBfxJXA==}
     engines: {node: '>=8'}
+
+  xatlas-web@0.1.0:
+    resolution: {integrity: sha512-PprVfuXbaIskxLTLBUQRaWfgSy9xUQqAMIRooOw0P6NYqwgh6T0voeer6+Z5M7AFt5SGXUybuww/uDGs1yw8vQ==}
 
   y18n@4.0.3:
     resolution: {integrity: sha512-JKhqTOwSrqNA1NY5lSztJ1GrBiUodLMmIZuLiDaMRJ+itFd+ABVE8XBjOvIWL+rSqNDC74LCSFmlb/U4UZ4hJQ==}
@@ -939,6 +960,16 @@ snapshots:
     dependencies:
       ansi-regex: 5.0.1
 
+  three-gpu-pathtracer@0.0.25(three-mesh-bvh@0.9.15(three@0.186.1))(three@0.186.1)(xatlas-web@0.1.0):
+    dependencies:
+      three: 0.186.1
+      three-mesh-bvh: 0.9.15(three@0.186.1)
+      xatlas-web: 0.1.0
+
+  three-mesh-bvh@0.9.15(three@0.186.1):
+    dependencies:
+      three: 0.186.1
+
   three@0.186.1: {}
 
   tinyglobby@0.2.17:
@@ -989,6 +1020,8 @@ snapshots:
       ansi-styles: 4.3.0
       string-width: 4.2.3
       strip-ansi: 6.0.1
+
+  xatlas-web@0.1.0: {}
 
   y18n@4.0.3: {}
 
