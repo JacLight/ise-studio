@@ -1,5 +1,5 @@
-// The view's toolbar, under the view cube: orthographic/perspective, display
-// mode, section planes and the measure tool, with their keyboard shortcuts
+// The view's toolbar, a short bar at the bottom centre of the view:
+// orthographic/perspective, display mode, section planes and the measure tool, with their keyboard shortcuts
 // (FreeCAD's for the standard views: 0 iso, 1 front, 2 top, 3 right, 4 back,
 // 5 bottom, 6 left).
 
@@ -61,8 +61,10 @@ export function ViewToolbar({ tools, selected, onFitAll }: { tools: ViewTools; s
   return (
     <div className="view-tools" onPointerDown={(e) => e.stopPropagation()}>
       <div className="view-tools-bar" role="toolbar" aria-label="View tools">
-        <button type="button" className={`vt-btn vt-proj ${s.orthographic ? "is-on" : ""}`} onClick={() => tools.setOrthographic(!s.orthographic)} title={`${s.orthographic ? "Orthographic" : "Perspective"} (O to switch)`}>
-          {s.orthographic ? "Ortho" : "Persp"}
+        <button type="button" className={`vt-btn vt-icon ${s.orthographic ? "is-on" : ""}`} onClick={() => tools.setOrthographic(!s.orthographic)} title={`${s.orthographic ? "Orthographic" : "Perspective"} (O to switch)`} aria-label={s.orthographic ? "Orthographic" : "Perspective"}>
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden>
+            <path d={s.orthographic ? "M3.5 3.5h9v9h-9zM3.5 8h9M8 3.5v9" : "M5.5 3.5h5l3 9h-11zM4 8h8M8 3.5v9"} />
+          </svg>
         </button>
         <span className="vt-sep" />
         {DISPLAY_MODES.map((d) => (
@@ -81,13 +83,18 @@ export function ViewToolbar({ tools, selected, onFitAll }: { tools: ViewTools; s
           </button>
         ))}
         <span className="vt-sep" />
-        <button type="button" className={`vt-btn ${sectionOpen || s.section.planes.length ? "is-on" : ""}`} onClick={() => setSectionOpen((o) => !o)} title="Section planes (X)" aria-expanded={sectionOpen}>
-          Section
+        <button type="button" className={`vt-btn vt-icon ${sectionOpen || s.section.planes.length ? "is-on" : ""}`} onClick={() => setSectionOpen((o) => !o)} title="Section planes (X)" aria-label="Section planes" aria-expanded={sectionOpen}>
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden>
+            <path d="M3 5.5 8 3l5 2.5v5L8 13l-5-2.5zM2 9.5l7-4 5 2.5" />
+          </svg>
         </button>
-        <button type="button" className={`vt-btn ${s.measuring ? "is-on" : ""}`} onClick={() => tools.setMeasuring(!s.measuring)} title="Measure (M)" aria-pressed={s.measuring}>
-          Measure
+        <button type="button" className={`vt-btn vt-icon ${s.measuring ? "is-on" : ""}`} onClick={() => tools.setMeasuring(!s.measuring)} title="Measure (M)" aria-label="Measure" aria-pressed={s.measuring}>
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden>
+            <path d="M2 10.5 10.5 2 14 5.5 5.5 14zM5 7.5l1.5 1.5M7 5.5l1 1M9 3.5l1.5 1.5M3 9.5l1 1" />
+          </svg>
         </button>
       </div>
+      <div className="view-tools-cards">
       {sectionOpen && <SectionCard tools={tools} planes={s.section.planes} capped={s.section.capped} picking={s.section.picking} bounds={s.bounds ?? tools.boundsNow()} onClose={() => setSectionOpen(false)} />}
       {s.measuring && (
         <div className="vt-card measure-card" aria-live="polite">
@@ -116,6 +123,7 @@ export function ViewToolbar({ tools, selected, onFitAll }: { tools: ViewTools; s
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }

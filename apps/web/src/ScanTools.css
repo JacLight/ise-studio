@@ -204,20 +204,34 @@
 
 /* Photos to model. */
 .pg-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 6px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 8px;
+  margin-bottom: 8px;
   font-size: 12px;
 }
 .pg-options label {
   display: flex;
-  gap: 4px;
-  align-items: center;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted, #6b7080);
 }
 .pg-options select {
-  max-width: 130px;
+  width: 100%;
+  min-width: 0;
+}
+.pg-options label.pg-check {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: inherit;
+  white-space: nowrap;
+}
+.pg-options label.pg-check input {
+  width: auto;
+  margin: 0;
 }
 .scan-panel a.btn {
   text-decoration: none;

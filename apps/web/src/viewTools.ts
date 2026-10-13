@@ -9,7 +9,8 @@ import { Display, type DisplayMode } from "./display";
 import { type MeasureCard, MeasureTool } from "./measure";
 import { Projection, VIEW_DIRECTIONS, type ViewName, upFor } from "./projection";
 import { type Axis, Section, type SectionPlane, axisPlane } from "./section";
-import { ViewCube } from "./viewcube";
+import { type CubeStep, ViewCube } from "./viewcube";
+import { tumble } from "./tumble";
 import { Topology, worldMesh } from "./measureMath";
 
 export type { DisplayMode, ViewName, SectionPlane, Axis };
@@ -80,10 +81,17 @@ export class ViewTools {
   constructor(private host: ViewHost) {
     this.measure = new MeasureTool(host.el, (card) => this.set({ card }), host.invalidate);
     host.scene.add(this.measure.root);
-    this.cube = new ViewCube(
-      (dir) => this.look(dir),
-      () => this.view("iso"),
-    );
+    this.cube = new ViewCube({
+      pick: (dir) => this.look(dir),
+      home: () => this.view("iso"),
+      drag: (dx, dy) => {
+        // The cube turns the view like dragging the model does, a little faster for its size.
+        tumble(host.camera, host.target(), dx, dy, host.el.clientHeight, 1.6);
+        host.invalidate();
+      },
+      step: (step) => this.step(step),
+      view: (name) => this.view(name as ViewName),
+    });
     host.el.append(this.cube.root);
     this.band = document.createElement("div");
     this.band.className = "select-band";
@@ -108,6 +116,21 @@ export class ViewTools {
   /** Looks from a standard view, everything framed. */
   view(name: ViewName) {
     this.look(new THREE.Vector3(...VIEW_DIRECTIONS[name]));
+  }
+
+  /** Turns the view 90° about the screen's vertical (left, right) or horizontal (up, down) axis. */
+  step(step: CubeStep) {
+    const cam = this.host.camera;
+    const back = cam.position.clone().sub(this.host.target()).normalize();
+    const up = cam.up.clone().normalize();
+    const right = new THREE.Vector3().crossVectors(up, back).normalize();
+    const sign = step === "left" || step === "up" ? 1 : -1;
+    const axis = step === "left" || step === "right" ? up : right;
+    const q = new THREE.Quaternion().setFromAxisAngle(axis, (sign * Math.PI) / 2);
+    const dir = back.applyQuaternion(q);
+    // Snap to the nearest axis so steps land exactly on Front, Back, Top, Bottom…
+    const snap = (v: THREE.Vector3) => v.set(...(v.toArray().map((c) => (Math.abs(c) < 1e-6 ? 0 : Math.round(c * 1e6) / 1e6)) as [number, number, number]));
+    this.host.fit(undefined, snap(dir).normalize(), snap(up.applyQuaternion(q)).normalize());
   }
 
   look(direction: THREE.Vector3) {

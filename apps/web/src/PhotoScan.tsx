@@ -158,7 +158,7 @@ export function PhotoScan(props: { active: string | null; onJob: (listener: (job
           </select>
         </label>
         <label className="pg-check">
-          <input type="checkbox" checked={mask} onChange={(e) => setMask(e.target.checked)} disabled={!!running} /> Object only
+          <input type="checkbox" checked={mask} onChange={(e) => setMask(e.target.checked)} disabled={!!running} /> Object only (cut the background away)
         </label>
       </div>
       <div className="scan-actions">

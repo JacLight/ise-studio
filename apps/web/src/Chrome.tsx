@@ -144,7 +144,7 @@ export function ToolRail(props: {
       <IconButton icon="sliders" label="Object properties" className={active("properties")} onClick={() => props.onPanel("properties")} />
       <IconButton icon="shield" label="Requirements" className={active("requirements")} onClick={() => props.onPanel("requirements")} />
       <IconButton icon="history" label="Change history" className={active("history")} onClick={() => props.onPanel("history")} />
-      {props.onScans && <IconButton icon="scan" label="Scans: point clouds and meshes, repair, fit, inspect" className={props.scansOpen ? "active" : ""} onClick={props.onScans} />}
+      {props.onScans && <IconButton icon="scan" label="Scans and photos to 3D: point clouds, meshes, photogrammetry, repair, fit, inspect" className={props.scansOpen ? "active" : ""} onClick={props.onScans} />}
       <IconButton icon="chip" label="Electronics: PCB boards (L)" className={props.pcbOpen ? "active" : ""} onClick={props.onPcb} />
       <IconButton icon="list" label="Bill of materials (B)" className={props.bench === "bom" ? "active" : ""} onClick={() => props.onBench("bom")} />
       <IconButton icon="truck" label="Sourcing: suppliers, quotes" className={props.bench === "sourcing" ? "active" : ""} onClick={() => props.onBench("sourcing")} />
