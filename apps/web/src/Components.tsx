@@ -90,6 +90,8 @@ export function ComponentTree(props: {
   onSelect: (id: string, piece?: string) => void;
   onToggleHidden: (id: string) => void;
   onIsolate: (id: string | null) => void;
+  /** The pointer moved onto a row (its item, or "id#piece"), or off the tree. */
+  onHover?: (key: string | null) => void;
 }) {
   const top = useMemo(() => [...props.entities.values()].filter(isPart), [props.entities]);
   const [open, setOpen] = useState<Set<string>>(() => new Set());
@@ -167,7 +169,7 @@ export function ComponentTree(props: {
         const off = group ? leaves(n).every((l) => props.hidden.has(subPartKey(e.id, l))) : props.hidden.has(key);
         return (
           <div key={key}>
-            <div className={`tree-row ${off || parentHidden ? "is-hidden" : ""} ${q && hit(n.name) ? "is-match" : ""}`} style={{ paddingLeft: 6 + depth * 14 }}>
+            <div className={`tree-row ${off || parentHidden ? "is-hidden" : ""} ${q && hit(n.name) ? "is-match" : ""}`} style={{ paddingLeft: 6 + depth * 14 }} onPointerEnter={() => props.onHover?.(key)}>
               {twist(key, expanded, group)}
               <button type="button" className="tree-name" title={n.path} onClick={() => (group ? toggle(key) : props.onSelect(e.id, n.path))}>
                 <Icon name={group ? "layers" : "cube"} />
@@ -212,7 +214,7 @@ export function ComponentTree(props: {
     const shared = inst ? usesOf(inst.of, props.entities) : 0;
     return (
       <div key={e.id}>
-        <div className={`tree-row ${props.selected === e.id ? "active" : ""} ${hidden ? "is-hidden" : ""} ${q && hit(partName(e)) ? "is-match" : ""}`} style={{ paddingLeft: 6 + depth * 14 }}>
+        <div className={`tree-row ${props.selected === e.id ? "active" : ""} ${hidden ? "is-hidden" : ""} ${q && hit(partName(e)) ? "is-match" : ""}`} style={{ paddingLeft: 6 + depth * 14 }} onPointerEnter={() => props.onHover?.(e.id)}>
           {twist(e.id, expanded, expandable)}
           <button type="button" className="tree-name" title={inst ? `${partName(e)} (${definitionName(inst.of, props.entities)})` : partName(e)} onClick={() => props.onSelect(e.id)}>
             <Icon name={expandable ? "layers" : "cube"} />
@@ -230,7 +232,7 @@ export function ComponentTree(props: {
 
   const rows = top.map((e) => row(e, 0)).filter(Boolean);
   return (
-    <div className="component-tree">
+    <div className="component-tree" onPointerLeave={() => props.onHover?.(null)}>
       {props.isolated && (
         <button type="button" className="isolate-banner" onClick={() => props.onIsolate(null)}>
           Showing only {props.isolated.includes("#") ? props.isolated.slice(props.isolated.indexOf("#") + 1) : partName(props.entities.get(props.isolated) ?? ({ components: {} } as EntityView))} · Show everything

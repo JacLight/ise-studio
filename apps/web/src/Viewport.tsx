@@ -378,6 +378,8 @@ type Props = {
   pickableParts?: string[] | null;
   /** Items (or instances at any depth) hidden from view. */
   hidden: ReadonlySet<string>;
+  /** The item (or "id#piece") the pointer is over in the components tree: lit up here. */
+  hovered?: string | null;
   /** Show only this item or instance, if set. */
   isolated: string | null;
   /** Paint instances by their sale status instead of their materials. */
@@ -453,6 +455,9 @@ const MM = 1000; // engine meters -> scene millimeters
 const STROKE_POINTS = 400;
 const STROKE_STEP = 3;
 const OUTLINE = new THREE.Color("#8b66ef");
+/** Pre-selection glow for what the pointer is over in the components tree. */
+const HOVER = "#9a7cf0";
+const HOVER_GLOW = 0.5;
 const POS_KEYS = ["x", "y", "z"] as const;
 const SIZE_KEYS = ["width", "depth", "height"] as const;
 const GIZMO_SCALE = 0.085; // of camera distance
@@ -828,11 +833,12 @@ export function statusColor(status: string | undefined) {
  * instance (at any depth) tinted, and, by status, each shape painted with the
  * sale status of the nearest instance above it that has one.
  */
-function paintInstance(part: Part, entities: ReadonlyMap<string, EntityView>, selected: string | null, hidden: ReadonlySet<string>, isolated: string | null, colorBy: "material" | "status", tints?: ReadonlyMap<string, string>) {
+function paintInstance(part: Part, entities: ReadonlyMap<string, EntityView>, selected: string | null, hidden: ReadonlySet<string>, isolated: string | null, colorBy: "material" | "status", tints?: ReadonlyMap<string, string>, hovered?: string | null) {
   for (const mesh of part.meshes) {
     const path = mesh.userData.path as string[];
     mesh.visible = !path.some((id) => hidden.has(id)) && (!isolated || path.includes(isolated));
     const chosen = !!selected && path.includes(selected);
+    const hot = !chosen && !!hovered && path.includes(hovered);
     let status: string | undefined;
     for (let i = path.length - 1; i >= 0 && !status; i--) status = instance(entities.get(path[i]))?.properties?.status;
     let tint: string | undefined;
@@ -845,8 +851,8 @@ function paintInstance(part: Part, entities: ReadonlyMap<string, EntityView>, se
       m.transparent = glass;
       m.opacity = glass ? look.opacity! : 1;
       m.depthWrite = !glass;
-      m.emissive.set(chosen ? ACCENT : "#000000");
-      m.emissiveIntensity = chosen ? 0.3 : 0;
+      m.emissive.set(chosen ? ACCENT : hot ? HOVER : "#000000");
+      m.emissiveIntensity = chosen ? 0.3 : hot ? HOVER_GLOW : 0;
       m.needsUpdate = true;
     }
   }
@@ -2513,13 +2519,16 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       // The picked part of an assembly glows; the rest of the assembly stays as built.
       const picked = id === selected && props.selectedPart ? assemblyParts(entities.get(id)).findIndex((p) => p.name === props.selectedPart) : -1;
       if (part.shared) {
-        paintInstance(part, entities, selected, props.hidden, props.isolated, props.colorBy, props.tints);
+        paintInstance(part, entities, selected, props.hidden, props.isolated, props.colorBy, props.tints, props.hovered);
         continue;
       }
       // "Show only" may name one piece of a part ("id#piece").
       const [isoId, isoPiece] = props.isolated ? [props.isolated.split("#")[0], props.isolated.includes("#") ? props.isolated.slice(props.isolated.indexOf("#") + 1) : null] : [null, null];
       part.group.visible = !props.hidden.has(id) && (!isoId || isoId === id);
       const pieces = assemblyParts(entities.get(id));
+      const hov = props.hovered ?? null;
+      const hotAll = hov === id && id !== selected;
+      const hotPiece = hov?.startsWith(`${id}#`) ? hov.slice(id.length + 1) : null;
       // The rest of the assembly turns to X-ray so a part inside stays visible.
       bodyMaterials(part.body).forEach((m, i) => {
         const base = m.userData.look as Look;
@@ -2527,8 +2536,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         const opacity = ghost ? Math.min(base.opacity ?? 1, 0.14) : (base.opacity ?? 1);
         // A layer's colour paints its parts; without one, the part's own look.
         m.color.set(props.colorBy === "material" ? (props.tints?.get(id) ?? base.color) : m.color);
-        m.emissive.set(i === picked ? ACCENT : "#000000");
-        m.emissiveIntensity = i === picked ? 0.45 : 0;
+        // The piece (or whole part) under the pointer in the components tree glows softly.
+        const hot = i !== picked && (hotAll || (!!hotPiece && !!pieces[i] && (pieces[i].name === hotPiece || pieces[i].name.startsWith(`${hotPiece}/`))));
+        m.emissive.set(i === picked ? ACCENT : hot ? HOVER : "#000000");
+        m.emissiveIntensity = i === picked ? 0.45 : hot ? HOVER_GLOW : 0;
         m.transparent = opacity < 1;
         m.opacity = opacity;
         m.depthWrite = opacity >= 1;
@@ -2576,7 +2587,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       cam.updateProjectionMatrix();
     }
     t.invalidate();
-  }, [entities, selected, live, props.also, props.pivotMode, props.pivotLive, props.selectedPart, props.hidden, props.isolated, props.colorBy, props.teammates, props.tints]);
+  }, [entities, selected, live, props.also, props.pivotMode, props.pivotLive, props.selectedPart, props.hidden, props.isolated, props.colorBy, props.teammates, props.tints, props.hovered]);
 
   // Draft objects: redrawn when they or the selection change.
   useEffect(() => {

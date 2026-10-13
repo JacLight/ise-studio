@@ -97,6 +97,7 @@ export function App({ engine }: { engine: Engine }) {
   const [colorBy, setColorBy] = useState<"material" | "status">("material");
   const [objectsTab, setObjectsTab] = useState<"tree" | "stacking">("tree");
   const [componentQuery, setComponentQuery] = useState("");
+  const [treeHover, setTreeHover] = useState<string | null>(null);
   // A new selection starts with no piece picked, unless the tree picked one with it.
   const pendingPiece = useRef<string | null>(null);
   useEffect(() => {
@@ -1530,6 +1531,7 @@ export function App({ engine }: { engine: Engine }) {
           comments={commentsView}
           selectedPart={selectedPartName}
           hidden={shownHidden}
+          hovered={panel === "components" ? treeHover : null}
           isolated={isolated}
           colorBy={colorBy}
           tints={layerFx.tints}
@@ -1817,6 +1819,7 @@ export function App({ engine }: { engine: Engine }) {
                   <ComponentTree
                     entities={state.entities}
                     query={componentQuery}
+                    onHover={setTreeHover}
                     selected={selected}
                     hidden={hiddenItems}
                     isolated={isolated}
