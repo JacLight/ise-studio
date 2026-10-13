@@ -31,6 +31,7 @@ mod sheet_metal;
 mod simulate;
 mod sourcing;
 mod stock;
+mod xproj;
 
 use axum::{
     Router,
@@ -2399,6 +2400,13 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/photogrammetry/engines", get(photogrammetry::engines))
         .route("/photogrammetry/markers.pdf", get(photogrammetry::markers_pdf))
         .route("/photogrammetry/{job}/cancel", axum::routing::post(photogrammetry::cancel))
+        .route("/link/tree", get(xproj::source_tree))
+        .route("/link/preview", axum::routing::post(xproj::insert_preview))
+        .route("/link/insert", axum::routing::post(xproj::insert))
+        .route("/links", get(xproj::list))
+        .route("/links/update", axum::routing::post(xproj::update))
+        .route("/links/break", axum::routing::post(xproj::unlink))
+        .route("/links/settings", axum::routing::post(xproj::settings))
         .route("/images", get(pictures::list))
         .route("/images/{file}", get(pictures::get).post(pictures::add).layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)))
         .route("/ai/attachments/{file}", get(pictures::attachment).post(pictures::attach).layer(axum::extract::DefaultBodyLimit::max(40 * 1024 * 1024)))
