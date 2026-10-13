@@ -23,6 +23,7 @@ import { type DisplayMode, type SectionPlane, type ViewName, ViewTools } from ".
 import { ViewToolbar } from "./ViewToolbar";
 import type { EntityView, MeshData } from "./engine";
 import { BatchLayer } from "./batchLayer";
+import { type FlexMesh, type FlexPose, flexKey } from "./flexPlayback";
 import {
   AXIS_NAMES,
   ACCENT,
@@ -419,6 +420,8 @@ type Props = {
   onConnectorPick?: (key: string) => void;
   /** Instances drawn at these placements instead of their own (a joint being scrubbed or swept). */
   poses?: ReadonlyMap<string, Transform> | null;
+  /** Shapes drawn as a played motion changes them (a spring stretching), by path and shape (see flexPlayback). */
+  flex?: FlexPose | null;
   /** An instance turned with the gizmo's rings: its new position and rotation (false: refused, put it back). */
   onTurnInstance?: (id: string, at: V3, rotation: V3) => Promise<boolean>;
   /** Lines and dots drawn over the model (project mm): exploded trails, a robot's reach and path, picked geometry. */
@@ -747,6 +750,98 @@ function releaseGeometry(geometry: THREE.BufferGeometry) {
   }
 }
 
+// ---- Shapes flexing while a motion plays (a spring stretched by its arm) ----
+
+/** Each evaluated step's geometry, built once (scene units, with its parts as groups). */
+const flexGeometries = new WeakMap<MeshData, THREE.BufferGeometry>();
+function flexGeometry(mesh: MeshData, parts: { index_start: number; index_count: number }[]) {
+  let g = flexGeometries.get(mesh);
+  if (!g) {
+    g = makeGeometry(mesh);
+    parts.forEach((p, i) => g!.addGroup(p.index_start, p.index_count, i));
+    flexGeometries.set(mesh, g);
+  }
+  return g;
+}
+
+/** Whether two evaluated steps can be blended vertex by vertex, worked out once per pair. */
+const blendable = new WeakMap<THREE.BufferGeometry, WeakMap<THREE.BufferGeometry, boolean>>();
+function canBlend(a: THREE.BufferGeometry, b: THREE.BufferGeometry): boolean {
+  let known = blendable.get(a);
+  if (!known) blendable.set(a, (known = new WeakMap()));
+  const seen = known.get(b);
+  if (seen !== undefined) return seen;
+  const [pa, pb] = [a.getAttribute("position") as THREE.BufferAttribute, b.getAttribute("position") as THREE.BufferAttribute];
+  const [ia, ib] = [a.index?.array, b.index?.array];
+  let ok = pa.count === pb.count && !!ia && !!ib && ia.length === ib.length;
+  // The same triangles (a mesher can lay out the same count differently)…
+  for (let i = 0; ok && ia && ib && i < ia.length; i++) ok = ia[i] === ib[i];
+  // …and each vertex where its neighbours expect it: edges change smoothly, not wildly.
+  if (ok && ia) {
+    const [xa, xb] = [pa.array as Float32Array, pb.array as Float32Array];
+    const len = (x: Float32Array, i: number, j: number) => Math.hypot(x[3 * i] - x[3 * j], x[3 * i + 1] - x[3 * j + 1], x[3 * i + 2] - x[3 * j + 2]);
+    const step = Math.max(3, Math.floor(ia.length / 900) * 3);
+    for (let t = 0; ok && t + 2 < ia.length; t += step) {
+      const [i, j] = [ia[t], ia[t + 1]];
+      const [la, lb] = [len(xa, i, j), len(xb, i, j)];
+      ok = Math.abs(lb - la) <= 0.3 * Math.max(la, lb) + 0.05;
+    }
+  }
+  known.set(b, ok);
+  return ok;
+}
+
+/**
+ * Shows a flexing shape on `mesh`: one evaluated step, or two blended
+ * vertex by vertex when they have the same layout (a helix with the same
+ * turns, longer or shorter), else the nearer of the two.
+ */
+function flexMesh(mesh: THREE.Mesh, f: FlexMesh) {
+  mesh.userData.baseGeometry ??= mesh.geometry;
+  const a = flexGeometry(f.a, f.parts);
+  const b = f.b ? flexGeometry(f.b, f.parts) : null;
+  const pa = a.getAttribute("position") as THREE.BufferAttribute;
+  const same = !!b && canBlend(a, b);
+  if (!b || !same || f.t <= 1e-4 || f.t >= 1 - 1e-4) {
+    mesh.geometry = !b || f.t < 0.5 ? a : b;
+    return;
+  }
+  // One geometry per mesh, written in place each frame (the GPU batch keeps drawing it).
+  let blend = mesh.userData.flexBlend as THREE.BufferGeometry | undefined;
+  if (!blend || (blend.getAttribute("position") as THREE.BufferAttribute).count !== pa.count) {
+    blend?.dispose();
+    blend = new THREE.BufferGeometry();
+    blend.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pa.array.length), 3).setUsage(THREE.DynamicDrawUsage));
+    const na = a.getAttribute("normal") as THREE.BufferAttribute | undefined;
+    if (na) blend.setAttribute("normal", new THREE.BufferAttribute(new Float32Array(na.array.length), 3).setUsage(THREE.DynamicDrawUsage));
+    if (a.index) blend.setIndex(a.index);
+    for (const g of a.groups) blend.addGroup(g.start, g.count, g.materialIndex);
+    mesh.userData.flexBlend = blend;
+  }
+  const t = f.t;
+  for (const name of ["position", "normal"] as const) {
+    const x = a.getAttribute(name) as THREE.BufferAttribute | undefined;
+    const y = b.getAttribute(name) as THREE.BufferAttribute | undefined;
+    const out = blend.getAttribute(name) as THREE.BufferAttribute | undefined;
+    if (!x || !y || !out) continue;
+    const [xa, ya, o] = [x.array as Float32Array, y.array as Float32Array, out.array as Float32Array];
+    for (let i = 0; i < o.length; i++) o[i] = xa[i] + (ya[i] - xa[i]) * t;
+    out.needsUpdate = true;
+  }
+  blend.boundingSphere = a.boundingSphere ?? (a.computeBoundingSphere(), a.boundingSphere);
+  mesh.geometry = blend;
+}
+
+/** Back to the shape's own geometry. */
+function unflex(mesh: THREE.Mesh) {
+  const base = mesh.userData.baseGeometry as THREE.BufferGeometry | undefined;
+  if (!base) return;
+  mesh.geometry = base;
+  delete mesh.userData.baseGeometry;
+  (mesh.userData.flexBlend as THREE.BufferGeometry | undefined)?.dispose();
+  delete mesh.userData.flexBlend;
+}
+
 const meshIds = new WeakMap<object, number>();
 let nextMeshId = 1;
 const meshId = (m: object) => meshIds.get(m) ?? (meshIds.set(m, nextMeshId++), nextMeshId - 1);
@@ -1008,6 +1103,8 @@ const hoverList = (h: string | readonly string[] | null | undefined): Hover[] =>
 
 function disposePart(part: Part) {
   for (const mesh of part.meshes) {
+    // A shape shown flexing (a spring during playback) goes back to its own geometry first.
+    unflex(mesh);
     if (part.shared) releaseGeometry(mesh.geometry);
     else mesh.geometry.dispose();
     for (const m of bodyMaterials(mesh)) m.dispose();
@@ -2885,6 +2982,25 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     }
     t.invalidate();
   }, [props.poses, entities]);
+
+  // Shapes the motion changes (a spring stretching as the shoulder turns), blended between evaluated steps.
+  useEffect(() => {
+    const t = three.current;
+    if (!t) return;
+    const flex = props.flex;
+    for (const [, part] of t.parts) {
+      if (!part.shared) continue;
+      for (const m of part.meshes) {
+        const path = m.userData.path as string[];
+        let f: FlexMesh | undefined;
+        // Keyed from the swept assembly's instance down: match the end of the mesh's path.
+        for (let i = 0; flex && !f && i < path.length; i++) f = flex.get(flexKey(path.slice(i), m.userData.shape as string));
+        if (f) flexMesh(m, f);
+        else unflex(m);
+      }
+    }
+    t.invalidate();
+  }, [props.flex, entities]);
 
   // Lines and dots an assembly tool draws over the model (never picked: clicks reach the parts).
   // Reference pictures (canvases) on their planes, and points picked to calibrate one.

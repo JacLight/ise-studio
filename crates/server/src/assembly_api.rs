@@ -128,9 +128,33 @@ fn rig(w: &World, tip: &str, q: &HashMap<String, String>) -> Result<Rig, String>
 
 /// `GET /robot/<tip>?tool=&point=`: the chain from the ground to the tip
 /// instance — its moving joints (with limits), their values, where the tool is.
+/// `?controller=json` gives the arm's controller configuration instead (every
+/// joint's channel, limits and home, and the interlocks by channel);
+/// `?controller=arduino` the same as a C header with `arm_allowed` and `arm_clamp`.
 pub async fn chain(State(server): State<Arc<Server>>, Path(tip): Path<String>, Query(q): Query<HashMap<String, String>>) -> Response {
     let q2 = q.clone();
-    read(server, &q, move |_, w| rig(w, &tip, &q2)?.info()).await
+    match q.get("controller").map(String::as_str) {
+        None | Some("") => read(server, &q, move |_, w| rig(w, &tip, &q2)?.info()).await,
+        Some("json") => read(server, &q, move |_, w| robot::controller(w, &rig(w, &tip, &q2)?)).await,
+        Some("arduino" | "h" | "c") => {
+            let app = match server.project(q.get("project")) {
+                Ok(app) => app,
+                Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                let project = app.project.lock().unwrap();
+                let w = project.world();
+                robot::controller(w, &rig(w, &tip, &q2)?).map(|c| robot::arduino_header(&c))
+            })
+            .await
+            .unwrap_or_else(|e| Err(e.to_string()));
+            match result {
+                Ok(text) => ([(header::CONTENT_TYPE, "text/x-c; charset=utf-8")], text).into_response(),
+                Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+            }
+        }
+        Some(other) => fail(StatusCode::BAD_REQUEST, format!("controller={other}: json or arduino")),
+    }
 }
 
 /// `GET /robot/<tip>/fk?values={"Shoulder":30}`: where the tool is for these values.

@@ -25,6 +25,12 @@
 // z = 0, the case running along +X from the shaft end. The case, tabs and
 // gear-top boss are one part whose material lumps what is inside (motor,
 // gear train, pot and PCB) at the density that gives the datasheet mass.
+//
+// `output` turns the output spline in the case (degrees about the shaft,
+// counter-clockwise seen from the spline end). Placed in an assembly, give
+// each servo its own `output` following its joint (an instance value,
+// "=Shoulder.angle"): the spline then stays in its horn while the case turns
+// about it, as a real servo's does, and every servo still shares this program.
 
 const SERVOS = {
   // L, W: case; H: case top; boss: [Ø, top z]; spline: [Ø, top z, teeth, screw Ø];
@@ -70,7 +76,8 @@ const lid = s.lid
   : null;
 const body = lid ? union(caseBody, tabs, boss, nub, relief, lid) : union(caseBody, tabs, boss, nub, relief);
 
-// Output spline: n straight-sided teeth around Ø, the horn screw hole in its top.
+// Output spline: n straight-sided teeth around Ø, the horn screw hole in its
+// top, turned to `output` in the case.
 const [sd, sTop, teeth, screw] = s.spline;
 const ro = sd / 2;
 const ri = ro - 0.28;
@@ -85,7 +92,8 @@ for (let i = 0; i < teeth; i++) {
 }
 const splineH = sTop - s.boss[1];
 const spline = polygon(pts).extrude(splineH + 0.6).translate(0, 0, s.boss[1] - 0.6)
-  .subtract(cylinder(Math.min(4, splineH + 0.4), screw / 2).translate(0, 0, sTop - Math.min(4, splineH + 0.4) + 0.01));
+  .subtract(cylinder(Math.min(4, splineH + 0.4), screw / 2).translate(0, 0, sTop - Math.min(4, splineH + 0.4) + 0.01))
+  .rotate(0, 0, p.output ?? 0);
 
 // A 30 mm stub of the three-wire lead (brown, red, orange) leaving the relief.
 const wire = (y) => cylinder(30, 0.5).rotate(0, 90, 0).translate(s.L - s.off + 1.9, y, 2.5);

@@ -32,9 +32,10 @@ pub async fn pattern(State(server): State<Arc<Server>>, Path(id): Path<String>, 
         let project = app.project.lock().unwrap();
         let Some(sid) = serde_json::from_value::<StableId>(json!(id)).ok() else { return fail(StatusCode::NOT_FOUND, format!("{id} is not an id")) };
         let found = match project.get::<de_assembly::Instance>(sid) {
-            Some(i) => project.entity(i.of).and_then(|e| match &i.config {
-                Some(c) => de_shape::configs::configured_program(project.world(), e, c).ok(),
-                None => de_shape::resolved_program(project.world(), e),
+            Some(i) => project.entity(i.of).and_then(|e| match (&i.config, i.params.is_empty()) {
+                (Some(c), true) => de_shape::configs::configured_program(project.world(), e, c).ok(),
+                (None, true) => de_shape::resolved_program(project.world(), e),
+                (c, false) => de_shape::configs::variant_program(project.world(), e, c.as_deref(), &i.params, &|_, _| None).ok(),
             }),
             None => project.entity(sid).and_then(|e| de_shape::resolved_program(project.world(), e)),
         };

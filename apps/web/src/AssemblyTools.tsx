@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { type EntityView, projectUrl } from "./engine";
 import { Icon } from "./icons";
 import type { JointView } from "./Joints";
+import type { FlexShape } from "./flexPlayback";
 import { type Quat, type Transform, type V3, applyT, childrenOf, fmt, instance, invertT, qrotate, worldOf } from "./model";
 import type { GeometryHit } from "./Viewport";
 
@@ -556,7 +557,7 @@ export function PatternSection(props: { entity: EntityView; entities: ReadonlyMa
 
 type Frame = { value: number; poses: [V3, Quat][]; joints: Record<string, number[]> };
 type Gap = { a: string; b: string; a_id: string; b_id: string; gap: number; at: number; range?: [number, number]; joined: boolean };
-export type Played = { instances: { id: string; name: string; moves: boolean }[]; frames: Frame[]; binds_at: number | null; pairs: Gap[]; clashes: Gap[]; notes: string[] };
+export type Played = { instances: { id: string; name: string; moves: boolean }[]; frames: Frame[]; binds_at: number | null; pairs: Gap[]; clashes: Gap[]; notes: string[]; flex?: FlexShape[] };
 
 /** Placements at fractional frame `t`. */
 function posesAtFrame(p: Played, t: number): Map<string, Transform> {
@@ -672,9 +673,13 @@ export function Player(props: { played: Played; unit: string; name: string; view
   useEffect(() => {
     if (last < 1) return;
     view.poses(posesAtFrame(played, at));
+    // Shapes the motion changes (a spring stretching) change with it.
+    if (played.flex?.length) void view.flex({ shapes: played.flex, frame: at });
     props.overlay?.(at);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [at, played, view]);
+  // Exported frames show each shape as it is at that frame.
+  const flexAt = (k: number) => (played.flex?.length ? view.flex({ shapes: played.flex, frame: k }) : Promise.resolve());
   // Leaving stops an export part way and puts the parts back.
   const alive = useRef(true);
   useEffect(
@@ -692,6 +697,7 @@ export function Player(props: { played: Played; unit: string; name: string; view
     for (let k = 0; k <= last && alive.current; k++) {
       setExporting(`Frame ${k + 1} of ${last + 1}…`);
       view.poses(posesAtFrame(played, k));
+      await flexAt(k);
       props.overlay?.(k);
       await frames2();
       const url = view.snapshot();
@@ -720,6 +726,7 @@ export function Player(props: { played: Played; unit: string; name: string; view
     for (let k = 0; k <= last && alive.current; k++) {
       setExporting(`Recording ${k + 1} of ${last + 1}…`);
       view.poses(posesAtFrame(played, k));
+      void flexAt(k);
       props.overlay?.(k);
       await new Promise((r) => window.setTimeout(r, 1000 / fps));
     }

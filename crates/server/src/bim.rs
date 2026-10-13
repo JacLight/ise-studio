@@ -67,7 +67,12 @@ fn gather(project: &Project, scope: &str) -> Result<Vec<Placed>, String> {
         if project.get::<de_assembly::Instance>(id).is_some() || project.get::<de_assembly::AssemblyDef>(id).is_some() {
             for o in de_assembly::occurrences(project.world(), id) {
                 let path = o.names[..o.names.len().saturating_sub(1)].to_vec();
-                if let Some(p) = placed_shape(project, o.shape, o.config.as_deref(), o.transform, path) {
+                let placed = match o.params.is_empty() {
+                    true => placed_shape(project, o.shape, o.config.as_deref(), o.transform, path),
+                    // An instance giving its shape values of its own shows those.
+                    false => de_assembly::occurrence_program(project.world(), &o).ok().map(|program| Placed { shape: o.shape, program, transform: o.transform, path, materials: material_names(project, o.shape) }),
+                };
+                if let Some(p) = placed {
                     out.push(p);
                 }
             }

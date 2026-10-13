@@ -37,6 +37,7 @@ import { ProjectsHome } from "./ProjectsHome";
 import { VersionsSection, openVersion } from "./Versions";
 import { type CommentPin, type CommentsView, type MarkupTool, type PinAnchor, type Stroke, type ThreadMarks, CommentsPanel, DraftCard, ThreadCard, colorFor, initialsOf, pinsFor, placeName, useThreads } from "./Comments";
 import { type DisplayMode, type ViewName, Viewport, type ViewportHandle } from "./Viewport";
+import { type FlexShape, FlexSamples } from "./flexPlayback";
 import type { Axis } from "./viewTools";
 import { copyOffset, copySteps, inverted, ofType, selectable } from "./selection";
 import { SelectionTools } from "./SelectionTools";
@@ -201,18 +202,39 @@ export function App({ engine }: { engine: Engine }) {
   // Joints: connectors offered for picking in the view, and instances drawn where a scrubbed joint puts them.
   const [connectorPick, setConnectorPick] = useState<ConnectorPick | null>(null);
   const [posePreview, setPosePreview] = useState<Map<string, Transform> | null>(null);
+  // Shapes a played motion changes (a spring stretching): evaluated at a few frames by the engine, blended between.
+  const flexSamples = useMemo(() => new FlexSamples((shape, values, config) => engine.shapePreview(shape, values, undefined, config)), [engine]);
+  const [flexPlay, setFlexPlay] = useState<{ shapes: FlexShape[]; frame: number } | null>(null);
+  const [flexLoaded, setFlexLoaded] = useState(0);
+  useEffect(() => {
+    flexSamples.onLoad = () => setFlexLoaded((n) => n + 1);
+  }, [flexSamples]);
+  const flexPose = useMemo(() => (flexPlay ? flexSamples.at(flexPlay.shapes, flexPlay.frame) : null), [flexPlay, flexSamples, flexLoaded]);
+  // A new motion's shapes start evaluating at once (nearest frame first).
+  const flexShapes = flexPlay?.shapes;
+  useEffect(() => {
+    if (flexShapes) flexSamples.prefetch(flexShapes);
+  }, [flexShapes, flexSamples]);
   // Assembly tools: lines and dots drawn over the model, and clicks picking geometry for a mate.
   const [assemblyOverlay, setAssemblyOverlay] = useState<AssemblyOverlay | null>(null);
   const [geometryPick, setGeometryPick] = useState<((hit: GeometryHit) => void) | null>(null);
   const jointView = useMemo<JointView>(
     () => ({
       pick: setConnectorPick,
-      poses: setPosePreview,
+      poses: (m) => {
+        setPosePreview(m);
+        // Back where they are: shapes the motion changed are back as they are too.
+        if (!m) setFlexPlay(null);
+      },
+      flex: (f) => {
+        setFlexPlay(f);
+        return f ? flexSamples.ready(f.shapes, f.frame) : Promise.resolve();
+      },
       overlay: setAssemblyOverlay,
       geometry: (f) => setGeometryPick(() => f),
       snapshot: () => viewport.current?.snapshot() ?? null,
     }),
-    [],
+    [flexSamples],
   );
   const [live, setLiveState] = useState<LiveEdit | null>(null);
   const [lockRatio, setLockRatio] = useState(false);
@@ -1767,6 +1789,7 @@ export function App({ engine }: { engine: Engine }) {
           connectors={connectorPick?.picture ?? null}
           onConnectorPick={(key) => connectorPick?.onPick(key)}
           poses={posePreview}
+          flex={flexPose}
           overlay={assemblyOverlay}
           scan={scanLayer}
           onGeometryPick={geometryPick}

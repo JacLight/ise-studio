@@ -18,6 +18,7 @@ use de_solid::BoxFeature;
 use geometry::{EPS, PartView, fmt, name, part};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub use check::{CheckReport, Finding, Severity, check};
 
@@ -75,6 +76,18 @@ pub enum Rule {
         /// Positions checked through the range (default 72).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         steps: Option<u32>,
+        /// Other joints held at these values (joint id → value) while it
+        /// sweeps, instead of where they are now: the worst pose to check
+        /// (a shoulder low while the elbow folds).
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        set: BTreeMap<StableId, f64>,
+        /// Joints stepped through their own limits too (`across_steps` + 1
+        /// values each, default 4 steps): the sweep is repeated at every
+        /// combination, covering the joint space as the interlocks allow it.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        across: Vec<StableId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        across_steps: Option<u32>,
     },
     /// Everything assembled in `assembly` (an assembly definition, or an
     /// instance of one) actually fits: every stock fastener in its holes
@@ -206,7 +219,7 @@ impl Rule {
         match self {
             Rule::MaxMass { parts, .. } | Rule::FitsWithin { parts, .. } | Rule::NoCollisions { parts } => parts.clone(),
             Rule::Clearance { a, b, .. } => vec![*a, *b],
-            Rule::NoClashesInMotion { joint, parts, .. } => std::iter::once(*joint).chain(parts.iter().copied()).collect(),
+            Rule::NoClashesInMotion { joint, parts, set, across, .. } => std::iter::once(*joint).chain(parts.iter().copied()).chain(set.keys().copied()).chain(across.iter().copied()).collect(),
             Rule::AssemblyFits { assembly, .. } => vec![*assembly],
             Rule::MinSafetyFactor { shape, .. } | Rule::MaxDeflection { shape, .. } | Rule::MinFirstFrequency { shape, .. } | Rule::MinBucklingFactor { shape, .. } => vec![*shape],
             Rule::ScanDeviation { part, .. } => vec![*part],
@@ -327,7 +340,7 @@ fn evaluate(world: &World, entity: Entity) -> Option<Result<RequirementResult, S
         }
         // Assemblies are checked part against part, inside and out.
         Rule::NoCollisions { parts: ids } => parts(world, ids).map(|ps| no_collisions(world, &geometry::expand(ps))),
-        Rule::NoClashesInMotion { joint, parts: ids, steps } => clear_in_motion(world, *joint, ids, steps.unwrap_or(72) as usize),
+        Rule::NoClashesInMotion { joint, parts: ids, steps, set, across, across_steps } => clear_in_motion(world, *joint, ids, steps.unwrap_or(72) as usize, set, across, across_steps.unwrap_or(4) as usize),
         Rule::AssemblyFits { assembly, motion, steps } => assembly_fits(world, *assembly, *motion, steps.unwrap_or(36) as usize),
         Rule::MinSafetyFactor { shape, part, min } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Safety, *min, false, ""),
         Rule::MaxDeflection { shape, part, max } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Deflection, max.canonical() * 1000.0, true, "mm"),
@@ -675,28 +688,99 @@ fn no_collisions(world: &World, ps: &[PartView]) -> RequirementResult {
     }
 }
 
-fn clear_in_motion(world: &World, joint: StableId, ids: &[StableId], steps: usize) -> Result<RequirementResult, String> {
-    let s = de_assembly::motion::sweep(world, joint, None, None, None, steps, &Default::default(), true)?;
-    let covered = |id: StableId| ids.is_empty() || ids.contains(&id) || s.assembly.is_some_and(|a| ids.contains(&a));
-    let unit = |v: f64| format!("{}{}", fmt(v), if s.unit == "°" { "°" } else { " mm" });
-    let watched: Vec<&de_assembly::motion::PairGap> = s.pairs.iter().filter(|p| !p.joined && (covered(p.a_id) || covered(p.b_id))).collect();
-    let clashes: Vec<&&de_assembly::motion::PairGap> = watched.iter().filter(|p| p.gap < 1e-4).collect();
-    let range = format!("{}–{}", unit(s.from), unit(s.to));
-    let summary = match (clashes.first(), watched.first()) {
-        (Some(c), _) => {
+/// The joint values a motion check holds the other joints at: `set` (by
+/// id), and each combination of the `across` joints stepped through their
+/// limits. One empty map when there is nothing to hold.
+fn motion_poses(world: &World, set: &BTreeMap<StableId, f64>, across: &[StableId], across_steps: usize) -> Result<Vec<Vec<(StableId, f64)>>, String> {
+    let mut poses: Vec<Vec<(StableId, f64)>> = vec![set.iter().map(|(k, v)| (*k, *v)).collect()];
+    for j in across {
+        let e = world.resource::<de_core::IdIndex>().get(*j).ok_or_else(|| format!("joint {j} does not exist"))?;
+        let ps = world.get::<de_shape::params::ParameterSet>(e).ok_or_else(|| format!("{j} is not a joint"))?;
+        let p = ps.params.first().ok_or_else(|| format!("{}: nothing moves", ps.name))?;
+        let (Some(lo), Some(hi)) = (p.min, p.max) else { return Err(format!("{} needs limits to be stepped through", ps.name)) };
+        let n = across_steps.clamp(1, 36);
+        let values: Vec<f64> = (0..=n).map(|k| lo + (hi - lo) * k as f64 / n as f64).collect();
+        poses = poses.into_iter().flat_map(|pose| values.iter().map(move |v| pose.iter().copied().chain(std::iter::once((*j, *v))).collect::<Vec<_>>())).collect();
+    }
+    Ok(poses)
+}
+
+fn clear_in_motion(world: &World, joint: StableId, ids: &[StableId], steps: usize, set: &BTreeMap<StableId, f64>, across: &[StableId], across_steps: usize) -> Result<RequirementResult, String> {
+    let poses = motion_poses(world, set, across, across_steps)?;
+    let name_of = |j: StableId| de_assembly::joints::joint_name(world, j);
+    let mut found: Vec<(de_assembly::motion::AssemblySweep, Vec<(StableId, f64)>)> = vec![];
+    let mut skipped: Vec<String> = vec![];
+    for pose in &poses {
+        let mut held: std::collections::HashMap<StableId, Vec<f64>> = Default::default();
+        for (j, v) in pose {
+            let mut now = de_assembly::joints::link(world, *j, None)?.values;
+            if now.is_empty() {
+                return Err(format!("{} has no value to hold", name_of(*j)));
+            }
+            now[0] = *v;
+            held.insert(*j, now);
+        }
+        match de_assembly::motion::sweep(world, joint, None, None, None, steps, &held, true) {
+            Ok(s) => found.push((s, pose.clone())),
+            // A pose the interlocks forbid outright is not one the arm can be in.
+            Err(m) if poses.len() > 1 && m.contains("interlock") => skipped.push(m),
+            Err(m) => return Err(m),
+        }
+    }
+    let Some((first, _)) = found.first() else { return Err(skipped.first().cloned().unwrap_or_else(|| "nothing to sweep".into())) };
+    let unit = |v: f64| format!("{}{}", fmt(v), if first.unit == "°" { "°" } else { " mm" });
+    let pose_text = |pose: &[(StableId, f64)]| -> String {
+        if pose.is_empty() {
+            return String::new();
+        }
+        let parts: Vec<String> = pose.iter().map(|(j, v)| format!("{} at {}", name_of(*j), unit(*v))).collect();
+        format!(" with {}", parts.join(", "))
+    };
+    let mut clashes: Vec<(&de_assembly::motion::PairGap, &de_assembly::motion::AssemblySweep, &[(StableId, f64)])> = vec![];
+    let mut closest: Option<(&de_assembly::motion::PairGap, &de_assembly::motion::AssemblySweep, &[(StableId, f64)])> = None;
+    let mut binds: Option<(f64, &[(StableId, f64)])> = None;
+    for (s, pose) in &found {
+        let covered = |id: StableId| ids.is_empty() || ids.contains(&id) || s.assembly.is_some_and(|a| ids.contains(&a));
+        for p in s.pairs.iter().filter(|p| !p.joined && (covered(p.a_id) || covered(p.b_id))) {
+            if p.gap < 1e-4 {
+                clashes.push((p, s, pose));
+            } else if closest.is_none_or(|(c, _, _)| p.gap < c.gap) {
+                closest = Some((p, s, pose));
+            }
+        }
+        if let Some(v) = s.binds_at
+            && binds.is_none()
+        {
+            binds = Some((v, pose));
+        }
+    }
+    let range = format!("{}–{}", unit(first.from), unit(first.to));
+    let over = if poses.len() > 1 { format!(" at {} poses of {}", found.len(), across.iter().map(|j| name_of(*j)).collect::<Vec<_>>().join(" × ")) } else { pose_text(&poses[0]) };
+    let summary = match (clashes.first(), closest) {
+        (Some((c, s, pose)), _) => {
             let [a, b] = c.range.unwrap_or([c.at, c.at]);
             let more = if clashes.len() > 1 { format!(" (+{} more)", clashes.len() - 1) } else { String::new() };
-            format!("{} hits {} as {} moves, from {} to {}{more}", c.a, c.b, s.name, unit(a), unit(b))
+            format!("{} hits {} as {} moves, from {} to {}{}{more}", c.a, c.b, s.name, unit(a), unit(b), pose_text(pose))
         }
-        (None, Some(p)) => format!("Clear through {range} of {}; closest {} mm ({} – {} at {})", s.name, fmt_gap(p.gap), p.a, p.b, unit(p.at)),
-        (None, None) => format!("Clear through {range} of {}; nothing comes within {} mm", s.name, fmt(s.search)),
+        (None, Some((p, s, pose))) => format!("Clear through {range} of {}{over}; closest {} mm ({} – {} at {}{})", s.name, fmt_gap(p.gap), p.a, p.b, unit(p.at), pose_text(pose)),
+        (None, None) => format!("Clear through {range} of {}{over}; nothing comes within {} mm", first.name, fmt(first.search)),
     };
-    let summary = match s.binds_at {
-        Some(v) => format!("{summary}; binds at {}", unit(v)),
+    let summary = match binds {
+        Some((v, pose)) => format!("{summary}; binds at {}{}", unit(v), pose_text(pose)),
         None => summary,
     };
+    // Where the interlocks narrowed the sweep, say so.
+    let narrowed = found.iter().find(|(s, _)| !s.allowed.is_empty());
+    let summary = match narrowed {
+        Some((s, pose)) => {
+            let pieces: Vec<String> = s.allowed.iter().map(|[a, b]| format!("{}…{}", unit(*a), unit(*b))).collect();
+            format!("{summary} (interlocks hold {} to {}{})", s.name, pieces.join(" and "), pose_text(pose))
+        }
+        None => summary,
+    };
+    let clashes: Vec<&de_assembly::motion::PairGap> = clashes.into_iter().map(|(p, _, _)| p).collect();
     Ok(RequirementResult {
-        passed: clashes.is_empty() && s.binds_at.is_none(),
+        passed: clashes.is_empty() && binds.is_none(),
         measured: clashes.len() as f64,
         limit: 0.0,
         unit: "clashes".into(),
@@ -861,13 +945,22 @@ fn silhouette_check(world: &World, id: StableId, canvas: StableId, min_iou: f64,
 // ---- Commands --------------------------------------------------------------
 
 fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
-    if let Rule::NoClashesInMotion { joint, steps, .. } = rule {
-        if tx.get::<de_assembly::joints::Joint>(*joint).is_none() {
-            return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{joint} is not an assembly joint")));
+    if let Rule::NoClashesInMotion { joint, steps, set, across, across_steps, .. } = rule {
+        for j in std::iter::once(joint).chain(set.keys()).chain(across) {
+            if tx.get::<de_assembly::joints::Joint>(*j).is_none() {
+                return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{j} is not an assembly joint")));
+            }
+        }
+        if set.contains_key(joint) || across.contains(joint) {
+            return Err(CommandError::new(ErrorCode::InvalidParameters, "the swept joint cannot also be held (set) or stepped (across)"));
         }
         if steps.is_some_and(|n| !(2..=720).contains(&n)) {
             return Err(CommandError::new(ErrorCode::InvalidParameters, "steps must be 2 to 720"));
         }
+        if across_steps.is_some_and(|n| !(1..=36).contains(&n)) {
+            return Err(CommandError::new(ErrorCode::InvalidParameters, "across_steps must be 1 to 36"));
+        }
+        motion_poses(tx.world(), set, across, across_steps.unwrap_or(4) as usize).map_err(|m| CommandError::new(ErrorCode::InvalidParameters, m))?;
     }
     if let Rule::AssemblyFits { assembly, steps, .. } = rule {
         if fit_scope(tx.world(), *assembly).is_none() {
@@ -879,7 +972,9 @@ fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
     }
     // A motion check's joint, a value check's target and a photo match's canvas are checked below, not as parts.
     let joint_of = |id: StableId| {
-        matches!(rule, Rule::NoClashesInMotion { joint, .. } if *joint == id) || matches!(rule, Rule::ParameterRange { .. }) || matches!(rule, Rule::SilhouetteMatch { canvas, .. } if *canvas == id)
+        matches!(rule, Rule::NoClashesInMotion { joint, set, across, .. } if *joint == id || set.contains_key(&id) || across.contains(&id))
+            || matches!(rule, Rule::ParameterRange { .. })
+            || matches!(rule, Rule::SilhouetteMatch { canvas, .. } if *canvas == id)
     };
     for id in rule.targets().into_iter().filter(|id| !joint_of(*id)) {
         if tx.get::<BoxFeature>(id).is_none()
@@ -983,7 +1078,7 @@ fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
 /// level: every top-level instance), so it re-runs when any of it changes.
 fn with_default_parts(tx: &Tx, rule: Rule) -> Rule {
     match rule {
-        Rule::NoClashesInMotion { joint, parts, steps } if parts.is_empty() => {
+        Rule::NoClashesInMotion { joint, parts, steps, set, across, across_steps } if parts.is_empty() => {
             let scope = tx.get::<de_assembly::joints::Joint>(joint).and_then(|j| j.assembly);
             let parts = match scope {
                 Some(a) => vec![a],
@@ -994,7 +1089,7 @@ fn with_default_parts(tx: &Tx, rule: Rule) -> Rule {
                     ids
                 }
             };
-            Rule::NoClashesInMotion { joint, parts, steps }
+            Rule::NoClashesInMotion { joint, parts, steps, set, across, across_steps }
         }
         r => r,
     }

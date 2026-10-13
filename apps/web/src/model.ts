@@ -105,7 +105,21 @@ export type InstanceData = {
   properties?: Record<string, string>;
   /** The configuration of its shape it shows (none: the definition as it is). */
   config?: string | null;
+  /** Values of its own for parameters of its shape: a number, or a formula (stored by id) it follows. */
+  params?: Record<string, { value: number; expr?: string }>;
 };
+
+/** Whether an instance shows its shape other than as defined: in a configuration, or with values of its own. */
+export const variesShape = (i: InstanceData | undefined) => !!i && (!!i.config || Object.keys(i.params ?? {}).length > 0);
+
+/** A stored formula (`=#<id>.angle * 2`) with references by name, for people (`=Shoulder.angle * 2`). */
+export function formulaText(stored: string, entities: ReadonlyMap<string, EntityView>) {
+  return stored.replace(/#([0-9a-f-]{36})\.([A-Za-z_][\w]*)/g, (_, id: string, key: string) => {
+    const e = entities.get(id);
+    const name = (e?.components["shape.parameter_set"] as { name?: string } | undefined)?.name ?? (e?.components["shape.program"] as { name?: string } | undefined)?.name ?? "(missing)";
+    return `${name}.${key}`;
+  });
+}
 
 export const instance = (e: EntityView | undefined) => e?.components["assembly.instance"] as InstanceData | undefined;
 export const assemblyDef = (e: EntityView | undefined) => e?.components["assembly.definition"] as { name: string; description: string } | undefined;
@@ -250,7 +264,7 @@ export function occurrences(id: string, entities: ReadonlyMap<string, EntityView
     }
     if (program(e)) {
       const holder = entities.get(path[path.length - 1]);
-      const configured = instance(holder)?.config ? (holder?.configured ?? undefined) : undefined;
+      const configured = variesShape(instance(holder)) ? (holder?.configured ?? undefined) : undefined;
       out.push({ shape: eid, path, transform: t, configured });
     }
   };

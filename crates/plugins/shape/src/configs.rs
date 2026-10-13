@@ -231,6 +231,141 @@ pub fn configured_program(world: &World, e: Entity, config: &str) -> Result<Shap
     Ok(program)
 }
 
+// ---- One instance's own values ---------------------------------------------------
+
+/// A value an instance gives one parameter of the shape it shows, in place of
+/// the definition's: a number, or a formula (`=Shoulder.angle`: a servo's
+/// output spline following its joint). Every other instance keeps sharing the
+/// definition, its program and every edit to it; only this value differs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ParamOverride {
+    /// The value; with a formula, the last value given by hand (kept when it is unlinked).
+    #[serde(default)]
+    pub value: f64,
+    /// A formula that drives it (stored with references by id, as a linked parameter's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expr: Option<String>,
+}
+
+/// An instance's own parameter values, by key.
+pub type Overrides = BTreeMap<String, ParamOverride>;
+
+/// Puts an instance's own values into a program's parameters (a formula
+/// replaces the definition's value or formula). A key the program no longer
+/// has is an error naming the ones it has.
+pub fn apply_overrides(program: &mut ShapeProgram, overrides: &Overrides) -> Result<(), String> {
+    for (key, o) in overrides {
+        let Some(p) = program.params.iter_mut().find(|p| &p.key == key) else {
+            let keys: Vec<&str> = program.params.iter().map(|p| p.key.as_str()).collect();
+            return Err(format!("{} has no parameter “{key}” (it has {}): change or drop the instance's value", program.name, keys.join(", ")));
+        };
+        p.value = o.value;
+        p.expr = o.expr.clone();
+    }
+    Ok(())
+}
+
+/// Checks an instance's own values against its shape and stores their
+/// formulas by id: every key is a parameter of the shape, a plain value is
+/// within its min/max, and formulas read things that exist (a bare key is
+/// another parameter of the same shape).
+pub fn check_overrides(world: &World, program: &ShapeProgram, overrides: &mut Overrides) -> Result<(), CommandError> {
+    let own: Vec<String> = program.params.iter().map(|p| p.key.clone()).collect();
+    for (key, o) in overrides.iter_mut() {
+        let p = program.params.iter().find(|p| &p.key == key).ok_or_else(|| invalid(format!("{} has no parameter “{key}” (it has {})", program.name, own.join(", "))))?;
+        match &o.expr {
+            Some(f) => {
+                o.expr = Some(params::canonical(world, f, &own).map_err(|e| invalid(format!("{}: {e}", p.label)))?);
+            }
+            None => {
+                if !o.value.is_finite() {
+                    return Err(invalid(format!("{} must be a finite number", p.label)));
+                }
+                if p.min.is_some_and(|m| o.value < m) || p.max.is_some_and(|m| o.value > m) {
+                    return Err(invalid(format!(
+                        "{} {} is outside {}–{}",
+                        p.label,
+                        o.value,
+                        p.min.map(|m| m.to_string()).unwrap_or("−∞".into()),
+                        p.max.map(|m| m.to_string()).unwrap_or("∞".into())
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Every entity an instance's own formulas read (for dependencies).
+pub fn override_references(overrides: &Overrides) -> Vec<StableId> {
+    let as_params: Vec<Param> = overrides
+        .iter()
+        .map(|(k, o)| Param { key: k.clone(), label: k.clone(), value: o.value, unit: String::new(), min: None, max: None, step: None, expr: o.expr.clone() })
+        .collect();
+    params::references(&as_params)
+}
+
+/// Shape `e`'s program as one instance shows it: in configuration `config`
+/// (else as the shape is), with the instance's own values `overrides` in
+/// place of the definition's, every formula worked out — those that read a
+/// value `given` here (a joint at one step of a sweep) with that value — its
+/// suppressed finishes left off, and named for the configuration.
+pub fn variant_program(world: &World, e: Entity, config: Option<&str>, overrides: &Overrides, given: &dyn Fn(StableId, &str) -> Option<f64>) -> Result<ShapeProgram, String> {
+    let mut program = world.get::<ShapeProgram>(e).ok_or("not a shape")?.clone();
+    let table = world.get::<ShapeConfigurations>(e);
+    let row = match config {
+        Some(c) => {
+            let row = table
+                .and_then(|t| t.row(c))
+                .ok_or_else(|| format!("{} has no configuration “{c}” (it has {})", program.name, table.map(|t| t.names()).unwrap_or_else(|| "none".into())))?;
+            apply_row(&mut program, row);
+            Some(row)
+        }
+        None => table.and_then(|t| t.active_row()),
+    };
+    if let Some(row) = row {
+        suppress_finishes(&mut program, row);
+    }
+    apply_overrides(&mut program, overrides)?;
+    let values = params::resolve_with(world, &program.params, given)?;
+    for p in &mut program.params {
+        if let Some(v) = values.get(&p.key) {
+            p.value = *v;
+        }
+    }
+    program.inputs = match config {
+        Some(_) => crate::program_inputs(world, &program)?,
+        None => crate::program_inputs(world, &program).unwrap_or_else(|_| format!(r#"{{"finishes":{}}}"#, serde_json::to_string(&program.finishes).unwrap())),
+    };
+    if let Some(row) = row {
+        program.inputs = with_row(&program.inputs, row);
+        program.name = display_name(&program.name, Some(&row.name));
+    }
+    Ok(program)
+}
+
+/// Shape `e` evaluated as an instance shows it: in configuration `config`
+/// and with the instance's own values (see [`variant_program`]).
+pub fn evaluate_variant(world: &World, e: Entity, config: Option<&str>, overrides: &Overrides) -> Result<Configured, String> {
+    let program = variant_program(world, e, config, overrides, &|_, _| None)?;
+    configured_from(world, e, config.unwrap_or_default(), program)
+}
+
+fn configured_from(world: &World, e: Entity, config: &str, program: ShapeProgram) -> Result<Configured, String> {
+    let ev = crate::evaluated_at(&program, program.display_tolerance())?;
+    let stats = crate::stats_of(&ev);
+    let masses = crate::masses_of(world, e, &stats)?;
+    let mass = crate::mass_of(&stats, &masses);
+    Ok(Configured {
+        config: config.to_string(),
+        name: program.name.clone(),
+        mesh: crate::mesh_of(&ev.positions, &ev.normals, &ev.indices),
+        part_masses: if stats.parts.is_empty() { vec![] } else { masses },
+        stats,
+        mass,
+    })
+}
+
 /// A shape evaluated in one configuration: what an instance that names it shows.
 #[derive(Clone, Debug, Serialize)]
 pub struct Configured {
@@ -249,18 +384,7 @@ pub struct Configured {
 /// three instances of one size evaluate once).
 pub fn evaluate(world: &World, e: Entity, config: &str) -> Result<Configured, String> {
     let program = configured_program(world, e, config)?;
-    let ev = crate::evaluated_at(&program, program.display_tolerance())?;
-    let stats = crate::stats_of(&ev);
-    let masses = crate::masses_of(world, e, &stats)?;
-    let mass = crate::mass_of(&stats, &masses);
-    Ok(Configured {
-        config: config.to_string(),
-        name: program.name.clone(),
-        mesh: crate::mesh_of(&ev.positions, &ev.normals, &ev.indices),
-        part_masses: if stats.parts.is_empty() { vec![] } else { masses },
-        stats,
-        mass,
-    })
+    configured_from(world, e, config, program)
 }
 
 /// Applies a table to a shape: checks it, checks that every configuration

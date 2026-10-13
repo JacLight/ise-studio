@@ -843,12 +843,12 @@ fn connectors_at(world: &World, instance: StableId, depth: usize) -> Result<Vec<
         return Ok(out);
     }
     let program = world.get::<ShapeProgram>(def).ok_or_else(|| format!("{}: not a component", inst.name))?;
-    let declared = match &inst.config {
-        Some(c) => {
-            let p = de_shape::configs::configured_program(world, def, c)?;
-            de_shape::evaluated_at(&p, p.display_tolerance())?.declared.clone()
-        }
-        None => world.get::<ShapeSolid>(def).ok_or_else(|| format!("{} has no valid result", program.name))?.stats.declared.clone(),
+    // Read at every step of a sweep: kept by program, not evaluated again.
+    let declared = match (&inst.config, inst.params.is_empty()) {
+        (Some(c), true) => de_shape::declared_of(&de_shape::configs::configured_program(world, def, c)?)?,
+        // Its own values (as they are now) may move a connector too.
+        (config, false) => de_shape::declared_of(&de_shape::configs::variant_program(world, def, config.as_deref(), &inst.params, &|_, _| None).map_err(|m| format!("{}: {m}", inst.name))?)?,
+        (None, true) => Arc::new(world.get::<ShapeSolid>(def).ok_or_else(|| format!("{} has no valid result", program.name))?.stats.declared.clone()),
     };
     Ok(declared.connectors.iter().map(|c| (c.name.clone(), Transform::frame(c.at, c.x, c.axis))).collect())
 }
@@ -1121,6 +1121,7 @@ pub(crate) fn rewire(tx: &mut Tx, scope: Option<StableId>) -> Result<(), Command
     if let Some(h) = hub {
         let mut want: Vec<StableId> = joints.iter().map(|(j, _)| *j).collect();
         want.extend(crate::couplings::couplings_in(tx.world(), scope).into_iter().map(|(c, _)| c));
+        want.extend(crate::interlocks::interlocks_in(tx.world(), scope).into_iter().map(|(c, _)| c));
         for g in &gs {
             want.extend(g.anchor);
             for m in &g.members {
@@ -1144,6 +1145,8 @@ pub(crate) fn rewire(tx: &mut Tx, scope: Option<StableId>) -> Result<(), Command
         if gs.iter().any(|g| g.members.contains(id) && g.anchor != Some(*id)) {
             want.extend(hub);
         }
+        // What its own values' formulas read (a joint its servo's output follows) stays.
+        want.extend(de_shape::configs::override_references(&inst.params));
         let world = tx.world();
         let current = tx.get::<DependsOn>(*id).map(|d| d.0.clone()).unwrap_or_default();
         let ours = |d: &StableId| {
@@ -1255,6 +1258,8 @@ pub(crate) fn delete_joints_of(tx: &mut Tx, instance: StableId, scope: Option<St
 fn drop_joint(tx: &mut Tx, id: StableId) -> Result<(), CommandError> {
     // Its couplings go with it.
     crate::couplings::delete_couplings_of(tx, id)?;
+    // So do the interlock rules that name it.
+    crate::interlocks::joint_deleted(tx, id)?;
     // Nothing else may keep depending on it.
     let users: Vec<StableId> = tx.world().resource::<IdIndex>().iter().filter(|(_, e)| tx.world().get::<DependsOn>(*e).is_some_and(|d| d.0.contains(&id))).map(|(u, _)| u).collect();
     for u in users {

@@ -9,6 +9,8 @@ import { type EntityView, projectUrl } from "./engine";
 import { Icon } from "./icons";
 import { type Transform, type V3, applyT, childrenOf, fmt, instance, qrotate } from "./model";
 import { ScrubField } from "./ScrubField";
+import type { FlexShape } from "./flexPlayback";
+import { Interlocks } from "./Interlocks";
 import { LinkNote } from "./Panels";
 import type { AssemblyOverlay, GeometryHit } from "./Viewport";
 import { Couplings, DofSummary, MateBuilder, MateGlyph, type MateKind, couplingOf, isMate } from "./AssemblyTools";
@@ -30,7 +32,13 @@ export type ConnectorPick = { picture: ConnectorPicture; onPick: (key: string) =
 /** How the joints panel (and the assembly tools) reach the view. */
 export type JointView = {
   pick: (p: ConnectorPick | null) => void;
+  /** Instances drawn at these placements (null: back where they are; flexing shapes go back too). */
   poses: (m: Map<string, Transform> | null) => void;
+  /**
+   * Shapes a played motion changes (a spring stretching), at fractional frame
+   * `frame` of their values; resolves when that frame's meshes are evaluated.
+   */
+  flex: (f: { shapes: FlexShape[]; frame: number } | null) => Promise<void>;
   /** Lines and dots over the model (project mm), or none. */
   overlay: (o: AssemblyOverlay | null) => void;
   /** Clicks on parts report the face picked (null: back to selecting). */
@@ -131,6 +139,10 @@ export type AssemblySweep = {
   clashes: Gap[];
   search: number;
   notes: string[];
+  /** Shapes that change as it moves (a spring the joint stretches), with their values at each frame. */
+  flex?: FlexShape[];
+  /** The values the interlocks allow here, when they leave some of the range out. */
+  allowed?: [number, number][];
 };
 
 async function fetchSweep(joint: string, opts: { key?: string; from?: number; to?: number; steps: number; gaps: boolean }): Promise<AssemblySweep> {
@@ -144,13 +156,40 @@ async function fetchSweep(joint: string, opts: { key?: string; from?: number; to
   return r.json();
 }
 
-/** The placements of a sweep at value `v` (interpolated between its steps). */
-function posesAt(s: AssemblySweep, v: number): Map<string, Transform> {
+/**
+ * The fractional frame where a sweep reaches value `v`. Its frames run from
+ * `from` to `to`, evenly unless interlocks left some values out.
+ */
+export function frameAt(s: { frames: { value: number }[] }, v: number): number {
   const f = s.frames;
-  const span = s.to - s.from;
-  const t = Math.max(0, Math.min(f.length - 1, ((v - s.from) / span) * (f.length - 1)));
-  const i = Math.min(f.length - 2, Math.floor(t));
-  const k = t - i;
+  if (f.length < 2) return 0;
+  const up = f[f.length - 1].value >= f[0].value;
+  const before = (a: number, b: number) => (up ? a <= b : a >= b);
+  if (before(v, f[0].value)) return 0;
+  for (let i = 1; i < f.length; i++) {
+    if (before(v, f[i].value)) {
+      const [a, b] = [f[i - 1].value, f[i].value];
+      return i - 1 + (b !== a ? (v - a) / (b - a) : 0);
+    }
+  }
+  return f.length - 1;
+}
+
+/** A sweep's value at fractional frame `k`. */
+export function valueAt(s: { frames: { value: number }[] }, k: number): number {
+  const f = s.frames;
+  if (!f.length) return 0;
+  const i = Math.max(0, Math.min(f.length - 1, Math.floor(k)));
+  const j = Math.min(f.length - 1, i + 1);
+  return f[i].value + (f[j].value - f[i].value) * Math.max(0, Math.min(1, k - i));
+}
+
+/** The placements of a sweep at fractional frame `t` (see `frameAt` for a value's). */
+function posesAtIndex(s: AssemblySweep, t: number): Map<string, Transform> {
+  const f = s.frames;
+  t = Math.max(0, Math.min(f.length - 1, t));
+  const i = Math.max(0, Math.min(f.length - 2, Math.floor(t)));
+  const k = Math.max(0, Math.min(1, t - i));
   const out = new Map<string, Transform>();
   s.instances.forEach((inst, j) => {
     const [a, b] = [f[i].poses[j], f[Math.min(i + 1, f.length - 1)].poses[j]];
@@ -309,6 +348,7 @@ export function AssemblyJoints(props: {
         </ul>
       )}
       {!focus && <Couplings scope={scope} joints={allJoints} entities={entities} run={run} />}
+      {!focus && <Interlocks scope={scope} joints={allJoints} entities={entities} run={run} />}
     </section>
   );
 }
@@ -343,7 +383,12 @@ function JointRow(props: {
   const planes = j.kind === "coincident" || j.kind === "distance" || j.kind === "parallel";
   // Scrubbing: the motion through the value's range, fetched once, played in the view.
   const sweeps = useRef(new Map<string, Promise<AssemblySweep | null>>());
-  useEffect(() => sweeps.current.clear(), [entities]);
+  // Where interlocks hold a value here (with the other joints where they are): the slider stops there.
+  const [held, setHeld] = useState<Record<string, [number, number]>>({});
+  useEffect(() => {
+    sweeps.current.clear();
+    setHeld({});
+  }, [entities]);
   const sweepFor = (p: Param) => {
     let s = sweeps.current.get(p.key);
     if (!s) {
@@ -352,13 +397,22 @@ function JointRow(props: {
       const [from, to] = p.min != null && p.max != null ? [p.min, p.max] : turning ? [v - 180, v + 180] : [v - 200, v + 200];
       s = fetchSweep(e.id, { key: p.key, from, to, steps: turning ? 240 : 200, gaps: false }).catch(() => null);
       sweeps.current.set(p.key, s);
+      void s.then((r) => {
+        const piece = r?.allowed?.length ? (r.allowed.find(([a, b]) => v >= a - 1e-9 && v <= b + 1e-9) ?? r.allowed[0]) : null;
+        if (piece) setHeld((h) => ({ ...h, [p.key]: piece }));
+      });
     }
     return s;
   };
   const live = async (p: Param, v: number | null) => {
     if (v === null) return view.poses(null);
     const s = await sweepFor(p);
-    if (s && s.frames.length > 1) view.poses(posesAt(s, v));
+    if (s && s.frames.length > 1) {
+      const k = frameAt(s, v);
+      view.poses(posesAtIndex(s, k));
+      // A spring the joint stretches stretches as it is scrubbed.
+      if (s.flex?.length) void view.flex({ shapes: s.flex, frame: k });
+    }
   };
   const primary = set.params[0];
   const ends = `${endText(j.b, entities)}  →  ${endText(j.a, entities)}`;
@@ -406,6 +460,12 @@ function JointRow(props: {
                     <span className="param-label">
                       {p.label}
                       {limits(p) && <small className="aj-limits-note">{limits(p)}</small>}
+                      {held[p.key] && (
+                        <small className="aj-limits-note aj-interlocked" title="An interlock holds it to this range here, with the other joints where they are">
+                          interlock {n(held[p.key][0], 1)}…{n(held[p.key][1], 1)}
+                          {unitOf(p)}
+                        </small>
+                      )}
                       {e.formulas?.[p.key] && <LinkNote formula={e.formulas[p.key]} onUnlink={() => run("shape.link_param", { target: e.id, key: p.key, expr: null })} />}
                     </span>
                     <ScrubField
@@ -414,8 +474,8 @@ function JointRow(props: {
                       tone="#7352d6"
                       value={value(p, k)}
                       unit={unitOf(p)}
-                      min={p.min ?? undefined}
-                      max={p.max ?? undefined}
+                      min={held[p.key]?.[0] ?? p.min ?? undefined}
+                      max={held[p.key]?.[1] ?? p.max ?? undefined}
                       step={p.unit === "deg" ? 1 : 0.5}
                       formula={e.formulas?.[p.key]}
                       onFormula={(f) => run("shape.link_param", { target: e.id, key: p.key, expr: f })}
@@ -542,7 +602,9 @@ function SweepResult(props: {
   }, [playing, sweep]);
   useEffect(() => {
     if (!sweep || at === null) return;
-    view.poses(posesAt(sweep, sweep.from + ((sweep.to - sweep.from) * at) / Math.max(1, last)));
+    view.poses(posesAtIndex(sweep, at));
+    // Shapes the motion changes (a spring the joint stretches) change with it.
+    if (sweep.flex?.length) void view.flex({ shapes: sweep.flex, frame: at });
   }, [at, sweep, last, view]);
   const requirement = [...props.entities.values()].find((e) => {
     const r = e.components["intent.requirement"] as { rule?: { kind: string; joint?: string } } | undefined;
@@ -553,10 +615,10 @@ function SweepResult(props: {
   const s = check.sweep;
   const u = s.unit === "°" ? "°" : " mm";
   const pct = (v: number) => ((v - s.from) / (s.to - s.from)) * 100;
-  const value = s.from + ((s.to - s.from) * (at ?? 0)) / Math.max(1, last);
+  const value = valueAt(s, at ?? 0);
   const jump = (v: number) => {
     setPlaying(false);
-    setAt(((v - s.from) / (s.to - s.from)) * last);
+    setAt(frameAt(s, v));
   };
   const closest = s.pairs.find((p) => !p.joined);
   return (
@@ -588,7 +650,12 @@ function SweepResult(props: {
           const [a, b] = c.range ?? [c.at, c.at];
           return <span key={`${c.a_id}${c.b_id}`} className="aj-clash" style={{ left: `${pct(a)}%`, width: `${Math.max(0.8, pct(b) - pct(a))}%` }} title={`${c.a} – ${c.b}`} />;
         })}
-        {at !== null && <span className="aj-head-mark" style={{ left: `${(at / Math.max(1, last)) * 100}%` }} />}
+        {(s.allowed ?? []).length > 0 &&
+          // What the interlocks leave out of the range: shaded.
+          [s.from, ...(s.allowed ?? []).flat(), s.to]
+            .reduce<[number, number][]>((gaps, v, i, all) => (i % 2 === 0 && i + 1 < all.length && Math.abs(all[i + 1] - v) > 1e-9 ? [...gaps, [Math.min(v, all[i + 1]), Math.max(v, all[i + 1])]] : gaps), [])
+            .map(([a, b]) => <span key={`il${a}`} className="aj-interlocked-span" style={{ left: `${Math.min(pct(a), pct(b))}%`, width: `${Math.abs(pct(b) - pct(a))}%` }} title="Left out by an interlock" />)}
+        {at !== null && <span className="aj-head-mark" style={{ left: `${pct(value)}%` }} />}
       </div>
       <div className="gear-turn-row">
         <button type="button" className="gear-play" aria-label={playing ? "Pause" : "Play the motion"} onClick={() => setPlaying((p) => !p)}>

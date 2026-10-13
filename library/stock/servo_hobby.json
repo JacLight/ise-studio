@@ -45,6 +45,14 @@
    "min": 0,
    "max": 5,
    "step": 1
+  },
+  {
+   "key": "output",
+   "label": "Output spline angle in the case",
+   "value": 0,
+   "unit": "deg",
+   "min": -360,
+   "max": 360
   }
  ],
  "columns": [
