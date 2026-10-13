@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExt
 import { usePersisted, usePersistedSet } from "./persist";
 import { AiPanel } from "./AiPanel";
 import { RenderView } from "./RenderView";
-import { renderImage } from "./render";
+import { type Backdrop, renderImage } from "./render";
 import { type Proposal, interpret } from "./assistant";
 import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
@@ -195,6 +195,10 @@ export function App({ engine }: { engine: Engine }) {
   const [turntable, setTurntable] = useState(false);
   // Render mode: the view path-traced over the model.
   const [rendering, setRendering] = useState(false);
+  // What renders stand in (a grey studio or a white sweep), for render mode and ./forma render alike.
+  const [backdrop, setBackdrop] = usePersisted<Backdrop>("renderBackdrop", "studio");
+  const backdropNow = useRef(backdrop);
+  backdropNow.current = backdrop;
   const renderSource = useCallback(() => viewport.current?.renderSource() ?? null, []);
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [busy, setBusy] = useState(false);
@@ -343,9 +347,17 @@ export function App({ engine }: { engine: Engine }) {
             break;
           case "render": {
             // A render asked for from ./forma render: made here, sent back to the engine.
-            const job = value ? (JSON.parse(value) as { job?: string; width?: number; height?: number; samples?: number; open?: boolean }) : {};
+            // "white" or "studio" (or {"backdrop": …}) sets what renders stand in;
+            // {"open": false} only sets it, without opening render mode.
+            const word = (value ?? "").trim().toLowerCase();
+            const job = /^(white|studio)$/.test(word)
+              ? { backdrop: word as Backdrop }
+              : value
+                ? (JSON.parse(value) as { job?: string; width?: number; height?: number; samples?: number; open?: boolean; backdrop?: string })
+                : {};
+            if (job.backdrop === "white" || job.backdrop === "studio") setBackdrop((backdropNow.current = job.backdrop));
             if (!job.job) {
-              setRendering(true);
+              if (job.open !== false) setRendering(true);
               break;
             }
             const source = viewport.current?.renderSource();
@@ -355,7 +367,7 @@ export function App({ engine }: { engine: Engine }) {
               back("", "the view is not ready");
               break;
             }
-            renderImage(source, { width: job.width ?? 1920, height: job.height ?? 1080, samples: job.samples ?? 256 })
+            renderImage(source, { width: job.width ?? 1920, height: job.height ?? 1080, samples: job.samples ?? 256, backdrop: backdropNow.current })
               .then((png) => back(png))
               .catch((e) => back("", String(e)));
             break;
@@ -399,7 +411,7 @@ export function App({ engine }: { engine: Engine }) {
           }
         }
       }),
-    [engine],
+    [engine, setBackdrop],
   );
 
   const pendingSelect = useRef<{ id: string; focus: boolean } | null>(null);
@@ -1836,7 +1848,7 @@ export function App({ engine }: { engine: Engine }) {
             onRestart={() => setCalibrating((c) => (c ? { ...c, points: [] } : c))}
           />
         )}
-        {rendering && <RenderView source={renderSource} name={projectTitle()} onClose={() => setRendering(false)} />}
+        {rendering && <RenderView source={renderSource} name={projectTitle()} backdrop={backdrop} onBackdrop={setBackdrop} onClose={() => setRendering(false)} />}
         <div className="view-caption">
           <span>{projectTitle().toUpperCase()}</span>
           <span>

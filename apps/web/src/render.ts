@@ -10,7 +10,28 @@ import { WebGLPathTracer } from "three-gpu-pathtracer";
 /** What the view shows: its part groups and its camera. */
 export type RenderSource = { objects: THREE.Object3D[]; camera: THREE.PerspectiveCamera };
 
-export type RenderOptions = { width: number; height: number; samples: number };
+/**
+ * What the model stands in: "studio" (a soft grey dome with softboxes, its
+ * floor fading into the room) or "white" (a seamless white sweep, as product
+ * photographs are shot: the backdrop and floor read paper white, the model
+ * keeps its true colours and casts a soft contact shadow).
+ */
+export type Backdrop = "studio" | "white";
+
+export type RenderOptions = { width: number; height: number; samples: number; backdrop?: Backdrop };
+
+/** Tone mapping per backdrop: the white sweep needs colours kept true and whites reaching white. */
+function exposeFor(renderer: THREE.WebGLRenderer, backdrop: Backdrop) {
+  if (backdrop === "white") {
+    // Khronos PBR Neutral: base colours below the shoulder pass unchanged (a
+    // blue stays that blue), so the sweep, lit past one, reads clean white.
+    renderer.toneMapping = THREE.NeutralToneMapping;
+    renderer.toneMappingExposure = 1;
+  } else {
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.85;
+  }
+}
 
 /**
  * A studio as an equirectangular HDR, Y up: a soft grey dome brighter
@@ -128,7 +149,7 @@ function physical(m: THREE.Material): THREE.Material {
  * physical materials, the studio light, and a large matte floor under the
  * model for soft contact shadows. Z is up, as in the view.
  */
-export function buildRenderScene(source: RenderSource, environment: THREE.Texture): { scene: THREE.Scene; bounds: THREE.Box3 } {
+export function buildRenderScene(source: RenderSource, environment: THREE.Texture, backdrop: Backdrop = "studio"): { scene: THREE.Scene; bounds: THREE.Box3 } {
   const scene = new THREE.Scene();
   const materials = new Map<THREE.Material, THREE.Material>();
   const convert = (m: THREE.Material) => {
@@ -159,16 +180,32 @@ export function buildRenderScene(source: RenderSource, environment: THREE.Textur
   if (!bounds.isEmpty()) {
     const size = bounds.getSize(new THREE.Vector3());
     const span = Math.max(size.x, size.y, size.z, 1);
+    // The white sweep glows a little of its own (a lit cyclorama is a light
+    // to the model), so it reads white everywhere but where the model shades it.
+    const white = backdrop === "white";
     const floor = new THREE.Mesh(
       new THREE.CircleGeometry(span * 40, 96),
-      new THREE.MeshPhysicalMaterial({ color: 0xf3f4f6, roughness: 0.92, metalness: 0 }),
+      new THREE.MeshPhysicalMaterial({
+        color: white ? 0xffffff : 0xf3f4f6,
+        roughness: white ? 1 : 0.92,
+        metalness: 0,
+        emissive: white ? 0xffffff : 0x000000,
+        emissiveIntensity: white ? WHITE_SWEEP.glow : 0,
+      }),
     );
     floor.position.set((bounds.min.x + bounds.max.x) / 2, (bounds.min.y + bounds.max.y) / 2, bounds.min.z - span * 1e-4);
     scene.add(floor);
   }
   scene.environment = environment;
-  scene.background = environment;
-  scene.backgroundBlurriness = 0.4;
+  if (backdrop === "white") {
+    // Seen past the model: paper white, past the tone curve's shoulder.
+    scene.background = new THREE.Color(1, 1, 1);
+    scene.backgroundIntensity = WHITE_SWEEP.background;
+    scene.environmentIntensity = WHITE_SWEEP.light;
+  } else {
+    scene.background = environment;
+    scene.backgroundBlurriness = 0.4;
+  }
   // The studio is made Y up; the model is Z up.
   scene.environmentRotation.set(-Math.PI / 2, 0, 0);
   scene.backgroundRotation.set(-Math.PI / 2, 0, 0);
@@ -182,6 +219,9 @@ function cameraFor(source: RenderSource, aspect: number) {
   c.updateProjectionMatrix();
   return c;
 }
+
+/** The white sweep's light: how bright the backdrop, the floor's own glow and the studio around it are. */
+const WHITE_SWEEP = { background: 4, glow: 0.55, light: 0.55 };
 
 let sharedEnvironment: THREE.DataTexture | null = null;
 const environment = () => (sharedEnvironment ??= studioEnvironment());
@@ -202,14 +242,13 @@ export class LiveRender {
   private stopped = false;
   ready = false;
 
-  constructor(private source: RenderSource, onFrame: (samples: number) => void) {
+  constructor(private source: RenderSource, onFrame: (samples: number) => void, backdrop: Backdrop = "studio") {
     this.canvas = document.createElement("canvas");
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: false, preserveDrawingBuffer: true });
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.85;
+    exposeFor(this.renderer, backdrop);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    this.scene = buildRenderScene(source, environment()).scene;
+    this.scene = buildRenderScene(source, environment(), backdrop).scene;
     this.camera = cameraFor(source, 1);
     this.tracer = new WebGLPathTracer(this.renderer);
     this.tracer.tiles.set(2, 2);
@@ -270,15 +309,14 @@ export class LiveRender {
  * have landed, as a PNG. `onProgress` hears the samples so far.
  */
 export async function renderImage(source: RenderSource, options: RenderOptions, onProgress?: (samples: number) => void): Promise<Blob> {
-  const { width, height, samples } = options;
+  const { width, height, samples, backdrop = "studio" } = options;
   const canvas = document.createElement("canvas");
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true });
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.85;
+  exposeFor(renderer, backdrop);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setPixelRatio(1);
   renderer.setSize(width, height, false);
-  const { scene } = buildRenderScene(source, environment());
+  const { scene } = buildRenderScene(source, environment(), backdrop);
   const camera = cameraFor(source, width / height);
   const tracer = new WebGLPathTracer(renderer);
   // Big images in tiles, so each draw call stays short.

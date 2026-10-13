@@ -636,7 +636,7 @@ You can drive their view, not just the design. When they ask to see something, s
 ./forma view color status        paint the building by sale status (color material to undo)
 ./forma view camera top          iso, front, back, left, right, top, bottom (glides there, everything framed)
 ./forma view explode Bracket 1.5 pull an assembly's parts apart (spread 0.25–2.5, default 1); `off` puts them back
-./forma view render              photoreal render mode: the view path-traced live (studio light, physical metals, plastics, glass)
+./forma view render [white]      photoreal render mode: the view path-traced live (studio light, physical metals, plastics, glass; white: on a white sweep)
 ./forma view projection ortho    orthographic (true elevations) or perspective
 ./forma view display edges       shaded, edges, wireframe, hidden (hidden line) or xray; zebra, curvature or draft (surface analysis)
 ./forma view section x 25        cut at x = 25 mm, cut faces filled and hatched (add `flip` to keep the other side; one plane per axis, together a section box)
@@ -644,7 +644,7 @@ You can drive their view, not just the design. When they ask to see something, s
 ./forma view measure Block Pin    measure one item (mass, inertia) or one to another in their view, with dimension lines
 ```
 
-`./forma render [--width 1920] [--height 1080] [--samples 256] [--out shot.png]` writes a photoreal PNG of the model as their view shows it (set the camera, isolation and explode first); with no view open it renders in a headless browser. Materials render from their names: metals by family (aluminium, steel, stainless, brass, copper), a colour word in the name colours it ("Aluminium 5052 anodised black" renders anodised), glass, acrylic and LED epoxy transmit light.
+`./forma render [--width 1920] [--height 1080] [--samples 256] [--backdrop studio|white] [--out shot.png]` writes a photoreal PNG of the model as their view shows it (set the camera, isolation and explode first); with no view open it renders in a headless browser. `--backdrop white` stands the model on a seamless white sweep, as product photographs are shot (white background and floor, a soft contact shadow, colours kept true); it stays the view's backdrop until changed (`./forma view render white` opens render mode on it; the person picks it in render mode's bar too). Materials render from their names: metals by family (aluminium, steel, stainless, brass, copper), a colour word in the name colours it ("Aluminium 5052 anodised black" renders anodised), glass, acrylic and LED epoxy transmit light.
 
 Names work (instances like L26, shapes, assemblies) or ids. These change only that person's view (the person who spoke to you last, also after the engine restarts; before anyone has spoken, every open view of the project); nothing is saved and other people's views stay as they are. The context tells you what their view shows (selection, isolation, hidden items, paint).
 

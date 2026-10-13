@@ -28,7 +28,8 @@
 //   node tools/forma.mjs study <study> [fps] [--out frames.json]   play a motion study: what moves, clashes, binding; frames to a file
 //   node tools/forma.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]' | controller [json|arduino] [--out f]] [--tool connector]
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
-//   node tools/forma.mjs render [--width 1920] [--height 1080] [--samples 256] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open)
+//   node tools/forma.mjs render [--width 1920] [--height 1080] [--samples 256] [--backdrop studio|white] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open);
+//        white: a seamless white sweep, as product photographs are shot
 //   node tools/forma.mjs flat [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
 //   node tools/forma.mjs pcb calc|panel|gerbview|glb …   board calculators, panelization, the Gerber viewer, the board as glTF
@@ -478,11 +479,21 @@ if (command === "run") {
   const width = Number(opt("width", 1920));
   const height = Number(opt("height", Math.round((width * 9) / 16)));
   const samples = Number(opt("samples", 256));
+  const backdrop = opt("backdrop", null);
+  if (backdrop && !["studio", "white"].includes(backdrop)) {
+    console.error(`✗ --backdrop ${backdrop}: use studio or white`);
+    process.exit(1);
+  }
   const out = opt("out", `render-${width}x${height}.png`);
   const q = new URLSearchParams({ ...(project ? { project } : {}), width, height, samples });
   // A render can take minutes: no header timeout (fetch gives up after five).
   const { request } = await import("node:http");
-  const ask = () =>
+  // The backdrop is the view's own setting: set it first (without opening render mode there).
+  const ask = async () => {
+    if (backdrop) await engine.send("view", { action: "render", target: null, value: JSON.stringify({ backdrop, open: false }) });
+    return post();
+  };
+  const post = () =>
     new Promise((done, fail) => {
       const r = request(`${http}/render?${q}`, { method: "POST" }, (res) => {
         const chunks = [];
@@ -521,7 +532,7 @@ if (command === "run") {
   } else {
     const png = Buffer.from(await res.arrayBuffer());
     writeFileSync(out, png);
-    console.log(`✓ ${out}: ${width} × ${height} px, ${samples} samples, ${(png.length / 1024).toFixed(0)} KB${chrome ? " (rendered headless)" : ""}`);
+    console.log(`✓ ${out}: ${width} × ${height} px, ${samples} samples${backdrop ? `, ${backdrop} backdrop` : ""}, ${(png.length / 1024).toFixed(0)} KB${chrome ? " (rendered headless)" : ""}`);
   }
   chrome?.kill();
 } else if (command === "flat") {
@@ -2545,6 +2556,7 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
     arg = arg.slice(0, how.index).trim();
   }
   if (["color", "camera", "projection", "display", "section"].includes(action)) value = arg;
+  else if (action === "render" && /^(studio|white)$/i.test(arg)) value = arg.toLowerCase();
   else if (action === "measure" && arg) {
     // One or two items: their ids (names resolved below, one at a time).
     const s = await engine.snapshot;
