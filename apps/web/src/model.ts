@@ -538,7 +538,8 @@ export function materialLook(name: string | undefined): Look {
   const key = name.toLowerCase();
   if (LOOKS[key]) return LOOKS[key];
   // "Tempered glass", "Stainless steel", "6061 aluminium": match the family.
-  const family = Object.keys(LOOKS).find((k) => key.includes(k));
+  // A family is a whole word of the name (plurals too): "nickel-plated steel" is steel, not PLA.
+  const family = Object.keys(LOOKS).find((k) => new RegExp(`(^|[^a-z])${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(s|es)?([^a-z]|$)`).test(key));
   const look = family ? LOOKS[family] : { color: "#c4c9d4", metalness: 0.2, roughness: 0.5 };
   const hex = key.match(/#[0-9a-f]{6}\b/)?.[0];
   const word = Object.keys(COLOUR_WORDS)
