@@ -206,6 +206,19 @@ pub fn homography(from: &[[f64; 2]; 4], to: &[[f64; 2]; 4]) -> Result<M3, String
     Ok([[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1.0]])
 }
 
+/// Where a quadrilateral's diagonals cross (corners in order round it): the
+/// pixel a perspective correction takes to the rectangle's centre.
+fn quad_centre(q: &[[f64; 2]]) -> Option<[f64; 2]> {
+    let [a, b, c, d] = <[[f64; 2]; 4]>::try_from(q).ok()?;
+    let (r, s) = ([c[0] - a[0], c[1] - a[1]], [d[0] - b[0], d[1] - b[1]]);
+    let den = r[0] * s[1] - r[1] * s[0];
+    if den.abs() < 1e-12 {
+        return None;
+    }
+    let t = ((b[0] - a[0]) * s[1] - (b[1] - a[1]) * s[0]) / den;
+    Some([a[0] + t * r[0], a[1] + t * r[1]])
+}
+
 /// R · F as a matrix: the turn after the mirror.
 fn turn(rotation: f64, flip: bool) -> M3 {
     let (s, c) = rotation.to_radians().sin_cos();
@@ -535,8 +548,15 @@ fn settle(c: &mut Canvas, s: Settings, picture: &Picture) -> Result<(), CommandE
         c.rotation = if c.flip { -ang } else { ang };
     }
     if let Some(p) = s.perspective {
+        // The squared-up rectangle centres on the plane's origin: move the
+        // origin to where that rectangle's centre is now, so the picture stays
+        // where it was (unless this update also says where it goes).
+        let keep = if s.at.is_none() { quad_centre(&p.points).map(|m| c.pixel_to_world(m)) } else { None };
         c.perspective = Some(p);
         c.sized = true;
+        if let Some(w) = keep {
+            c.plane.origin = w;
+        }
     }
     if let Some(a) = s.anchor {
         c.anchor = a;
@@ -1219,6 +1239,18 @@ mod tests {
         assert!(close(mid, [0.0, -80.0]), "{mid:?}");
         let back = apply(&c.to_pixel(), [5.0, 5.0]);
         assert!(close(apply(&m, back), [5.0, 5.0]));
+    }
+
+    #[test]
+    fn squaring_up_keeps_the_picture_where_it_was() {
+        let mut c = canvas(800, 600);
+        let picture = Picture::blank(800, 600);
+        let pts = [[300.0, 100.0], [500.0, 100.0], [600.0, 500.0], [200.0, 500.0]];
+        let centre = quad_centre(&pts).unwrap();
+        let before = c.pixel_to_world(centre);
+        settle(&mut c, Settings { perspective: Some(Perspective { points: pts, width: 40.0, height: 160.0 }), ..Default::default() }, &picture).unwrap();
+        let after = c.pixel_to_world(centre);
+        assert!((0..3).all(|k| (before[k] - after[k]).abs() < 1e-6), "{before:?} → {after:?}");
     }
 
     /// Timing on a real photo: FORMA_PHOTO=<file.jpg> cargo test … -- --ignored trace_timing --nocapture
