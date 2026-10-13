@@ -41,9 +41,10 @@ import type { CommentPin, CommentsView, PinAnchor } from "./Comments";
 import { EdgeLayer, type EdgePicture } from "./edgeLayer";
 import { ConnectorLayer, type ConnectorPicture } from "./connectorLayer";
 import { FaceLayer, type FacePicture, type FlatFace, PickedFacesLayer, curvedFaceAt, flatFaceAt } from "./faceLayer";
-import { SketchLayer, type SketchPicture, segmentPoints } from "./sketchLayer";
+import { SketchLayer, type SketchPicture } from "./sketchLayer";
+import { type Snap, snapSketch } from "./sketchSnap";
 import { DraftLayer, type DraftPicture } from "./draftLayer";
-import { type Plane, normalOf, positions, radiusOf, toWorld } from "./sketchModel";
+import { type Plane, normalOf, toWorld } from "./sketchModel";
 import {
   type Frac,
   type LiveEdit,
@@ -425,6 +426,8 @@ export type SketchPointer = {
   /** Grid spacing at the current zoom (mm). */
   grid: number;
   shift: boolean;
+  /** What the place snapped to (a midpoint, a crossing, onto a curve…), if anything. */
+  snap?: Snap | null;
 };
 
 const MM = 1000; // engine meters -> scene millimeters
@@ -1101,45 +1104,14 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
       const px = (a: number, b: number) => toScreen(new THREE.Vector3(...toWorld(plane, a, b)));
-      // Snap to the nearest point within 10 px, else note a curve within 6 px, else the grid.
-      const pos = positions(pic.data.geometry, pic.solved);
-      let point: number | null = null;
-      let best = 10;
-      for (const [id, [a, b]] of pos) {
-        const q = px(a, b);
-        const d = Math.hypot(q.x - mx, q.y - my);
-        if (d < best) [best, point] = [d, id];
-      }
-      let curve: number | null = null;
-      if (point === null) {
-        let bestC = 6;
-        for (const c of pic.data.geometry.curves) {
-          const at = (id: number) => pos.get(id) ?? [0, 0];
-          const seg =
-            c.kind === "line"
-              ? { kind: "line" as const, from: at(c.a), to: at(c.b) }
-              : c.kind === "circle"
-                ? { kind: "circle" as const, center: at(c.center), radius: radiusOf(c, pic.solved) }
-                : c.kind === "bezier"
-                  ? { kind: "bezier" as const, from: at(c.a), to: at(c.b), c1: at(c.c1), c2: at(c.c2) }
-                  : { kind: "arc" as const, from: at(c.start), to: at(c.end), center: at(c.center), ccw: true };
-          const pts = segmentPoints(seg).map(([a, b]) => px(a, b));
-          for (let i = 1; i < pts.length; i++) {
-            const [p0, p1] = [pts[i - 1], pts[i]];
-            const dx = p1.x - p0.x, dy = p1.y - p0.y;
-            const t = Math.max(0, Math.min(1, ((mx - p0.x) * dx + (my - p0.y) * dy) / (dx * dx + dy * dy || 1)));
-            const d = Math.hypot(p0.x + t * dx - mx, p0.y + t * dy - my);
-            if (d < bestC) [bestC, curve] = [d, c.id];
-          }
-        }
-      }
+      // Snap: points, then midpoints, centres, quadrants and crossings, then onto a curve, else the grid.
       const distance = camera.position.distanceTo(controls.target);
       const raw = distance / 60;
       const mag = 10 ** Math.floor(Math.log10(raw));
       const grid = [1, 2, 5, 10].map((m) => m * mag).find((g) => g >= raw)!;
-      if (point !== null) [u, v] = pos.get(point)!;
-      else if (!e.altKey) [u, v] = [Math.round(u / grid) * grid, Math.round(v / grid) * grid];
-      callbacks.current.onSketchPointer({ type, u, v, point, curve, grid, shift: e.shiftKey });
+      const s = snapSketch(pic, [u, v], { x: mx, y: my }, px, grid, { alt: e.altKey, shift: e.shiftKey, anchor: pic.anchor ?? null });
+      [u, v] = [s.u, s.v];
+      callbacks.current.onSketchPointer({ type, u, v, point: s.point, curve: s.curve, grid, shift: e.shiftKey, snap: s.snap });
       dirty = true;
     };
     const gizmoScale = (at: THREE.Vector3) => camera.position.distanceTo(at) * GIZMO_SCALE;

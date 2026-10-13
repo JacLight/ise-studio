@@ -4,7 +4,7 @@ import { type Proposal, interpret } from "./assistant";
 import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
 import { StockBrowser } from "./StockBrowser";
-import { PcbWorkspace, importKicadFile } from "./Pcb";
+import { EDA_DROP, PcbWorkspace, importEdaFile } from "./Pcb";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
 import { type Bench, Workbench } from "./Bom";
 import { RequirementsPanel } from "./RequirementsPanel";
@@ -623,6 +623,8 @@ export function App({ engine }: { engine: Engine }) {
 
   // Sketching by hand: the editor, and the plane menu for a new sketch.
   const [planeMenu, setPlaneMenu] = useState(false);
+  /** Asks for a face (set once the face picking below exists). */
+  const requestFaceRef = useRef<((purpose: string, take: (f: ProgramFace) => void) => void) | null>(null);
   const draftTool = useDraftTool({
     entities: state.entities,
     run,
@@ -639,6 +641,7 @@ export function App({ engine }: { engine: Engine }) {
     entities: state.entities,
     run,
     notify,
+    requestFace: (purpose, take) => requestFaceRef.current?.(purpose, take),
     hidden: hiddenItems,
     isolated,
     onFace: (plane, focus) => {
@@ -679,6 +682,7 @@ export function App({ engine }: { engine: Engine }) {
   // A stress study asking for a face: the next flat face clicked goes to it.
   const [stressPick, setStressPick] = useState<{ purpose: string; take: (f: ProgramFace) => void; parts?: string[] } | null>(null);
   const requestFace = useCallback((purpose: string, take: (f: ProgramFace) => void, parts?: string[]) => setStressPick({ purpose, take, parts }), []);
+  requestFaceRef.current = requestFace;
   const showStress = useCallback((id: string, view: StressView | null) => viewport.current?.stress(id, view), []);
   const grabMotion = useCallback((spec: MotionGrab | null) => viewport.current?.grabMotion(spec), []);
   useEffect(() => {
@@ -1100,9 +1104,9 @@ export function App({ engine }: { engine: Engine }) {
         setPrefs((p) => ({ ...p, aiMode: p.aiMode === "mini" || p.aiMode === "hidden" ? p.lastMode : p.aiMode }));
         return;
       }
-      // A KiCad board becomes a Forma board, opened in the Electronics workspace.
-      if (/\.kicad_pcb$/i.test(f.name)) {
-        void importKicadFile(f, (op, p, done) => run(op, p).then((out) => (out && done && notify(done), out))).then((made) => made && setPcbOpen(true));
+      // A board or schematic from another EDA tool becomes Forma's, opened in the Electronics workspace.
+      if (EDA_DROP.test(f.name)) {
+        void importEdaFile(f, (op, p, done) => run(op, p).then((out) => (out && done && notify(done), out))).then((made) => made && setPcbOpen(true));
         return;
       }
       importStep(f);
@@ -1550,6 +1554,7 @@ export function App({ engine }: { engine: Engine }) {
         )}
         {state.connection === "offline" && <div className="offline-note">Engine offline · reconnecting…</div>}
         {sketcher.bar}
+        {sketcher.sidebar}
         {!sketcher.editing && draftTool.bar}
         {sketcher.dimEditor}
         {edger.bar}
@@ -1628,9 +1633,14 @@ export function App({ engine }: { engine: Engine }) {
         <SyncBanner team={team} />
         {planeMenu && !sketcher.editing && (
           <PlaneMenu
-            onPick={(p) => {
+            onPick={(p, offset) => {
               setPlaneMenu(false);
-              sketcher.start(p);
+              sketcher.start(p, offset);
+            }}
+            onFace={() => {
+              setPlaneMenu(false);
+              notify("Select a part, then click the flat face to sketch on");
+              requestFace("Sketch on this face", (f) => void sketcher.start({ origin: f.centroid, normal: f.normal }));
             }}
             onClose={() => setPlaneMenu(false)}
           />

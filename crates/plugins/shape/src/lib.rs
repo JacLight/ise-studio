@@ -10,6 +10,7 @@ pub mod assets;
 pub mod cache;
 pub mod cam;
 pub mod configs;
+pub mod curves;
 pub mod decor;
 pub mod drawing;
 pub mod exact;
@@ -32,6 +33,8 @@ pub mod runtime;
 pub mod scad;
 pub mod sheet;
 pub mod sketch;
+pub mod sketch_tools;
+pub mod solver;
 pub mod stock;
 pub mod sweep;
 pub mod table;
@@ -82,6 +85,17 @@ impl Plugin for ShapePlugin {
             .command::<pattern::PatternSketch>()
             .command::<pattern::MirrorSketch>()
             .command::<project::ProjectSketch>()
+            .command::<sketch_tools::AddToSketch>()
+            .command::<sketch_tools::SplitSketch>()
+            .command::<sketch_tools::JoinSketch>()
+            .command::<sketch_tools::EditSpline>()
+            .command::<sketch_tools::TransformSketch>()
+            .command::<sketch_tools::CarbonCopy>()
+            .command::<sketch_tools::ValidateSketch>()
+            .command::<sketch_tools::Unalign>()
+            .command::<sketch_tools::RestoreInternal>()
+            .command::<sketch_tools::ToggleConstraint>()
+            .command::<sketch_tools::SetConstruction>()
             .command::<CreateParameterSet>()
             .command::<SetParameters>()
             .command::<LinkParam>()

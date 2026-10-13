@@ -129,7 +129,7 @@ fn norm_angle(a: f64) -> f64 {
 }
 
 /// The points of an arc through `a`, `m`, `b` (within `tol` mm), ends included.
-fn arc3(a: P, m: P, b: P, tol: f64) -> Vec<P> {
+pub(crate) fn arc3(a: P, m: P, b: P, tol: f64) -> Vec<P> {
     let d = 2.0 * (a[0] * (m[1] - b[1]) + m[0] * (b[1] - a[1]) + b[0] * (a[1] - m[1]));
     if d.abs() < 1e-12 {
         return vec![a, b];
@@ -149,7 +149,7 @@ fn arc3(a: P, m: P, b: P, tol: f64) -> Vec<P> {
     arc_center(c, r, a0, span, tol, a, b)
 }
 
-fn arc_center(c: P, r: f64, a0: f64, span: f64, tol: f64, a: P, b: P) -> Vec<P> {
+pub(crate) fn arc_center(c: P, r: f64, a0: f64, span: f64, tol: f64, a: P, b: P) -> Vec<P> {
     let n = ((geom::segments_for(r, tol) as f64) * span.abs() / std::f64::consts::TAU).ceil().max(1.0) as usize;
     let mut out = vec![a];
     for k in 1..n {
@@ -160,7 +160,7 @@ fn arc_center(c: P, r: f64, a0: f64, span: f64, tol: f64, a: P, b: P) -> Vec<P> 
     out
 }
 
-fn circle_pts(c: P, r: f64, tol: f64) -> Vec<P> {
+pub(crate) fn circle_pts(c: P, r: f64, tol: f64) -> Vec<P> {
     let n = geom::segments_for(r, tol);
     (0..n).map(|i| {
         let t = std::f64::consts::TAU * i as f64 / n as f64;
@@ -276,7 +276,7 @@ fn kicad_layer(f: &str) -> &'static str {
 }
 
 /// Polylines joined end to end into closed loops (ends within `tol`).
-fn chain_loops(mut open: Vec<Vec<P>>, tol: f64) -> (Vec<Vec<P>>, usize) {
+pub(crate) fn chain_loops(mut open: Vec<Vec<P>>, tol: f64) -> (Vec<Vec<P>>, usize) {
     let mut loops = Vec::new();
     let mut dangling = 0;
     while let Some(mut cur) = open.pop() {
@@ -345,7 +345,7 @@ impl Place {
     }
 }
 
-fn kind_for(reference: &str, value: &str) -> &'static str {
+pub(crate) fn kind_for(reference: &str, value: &str) -> &'static str {
     let prefix: String = reference.chars().take_while(|c| c.is_ascii_alphabetic()).collect::<String>().to_ascii_uppercase();
     let v = value.to_ascii_lowercase();
     match prefix.as_str() {
@@ -364,7 +364,7 @@ fn kind_for(reference: &str, value: &str) -> &'static str {
 }
 
 /// (height, material) of an estimated body by kind.
-fn body_guess(kind: &str) -> (f64, &'static str) {
+pub(crate) fn body_guess(kind: &str) -> (f64, &'static str) {
     match kind {
         "resistor" => (0.5, "Epoxy"),
         "capacitor" => (0.9, "Ceramic"),
@@ -707,7 +707,7 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
 }
 
 /// Track segments of one net, layer and width joined into polylines.
-fn chain_tracks(segs: Vec<(Option<String>, String, f64, P, P)>) -> Vec<KTrack> {
+pub(crate) fn chain_tracks(segs: Vec<(Option<String>, String, f64, P, P)>) -> Vec<KTrack> {
     let mut groups: BTreeMap<(String, String, i64), Vec<(P, P)>> = BTreeMap::new();
     let mut net_of: BTreeMap<String, Option<String>> = BTreeMap::new();
     for (net, layer, width, a, b) in segs {
@@ -1128,111 +1128,117 @@ impl Command for ImportKicad {
 
     fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
         let k = parse_board(&self.text).map_err(|e| CommandError::new(ErrorCode::InvalidParameters, e))?;
-        let name = self.name.filter(|n| !n.trim().is_empty()).or(k.title.clone()).unwrap_or_else(|| "Imported board".into()).trim().to_string();
-        for (n, f) in &k.footprints {
-            for p in &f.pads {
-                if !(p.size[0] > 0.0 && p.size[1] > 0.0 && p.size[0] < 100.0 && p.size[1] < 100.0) {
-                    return Err(CommandError::new(ErrorCode::InvalidParameters, format!("footprint {n}: pad {} has no size", p.number)));
-                }
+        create_board(tx, &k, self.name, self.at)
+    }
+}
+
+/// A board read from any file (KiCad or another tool's, in Forma's terms) written into the
+/// project in one change: the board, its footprints, components, tracks, vias, pours and 3D part.
+pub fn create_board(tx: &mut Tx, k: &KicadBoard, name: Option<String>, at: Option<[f64; 3]>) -> Result<Value, CommandError> {
+    let name = name.filter(|n| !n.trim().is_empty()).or(k.title.clone()).unwrap_or_else(|| "Imported board".into()).trim().to_string();
+    for (n, f) in &k.footprints {
+        for p in &f.pads {
+            if !(p.size[0] > 0.0 && p.size[1] > 0.0 && p.size[0] < 100.0 && p.size[1] < 100.0) {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, format!("footprint {n}: pad {} has no size", p.number)));
             }
         }
-        let board = Board {
-            name: name.clone(),
-            outline: k.outline.clone(),
-            corner_radius: 0.0,
-            cutouts: k.cutouts.clone(),
-            sketch: None,
-            layers: k.layers,
-            thickness: k.thickness.clamp(0.2, 3.2),
-            finish: "HASL lead-free".into(),
-            copper_oz: 1.0,
-            inner_copper_oz: 0.5,
-            mask: "green".into(),
-            silk: "white".into(),
-            rules: k.rules.clone(),
-            net_classes: vec![k.default_class.clone()],
-            footprints: k.footprints.clone(),
-            model: None,
-            revision: k.revision.clone().unwrap_or_else(|| "A".into()),
-            quantity: 5,
-            fab: None,
-            sourcing: BTreeMap::new(),
-        };
-        let id = tx.create();
-        tx.set(id, board)?;
-        for c in &k.components {
-            let cid = tx.create();
-            tx.set(
-                cid,
-                PcbComponent {
-                    board: id,
-                    reference: c.reference.clone(),
-                    value: c.value.clone(),
-                    footprint: c.footprint.clone(),
-                    at: c.at,
-                    rotation: c.rotation,
-                    side: c.side,
-                    mpn: c.mpn.clone(),
-                    manufacturer: c.manufacturer.clone(),
-                    lcsc: c.lcsc.clone(),
-                    description: c.description.clone(),
-                    pins: c.pins.clone(),
-                    pin_names: BTreeMap::new(),
-                    dnp: c.dnp,
-                },
-            )?;
-            tx.add_dependency(id, cid)?;
-        }
-        for t in &k.tracks {
-            let tid = tx.create();
-            tx.set(tid, Track { board: id, net: t.net.clone(), layer: t.layer.clone(), width: t.width, points: t.points.clone(), auto: false, reroute: false, bulges: vec![] })?;
-            tx.add_dependency(id, tid)?;
-        }
-        for v in &k.vias {
-            let vid = tx.create();
-            tx.set(vid, Via { board: id, net: v.net.clone(), at: v.at, drill: v.drill, diameter: v.diameter, auto: false })?;
-            tx.add_dependency(id, vid)?;
-        }
-        for z in &k.zones {
-            let zid = tx.create();
-            tx.set(
-                zid,
-                Zone {
-                    board: id,
-                    net: z.net.clone(),
-                    layer: z.layer.clone(),
-                    outline: z.outline.clone(),
-                    clearance: z.clearance,
-                    min_width: z.min_width,
-                    priority: z.priority,
-                    remove_islands: true,
-                    connection: z.connection,
-                    thermal_gap: z.thermal_gap,
-                    thermal_spoke: z.thermal_spoke,
-                },
-            )?;
-            tx.add_dependency(id, zid)?;
-        }
-        let model = crate::model3d::create(tx, id, self.at.unwrap_or([0.0; 3]))?;
-        Ok(json!({
-            "id": id,
-            "model": model,
-            "name": name,
-            "layers": k.layers,
-            "components": k.components.len(),
-            "footprints": k.footprints.len(),
-            "tracks": k.tracks.len(),
-            "vias": k.vias.len(),
-            "zones": k.zones.len(),
-            "notes": k.notes,
-        }))
     }
+    let board = Board {
+        name: name.clone(),
+        outline: k.outline.clone(),
+        corner_radius: 0.0,
+        cutouts: k.cutouts.clone(),
+        sketch: None,
+        layers: k.layers,
+        thickness: k.thickness.clamp(0.2, 3.2),
+        finish: "HASL lead-free".into(),
+        copper_oz: 1.0,
+        inner_copper_oz: 0.5,
+        mask: "green".into(),
+        silk: "white".into(),
+        rules: k.rules.clone(),
+        net_classes: vec![k.default_class.clone()],
+        footprints: k.footprints.clone(),
+        model: None,
+        revision: k.revision.clone().unwrap_or_else(|| "A".into()),
+        quantity: 5,
+        fab: None,
+        sourcing: BTreeMap::new(),
+    };
+    let id = tx.create();
+    tx.set(id, board)?;
+    for c in &k.components {
+        let cid = tx.create();
+        tx.set(
+            cid,
+            PcbComponent {
+                board: id,
+                reference: c.reference.clone(),
+                value: c.value.clone(),
+                footprint: c.footprint.clone(),
+                at: c.at,
+                rotation: c.rotation,
+                side: c.side,
+                mpn: c.mpn.clone(),
+                manufacturer: c.manufacturer.clone(),
+                lcsc: c.lcsc.clone(),
+                description: c.description.clone(),
+                pins: c.pins.clone(),
+                pin_names: BTreeMap::new(),
+                dnp: c.dnp,
+            },
+        )?;
+        tx.add_dependency(id, cid)?;
+    }
+    for t in &k.tracks {
+        let tid = tx.create();
+        tx.set(tid, Track { board: id, net: t.net.clone(), layer: t.layer.clone(), width: t.width, points: t.points.clone(), auto: false, reroute: false, bulges: vec![] })?;
+        tx.add_dependency(id, tid)?;
+    }
+    for v in &k.vias {
+        let vid = tx.create();
+        tx.set(vid, Via { board: id, net: v.net.clone(), at: v.at, drill: v.drill, diameter: v.diameter, auto: false })?;
+        tx.add_dependency(id, vid)?;
+    }
+    for z in &k.zones {
+        let zid = tx.create();
+        tx.set(
+            zid,
+            Zone {
+                board: id,
+                net: z.net.clone(),
+                layer: z.layer.clone(),
+                outline: z.outline.clone(),
+                clearance: z.clearance,
+                min_width: z.min_width,
+                priority: z.priority,
+                remove_islands: true,
+                connection: z.connection,
+                thermal_gap: z.thermal_gap,
+                thermal_spoke: z.thermal_spoke,
+            },
+        )?;
+        tx.add_dependency(id, zid)?;
+    }
+    let model = crate::model3d::create(tx, id, at.unwrap_or([0.0; 3]))?;
+    Ok(json!({
+        "id": id,
+        "model": model,
+        "name": name,
+        "layers": k.layers,
+        "components": k.components.len(),
+        "footprints": k.footprints.len(),
+        "tracks": k.tracks.len(),
+        "vias": k.vias.len(),
+        "zones": k.zones.len(),
+        "notes": k.notes,
+    }))
 }
 
 // ---- Writing ------------------------------------------------------------------------
 
 /// A stable RFC 4122-shaped id from a seed (same board, same ids).
-fn uuid(seed: &str) -> String {
+pub(crate) fn uuid(seed: &str) -> String {
     let h = |salt: u64| {
         let mut x = std::collections::hash_map::DefaultHasher::new();
         salt.hash(&mut x);
