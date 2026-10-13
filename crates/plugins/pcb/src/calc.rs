@@ -554,6 +554,64 @@ pub fn gcpw(w: f64, s: f64, h: f64, er: f64) -> (f64, f64) {
     (60.0 * PI / eeff.sqrt() / (kk(k0) + kk(k3)), eeff)
 }
 
+/// Edge-coupled symmetric stripline of zero thickness between planes `b` apart
+/// (Cohn 1955, exact by conformal mapping): (Z0 even, Z0 odd) in Ω.
+pub fn coupled_stripline_thin(w: f64, s: f64, b: f64, er: f64) -> (f64, f64) {
+    let a = (PI * w / (2.0 * b)).tanh();
+    let c = (PI * (w + s) / (2.0 * b)).tanh();
+    let z = |k: f64| 30.0 * PI / er.sqrt() / kk(k.clamp(1e-12, 1.0 - 1e-12));
+    (z(a * c), z(a / c))
+}
+
+/// Stripline off centre: `h1` of εr1 to the plane above, `h2` of εr2 below.
+/// Each side as a centred stripline of twice its height, combined in
+/// parallel (Cohn's offset approximation; IPC-2141A §4.2.3).
+pub fn stripline_offset(w: f64, h1: f64, er1: f64, h2: f64, er2: f64, t: f64) -> f64 {
+    let z1 = stripline(w, 2.0 * h1 + t, t, er1);
+    let z2 = stripline(w, 2.0 * h2 + t, t, er2);
+    2.0 * z1 * z2 / (z1 + z2)
+}
+
+/// Differential impedance of an edge-coupled offset stripline: Cohn's exact
+/// odd mode per side, scaled by the thick-strip correction of the single
+/// line, the two sides combined as for `stripline_offset`. Ω.
+pub fn zdiff_stripline(w: f64, s: f64, h1: f64, er1: f64, h2: f64, er2: f64, t: f64) -> f64 {
+    let side = |h: f64, er: f64| {
+        let b = 2.0 * h + t;
+        let (_, zo) = coupled_stripline_thin(w, s, b, er);
+        let thick = if t > 0.0 && t < b { stripline(w, b, t, er) / stripline(w, b, 0.0, er) } else { 1.0 };
+        zo * thick
+    };
+    let (a, b) = (side(h1, er1), side(h2, er2));
+    2.0 * (2.0 * a * b / (a + b))
+}
+
+/// Differential impedance of an edge-coupled microstrip: Hammerstad–Jensen's
+/// single line (with thickness) and IPC-2141's coupling term. Ω.
+pub fn zdiff_microstrip(w: f64, s: f64, h: f64, t: f64, er: f64) -> f64 {
+    2.0 * microstrip(w, h, t, er).0 * (1.0 - 0.48 * (-0.96 * s / h).exp())
+}
+
+/// The `x` in [lo, hi] (log-spaced bisection) where a monotonic `f(x)` meets `target`.
+pub fn solve(f: &dyn Fn(f64) -> f64, target: f64, lo: f64, hi: f64) -> Option<f64> {
+    let (flo, fhi) = (f(lo) - target, f(hi) - target);
+    if !(flo.is_finite() && fhi.is_finite()) || flo * fhi > 0.0 {
+        return None;
+    }
+    let (mut a, mut b) = (lo.ln(), hi.ln());
+    let up = fhi > flo;
+    for _ in 0..80 {
+        let m = (a + b) / 2.0;
+        let v = f(m.exp()) - target;
+        if (v > 0.0) == up {
+            b = m;
+        } else {
+            a = m;
+        }
+    }
+    Some(((a + b) / 2.0).exp())
+}
+
 fn impedance(a: &Args) -> Result<Value, String> {
     let line = word(a, "line", "microstrip").to_ascii_lowercase();
     let w = positive(arg(a, "width", 0.3)?, "the width")?;

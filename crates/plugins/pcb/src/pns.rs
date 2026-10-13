@@ -627,6 +627,8 @@ pub struct Node {
     default_clearance: f64,
     min_space: f64,
     reach: f64,
+    /// Two nets of one differential pair: the clearance their gap allows.
+    pair_gaps: HashMap<(String, String), f64>,
 }
 
 impl Node {
@@ -665,7 +667,15 @@ impl Node {
         }
         let default_clearance = board.class_of(None).clearance;
         let reach = board.net_classes.iter().map(|c| c.clearance).fold(board.rules.min_space.max(default_clearance), f64::max);
-        Node { layers, fixed, lines, vias, outline: v.outline.clone(), cutouts: v.cutouts.clone(), edge: board.rules.edge_clearance, clearances, default_clearance, min_space: board.rules.min_space, reach }
+        let mut pair_gaps = HashMap::new();
+        for p in &v.signal.pairs {
+            let g = crate::signal::pair_clearance(board, v, Some(&p.p), Some(&p.n), f64::INFINITY);
+            if g.is_finite() {
+                pair_gaps.insert((p.p.clone(), p.n.clone()), g);
+                pair_gaps.insert((p.n.clone(), p.p.clone()), g);
+            }
+        }
+        Node { layers, fixed, lines, vias, outline: v.outline.clone(), cutouts: v.cutouts.clone(), edge: board.rules.edge_clearance, clearances, default_clearance, min_space: board.rules.min_space, reach, pair_gaps }
     }
 
     pub fn all_layers(&self) -> u32 {
@@ -674,7 +684,16 @@ impl Node {
 
     pub fn clearance(&self, a: &Option<String>, b: &Option<String>) -> f64 {
         let c = |n: &Option<String>| n.as_ref().and_then(|n| self.clearances.get(n)).copied().unwrap_or(self.default_clearance);
-        c(a).max(c(b)).max(self.min_space)
+        let need = c(a).max(c(b)).max(self.min_space);
+        match (a, b) {
+            (Some(x), Some(y)) if !self.pair_gaps.is_empty() => self.pair_gaps.get(&(x.clone(), y.clone())).map_or(need, |g| need.min(*g)),
+            _ => need,
+        }
+    }
+
+    /// The clearance of a net (one made up for the router, as a pair's centreline).
+    pub fn set_clearance(&mut self, net: &str, c: f64) {
+        self.clearances.insert(net.to_string(), c);
     }
 
     pub fn line_by_id(&self, id: StableId) -> Option<usize> {
@@ -1207,6 +1226,7 @@ mod tests {
             default_clearance: 0.2,
             min_space: 0.15,
             reach: 0.3,
+            pair_gaps: HashMap::new(),
         }
     }
 

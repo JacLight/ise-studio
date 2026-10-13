@@ -81,7 +81,10 @@ pub mod drc_extra;
 pub mod graphics;
 pub mod multichannel;
 pub mod placement;
+pub mod meander;
+pub mod pair;
 pub mod rules;
+pub mod signal;
 pub mod stackup;
 pub mod teardrops;
 pub mod vias;
@@ -141,6 +144,9 @@ impl Plugin for PcbPlugin {
         multichannel::register(r);
         stackup::register(r);
         rules::register(r);
+        signal::register(r);
+        pair::register(r);
+        meander::register(r);
         teardrops::register(r);
     }
 }
@@ -212,6 +218,30 @@ pub struct NetClass {
     /// 60 % of `track_width`, never below the board's `min_track`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub neck_width: Option<f64>,
+    /// Net names or patterns (`USB_*`, `D?`) the class takes besides `nets`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub patterns: Vec<String>,
+    /// Single-ended impedance target (Ω): the track width on each layer is worked out from the stackup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impedance: Option<f64>,
+    /// Differential impedance target (Ω) for the class's differential pairs: width and gap per layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_impedance: Option<f64>,
+    /// Gap between the tracks of a pair (mm); with `diff_impedance` the width is solved for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_gap: Option<f64>,
+    /// Allowed impedance error (%), default 10.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impedance_tolerance: Option<f64>,
+    /// Longest stretch of a pair that may run uncoupled (mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_uncoupled: Option<f64>,
+    /// Largest length difference between a pair's two tracks (mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_skew: Option<f64>,
+    /// Centre-to-centre spacing of a pair's coupled vias (mm); default diameter + clearance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pair_via_pitch: Option<f64>,
 }
 
 fn default_via_drill() -> f64 {
@@ -223,7 +253,7 @@ fn default_via_diameter() -> f64 {
 
 impl NetClass {
     pub fn default_class() -> NetClass {
-        NetClass { name: "Default".into(), nets: vec![], track_width: 0.25, clearance: 0.2, via_drill: 0.3, via_diameter: 0.6, neck_width: None }
+        NetClass { name: "Default".into(), nets: vec![], track_width: 0.25, clearance: 0.2, via_drill: 0.3, via_diameter: 0.6, neck_width: None, patterns: vec![], impedance: None, diff_impedance: None, diff_gap: None, impedance_tolerance: None, max_uncoupled: None, max_skew: None, pair_via_pitch: None }
     }
 }
 
@@ -304,6 +334,9 @@ pub struct Board {
     /// Teardrops where tracks meet pads and vias.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub teardrops: Option<teardrops::Teardrops>,
+    /// Routing constraints: differential pairs, length-matching groups, pad-to-die lengths.
+    #[serde(default, skip_serializing_if = "signal::Signal::is_empty")]
+    pub signal: signal::Signal,
 }
 
 fn one() -> f64 {
@@ -333,6 +366,9 @@ impl Board {
     pub fn class_of(&self, net: Option<&str>) -> NetClass {
         if let Some(n) = net {
             if let Some(c) = self.net_classes.iter().find(|c| c.nets.iter().any(|x| x == n)) {
+                return c.clone();
+            }
+            if let Some(c) = self.net_classes.iter().find(|c| c.patterns.iter().any(|p| rules::wild(p, n))) {
                 return c.clone();
             }
         }
@@ -645,7 +681,9 @@ fn check_board(b: &Board) -> Result<(), CommandError> {
         if !(c.track_width > 0.0 && c.track_width <= 10.0 && c.clearance >= 0.0 && c.clearance <= 10.0 && c.via_drill > 0.0 && c.via_diameter > c.via_drill) {
             return Err(bad(format!("net class {}: a positive track width and clearance, and a via larger than its drill", c.name)));
         }
+        signal::check_class(c).map_err(bad)?;
     }
+    b.signal.check().map_err(bad)?;
     for (name, f) in &b.footprints {
         check_footprint(name, f)?;
     }
@@ -743,6 +781,7 @@ impl Command for CreateBoard {
             stackup: None,
             drc_rules: String::new(),
             teardrops: None,
+            signal: Default::default(),
         };
         check_board(&board)?;
         let id = tx.create();

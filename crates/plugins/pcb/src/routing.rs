@@ -24,7 +24,7 @@ fn unresolved(m: impl Into<String>) -> CommandError {
     CommandError::new(ErrorCode::UnresolvedReference, m)
 }
 
-fn resolved(tx: &Tx, id: StableId) -> Result<(Board, BoardView), CommandError> {
+pub(crate) fn resolved(tx: &Tx, id: StableId) -> Result<(Board, BoardView), CommandError> {
     let b = board_of(tx, id)?;
     let v = board::resolve(tx.world(), id, &b).map_err(|e| CommandError::new(ErrorCode::InvalidGeometry, e))?;
     Ok((b, v))
@@ -38,13 +38,13 @@ pub enum Endpoint {
     Pad(String),
 }
 
-struct Spot {
-    at: P,
-    layer: Option<String>,
-    net: Option<String>,
+pub(crate) struct Spot {
+    pub(crate) at: P,
+    pub(crate) layer: Option<String>,
+    pub(crate) net: Option<String>,
 }
 
-fn spot(v: &BoardView, e: &Endpoint, layer: Option<&str>) -> Result<Spot, String> {
+pub(crate) fn spot(v: &BoardView, e: &Endpoint, layer: Option<&str>) -> Result<Spot, String> {
     match e {
         Endpoint::Pad(name) => {
             let p = v.pads.iter().find(|p| format!("{}.{}", p.reference, p.number) == *name && !p.layers.is_empty()).ok_or_else(|| format!("no pad {name} on this board (reference.pad, e.g. U1.3)"))?;
@@ -96,6 +96,9 @@ pub struct PlanRun {
     pub points: Vec<P>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub bulges: Vec<f64>,
+    /// Its own width (a pair's neck into its pads); the plan's when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -138,10 +141,18 @@ pub struct Plan {
     pub end: P,
     pub layer: String,
     pub notes: Vec<String>,
+    /// The net's length with this route (track, vias, pad-to-die), for the live readout.
+    pub length: f64,
+    /// The length it is tuned to (its length group's), when it has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<f64>,
+    /// Made by the autorouter.
+    #[serde(skip)]
+    pub auto: bool,
 }
 
 /// The changes of a node against the board it came from.
-fn moved_of(node: &Node, keep: &BTreeSet<StableId>, plan: &mut Plan) {
+pub(crate) fn moved_of(node: &Node, keep: &BTreeSet<StableId>, plan: &mut Plan) {
     for l in &node.lines {
         if let Some(id) = l.id {
             if l.moved && !keep.contains(&id) {
@@ -159,7 +170,7 @@ fn moved_of(node: &Node, keep: &BTreeSet<StableId>, plan: &mut Plan) {
 }
 
 /// Clearances broken by everything moved in `node`.
-fn moved_collisions(node: &Node) -> Vec<Collision> {
+pub(crate) fn moved_collisions(node: &Node) -> Vec<Collision> {
     let mut out = Vec::new();
     for (i, l) in node.lines.iter().enumerate() {
         if l.moved {
@@ -174,7 +185,7 @@ fn moved_collisions(node: &Node) -> Vec<Collision> {
     out
 }
 
-fn apply(tx: &mut Tx, board: StableId, plan: &Plan) -> Result<Value, CommandError> {
+pub(crate) fn apply(tx: &mut Tx, board: StableId, plan: &Plan) -> Result<Value, CommandError> {
     let mut tracks = Vec::new();
     let mut vias = Vec::new();
     for r in &plan.runs {
@@ -183,13 +194,13 @@ fn apply(tx: &mut Tx, board: StableId, plan: &Plan) -> Result<Value, CommandErro
             continue;
         }
         let id = tx.create();
-        tx.set(id, Track { board, net: plan.net.clone(), layer: r.layer.clone(), width: plan.width, points, auto: false, reroute: false, bulges: r.bulges.clone() })?;
+        tx.set(id, Track { board, net: plan.net.clone(), layer: r.layer.clone(), width: r.width.unwrap_or(plan.width), points, auto: plan.auto, reroute: false, bulges: r.bulges.clone() })?;
         tx.add_dependency(board, id)?;
         tracks.push(id);
     }
     for at in &plan.vias {
         let id = tx.create();
-        tx.set(id, Via { board, net: plan.net.clone(), at: *at, drill: plan.via_drill, diameter: plan.via_diameter, auto: false, spec: Default::default() })?;
+        tx.set(id, Via { board, net: plan.net.clone(), at: *at, drill: plan.via_drill, diameter: plan.via_diameter, auto: plan.auto, spec: Default::default() })?;
         tx.add_dependency(board, id)?;
         vias.push(id);
     }
@@ -286,7 +297,7 @@ pub fn plan_route(b: &Board, v: &BoardView, r: &RouteInteractive) -> Result<Plan
     }
     let net = r.net.clone().filter(|n| !n.trim().is_empty()).or(start.net.clone()).or_else(|| targets.last().and_then(|(s, _)| s.net.clone()));
     let class = b.class_of(net.as_deref());
-    let width = r.width.unwrap_or(class.track_width);
+    let width = r.width.unwrap_or_else(|| crate::signal::width_on(b, v, net.as_deref(), &v.layers[layer]));
     if !(width > 0.0 && width <= 20.0) {
         return Err("a track width is above 0 and up to 20 mm".into());
     }
@@ -333,7 +344,7 @@ pub fn plan_route(b: &Board, v: &BoardView, r: &RouteInteractive) -> Result<Plan
     for (l, pts) in legs {
         match plan.runs.last_mut() {
             Some(run) if run.layer == v.layers[l] => run.points.extend(pts.into_iter().skip(1)),
-            _ => plan.runs.push(PlanRun { layer: v.layers[l].clone(), points: pts, bulges: vec![] }),
+            _ => plan.runs.push(PlanRun { layer: v.layers[l].clone(), points: pts, bulges: vec![], width: None }),
         }
     }
     for run in &mut plan.runs {
@@ -364,6 +375,11 @@ pub fn plan_route(b: &Board, v: &BoardView, r: &RouteInteractive) -> Result<Plan
     plan.collisions.extend(moved_collisions(&node));
     moved_of(&node, &BTreeSet::new(), &mut plan);
     plan.ok = plan.collisions.is_empty();
+    if let Some(n) = &net {
+        let (len, target) = crate::signal::readout(b, v, n, &plan.runs, &plan.vias);
+        plan.length = len;
+        plan.target = target;
+    }
     Ok(plan)
 }
 

@@ -1199,6 +1199,7 @@ pub fn create_board(tx: &mut Tx, k: &KicadBoard, name: Option<String>, at: Optio
         stackup: None,
         drc_rules: String::new(),
         teardrops: k.teardrops.then(crate::teardrops::Teardrops::default),
+        signal: Default::default(),
     };
     let id = tx.create();
     tx.set(id, board)?;
