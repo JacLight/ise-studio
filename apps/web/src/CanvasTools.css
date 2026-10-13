@@ -1,0 +1,355 @@
+/* Canvases: reference pictures in Project objects, their properties, placing
+   them, and calibrating one by two clicked points. */
+
+.canvas-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.canvas-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 8px;
+}
+.canvas-row.active {
+  background: #f3effa;
+}
+.canvas-pick {
+  flex: 1;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 6px 6px;
+  text-align: left;
+  font-size: 11px;
+  min-width: 0;
+}
+.canvas-row.active .canvas-pick {
+  color: #7c58be;
+}
+.canvas-pick img {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: #fff;
+  flex-shrink: 0;
+}
+.canvas-pick > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+}
+.canvas-pick .row-count {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 10px;
+}
+.canvas-pick .row-count.warn {
+  color: #b5541b;
+}
+
+.canvas-props .props-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.canvas-thumb img {
+  width: 42px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  display: block;
+}
+.canvas-props .props-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.canvas-props .props-title small {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.canvas-status {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 11.5px;
+  margin: 6px 0 8px;
+  color: #3f6f45;
+}
+.canvas-status .icon {
+  width: 15px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.canvas-status.warn {
+  color: #b5541b;
+}
+.canvas-status span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.canvas-status small {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.canvas-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+.canvas-props .btn,
+.canvas-insert .btn,
+.calibrate-bar .btn {
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 7px;
+  background: #f3effa;
+  color: #5b3fc4;
+  font-size: 11.5px;
+  font-weight: 650;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.canvas-props .btn:hover:not(:disabled),
+.canvas-insert .btn:hover:not(:disabled),
+.calibrate-bar .btn:hover:not(:disabled) {
+  background: #ebe3fb;
+}
+.canvas-props .btn.primary,
+.canvas-insert .btn.primary,
+.calibrate-bar .btn.primary {
+  background: #6d4ae0;
+  color: #fff;
+}
+.canvas-props .btn:disabled,
+.canvas-insert .btn:disabled,
+.calibrate-bar .btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.canvas-props .btn .icon,
+.canvas-insert .btn .icon {
+  width: 14px;
+}
+.canvas-xyz {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.canvas-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 10px 0 2px;
+  font-size: 11.5px;
+}
+.canvas-checks .check,
+.canvas-insert .check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #5b5467;
+}
+.canvas-checks input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+.canvas-opacity b {
+  float: right;
+  font-weight: 600;
+  color: #5b5467;
+}
+.canvas-opacity input[type="range"] {
+  padding: 0;
+  border: 0;
+  accent-color: #6d4ae0;
+  background: transparent;
+}
+.canvas-match {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.canvas-match img {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+.canvas-iou {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+}
+.canvas-iou b {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.canvas-iou small {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.canvas-iou.good b {
+  color: #2f8a44;
+}
+.canvas-iou.fair b {
+  color: #b5891b;
+}
+.canvas-iou.poor b {
+  color: #c2412d;
+}
+.canvas-region {
+  margin: 0;
+  color: #5b5467;
+}
+.canvas-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  vertical-align: -1px;
+}
+.canvas-swatch.extra {
+  background: #e0605a;
+}
+.canvas-swatch.missing {
+  background: #3b72e0;
+}
+.danger-zone {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.canvas-insert {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 2px 2px;
+}
+.canvas-insert p {
+  margin: 0;
+}
+.canvas-choose {
+  align-self: flex-start;
+  cursor: pointer;
+  position: relative;
+}
+.canvas-choose input {
+  display: none;
+}
+.canvas-pending {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.canvas-pending li {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 92px 28px;
+  align-items: center;
+  gap: 8px;
+}
+.canvas-pending img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+}
+.canvas-pending input,
+.canvas-pending select {
+  margin: 0;
+}
+.canvas-insert .field small {
+  display: block;
+  margin-top: 5px;
+  font-size: 10.5px;
+}
+.canvas-insert .canvas-actions {
+  justify-content: flex-end;
+}
+
+.calibrate-bar {
+  position: absolute;
+  left: 50%;
+  top: 72px;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid #e3dcf5;
+  box-shadow: 0 8px 28px rgba(60, 40, 120, 0.16);
+  font-size: 12px;
+  color: #3f3a4a;
+}
+.calibrate-bar > .icon {
+  width: 16px;
+  color: #e0761f;
+}
+.calibrate-bar > span,
+.calibrate-bar form > span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.calibrate-bar small {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.calibrate-bar form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.calibrate-bar input {
+  width: 90px;
+  margin: 0;
+  padding: 6px 8px;
+}
+.calibrate-bar .unit {
+  color: var(--muted);
+}
+.canvas-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.canvas-labelled {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+.canvas-labelled > span {
+  font-size: 10.5px;
+  color: #777180;
+}
+.canvas-note {
+  margin: 0 0 6px;
+}

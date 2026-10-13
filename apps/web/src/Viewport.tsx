@@ -46,6 +46,7 @@ import { SketchLayer, type SketchPicture } from "./sketchLayer";
 import { type Snap, snapSketch } from "./sketchSnap";
 import { DraftLayer, type DraftPicture } from "./draftLayer";
 import { type ScanLayer, buildScanLayer, disposeScanLayer } from "./scanLayer";
+import { CanvasLayer, type CanvasPicking } from "./canvasLayer";
 import { type Plane, normalOf, toWorld } from "./sketchModel";
 import {
   type Frac,
@@ -417,6 +418,9 @@ type Props = {
   scan?: ScanLayer | null;
   /** Picking geometry for a mate: a click on a part reports where and which face (project mm), instead of selecting. */
   onGeometryPick?: ((hit: GeometryHit) => void) | null;
+  /** Picking points on a canvas (calibrating it): clicks on its picture report the pixel, instead of selecting. */
+  canvasPick?: CanvasPicking;
+  onCanvasPick?: (pixel: [number, number]) => void;
   /** A selection box closed on these items (add: Shift held, adding to what is selected). */
   onSelectMany?: (ids: string[], add: boolean) => void;
 };
@@ -911,6 +915,9 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
   if (!draftLayerRef.current) draftLayerRef.current = new DraftLayer();
   const draftLayer = draftLayerRef.current;
   const draftLabels = useRef<HTMLDivElement>(null);
+  const canvasLayerRef = useRef<CanvasLayer | null>(null);
+  if (!canvasLayerRef.current) canvasLayerRef.current = new CanvasLayer();
+  const canvasLayer = canvasLayerRef.current;
   const edgeLayerRef = useRef<EdgeLayer | null>(null);
   const turning = useRef<Turning | null>(null);
   const motionGrab = useRef<MotionGrab | null>(null);
@@ -1758,6 +1765,17 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         }
         return;
       }
+      // Calibrating a canvas: a click on its picture reports the pixel; anywhere else orbits.
+      const cp = callbacks.current.canvasPick;
+      if (cp && e.button === 0) {
+        const px = canvasLayer.hit(rayAt(e.clientX, e.clientY).ray, callbacks.current.entities, cp.id);
+        if (!px) return;
+        e.stopPropagation();
+        e.preventDefault();
+        callbacks.current.onCanvasPick?.(px);
+        dirty = true;
+        return;
+      }
       // Picking geometry for a mate: a click on a part reports the face under it; anywhere else orbits.
       const geometryPick = callbacks.current.onGeometryPick;
       if (geometryPick && e.button === 0) {
@@ -2415,7 +2433,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     renderer.domElement.addEventListener("pointerup", onCanvasUp);
 
     three.current = { renderer, scene, camera, controls, tumble: tumbler, sun, parts: new Map(), gizmo, push, overlayRoot, overlayLabels: [], ground, grid, gridCell: 20, wireframe: false, invalidate, flight: null, extent: new THREE.Sphere(new THREE.Vector3(), 100) };
-    scene.add(sketchLayer.root, draftLayer.root, edgeLayer.root, faceLayer.root, pickedLayer.root, connectorLayer.root);
+    scene.add(sketchLayer.root, draftLayer.root, edgeLayer.root, faceLayer.root, pickedLayer.root, connectorLayer.root, canvasLayer.root);
+    canvasLayer.onLoaded = invalidate;
     if (sketchLabels.current) sketchLayer.setHost(sketchLabels.current);
     if (draftLabels.current) draftLayer.setHost(draftLabels.current);
     draftLayer.onSelect = (id) => callbacks.current.onSelectDraft?.(id);
@@ -2638,6 +2657,15 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
   }, [props.poses, entities]);
 
   // Lines and dots an assembly tool draws over the model (never picked: clicks reach the parts).
+  // Reference pictures (canvases) on their planes, and points picked to calibrate one.
+  useEffect(() => {
+    canvasLayer.update(entities, selected, props.canvasPick ?? null);
+    const t = three.current;
+    if (t) t.renderer.domElement.style.cursor = props.canvasPick ? "crosshair" : "";
+    t?.invalidate();
+  }, [entities, selected, props.canvasPick, canvasLayer]);
+  useEffect(() => () => canvasLayer.dispose(), [canvasLayer]);
+
   // A scan (points, mesh, deviation colours, problem markers), drawn in place.
   const scanGroup = useRef<THREE.Group | null>(null);
   useEffect(() => {
