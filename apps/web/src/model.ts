@@ -415,7 +415,7 @@ export const describeOperation = (op: string) => {
   return verb.charAt(0).toUpperCase() + verb.slice(1) + what;
 };
 
-export type Look = { color: string; metalness: number; roughness: number; opacity?: number };
+export type Look = { color: string; metalness: number; roughness: number; opacity?: number; picture?: string };
 
 const LOOKS: Record<string, Look> = {
   // Printed circuit boards (the PCB workspace's 3D part): exact names, matched before any family.
@@ -521,6 +521,17 @@ const COLOUR_WORDS: Record<string, string> = {
   brown: "#7a5236",
 };
 
+/**
+ * A picture a material prints (see pictures.ts): a stored picture's file
+ * name in its name ("Label print battery-label.png"), or its id or the id's
+ * first 8 or more characters ("Label print 1f6b353f").
+ */
+export function pictureIn(name: string): string | undefined {
+  const file = name.match(/[\w.-]+\.(?:png|jpe?g)\b/i)?.[0];
+  if (file) return file;
+  return name.match(/\b[0-9a-f]{8,64}\b/gi)?.find((t) => /[0-9]/.test(t) && /[a-f]/i.test(t));
+}
+
 /** How a material renders; unknown materials get a neutral look. A colour in the name wins over the family's own. */
 export function materialLook(name: string | undefined): Look {
   if (!name) return UNASSIGNED_LOOK;
@@ -529,8 +540,8 @@ export function materialLook(name: string | undefined): Look {
   // "Tempered glass", "Stainless steel", "6061 aluminium": match the family.
   // Glass-filled nylon is a nylon, not glass.
   const plain = key.replace(/glass[- ]?(filled|fibre|fiber|reinforced)/g, "");
-  // Whole words: "zinc plated steel" is steel, not PLA.
-  const family = Object.keys(LOOKS).find((k) => new RegExp(`\\b${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(plain));
+  // A family is a whole word of the name (plurals too): "nickel-plated steel" is steel, not PLA.
+  const family = Object.keys(LOOKS).find((k) => new RegExp(`(^|[^a-z])${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(s|es)?([^a-z]|$)`).test(plain));
   // An engineering plastic not in the table ("PC/ABS", "polycarbonate", "TPU") is a plastic, not a half metal.
   const plastic = /\b(abs|pc|polycarbonate|polymer|plastic|polyamide|pa6|pa12|pom|tpu|tpe|pp|polypropylene|pe|hdpe|pvc|pmma|pbt|pet|elastomer|ink|print)\b/.test(plain);
   let look = family ? LOOKS[family] : plastic ? { color: "#c4c9d4", metalness: 0, roughness: 0.55 } : { color: "#c4c9d4", metalness: 0.2, roughness: 0.5 };
@@ -543,6 +554,9 @@ export function materialLook(name: string | undefined): Look {
     .sort((a, b) => b.length - a.length) // "dark grey" before "grey"
     .find((w) => new RegExp(`\\b${w}\\b`).test(key));
   const color = hex ?? (word ? COLOUR_WORDS[word] : undefined);
+  // A printed picture ("Label print battery-label.png"): its own colours on a satin print.
+  const picture = pictureIn(name);
+  if (picture) return { color: "#ffffff", metalness: 0, roughness: family ? look.roughness : 0.45, picture };
   return color ? { ...look, color } : look;
 }
 

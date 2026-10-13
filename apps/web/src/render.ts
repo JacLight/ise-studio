@@ -6,6 +6,7 @@
 
 import * as THREE from "three";
 import { WebGLPathTracer } from "three-gpu-pathtracer";
+import { picturesReady } from "./pictures";
 
 /** What the view shows: its part groups and its camera. */
 export type RenderSource = { objects: THREE.Object3D[]; camera: THREE.PerspectiveCamera };
@@ -119,6 +120,7 @@ function physical(m: THREE.Material): THREE.Material {
     emissive: look ? 0x000000 : m.emissive.clone(),
     emissiveMap: look ? null : m.emissiveMap,
     emissiveIntensity: look ? 0 : m.emissiveIntensity,
+    alphaTest: m.alphaTest,
     side: THREE.DoubleSide,
   });
   const hsl = { h: 0, s: 0, l: 0 };
@@ -348,6 +350,8 @@ export class LiveRender {
     this.tracer.dynamicLowRes = true;
     this.tracer.setScene(this.scene, this.camera);
     this.ready = true;
+    // Labels whose pictures arrive later: printed once they are in.
+    void picturesReady().then(() => !this.stopped && this.tracer.updateMaterials());
     const loop = () => {
       if (this.stopped) return;
       this.frame = requestAnimationFrame(loop);
@@ -409,6 +413,8 @@ function breathe(): Promise<void> {
  */
 export async function renderImage(source: RenderSource, options: RenderOptions, onProgress?: (samples: number) => void): Promise<Blob> {
   const { width, height, samples, studio = "studio" } = options;
+  // Every printed picture (labels, decals) in before the first sample.
+  await picturesReady();
   const canvas = document.createElement("canvas");
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true });
   renderer.outputColorSpace = THREE.SRGBColorSpace;

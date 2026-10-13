@@ -50,6 +50,7 @@ import { type Snap, snapSketch } from "./sketchSnap";
 import { DraftLayer, type DraftPicture } from "./draftLayer";
 import { type ScanLayer, buildScanLayer, disposeScanLayer } from "./scanLayer";
 import { CanvasLayer, type CanvasPicking } from "./canvasLayer";
+import { applyPictureUVs, pictureEvents, pictureTexture } from "./pictures";
 import { type Plane, normalOf, toWorld } from "./sketchModel";
 import {
   type Frac,
@@ -702,8 +703,11 @@ const lookKey = (e: EntityView, entities: ReadonlyMap<string, EntityView>) => JS
 
 function surface(look: Look, wireframe: boolean) {
   const glass = look.opacity !== undefined && look.opacity < 1;
+  const { picture, ...plain } = look;
   const m = new THREE.MeshStandardMaterial({
-    ...look,
+    ...plain,
+    // A printed picture (a label, a decal): its own colours; clear pixels show what is under it.
+    ...(picture ? { map: pictureTexture(picture), alphaTest: 0.5 } : {}),
     wireframe,
     transparent: glass,
     opacity: look.opacity ?? 1,
@@ -877,7 +881,9 @@ function buildInstance(e: EntityView, entities: ReadonlyMap<string, EntityView>,
     if (!def || !meshData) continue;
     const parts = o.configured ? o.configured.stats.parts ?? [] : assemblyParts(def);
     const geometry = acquireGeometry(meshData, parts);
-    const materials = looksFor(def, entities).map((l) => surface(l, wireframe));
+    const looks = looksFor(def, entities);
+    const materials = looks.map((l) => surface(l, wireframe));
+    applyPictureUVs(geometry, looks.map((l) => l.picture));
     const mesh = new THREE.Mesh(geometry, parts.length ? materials : materials[0]);
     mesh.position.set(...o.transform.at);
     mesh.quaternion.set(...o.transform.q);
@@ -906,6 +912,7 @@ function buildPart(e: EntityView, entities: ReadonlyMap<string, EntityView>, wir
   const parts = assemblyParts(e);
   parts.forEach((p, i) => geometry.addGroup(p.index_start, p.index_count, i));
   const materials = looks.map((l) => surface(l, wireframe));
+  applyPictureUVs(geometry, looks.map((l) => l.picture));
   const body = new THREE.Mesh(geometry, parts.length ? materials : materials[0]);
   body.castShadow = true;
   body.receiveShadow = true;
@@ -2764,6 +2771,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     three.current = { renderer, scene, camera, controls, tumble: tumbler, sun, parts: new Map(), gizmo, push, overlayRoot, overlayLabels: [], ground, grid, gridCell: 20, groundGrid: groundGridUniforms, wireframe: false, invalidate, flight: null, extent: new THREE.Sphere(new THREE.Vector3(), 100), bounds: new THREE.Box3() };
     scene.add(sketchLayer.root, draftLayer.root, edgeLayer.root, faceLayer.root, pickedLayer.root, connectorLayer.root, canvasLayer.root);
     canvasLayer.onLoaded = invalidate;
+    pictureEvents.onLoaded = invalidate;
     if (sketchLabels.current) sketchLayer.setHost(sketchLabels.current);
     if (draftLabels.current) draftLayer.setHost(draftLabels.current);
     draftLayer.onSelect = (id) => callbacks.current.onSelectDraft?.(id);
