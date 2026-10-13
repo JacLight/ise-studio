@@ -16526,9 +16526,22 @@ a.button .icon {
   color: #8a90a0;
 }
 
+/* The search stays at the top while the tree scrolls under it (the panel
+   body scrolls; its 10px top padding is covered by the white backing). */
+.components-panel .component-search {
+  position: sticky;
+  top: -10px;
+  z-index: 3;
+  box-shadow: 0 -10px 0 6px #fff, 0 6px 0 2px #fff;
+}
+
 .component-search:focus-within {
   border-color: #cfc2f1;
   box-shadow: 0 0 0 3px #7352d61a;
+}
+
+.components-panel .component-search:focus-within {
+  box-shadow: 0 0 0 3px #7352d61a, 0 -10px 0 6px #fff, 0 6px 0 2px #fff;
 }
 
 .component-search input {
