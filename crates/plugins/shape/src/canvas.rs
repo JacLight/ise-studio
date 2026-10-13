@@ -372,6 +372,22 @@ pub struct ObjectSize {
     pub align: Option<String>,
 }
 
+/// A turn about a world axis (right-handed, degrees).
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+pub struct Pivot {
+    pub axis: [f64; 3],
+    pub degrees: f64,
+}
+
+/// `v` turned about the unit `axis` by `deg` degrees (Rodrigues).
+fn rotate_about(v: [f64; 3], axis: [f64; 3], deg: f64) -> [f64; 3] {
+    let k = unit3(axis);
+    let (s, c) = deg.to_radians().sin_cos();
+    let kv = [k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0]];
+    let kd = k[0] * v[0] + k[1] * v[1] + k[2] * v[2];
+    [0, 1, 2].map(|i| v[i] * c + kv[i] * s + k[i] * kd * (1.0 - c))
+}
+
 /// What `canvas.create` and `canvas.update` set (anything left out stays).
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct Settings {
@@ -381,6 +397,10 @@ pub struct Settings {
     pub plane: Option<CanvasPlane>,
     /// Moves a named plane this far along its normal (mm).
     pub offset: Option<f64>,
+    /// Turns the plane about a world axis through its origin: for a photo
+    /// taken square on while the object stood pitched or rolled (resting on
+    /// a grip, a foot), so comparisons look from where the camera really was.
+    pub pivot: Option<Pivot>,
     /// Where the anchor pixel lands in the world (mm); moves the plane there.
     pub at: Option<[f64; 3]>,
     /// The pixel to put at the plane's origin (default the picture's middle).
@@ -468,6 +488,13 @@ fn settle(c: &mut Canvas, s: Settings, picture: &Picture) -> Result<(), CommandE
         // Along the normal from where it lies within the plane.
         let d = c.plane.origin[0] * n[0] + c.plane.origin[1] * n[1] + c.plane.origin[2] * n[2];
         c.plane.origin = [0, 1, 2].map(|k| c.plane.origin[k] + n[k] * (o - d));
+    }
+    if let Some(p) = s.pivot {
+        if !(p.axis.iter().map(|v| v * v).sum::<f64>() > 1e-18) || !p.degrees.is_finite() {
+            return Err(invalid("a pivot needs an axis and an angle in degrees"));
+        }
+        c.plane.x = unit3(rotate_about(c.plane.x, p.axis, p.degrees));
+        c.plane.y = unit3(rotate_about(c.plane.y, p.axis, p.degrees));
     }
     if let Some(at) = s.at {
         if at.iter().any(|v| !v.is_finite()) {
@@ -1160,6 +1187,22 @@ mod tests {
         let (pa, pb) = (apply(&c.to_plane(), a), apply(&c.to_plane(), b));
         assert!((pa[1] - pb[1]).abs() < 1e-9, "{pa:?} {pb:?}");
         assert!((c.rotation + 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_pivot_turns_the_plane_about_a_world_axis() {
+        let mut c = canvas(100, 100);
+        let picture = Picture::blank(100, 100);
+        // The end view (from −X) of something standing nose-up by 10°: turn the plane about Y.
+        let (plane, _) = view_plane("left").unwrap();
+        c.plane = plane;
+        settle(&mut c, Settings { pivot: Some(Pivot { axis: [0.0, 1.0, 0.0], degrees: -10.0 }), ..Default::default() }, &picture).unwrap();
+        let n = c.plane.normal();
+        let t = 10f64.to_radians();
+        // Right-handed: −10° about +Y tips the −X normal down by 10°.
+        assert!((n[0] + t.cos()).abs() < 1e-9 && (n[2] + t.sin()).abs() < 1e-9 && n[1].abs() < 1e-12, "{n:?}");
+        // Still a unit, square frame; x untouched (it lies along the axis).
+        assert!((c.plane.x[1] + 1.0).abs() < 1e-12);
     }
 
     #[test]

@@ -1178,8 +1178,17 @@ if (command === "run") {
     const v = (name) => flag(name);
     let x;
     if ((x = v("--name")) !== undefined) s.name = x;
-    if ((x = v("--plane")) !== undefined) s.plane = x;
+    if ((x = v("--plane")) !== undefined) s.plane = x.trim().startsWith("{") ? JSON.parse(x) : x;
     if ((x = v("--offset")) !== undefined) s.offset = Number(x);
+    if ((x = v("--pivot")) !== undefined) {
+      // --pivot y,8.3 or --pivot ax,ay,az,deg: turn the plane about a world axis.
+      const parts = x.split(",").map((t) => t.trim());
+      const named = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[parts[0]?.toLowerCase()];
+      const nums4 = parts.map(Number);
+      if (named && parts.length === 2 && Number.isFinite(nums4[1])) s.pivot = { axis: named, degrees: nums4[1] };
+      else if (parts.length === 4 && nums4.every(Number.isFinite)) s.pivot = { axis: nums4.slice(0, 3), degrees: nums4[3] };
+      else throw new Error("--pivot x|y|z,degrees or ax,ay,az,degrees");
+    }
     if ((x = v("--at")) !== undefined) s.at = nums(x, 3, "--at x,y,z");
     if ((x = v("--anchor")) !== undefined) s.anchor = nums(x, 2, "--anchor u,v");
     if ((x = v("--scale")) !== undefined) s.scale = Number(x);
