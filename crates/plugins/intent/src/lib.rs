@@ -713,6 +713,7 @@ fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
             && tx.get::<de_shape::ShapeProgram>(id).is_none()
             && tx.get::<de_assembly::Instance>(id).is_none()
             && tx.get::<de_assembly::AssemblyDef>(id).is_none()
+            && tx.get::<de_pcb::Board>(id).is_none()
         {
             return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{id} is not a part")));
         }

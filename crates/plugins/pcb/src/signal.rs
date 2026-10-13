@@ -1224,7 +1224,9 @@ pub fn dru_rules(board: &Board, v: &BoardView) -> String {
         for lt in &c.layers {
             let kl = rules::kicad_layer(&lt.layer);
             let w = lt.width;
-            out.push_str(&format!("(rule \"{} width {}\"\n  (layer \"{kl}\")\n  (condition \"A.NetClass == '{}'\")\n  (constraint track_width (min {:.4}mm) (opt {:.4}mm) (max {:.4}mm)))\n", c.name, lt.layer, q(&c.name), w * (1.0 - tol), w, w * (1.0 + tol)));
+            // Necks into fine-pitch pads may be narrower (the class neck width).
+            let neck = class.neck_width.unwrap_or(w * 0.6).max(board.rules.min_track).min(w * (1.0 - tol));
+            out.push_str(&format!("(rule \"{} width {}\"\n  (layer \"{kl}\")\n  (condition \"A.NetClass == '{}'\")\n  (constraint track_width (min {:.4}mm) (opt {:.4}mm) (max {:.4}mm)))\n", c.name, lt.layer, q(&c.name), neck, w, w * (1.0 + tol)));
             if let Some(g) = lt.gap {
                 out.push_str(&format!("(rule \"{} pair gap {}\"\n  (layer \"{kl}\")\n  (condition \"A.NetClass == '{}' && A.inDiffPair('*')\")\n  (constraint diff_pair_gap (min {:.4}mm) (opt {:.4}mm) (max {:.4}mm)))\n", c.name, lt.layer, q(&c.name), g * 0.9, g, g * 1.1));
             }
