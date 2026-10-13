@@ -1195,7 +1195,7 @@ pub fn create_board(tx: &mut Tx, k: &KicadBoard, name: Option<String>, at: Optio
     }
     for t in &k.tracks {
         let tid = tx.create();
-        tx.set(tid, Track { board: id, net: t.net.clone(), layer: t.layer.clone(), width: t.width, points: t.points.clone(), auto: false, reroute: false })?;
+        tx.set(tid, Track { board: id, net: t.net.clone(), layer: t.layer.clone(), width: t.width, points: t.points.clone(), auto: false, reroute: false, bulges: vec![] })?;
         tx.add_dependency(id, tid)?;
     }
     for v in &k.vias {

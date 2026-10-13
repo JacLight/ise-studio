@@ -169,7 +169,7 @@ pub fn follow(tx: &mut Tx, board: &Board, before: &PcbComponent, after: &PcbComp
             continue;
         }
         check_points(&points, "track")?;
-        tx.set(id, Track { points, reroute: true, ..t })?;
+        tx.set(id, Track { points, reroute: true, bulges: vec![], ..t })?;
         changed += 1;
     }
     Ok(changed)
@@ -244,7 +244,7 @@ impl Command for CreateRoute {
             let points = tidy(&r.points);
             if points.len() >= 2 {
                 let id = tx.create();
-                tx.set(id, Track { board: self.board, net: net.clone(), layer: r.layer.clone(), width, points, auto: false, reroute: false })?;
+                tx.set(id, Track { board: self.board, net: net.clone(), layer: r.layer.clone(), width, points, auto: false, reroute: false, bulges: vec![] })?;
                 tx.add_dependency(self.board, id)?;
                 tracks.push(id);
             }
