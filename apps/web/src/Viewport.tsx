@@ -478,6 +478,9 @@ const OUTLINE = new THREE.Color("#8b66ef");
 /** Pre-selection glow for what the pointer is over in the components tree. */
 const HOVER = "#9a7cf0";
 const HOVER_GLOW = 0.5;
+/** Through the X-ray, lit parts take one strong violet (whatever their own colour). */
+const XRAY_LIT = "#6a46dc";
+const XRAY_GLOW = 0.42;
 const POS_KEYS = ["x", "y", "z"] as const;
 const SIZE_KEYS = ["width", "depth", "height"] as const;
 const GIZMO_SCALE = 0.085; // of camera distance
@@ -887,6 +890,11 @@ function paintInstance(part: Part, entities: ReadonlyMap<string, EntityView>, se
       const glow = hot && (!pieces.length || hotAt(i));
       m.emissive.set(chosen ? ACCENT : glow ? HOVER : "#000000");
       m.emissiveIntensity = chosen ? 0.3 : glow ? HOVER_GLOW : 0;
+      // Through the X-ray, what is lit is painted outright: small parts must not be missed.
+      if (faint && glow) {
+        m.color.set(XRAY_LIT);
+        m.emissiveIntensity = XRAY_GLOW;
+      }
       // The child under the pointer also shows through the parts around it.
       if ((within && !hot && !glass) || (faint && !glow && !chosen)) {
         m.transparent = true;
@@ -2597,6 +2605,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         m.color.set(props.colorBy === "material" ? (props.tints?.get(id) ?? base.color) : m.color);
         m.emissive.set(i === picked ? ACCENT : hot ? HOVER : "#000000");
         m.emissiveIntensity = i === picked ? 0.45 : hot ? HOVER_GLOW : 0;
+        if (xray && hot && props.colorBy === "material") {
+          m.color.set(XRAY_LIT);
+          m.emissiveIntensity = XRAY_GLOW;
+        }
         m.transparent = opacity < 1;
         m.opacity = opacity;
         m.depthWrite = opacity >= 1;

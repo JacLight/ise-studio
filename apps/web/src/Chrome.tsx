@@ -69,6 +69,8 @@ export function ProjectPill(props: {
 
 export function ToolRail(props: {
   panel: PanelKind | null;
+  /** Panels open in a dock: they show as active too. */
+  docked?: readonly PanelKind[];
   canEdit: boolean;
   onPanel: (p: PanelKind) => void;
   onSelectTool: () => void;
@@ -107,7 +109,7 @@ export function ToolRail(props: {
   scansOpen?: boolean;
   onScans?: () => void;
 }) {
-  const active = (p: PanelKind) => (props.panel === p ? "active" : "");
+  const active = (p: PanelKind) => (props.panel === p || props.docked?.includes(p) ? "active" : "");
   return (
     <nav className="tool-rail floating" aria-label="Canvas tools">
       <IconButton icon="dots" label="Project menu" className={active("project")} onClick={() => props.onPanel("project")} />

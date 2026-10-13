@@ -103,16 +103,48 @@ svg.icon {
   position: relative;
 }
 
+/* The 3D view takes what docked panels leave: --dock-l/-r/-b are their sizes at
+   each edge (see Dock.tsx). The floating chrome sits over the view, not them. */
 .workspace {
   position: absolute;
   inset: 0;
+  left: var(--dock-l, 0px);
+  right: var(--dock-r, 0px);
+  bottom: var(--dock-b, 0px);
   background-image: radial-gradient(#cfd3dc 0.8px, transparent 0.8px);
   background-size: 21px 21px;
-  transition: right 0.2s ease;
+  transition: left 0.2s ease, right 0.2s ease, bottom 0.2s ease;
 }
 
-.is-docked .workspace {
-  right: var(--dock);
+.chrome {
+  position: absolute;
+  top: 0;
+  left: var(--dock-l, 0px);
+  right: var(--dock-r, 0px);
+  bottom: var(--dock-b, 0px);
+  pointer-events: none;
+  transition: left 0.2s ease, right 0.2s ease, bottom 0.2s ease;
+}
+
+.chrome > * {
+  pointer-events: auto;
+}
+
+/* A splitter drag moves everything at once, without easing. */
+.app.is-resizing .workspace,
+.app.is-resizing .chrome,
+.app.is-resizing .tool-panel.floating,
+.app.is-resizing .bench.floating {
+  transition: none;
+}
+
+.app.is-resizing,
+.app.is-resizing * {
+  user-select: none;
+}
+
+.app.is-resizing .model-canvas {
+  cursor: inherit;
 }
 
 .viewport {
@@ -285,11 +317,6 @@ svg.icon {
   display: inline-block;
 }
 
-.is-docked .share-pill,
-.is-docked .collapsed-share {
-  right: calc(var(--dock) + 20px);
-}
-
 .tool-rail {
   position: absolute;
   left: 20px;
@@ -300,6 +327,55 @@ svg.icon {
   padding: 6px;
   gap: 8px;
   z-index: 4;
+  /* Between the project bar and the view bar; in a short view (a panel docked
+     below) the tools scroll rather than run under them. */
+  max-height: calc(100% - 152px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.tool-rail > * {
+  flex-shrink: 0;
+}
+
+/* Tools scrolled out of sight fade at that end. */
+@property --rail-fade-top {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --rail-fade-bottom {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@keyframes rail-fade {
+  from {
+    --rail-fade-top: 0px;
+    --rail-fade-bottom: 26px;
+  }
+  8% {
+    --rail-fade-top: 26px;
+  }
+  92% {
+    --rail-fade-bottom: 26px;
+  }
+  to {
+    --rail-fade-top: 26px;
+    --rail-fade-bottom: 0px;
+  }
+}
+
+@supports (animation-timeline: scroll()) {
+  .tool-rail {
+    animation: rail-fade linear both;
+    animation-timeline: scroll(self);
+    mask-image: linear-gradient(to bottom, transparent 0, #000 var(--rail-fade-top), #000 calc(100% - var(--rail-fade-bottom)), transparent 100%);
+  }
 }
 
 .tool-rail .ib {
@@ -448,8 +524,8 @@ svg.icon {
 
 .ai-mini {
   width: 480px;
-  right: 24px;
-  bottom: 20px;
+  right: calc(var(--dock-r, 0px) + 24px);
+  bottom: calc(var(--dock-b, 0px) + 20px);
 }
 
 .panel-handle {
@@ -503,7 +579,7 @@ svg.icon {
 }
 
 .ai-floating {
-  right: 28px;
+  right: calc(var(--dock-r, 0px) + 28px);
   top: 100px;
   width: 400px;
   height: min(680px, calc(100dvh - 126px));
@@ -519,16 +595,134 @@ svg.icon {
   cursor: move;
 }
 
-.ai-docked {
-  right: 0;
+/* Docked panels: flush to the window edge, square, full height (the bottom one
+   spans the view), a 1px divider on the inner edge and no floating shadow. */
+.docked {
+  position: absolute;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #fff;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  transition: left 0.2s ease, right 0.2s ease, width 0.2s ease, height 0.2s ease;
+}
+
+.app.is-resizing .docked {
+  transition: none;
+}
+
+.docked.dock-left {
+  border-right: 1px solid #e4e4ea;
+}
+
+.docked.dock-right {
+  border-left: 1px solid #e4e4ea;
+}
+
+.docked.dock-bottom {
+  border-top: 1px solid #e4e4ea;
+}
+
+.docked .panel-handle {
+  cursor: default;
+}
+
+/* The splitter: a thin grab strip on the inner edge that shows a violet line when used. */
+.dock-splitter {
+  position: absolute;
+  z-index: 20;
+  touch-action: none;
+  outline: none;
+}
+
+.dock-splitter.left,
+.dock-splitter.right {
   top: 0;
   bottom: 0;
-  width: var(--dock);
-  border-radius: 0;
-  border-top: 0;
-  border-right: 0;
-  border-bottom: 0;
-  box-shadow: -4px 0 18px #27244104;
+  width: 7px;
+  cursor: col-resize;
+}
+
+.dock-splitter.left {
+  right: -1px;
+}
+
+.dock-splitter.right {
+  left: -1px;
+}
+
+.dock-splitter.bottom {
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 7px;
+  cursor: row-resize;
+}
+
+.dock-splitter::after {
+  content: "";
+  position: absolute;
+  background: var(--purple);
+  opacity: 0;
+  transition: opacity 0.12s ease 0.08s;
+}
+
+.dock-splitter.left::after {
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 2px;
+}
+
+.dock-splitter.right::after {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+}
+
+.dock-splitter.bottom::after {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+}
+
+.dock-splitter:hover::after,
+.dock-splitter:focus-visible::after,
+.dock-splitter.active::after {
+  opacity: 0.85;
+}
+
+.dock-splitter.active::after {
+  opacity: 1;
+  transition: none;
+}
+
+.app.is-resizing:has(.dock-splitter.active.left),
+.app.is-resizing:has(.dock-splitter.active.right) {
+  cursor: col-resize;
+}
+
+.app.is-resizing:has(.dock-splitter.active.bottom) {
+  cursor: row-resize;
+}
+
+.ai-docked.docked {
+  min-width: 0;
+  z-index: 8;
+}
+
+.ai-docked.docked::before {
+  inset: 0 0 auto;
+}
+
+.ai-docked .panel-handle {
+  padding-left: 16px;
 }
 
 .ai-expanded {
@@ -990,8 +1184,8 @@ svg.icon {
 
 .ai-launch {
   position: absolute;
-  right: 22px;
-  bottom: 20px;
+  right: calc(var(--dock-r, 0px) + 22px);
+  bottom: calc(var(--dock-b, 0px) + 20px);
   width: 46px;
   height: 46px;
   color: #9b76de;
@@ -1054,12 +1248,37 @@ svg.icon {
   position: absolute;
   z-index: 6;
   top: 85px;
-  left: 84px;
+  left: calc(var(--dock-l, 0px) + 84px);
   width: 300px;
   max-width: calc(100vw - 32px);
   max-height: calc(100dvh - 170px);
   overflow: auto;
   scrollbar-width: thin;
+  transition: left 0.2s ease;
+}
+
+.tool-panel.docked {
+  z-index: 7;
+  max-width: none;
+  max-height: none;
+  overflow: hidden;
+}
+
+.tool-panel.docked .panel-handle {
+  height: 42px;
+  padding: 6px 8px 6px 14px;
+}
+
+.tool-panel.docked .panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.tool-panel .panel-handle .panel-actions .ib.on {
+  color: var(--purple);
+  background: #f3effd;
 }
 
 .tool-panel .panel-handle strong {
@@ -1466,6 +1685,34 @@ dialog p {
   .collapsed-view {
     bottom: 164px;
   }
+}
+
+/* A narrow view (docked panels, a small window): the view bar steps up over the view tools;
+   tighter still, the sharing bar and the caption make way. */
+.app.view-narrow .view-bar,
+.app.view-narrow .collapsed-view {
+  bottom: 64px;
+}
+
+.app.view-narrow .tool-rail {
+  max-height: calc(100% - 236px);
+}
+
+.app.view-tight .share-pill,
+.app.view-tight .view-caption,
+.app.view-tight .concept {
+  display: none;
+}
+
+/* The board's display options drop below the top bars rather than run into them. */
+.app.view-narrow .b3d {
+  top: 78px;
+}
+
+.app.view-tight .project-name {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @media (max-width: 760px) {
@@ -10241,14 +10488,252 @@ button.download.drawing-open small {
   position: absolute;
   z-index: 7;
   top: 76px;
-  left: 78px;
-  right: 18px;
-  bottom: 18px;
+  left: calc(var(--dock-l, 0px) + 78px);
+  right: calc(var(--dock-r, 0px) + 18px);
+  bottom: calc(var(--dock-b, 0px) + 18px);
   max-width: 1320px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   animation: bench-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.bench.docked {
+  max-width: none;
+  animation: none;
+}
+
+.bench.dock-bottom {
+  top: auto;
+}
+
+.bench-actions,
+.bench-place {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.bench-head {
+  container-type: inline-size;
+}
+
+.bench-tabs button {
+  white-space: nowrap;
+}
+
+/* A narrow bench: its tabs keep their icons (and say the rest in their tips). */
+@container (max-width: 480px) {
+  .bench-head .bench-tabs button {
+    font-size: 0;
+    gap: 0;
+    padding: 0 10px;
+  }
+}
+
+.bench-place {
+  margin-right: 6px;
+  padding: 2px;
+  border-radius: 9px;
+  background: #f6f5f9;
+}
+
+.bench-place .ib {
+  width: 27px;
+  height: 25px;
+  padding: 5px;
+  border-radius: 7px;
+}
+
+.bench-place .ib.on {
+  background: #fff;
+  color: var(--purple);
+  box-shadow: 0 1px 2px #2724411a;
+}
+
+/* Docked under the model: a denser bench, so the lines get the room. */
+.bench.dock-bottom .bench-head {
+  padding-top: 0;
+}
+
+.bom.compact .bom-bar {
+  flex-wrap: nowrap;
+  gap: 10px;
+  padding: 7px 14px 6px;
+}
+
+.bom.compact .bom-scope {
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.bom.compact .scope-chip {
+  height: 28px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.bom.compact .scope-chip:last-child {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bom.compact .qty-field {
+  height: 30px;
+}
+
+.bom.compact .qty-field input {
+  width: 40px;
+}
+
+.bom-glance {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 14px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: #3a3445;
+  font-variant-numeric: tabular-nums;
+  transition: opacity 0.2s;
+}
+
+.bom-glance.refreshing {
+  opacity: 0.7;
+}
+
+.bom-glance small {
+  font-size: 9.5px;
+  letter-spacing: 0.9px;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: #a39db0;
+  margin-right: 2px;
+}
+
+.bom-glance .lead {
+  font-size: 15px;
+  font-weight: 700;
+  color: #3d2a8a;
+  letter-spacing: -0.2px;
+}
+
+.bom-glance .lead small {
+  margin: 0 0 0 5px;
+}
+
+.bom.compact {
+  container-type: inline-size;
+}
+
+@container (max-width: 1220px) {
+  .bom-glance span:nth-child(4) {
+    display: none;
+  }
+}
+
+@container (max-width: 1100px) {
+  .bom-glance span:not(.lead) {
+    display: none;
+  }
+}
+
+@container (max-width: 760px) {
+  .bom-glance .lead small,
+  .bom.compact .qty-field > span {
+    display: none;
+  }
+
+  .bom.compact .bom-bar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .bom-glance {
+    flex: 0 0 auto;
+  }
+
+  .bom.compact .menu-host > .secondary {
+    font-size: 0;
+    gap: 2px;
+  }
+}
+
+@container (max-width: 560px) {
+  .bom-glance {
+    display: none;
+  }
+}
+
+.bench.dock-bottom .bench-tabs button {
+  height: 34px;
+}
+
+.bench.dock-bottom .bom-bar,
+.bench.dock-bottom .src-nav {
+  padding: 8px 14px 2px;
+}
+
+.bench.dock-bottom .bom-summary {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.7fr);
+  gap: 8px;
+  padding: 6px 14px 4px;
+}
+
+.bench.dock-bottom .kpi {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  row-gap: 0;
+  padding: 6px 10px;
+  border-radius: 10px;
+}
+
+.bench.dock-bottom .kpi strong,
+.bench.dock-bottom .kpi.lead strong {
+  font-size: 15px;
+}
+
+.bench.dock-bottom .kpi span {
+  flex-basis: 100%;
+  font-size: 10px;
+}
+
+.bench.dock-bottom .breaks button {
+  padding: 5px 8px 9px;
+  border-radius: 10px;
+}
+
+.bench.dock-bottom .breaks button i {
+  bottom: 4px;
+}
+
+.bench.dock-bottom .bom-tabs {
+  padding: 4px 14px 6px;
+}
+
+.bench.dock-bottom .bom-table-wrap {
+  padding: 0 14px 10px;
+}
+
+.bench.dock-bottom .bom-flags {
+  margin: 2px 14px 4px;
+}
+
+/* Docked beside the model: one column of figures. */
+.bench.dock-right .bom-summary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.bench.dock-right .breaks {
+  grid-column: 1 / -1;
 }
 
 @keyframes bench-in {
@@ -10751,7 +11236,7 @@ button.download.drawing-open small {
 }
 
 .bom-table tbody tr:not(.detail):hover td {
-  background: #faf9fc;
+  background: #f7f5fc;
 }
 
 .bom-table tr.open td {
@@ -10794,6 +11279,40 @@ button.download.drawing-open small {
   width: 30px;
   color: #b0aabb;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.line-disclose {
+  width: 18px;
+  height: 18px;
+  margin: 0 2px 0 -4px;
+  padding: 0;
+  border-radius: 5px;
+  vertical-align: -4px;
+  color: #b9b3c4;
+}
+
+.line-disclose .icon {
+  width: 13px;
+  height: 13px;
+  transition: transform 0.15s;
+}
+
+.line-disclose.open .icon {
+  transform: rotate(90deg);
+}
+
+/* What is selected in the view: its lines carry a violet edge. */
+.bom-table tr.linked td {
+  background: #f5f1fe;
+}
+
+.bom-table tr.linked td:first-child {
+  box-shadow: inset 3px 0 0 var(--purple);
+}
+
+.bom-table tbody tr.linked:not(.detail):hover td {
+  background: #efe9fd;
 }
 
 .row-check {

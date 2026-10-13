@@ -1,7 +1,8 @@
 // The assistant: one conversation shown as mini, floating, docked, expanded or
 // hidden. Changing presentation never clears the draft, messages or proposal.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import type { DockPlace } from "./Dock";
 import type { Proposal } from "./assistant";
 import { type Attachment, attachToAi, attachmentUrl } from "./engine";
 import { useDraggable } from "./drag";
@@ -85,6 +86,9 @@ export function AiPanel(props: {
   aiBusy?: boolean;
   userId?: string;
   onStop?: () => void;
+  /** Docked: where it sits (flush to the right edge), with its splitter. */
+  dock?: DockPlace | null;
+  splitter?: ReactNode;
 }) {
   const ref = useRef<HTMLElement>(null);
   const conversation = useRef<HTMLDivElement>(null);
@@ -153,10 +157,12 @@ export function AiPanel(props: {
   }
 
   const full = mode !== "mini";
+  const docked = mode === "docked" ? (props.dock ?? null) : null;
   return (
     <section
       ref={ref}
-      className={`ai-panel floating ai-${mode}${dragging ? " dropping" : ""}`}
+      className={`ai-panel ${docked ? `docked dock-${docked.side}` : "floating"} ai-${mode}${dragging ? " dropping" : ""}`}
+      style={docked?.style}
       aria-label="AI assistant"
       onDragOver={(e) => {
         if (!props.claude || !e.dataTransfer.types.includes("Files")) return;
@@ -368,6 +374,7 @@ export function AiPanel(props: {
           )}
         </div>
       </form>
+      {docked && props.splitter}
       {!full && <div className="mini-foot">{props.claude ? (working ? "Forma AI is working…" : "Claude on this computer") : "Local command interpreter · no AI model yet"}</div>}
     </section>
   );

@@ -48,6 +48,8 @@ const PATHS = {
   grid: "M3 3h18v18H3z M3 9h18 M3 15h18 M9 3v18 M15 3v18",
   dots: "M5 12h.01 M12 12h.01 M19 12h.01",
   dock: "M3 4h18v16H3z M14 4v16",
+  dockLeft: "M3 4h18v16H3z M10 4v16",
+  dockBottom: "M3 4h18v16H3z M3 14h18",
   mic: "M9 5a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0z M6 10v2a6 6 0 0 0 12 0v-2 M12 18v4 M8 22h8",
   trash: "M4 7h16 M10 11v6 M14 11v6 M6 7l1 13h10l1-13 M9 7V4h6v3",
   fit: "M4 9V4h5 M15 4h5v5 M20 15v5h-5 M9 20H4v-5 M9 9h6v6H9z",
