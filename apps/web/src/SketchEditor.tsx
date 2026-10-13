@@ -6,49 +6,102 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EntityView } from "./engine";
 import { Icon, type IconName } from "./icons";
+import { curveTrace, knotList } from "./sketchCurves";
 import type { SketchPicture } from "./sketchLayer";
 import {
+  type Constraint,
+  type Curve,
   type Dim,
   type Geometry,
   PLANES,
+  type Plane,
   type Segment,
   addArc,
   addBezier,
   addCircle,
   addLine,
   addRectangle,
+  curveEnds,
   curvePoints,
+  describe,
+  innerOf,
+  keyOf,
   newKey,
   pointAt,
   positions,
   radiusOf,
+  refsOf,
   remove,
   sketchOf,
   solvedOf,
   status,
 } from "./sketchModel";
+import { type Click, FAMILIES, type Tool, buildShape, clicksFor, familyOf, isClickTool, previewShape, toolInfo } from "./sketchTools";
 import { type CornerPick, type PatternSpec, chamferPreview, filletPreview, isCorner, mappedSegments, patternPreview, reflectAbout } from "./sketchOps";
 import { type Align, align, distribute, duplicate, extent, inBox, mapPoints, mirrorAbout, moveBy, movedPoints, objects, rewrite, rotateAbout, scaleAbout } from "./sketchTransform";
 import type { SketchPointer } from "./Viewport";
 
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
-export type Tool = "select" | "pen" | "line" | "rect" | "circle" | "arc" | "dimension" | "trim" | "extend" | "fillet";
+export type { Tool };
+type P = [number, number];
 
-const TOOLS: { tool: Tool; label: string; key: string; hint: string }[] = [
-  { tool: "select", label: "Select", key: "S", hint: "Click to select · Shift adds · drag a box (right to left: touching) · drag to move · arrows nudge · ⌘D copies · Delete removes" },
-  { tool: "pen", label: "Pen", key: "P", hint: "Click for a corner · press and drag for a smooth curve · click the first point to close · Enter or Esc to finish" },
-  { tool: "line", label: "Line", key: "L", hint: "Click point to point · click the first point to close · double-click or Esc to stop" },
-  { tool: "rect", label: "Rectangle", key: "R", hint: "Click two opposite corners" },
-  { tool: "circle", label: "Circle", key: "C", hint: "Click the centre, then the radius" },
-  { tool: "arc", label: "Arc", key: "A", hint: "Click the centre, the start, then the end (counter-clockwise)" },
-  { tool: "dimension", label: "Dimension", key: "D", hint: "Click a line, circle or arc, or two points, then type a value or =formula" },
-  { tool: "trim", label: "Trim", key: "T", hint: "Click the piece of a curve to cut away, back to where other curves cross it" },
-  { tool: "extend", label: "Extend", key: "E", hint: "Click near the end of a line or arc to carry it on to the next curve" },
-  { tool: "fillet", label: "Fillet", key: "F", hint: "Click a corner to round it · drag out from the corner to size it · or click two curves (the pieces to keep)" },
-];
+/** What `sketch.validate` found. */
+type Validation = {
+  gaps?: { a: number; b: number; distance: number }[];
+  degenerate?: number[];
+  duplicates?: number[];
+  duplicate_constraints?: number[];
+  open_ends?: number[];
+  conflicts?: number[];
+  redundant?: number[];
+  malformed?: number[];
+  fixed?: { joined?: number; removed_curves?: number; removed_constraints?: number };
+};
+
+/** Distance (mm) between two things of a sketch as drawn: points, lines, circles/arcs, or a point and any curve. */
+function measureBetween(g: Geometry, pos: Map<number, P>, solvedRadius: (c: Curve) => number, traceOf: (c: Curve) => P[], a: number, b: number): number {
+  const curve = (id: number) => g.curves.find((c) => c.id === id);
+  const pt = (id: number) => pos.get(id)!;
+  const isPoint = (id: number) => pos.has(id) && !curve(id);
+  const lineOf = (id: number) => {
+    const c = curve(id);
+    return c?.kind === "line" ? ([pt(c.a), pt(c.b)] as [P, P]) : null;
+  };
+  const round = (id: number) => {
+    const c = curve(id);
+    return c?.kind === "circle" || c?.kind === "arc" ? { c: pt(c.center), r: solvedRadius(c) } : null;
+  };
+  const toLine = (p: P, [s, e]: [P, P]) => {
+    const d: P = [e[0] - s[0], e[1] - s[1]];
+    return Math.abs(d[0] * (p[1] - s[1]) - d[1] * (p[0] - s[0])) / (Math.hypot(d[0], d[1]) || 1);
+  };
+  if (isPoint(a) && isPoint(b)) return Math.hypot(pt(a)[0] - pt(b)[0], pt(a)[1] - pt(b)[1]);
+  if (isPoint(a) || isPoint(b)) {
+    const [p, c] = isPoint(a) ? [a, b] : [b, a];
+    const l = lineOf(c);
+    if (l) return toLine(pt(p), l);
+    const r = round(c);
+    if (r) return Math.abs(Math.hypot(pt(p)[0] - r.c[0], pt(p)[1] - r.c[1]) - r.r);
+    const tr = traceOf(curve(c)!);
+    return Math.min(...tr.map((q) => Math.hypot(q[0] - pt(p)[0], q[1] - pt(p)[1])));
+  }
+  const [la, lb, ra, rb] = [lineOf(a), lineOf(b), round(a), round(b)];
+  if (la && lb) return toLine([(lb[0][0] + lb[1][0]) / 2, (lb[0][1] + lb[1][1]) / 2], la);
+  if ((la && rb) || (lb && ra)) {
+    const [l, r] = la ? [la, rb!] : [lb!, ra!];
+    return toLine(r.c, l) - r.r;
+  }
+  if (ra && rb) {
+    const d = Math.hypot(ra.c[0] - rb.c[0], ra.c[1] - rb.c[1]);
+    return d + Math.min(ra.r, rb.r) <= Math.max(ra.r, rb.r) ? Math.abs(ra.r - rb.r) - d : d - ra.r - rb.r;
+  }
+  return 0;
+}
 
 type Draft =
   | { kind: "none" }
+  /** A tool that places a shape by clicks (sketchTools). */
+  | { kind: "clicks"; pts: Click[] }
   | { kind: "line"; from: number | null; at: [number, number]; first: number | null }
   | { kind: "rect"; at: [number, number] }
   | { kind: "circle"; center: number | null; at: [number, number] }
@@ -75,6 +128,8 @@ export function useSketchEditor(props: {
   notify: (text: string) => void;
   onFace: (plane: SketchPicture["data"]["plane"] | null, focus?: { center: [number, number]; size: number }) => void;
   onMade: (id: string) => void;
+  /** Ask for a flat face of a part (the next one clicked); the sketch moves onto it. */
+  requestFace?: (purpose: string, take: (f: { centroid: [number, number, number]; normal: [number, number, number] }) => void) => void;
   /** Parts hidden in the view, and the one isolated (for projecting what is visible). */
   hidden?: ReadonlySet<string>;
   isolated?: string | null;
@@ -100,6 +155,23 @@ export function useSketchEditor(props: {
   // Projecting parts: the open panel and its choices.
   const [projectOpen, setProjectOpen] = useState(false);
   const [proj, setProj] = useState<{ picked: ReadonlySet<string>; mode: "outline" | "section"; construction: boolean; fixed: boolean; hidden: boolean }>({ picked: new Set(), mode: "outline", construction: false, fixed: true, hidden: false });
+  // Drawing as construction, the click tools' options, and each family's last-used tool.
+  const [constructionMode, setConstructionMode] = useState(false);
+  const [facePick, setFacePick] = useState(false);
+  const [opts, setOpts] = useState({ sides: "6", radius: "5", degree: "3" });
+  const [lastOf, setLastOf] = useState<Record<string, Tool>>({});
+  const [familyMenu, setFamilyMenu] = useState<string | null>(null);
+  const [snapLabel, setSnapLabel] = useState<string | null>(null);
+  // Side panels: the constraint list, checking the sketch, copying from another sketch.
+  const [side, setSide] = useState<"constraints" | "validate" | "copy" | null>(null);
+  const [lit, setLit] = useState<number[]>([]);
+  const [polygons, setPolygons] = useState(false);
+  const [combs, setCombs] = useState(false);
+  const [knotPick, setKnotPick] = useState<number | null>(null);
+  const [validation, setValidation] = useState<Validation | null>(null);
+  const [copyFrom, setCopyFrom] = useState<{ from: string; linked: boolean }>({ from: "", linked: true });
+  /** A dimension just added: if it over-constrains, it becomes a reference. */
+  const pendingDim = useRef<{ index: number; key: string } | null>(null);
 
   const entity = editing ? entities.get(editing) : undefined;
   const data = sketchOf(entity);
@@ -113,9 +185,25 @@ export function useSketchEditor(props: {
   const commit = useCallback(
     (geometry: Geometry, params?: Dim[]) => {
       if (!editing || !data) return Promise.resolve();
+      // In construction mode, curves new in this edit are construction.
+      if (constructionMode) {
+        const before = new Set(data.geometry.curves.map((c) => c.id));
+        geometry = { ...geometry, curves: geometry.curves.map((c) => (before.has(c.id) ? c : { ...c, construction: true })) };
+      }
       return run("sketch.update", { target: editing, geometry, ...(params ? { params } : {}) }).catch(() => {});
     },
-    [editing, data, run],
+    [editing, data, run, constructionMode],
+  );
+
+  /** A shape the engine builds (sketch.add): the result becomes the selection. */
+  const addShape = useCallback(
+    async (shape: Record<string, unknown>) => {
+      if (!editing) return;
+      const out = (await run("sketch.add", { target: editing, shape, construction: constructionMode }).catch(() => null)) as { output?: { curves?: number[]; points?: number[] } } | null;
+      const made = out?.output?.curves?.length ? out.output.curves : (out?.output?.points ?? []);
+      if (made.length) setSelection(new Set(made));
+    },
+    [editing, run, constructionMode],
   );
 
   /** A dragged point: it stays where it was put, everything else adapts. */
@@ -127,19 +215,47 @@ export function useSketchEditor(props: {
     [editing, run],
   );
 
+  /** A new sketch: on a named plane (offset along its normal), or through a point square to a normal (a face). */
   const start = useCallback(
-    async (plane: keyof typeof PLANES) => {
+    async (plane: keyof typeof PLANES | { origin: [number, number, number]; normal: [number, number, number] }, offset = 0) => {
       const n = [...entities.values()].filter((e) => sketchOf(e)).length + 1;
-      const out = (await run("sketch.create", { name: `Sketch ${n}`, plane: { name: plane } })) as { output?: { id: string } } | null;
+      const spec = typeof plane === "string" ? { name: plane, offset } : { ...plane, offset };
+      const out = (await run("sketch.create", { name: `Sketch ${n}`, plane: spec })) as { output?: { id: string } } | null;
       const id = out?.output?.id;
       if (!id) return;
       setEditing(id);
       setTool("line");
       setDraft({ kind: "none" });
-      props.onFace(PLANES[plane].plane);
+      if (typeof plane === "string") {
+        const p = PLANES[plane].plane;
+        const nn = [p.x[1] * p.y[2] - p.x[2] * p.y[1], p.x[2] * p.y[0] - p.x[0] * p.y[2], p.x[0] * p.y[1] - p.x[1] * p.y[0]];
+        props.onFace({ ...p, origin: [nn[0] * offset, nn[1] * offset, nn[2] * offset] });
+      }
     },
     [entities, run, props],
   );
+  // When the plane of the sketch being edited changes (made on a face, moved onto one), face it.
+  const planeKey = data ? JSON.stringify(data.plane) : "";
+  useEffect(() => {
+    if (!editing || !planeKey) return;
+    const was = faced.current.get(editing);
+    faced.current.set(editing, planeKey);
+    if (was !== undefined && was !== planeKey) props.onFace(JSON.parse(planeKey) as Plane);
+    else if (was === undefined && data && !data.geometry.points.length) props.onFace(JSON.parse(planeKey) as Plane);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, planeKey]);
+
+  /** Moves the sketch being edited onto a face clicked next (Map / reorient sketch). */
+  const moveToFace = useCallback(() => {
+    if (!editing || !props.requestFace) return;
+    // The view picks parts and faces again until the face is clicked.
+    setFacePick(true);
+    props.notify("Select a part, then click the flat face to put the sketch on");
+    props.requestFace("Sketch on this face", (f) => {
+      setFacePick(false);
+      void run("sketch.update", { target: editing, plane: { origin: f.centroid, normal: f.normal } });
+    });
+  }, [editing, props, run]);
 
   const edit = useCallback(
     (id: string) => {
@@ -159,6 +275,8 @@ export function useSketchEditor(props: {
     },
     [entities, props],
   );
+
+  const faced = useRef(new Map<string, string>());
 
   const finish = useCallback(() => {
     setEditing(null);
@@ -193,17 +311,73 @@ export function useSketchEditor(props: {
   );
 
   const pos = useMemo(() => (data ? positions(data.geometry, solved) : new Map<number, [number, number]>()), [data, solved]);
+  /** The distance between two things as drawn (for a new dimension's value). */
+  const measure = useCallback(
+    (a: number, b: number) => {
+      if (!data) return 0;
+      const at = (id: number): P => pos.get(id) ?? [0, 0];
+      const r = (c: Curve) => (c.kind === "circle" ? radiusOf(c, solved) : c.kind === "arc" ? Math.hypot(at(c.start)[0] - at(c.center)[0], at(c.start)[1] - at(c.center)[1]) : 0);
+      return measureBetween(data.geometry, pos, r, (c) => curveTrace(c, at, solved), a, b);
+    },
+    [data, pos, solved],
+  );
+  /** Where the first click of a line or circle snapped (tied to it once the point exists). */
+  const firstSnap = useRef<SketchPointer | null>(null);
 
   const addDimension = useCallback(
-    (kind: "length" | "diameter" | "radius" | "distance", a: number, b: number | null, value: number, x: number, y: number) => {
+    (kind: "length" | "diameter" | "radius" | "distance" | "horizontal_distance" | "vertical_distance" | "angle", a: number, b: number | null, value: number, x: number, y: number) => {
       if (!data) return;
       const key = newKey(data.params);
-      const label = { length: "Length", diameter: "Diameter", radius: "Radius", distance: "Distance" }[kind];
-      const c = kind === "length" ? { kind, line: a, key } : kind === "distance" ? { kind, a, b: b!, key } : { kind, curve: a, key };
-      const params = [...data.params, { key, label: `${label} ${key.slice(1)}`, value: Math.round(value * 100) / 100, unit: "mm", min: 0.001 }];
+      const label = { length: "Length", diameter: "Diameter", radius: "Radius", distance: "Distance", horizontal_distance: "X", vertical_distance: "Y", angle: "Angle" }[kind];
+      const c = kind === "length" ? { kind, line: a, key } : kind === "diameter" || kind === "radius" ? { kind, curve: a, key } : { kind, a, b: b ?? a, key };
+      const signed = kind === "horizontal_distance" || kind === "vertical_distance" || kind === "angle";
+      const params = [...data.params, { key, label: `${label} ${key.slice(1)}`, value: Math.round(value * 100) / 100, unit: kind === "angle" ? "deg" : "mm", ...(signed ? {} : { min: 0.001 }) }];
+      pendingDim.current = { index: data.geometry.constraints.length, key };
       commit({ ...data.geometry, constraints: [...data.geometry.constraints, c as Geometry["constraints"][number]] }, params).then(() =>
         setEditDim({ key, x, y, text: String(Math.round(value * 100) / 100) }),
       );
+    },
+    [data, commit],
+  );
+
+  // A dimension that would over-constrain the sketch becomes a reference (it measures instead), as in FreeCAD.
+  useEffect(() => {
+    const p = pendingDim.current;
+    if (!p || !data || !solved) return;
+    const c = data.geometry.constraints[p.index];
+    if (!c || keyOf(c) !== p.key) return;
+    pendingDim.current = null;
+    const s = solved.solved;
+    if (c.kind !== "reference" && (s.conflicts.includes(p.index) || s.redundant?.includes(p.index))) {
+      const constraints = data.geometry.constraints.map((x, i) => (i === p.index ? ({ kind: "reference", of: x } as Constraint) : x));
+      void run("sketch.update", { target: editing, geometry: { ...data.geometry, constraints } });
+      setEditDim(null);
+      props.notify("That dimension would over-constrain the sketch: it is kept as a reference (it measures, it does not drive)");
+    }
+  }, [data, solved, run, editing, props]);
+
+  /** Changes one constraint: driving or reference, on or off, or removes it. */
+  const changeConstraint = useCallback(
+    (index: number, how: "reference" | "driving" | "off" | "on" | "remove") => {
+      if (!data) return;
+      const c = data.geometry.constraints[index];
+      if (!c) return;
+      if (how === "remove") {
+        const constraints = data.geometry.constraints.filter((_, i) => i !== index);
+        const keys = new Set(constraints.map(keyOf).filter(Boolean));
+        setLit([]);
+        return commit({ ...data.geometry, constraints }, data.params.filter((d) => keys.has(d.key)));
+      }
+      const off = c.kind === "inactive";
+      const core = off ? c.of : c;
+      const ref = core.kind === "reference";
+      const plain = ref ? core.of : core;
+      const isRef = how === "reference" ? true : how === "driving" ? false : ref;
+      const isOff = how === "off" ? true : how === "on" ? false : off;
+      let next: Constraint = isRef ? { kind: "reference", of: plain } : plain;
+      if (isOff) next = { kind: "inactive", of: next };
+      const constraints = data.geometry.constraints.map((x, i) => (i === index ? next : x));
+      return commit({ ...data.geometry, constraints });
     },
     [data, commit],
   );
@@ -325,14 +499,60 @@ export function useSketchEditor(props: {
     [data, draft, pos, commit],
   );
 
+  /** What a click snapped to, kept as a constraint on the new point (on a curve, at a midpoint). */
+  const tie = (geo: Geometry, id: number, e: SketchPointer): Geometry => {
+    const s = e.snap;
+    if (!s || e.point !== null) return geo;
+    const line = s.curve !== undefined ? geo.curves.find((c) => c.id === s.curve) : undefined;
+    if (s.kind === "midpoint" && line?.kind === "line") return { ...geo, constraints: [...geo.constraints, { kind: "midpoint", point: id, line: line.id }] };
+    if ((s.kind === "on_curve" || s.kind === "quadrant" || s.kind === "midpoint") && s.curve !== undefined) return { ...geo, constraints: [...geo.constraints, { kind: "on_curve", point: id, curve: s.curve }] };
+    if (s.kind === "intersection" && s.curves) return { ...geo, constraints: [...geo.constraints, ...s.curves.map((curve) => ({ kind: "on_curve" as const, point: id, curve }))] };
+    return geo;
+  };
+
   const onPointer = useCallback(
     (e: SketchPointer) => {
       if (!data) return;
       const g = data.geometry;
       const at: [number, number] = [e.u, e.v];
       setHover({ point: e.point, curve: e.curve, at, grid: e.grid });
+      setSnapLabel(e.snap && e.snap.kind !== "grid" ? e.snap.label : null);
       if (tool === "pen") {
         penPointer(e, at);
+        return;
+      }
+      if (isClickTool(tool)) {
+        if (e.type !== "down" && e.type !== "double") return;
+        const pts = draft.kind === "clicks" ? draft.pts : [];
+        const need = clicksFor(tool);
+        const o = { sides: Math.max(3, Math.round(Number(opts.sides)) || 6), radius: Math.max(0.001, Number(opts.radius) || 5), degree: Math.max(1, Math.round(Number(opts.degree)) || 3) };
+        if (e.type === "double") {
+          // Finishes an open-ended curve (the double click's own point is already in, twice).
+          const same = (a: Click, b: Click) => Math.hypot(a.at[0] - b.at[0], a.at[1] - b.at[1]) < 1e-9;
+          const done = pts.filter((q, i) => i === 0 || !same(q, pts[i - 1]));
+          const shape = buildShape(tool, done, o);
+          if (shape) void addShape(shape);
+          setDraft({ kind: "none" });
+          return;
+        }
+        // Clicking the first point again closes a B-spline or a curve through points.
+        if (need === null && pts.length >= 3 && ((e.point !== null && e.point === pts[0].id) || Math.hypot(at[0] - pts[0].at[0], at[1] - pts[0].at[1]) < 1e-9)) {
+          const shape = buildShape(tool, pts, o, true);
+          if (shape) void addShape(shape);
+          setDraft({ kind: "none" });
+          return;
+        }
+        const next = [...pts, { at, id: e.point }];
+        if (need !== null && next.length >= need) {
+          const shape = buildShape(tool, next, o);
+          if (shape) void addShape(shape);
+          setDraft({ kind: "none" });
+        } else setDraft({ kind: "clicks", pts: next });
+        return;
+      }
+      if (knotPick !== null && e.type === "down") {
+        if (e.curve === knotPick && editing) void run("sketch.bspline", { target: editing, curve: knotPick, op: "insert_knot", at });
+        setKnotPick(null);
         return;
       }
       if (e.type === "move") {
@@ -415,6 +635,13 @@ export function useSketchEditor(props: {
         case "extend":
           if (e.curve !== null && editing) void run(tool === "trim" ? "sketch.trim" : "sketch.extend", { target: editing, curve: e.curve, at });
           break;
+        case "split":
+          if (e.curve !== null && editing)
+            void run("sketch.split", { target: editing, curve: e.curve, at }).then((out) => {
+              const c = (out as { output?: { curves?: number[] } } | null)?.output?.curves;
+              if (c) setSelection(new Set(c));
+            });
+          break;
         case "select": {
           const id = e.point ?? e.curve;
           if (id === null) {
@@ -451,6 +678,7 @@ export function useSketchEditor(props: {
         case "line": {
           if (draft.kind !== "line" || draft.from === null) {
             // The first point: an existing one, or a new one (-1) made with the first line.
+            firstSnap.current = e;
             setDraft({ kind: "line", from: e.point ?? -1, at, first: e.point ?? -1 });
             break;
           }
@@ -461,11 +689,12 @@ export function useSketchEditor(props: {
             const r = pointAt(geo, draft.at[0], draft.at[1], null);
             geo = r.g;
             from = r.id;
+            if (firstSnap.current) geo = tie(geo, from, firstSnap.current);
           }
           const first = draft.first === -1 ? from : draft.first;
           const end = pointAt(geo, e.u, e.v, e.point);
           if (end.id === from) break;
-          geo = end.g;
+          geo = tie(end.g, end.id, e);
           const p2 = new Map(pos);
           for (const p of geo.points) if (!p2.has(p.id)) p2.set(p.id, [p.x, p.y]);
           geo = addLine(geo, from, end.id, p2);
@@ -483,11 +712,14 @@ export function useSketchEditor(props: {
           }
           break;
         case "circle":
-          if (draft.kind !== "circle") setDraft({ kind: "circle", center: e.point, at });
-          else {
+          if (draft.kind !== "circle") {
+            firstSnap.current = e;
+            setDraft({ kind: "circle", center: e.point, at });
+          } else {
             const r = pointAt(g, draft.at[0], draft.at[1], draft.center);
             const radius = Math.hypot(at[0] - draft.at[0], at[1] - draft.at[1]);
-            if (radius > 1e-6) commit(addCircle(r.g, r.id, radius));
+            const geo = draft.center === null && firstSnap.current ? tie(r.g, r.id, firstSnap.current) : r.g;
+            if (radius > 1e-6) commit(addCircle(geo, r.id, radius));
             setDraft({ kind: "none" });
           }
           break;
@@ -512,9 +744,10 @@ export function useSketchEditor(props: {
           break;
         case "dimension": {
           const [sx, sy] = lastScreen.current;
-          if (draft.kind === "dimension" && e.point !== null && e.point !== draft.from) {
-            const [p, q] = [pos.get(draft.from)!, pos.get(e.point)!];
-            addDimension("distance", draft.from, e.point, Math.hypot(q[0] - p[0], q[1] - p[1]), sx, sy);
+          const other = e.point ?? e.curve;
+          if (draft.kind === "dimension" && other !== null && other !== draft.from) {
+            // A point and a point, line, circle or any curve: the distance between them.
+            addDimension("distance", draft.from, other, measure(draft.from, other), sx, sy);
             setDraft({ kind: "none" });
             break;
           }
@@ -536,29 +769,43 @@ export function useSketchEditor(props: {
         }
       }
     },
-    [data, tool, draft, pos, commit, commitDrag, addDimension, solved, penPointer, selection, setSelected, applyMoves, editing, run, roundCorner, filletSize, filletFirst],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, tool, draft, pos, commit, commitDrag, addDimension, solved, penPointer, selection, setSelected, applyMoves, editing, run, roundCorner, filletSize, filletFirst, opts, addShape, knotPick],
   );
 
   // Keys: tools, Escape, Delete.
   useEffect(() => {
     if (!editing) return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).closest("input, textarea")) return;
-      const t = TOOLS.find((x) => x.key === e.key.toUpperCase());
-      if (t && !e.metaKey && !e.ctrlKey) {
-        setTool(t.tool);
-        setDraft({ kind: "none" });
-        setFilletFirst(null);
+      if ((e.target as HTMLElement).closest("input, textarea, select")) return;
+      const fam = FAMILIES.find((x) => x.key === e.key.toUpperCase());
+      if (fam && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        // A family's key picks its last-used tool; pressed again, the next one in the family.
+        const here = fam.tools.findIndex((x) => x.tool === tool);
+        const next = here >= 0 ? fam.tools[(here + 1) % fam.tools.length].tool : (lastOf[fam.key] ?? fam.tools[0].tool);
+        pick(next);
         e.preventDefault();
+      } else if (e.key.toUpperCase() === "N" && !e.metaKey && !e.ctrlKey) {
+        setConstructionMode((v) => !v);
+        e.preventDefault();
+      } else if (e.key === "Enter" && draft.kind === "clicks") {
+        e.preventDefault();
+        const shape = buildShape(tool, draft.pts, { sides: Number(opts.sides) || 6, radius: Number(opts.radius) || 5, degree: Number(opts.degree) || 3 });
+        if (shape && clicksFor(tool) === null) void addShape(shape);
+        setDraft({ kind: "none" });
       } else if (e.key === "Enter" && draft.kind === "pen") {
         e.preventDefault();
         setDraft({ kind: "none" });
       } else if (e.key === "Escape") {
         e.stopPropagation();
-        if (patternOpen || projectOpen) {
+        if (patternOpen || projectOpen || side || familyMenu) {
           setPatternOpen(null);
           setProjectOpen(false);
-        } else if (filletFirst) setFilletFirst(null);
+          setSide(null);
+          setFamilyMenu(null);
+        } else if (facePick) setFacePick(false);
+        else if (knotPick !== null) setKnotPick(null);
+        else if (filletFirst) setFilletFirst(null);
         else if (draft.kind !== "none") setDraft({ kind: "none" });
         else if (selection.size) setSelection(new Set());
         else finish();
@@ -587,7 +834,8 @@ export function useSketchEditor(props: {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [editing, draft, selection, data, solved, hover.grid, commit, finish, applyMoves, patternOpen, projectOpen, filletFirst]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, draft, selection, data, solved, hover.grid, commit, finish, applyMoves, patternOpen, projectOpen, filletFirst, tool, lastOf, opts, addShape, side, familyMenu, knotPick, facePick]);
 
   // What the current tool would add, drawn dashed.
   const drawPreview = useMemo((): Segment[] => {
@@ -595,6 +843,8 @@ export function useSketchEditor(props: {
     if (!cur) return [];
     const from = (d: { from: number | null; at: [number, number] }) => (d.from !== null && d.from >= 0 ? (pos.get(d.from) ?? d.at) : d.at);
     switch (draft.kind) {
+      case "clicks":
+        return previewShape(tool, draft.pts, cur, { sides: Math.max(3, Math.round(Number(opts.sides)) || 6), radius: Math.max(0.001, Number(opts.radius) || 5), degree: Math.max(1, Math.round(Number(opts.degree)) || 3) });
       case "line":
         return draft.from === null ? [] : [{ kind: "line", from: from(draft), to: cur }];
       case "rect": {
@@ -651,10 +901,7 @@ export function useSketchEditor(props: {
         const segs: Segment[] = [];
         for (const c of data?.geometry.curves ?? []) {
           if (!selection.has(c.id)) continue;
-          if (c.kind === "line") segs.push({ kind: "line", from: P(c.a), to: P(c.b) });
-          else if (c.kind === "bezier") segs.push({ kind: "bezier", from: P(c.a), to: P(c.b), c1: P(c.c1), c2: P(c.c2) });
-          else if (c.kind === "circle") segs.push({ kind: "circle", center: P(c.center), radius: radiusOf(c, solved) });
-          else segs.push({ kind: "arc", center: P(c.center), from: P(c.start), to: P(c.end), ccw: true });
+          segs.push({ kind: "poly", points: curveTrace(c, P, solved) });
         }
         return segs;
       }
@@ -666,6 +913,8 @@ export function useSketchEditor(props: {
             segs.push({ kind: "line", from: P(c.a), to: P(c.b) });
           } else if (c.kind === "bezier" && [c.a, c.b, c.c1, c.c2].includes(draft.point)) {
             segs.push({ kind: "bezier", from: P(c.a), to: P(c.b), c1: P(c.c1), c2: P(c.c2) }, { kind: "line", from: P(c.a), to: P(c.c1) }, { kind: "line", from: P(c.b), to: P(c.c2) });
+          } else if (c.kind === "bspline" && c.poles.includes(draft.point)) {
+            segs.push({ kind: "poly", points: curveTrace(c, P, solved) }, { kind: "poly", points: c.poles.map(P) });
           }
         }
         return segs;
@@ -673,7 +922,7 @@ export function useSketchEditor(props: {
       default:
         return [];
     }
-  }, [draft, hover.at, pos, data, selection, solved]);
+  }, [draft, hover.at, pos, data, selection, solved, tool, opts]);
 
   // The selection's curves and lone points, for patterns and the mirror.
   const selCurves = useMemo(() => (data ? data.geometry.curves.filter((c) => selection.has(c.id)).map((c) => c.id) : []), [data, selection]);
@@ -720,7 +969,7 @@ export function useSketchEditor(props: {
 
   const picture: SketchPicture | null = useMemo(
     () =>
-      data
+      data && !facePick
         ? {
             data,
             solved,
@@ -731,10 +980,24 @@ export function useSketchEditor(props: {
             preview,
             cursor: tool === "select" ? null : hover.at,
             grid: hover.grid,
+            polygons,
+            combs,
+            constraints: lit,
+            snapLabel: tool === "select" ? null : snapLabel,
+            anchor: draft.kind === "line" ? (draft.from !== null && draft.from >= 0 ? (pos.get(draft.from) ?? draft.at) : draft.at) : draft.kind === "clicks" && draft.pts.length ? draft.pts[draft.pts.length - 1].at : null,
           }
         : null,
-    [data, solved, hover, selection, preview, tool, filletFirst],
+    [data, solved, hover, selection, preview, tool, filletFirst, polygons, combs, lit, snapLabel, draft, pos, facePick],
   );
+
+  /** Picks a tool (remembering it as its family's last used). */
+  const pick = useCallback((t: Tool) => {
+    setTool(t);
+    setDraft({ kind: "none" });
+    setFilletFirst(null);
+    setFamilyMenu(null);
+    setLastOf((m) => ({ ...m, [familyOf(t).key]: t }));
+  }, []);
 
   const [angleText, setAngleText] = useState("45");
   const [scaleText, setScaleText] = useState("150");
@@ -761,6 +1024,12 @@ export function useSketchEditor(props: {
       <Icon name={p.icon} />
     </button>
   );
+  /** An engine result's curves become the selection. */
+  const selectOut = (out: unknown) => {
+    const o = (out as { output?: { curves?: number[]; curve?: number } } | null)?.output;
+    const ids = o?.curves ?? (o?.curve !== undefined ? [o.curve] : null);
+    if (ids?.length) setSelection(new Set(ids));
+  };
   // Constraints that fit what is selected.
   const constrainBar = (() => {
     if (!data) return null;
@@ -769,20 +1038,27 @@ export function useSketchEditor(props: {
     const ids = [...selection];
     const lines = ids.filter((id) => curveOf(id)?.kind === "line");
     const rounds = ids.filter((id) => ["circle", "arc"].includes(curveOf(id)?.kind ?? ""));
+    const conics = ids.filter((id) => ["ellipse", "ellipse_arc", "hyperbola_arc", "parabola_arc"].includes(curveOf(id)?.kind ?? ""));
+    const curves = ids.filter((id) => curveOf(id));
     const points = ids.filter((id) => g.points.some((p) => p.id === id) && !curveOf(id));
     const others = ids.length - lines.length - rounds.length - points.length;
     type C = Geometry["constraints"][number];
-    const options: { glyph: IconName; label: string; make: () => C[] }[] = [];
+    type Option = { glyph: IconName; label: string; make?: () => C[]; dims?: () => { c: C; label: string; value: number; unit: string; signed?: boolean }[]; run?: () => void };
+    const options: Option[] = [];
     const only = (l: number, r: number, p: number) => lines.length === l && rounds.length === r && points.length === p && others === 0;
+    const at = (id: number): P => pos.get(id) ?? [0, 0];
     if (lines.length >= 1 && rounds.length === 0 && points.length === 0 && others === 0) {
       options.push({ glyph: "cHorizontal", label: "Horizontal", make: () => lines.map((line) => ({ kind: "horizontal", line }) as C) });
       options.push({ glyph: "cVertical", label: "Vertical", make: () => lines.map((line) => ({ kind: "vertical", line }) as C) });
+      if (lines.some((l) => g.constraints.some((c) => (c.kind === "horizontal" || c.kind === "vertical") && c.line === l)))
+        options.push({ glyph: "unalign", label: "Remove axes alignment (horizontal/vertical become parallel/perpendicular)", run: () => void run("sketch.unalign", { target: editing, curves: lines }) });
     }
     if (only(2, 0, 0)) {
       const [a, b] = lines as [number, number];
       options.push({ glyph: "cParallel", label: "Parallel", make: () => [{ kind: "parallel", a, b } as C] });
       options.push({ glyph: "cPerpendicular", label: "Perpendicular", make: () => [{ kind: "perpendicular", a, b } as C] });
       options.push({ glyph: "cEqual", label: "Equal length", make: () => [{ kind: "equal", a, b } as C] });
+      options.push({ glyph: "cDistance", label: "Distance between (parallel lines)", dims: () => [{ c: { kind: "distance", a, b, key: "" } as C, label: "Distance", value: measure(a, b), unit: "mm" }] });
     }
     if (only(0, 2, 0)) {
       const [a, b] = rounds as [number, number];
@@ -793,42 +1069,119 @@ export function useSketchEditor(props: {
       options.push({ glyph: "cEqual", label: "Equal radius", make: () => [{ kind: "equal", a, b } as C] });
       options.push({ glyph: "cConcentric", label: "Concentric (same centre)", make: () => [{ kind: "coincident", a: centre(a), b: centre(b) } as C] });
       options.push({ glyph: "cTangent", label: "Tangent", make: () => [{ kind: "tangent", a, b } as C] });
+      options.push({ glyph: "cDistance", label: "Distance between edges", dims: () => [{ c: { kind: "distance", a, b, key: "" } as C, label: "Distance", value: Math.max(0.001, measure(a, b)), unit: "mm" }] });
     }
-    if (only(1, 1, 0)) options.push({ glyph: "cTangent", label: "Tangent", make: () => [{ kind: "tangent", a: lines[0]!, b: rounds[0]! } as C] });
-    if (only(0, 0, 2)) options.push({ glyph: "cCoincident", label: "Coincident (join the points)", make: () => [{ kind: "coincident", a: points[0]!, b: points[1]! } as C] });
-    if (points.length === 1 && lines.length + rounds.length === 1 && others === 0) {
-      const curve = (lines[0] ?? rounds[0])!;
+    if (only(1, 1, 0)) {
+      options.push({ glyph: "cTangent", label: "Tangent", make: () => [{ kind: "tangent", a: lines[0]!, b: rounds[0]! } as C] });
+      options.push({ glyph: "cPerpendicular", label: "Perpendicular (through the centre)", make: () => [{ kind: "perpendicular", a: lines[0]!, b: rounds[0]! } as C] });
+      options.push({ glyph: "cDistance", label: "Distance from the line", dims: () => [{ c: { kind: "distance", a: lines[0]!, b: rounds[0]!, key: "" } as C, label: "Distance", value: Math.max(0.001, measure(lines[0]!, rounds[0]!)), unit: "mm" }] });
+    }
+    // A line (or circle, arc) and a conic, apart: tangent.
+    if (conics.length === 1 && curves.length === 2 && points.length === 0 && (lines.length === 1 || rounds.length === 1))
+      options.push({ glyph: "cTangent", label: "Tangent", make: () => [{ kind: "tangent", a: (lines[0] ?? rounds[0])!, b: conics[0]! } as C] });
+    // Two ellipses (or an ellipse and a circle): equal.
+    if (curves.length === 2 && points.length === 0 && conics.length >= 1 && conics.length + rounds.length === 2) options.push({ glyph: "cEqual", label: "Equal", make: () => [{ kind: "equal", a: curves[0]!, b: curves[1]! } as C] });
+    // Two curves sharing an end: tangent (smooth) or square there; joined into one B-spline.
+    if (curves.length === 2 && points.length === 0) {
+      const [a, b] = [curveOf(curves[0]!)!, curveOf(curves[1]!)!];
+      const ea: number[] = curveEnds(a) ?? [];
+      const shared = (curveEnds(b) ?? []).find((p) => ea.includes(p));
+      if (shared !== undefined) {
+        if (!(a.kind === "line" && b.kind === "line") && !(only(1, 1, 0) || only(0, 2, 0))) options.push({ glyph: "cTangent", label: "Tangent where they meet (smooth)", make: () => [{ kind: "tangent", a: a.id, b: b.id, at: shared } as C] });
+        options.push({ glyph: "join", label: "Join into one B-spline", run: () => void run("sketch.join", { target: editing, curves: [a.id, b.id] }).then(selectOut) });
+      }
+    }
+    // Two curves and a point: tangent or perpendicular via that point.
+    if (curves.length === 2 && points.length === 1 && ids.length === 3) {
+      const [a, b] = curves as [number, number];
+      options.push({ glyph: "cTangent", label: "Tangent at the point (held on both)", make: () => [{ kind: "tangent", a, b, at: points[0]! } as C] });
+      options.push({ glyph: "cPerpendicular", label: "Perpendicular at the point (held on both)", make: () => [{ kind: "perpendicular", a, b, at: points[0]! } as C] });
+    }
+    if (only(0, 0, 2)) {
+      const [a, b] = points as [number, number];
+      options.push({ glyph: "cCoincident", label: "Coincident (join the points)", make: () => [{ kind: "coincident", a, b } as C] });
+      options.push({ glyph: "cHorizontal", label: "Level with each other (same height)", dims: () => [{ c: { kind: "vertical_distance", a, b, key: "" } as C, label: "Y", value: 0, unit: "mm", signed: true }] });
+      options.push({ glyph: "cVertical", label: "Above each other (same x)", dims: () => [{ c: { kind: "horizontal_distance", a, b, key: "" } as C, label: "X", value: 0, unit: "mm", signed: true }] });
+    }
+    // Symmetric: two points about a line, or about a third point (the last picked).
+    if (points.length === 2 && lines.length === 1 && ids.length === 3) options.push({ glyph: "cSymmetric", label: "Symmetric about the line", make: () => [{ kind: "symmetric", a: points[0]!, b: points[1]!, line: lines[0]! } as C] });
+    if (points.length === 3 && ids.length === 3) options.push({ glyph: "cSymmetric", label: "Symmetric about the last point picked", make: () => [{ kind: "symmetric", a: points[0]!, b: points[1]!, line: points[2]! } as C] });
+    if (points.length === 1 && curves.length === 1 && ids.length === 2) {
+      const curve = curves[0]!;
       options.push({ glyph: "cOnCurve", label: "On the curve", make: () => [{ kind: "on_curve", point: points[0]!, curve } as C] });
       if (lines.length === 1) options.push({ glyph: "cMidpoint", label: "Midpoint of the line", make: () => [{ kind: "midpoint", point: points[0]!, line: lines[0]! } as C] });
+      options.push({ glyph: "cDistance", label: "Distance from the curve", dims: () => [{ c: { kind: "distance", a: points[0]!, b: curve, key: "" } as C, label: "Distance", value: Math.max(0.001, measure(points[0]!, curve)), unit: "mm" }] });
     }
-    if (points.length >= 1 && lines.length + rounds.length + others === 0)
+    if (points.length >= 1 && lines.length + rounds.length + others === 0) {
       options.push({
         glyph: "cFix",
         label: "Fix where it is",
-        make: () => points.map((point) => ({ kind: "fixed", point, x: pos.get(point)?.[0] ?? 0, y: pos.get(point)?.[1] ?? 0 }) as C),
+        make: () => points.map((point) => ({ kind: "fixed", point, x: at(point)[0], y: at(point)[1] }) as C),
       });
-    const touches = (c: C) => {
-      const v = Object.entries(c).filter(([k]) => !["kind", "key", "x", "y"].includes(k)).map(([, x]) => x);
-      return v.some((x) => typeof x === "number" && selection.has(x));
-    };
-    const loose = g.constraints.filter((c) => !("key" in c) && touches(c));
+      options.push({
+        glyph: "cLock",
+        label: "Lock (its X and Y as dimensions)",
+        dims: () =>
+          points.flatMap((p) => [
+            { c: { kind: "horizontal_distance", a: p, b: p, key: "" } as C, label: "X", value: at(p)[0], unit: "mm", signed: true },
+            { c: { kind: "vertical_distance", a: p, b: p, key: "" } as C, label: "Y", value: at(p)[1], unit: "mm", signed: true },
+          ]),
+      });
+    }
+    // Snell's law: two rays meeting at a point and the boundary there.
+    if (curves.length === 3 && points.length === 0 && lines.length >= 2) {
+      const ls = lines.map((id) => curveOf(id) as Extract<Curve, { kind: "line" }>);
+      for (let i = 0; i < ls.length; i++) {
+        for (let j = 0; j < ls.length; j++) {
+          if (i === j) continue;
+          const shared = [ls[i].a, ls[i].b].find((p) => p === ls[j].a || p === ls[j].b);
+          const boundary = curves.find((id) => id !== ls[i].id && id !== ls[j].id);
+          if (shared === undefined || boundary === undefined || options.some((o) => o.glyph === "cSnell")) continue;
+          options.push({ glyph: "cSnell", label: "Snell's law (refraction n₂/n₁ at the boundary)", dims: () => [{ c: { kind: "snell", a: ls[i].id, b: ls[j].id, boundary, at: shared, key: "" } as C, label: "n2/n1", value: 1.5, unit: "", signed: true }] });
+        }
+      }
+    }
+    if (curves.length >= 1) {
+      options.push({ glyph: "cBlock", label: "Block (hold as it is)", make: () => curves.map((curve) => ({ kind: "block", curve }) as C) });
+      const allConstruction = curves.every((id) => curveOf(id)?.construction);
+      options.push({
+        glyph: "construction",
+        label: allConstruction ? "Make normal geometry" : "Make construction geometry",
+        run: () => void commit({ ...g, curves: g.curves.map((c) => (selection.has(c.id) ? { ...c, construction: !allConstruction } : c)) }),
+      });
+    }
+    if (curves.length === 1 && points.length === 0) {
+      const c = curveOf(curves[0]!)!;
+      if (c.kind === "ellipse" || c.kind === "ellipse_arc" || c.kind === "hyperbola_arc" || c.kind === "parabola_arc" || c.kind === "bspline")
+        options.push({ glyph: "cInternal", label: c.kind === "bspline" ? "Show knot points" : "Show axes and foci (internal geometry)", run: () => void run("sketch.internal", { target: editing, curve: c.id }) });
+      if (c.kind !== "bspline") options.push({ glyph: "spline", label: "Convert to B-spline (NURBS)", run: () => void run("sketch.bspline", { target: editing, curve: c.id, op: "convert" }).then(selectOut) });
+    }
+    const touches = (c: C) => refsOf(c).some((x) => selection.has(x));
+    const loose = g.constraints.filter((c) => !keyOf(c) && touches(c));
     if (!options.length && !loose.length) return null;
     const same = (a: C, b: C) => JSON.stringify(a) === JSON.stringify(b);
+    const apply = (o: Option) => {
+      if (o.run) return o.run();
+      if (o.dims) {
+        let params = [...data.params];
+        const add: C[] = [];
+        for (const d of o.dims()) {
+          const key = newKey(params);
+          params = [...params, { key, label: `${d.label} ${key.slice(1)}`, value: Math.round(d.value * 1000) / 1000, unit: d.unit, ...(d.signed ? {} : { min: 0.001 }) }];
+          const c = { ...d.c, key } as C;
+          add.push(c);
+          if (o.dims().length === 1) pendingDim.current = { index: g.constraints.length, key };
+        }
+        return void commit({ ...g, constraints: [...g.constraints, ...add] }, params);
+      }
+      const add = o.make!().filter((c) => !g.constraints.some((x) => same(x, c)));
+      if (!add.length) return props.notify(`Already ${o.label.toLowerCase()}`);
+      void commit({ ...g, constraints: [...g.constraints, ...add] });
+    };
     return (
       <div className="sel-group sel-constrain" aria-label="Constraints">
         {options.map((o) => (
-          <button
-            key={o.label}
-            type="button"
-            className="sel-btn"
-            title={o.label}
-            aria-label={o.label}
-            onClick={() => {
-              const add = o.make().filter((c) => !g.constraints.some((x) => same(x, c)));
-              if (!add.length) return props.notify(`Already ${o.label.toLowerCase()}`);
-              void commit({ ...g, constraints: [...g.constraints, ...add] });
-            }}
-          >
+          <button key={o.label} type="button" className="sel-btn" title={o.label} aria-label={o.label} onClick={() => apply(o)}>
             <Icon name={o.glyph} />
           </button>
         ))}
@@ -1033,6 +1386,236 @@ export function useSketchEditor(props: {
     [entities, props.hidden, props.isolated],
   );
 
+  /** Checks the sketch (and with `fix`, puts right what can be). */
+  const validate = useCallback(
+    async (fix: boolean) => {
+      if (!editing) return;
+      const out = (await run("sketch.validate", { target: editing, fix }).catch(() => null)) as { output?: Validation } | null;
+      setValidation(out?.output ?? null);
+      if (fix && out?.output?.fixed) {
+        const f = out.output.fixed;
+        props.notify(`Fixed: ${f.joined ?? 0} gaps joined, ${f.removed_curves ?? 0} curves and ${f.removed_constraints ?? 0} constraints removed`);
+      }
+    },
+    [editing, run, props],
+  );
+
+  // One B-spline selected: its degree, knots and weights.
+  const spline = data && selection.size === 1 ? data.geometry.curves.find((c): c is Extract<Curve, { kind: "bspline" }> => c.kind === "bspline" && selection.has(c.id)) : undefined;
+  const splineOp = (op: string, extra: Record<string, unknown> = {}) => editing && spline && void run("sketch.bspline", { target: editing, curve: spline.id, op, ...extra }).then(selectOut);
+  const splinePanel = spline && data && (
+    <div className="sketch-panel spline-panel" role="group" aria-label="B-spline">
+      <strong>
+        B-spline · degree {spline.degree}
+        {spline.periodic ? " · closed" : ""}
+        {spline.weights?.some((w) => Math.abs(w - 1) > 1e-9) ? " · rational" : ""}
+      </strong>
+      <div className="sel-group">
+        <button type="button" className="secondary" title="Raise the degree (the curve stays exactly the same)" onClick={() => splineOp("increase_degree")}>
+          Degree +
+        </button>
+        <button type="button" className="secondary" disabled={spline.degree <= 1} title="Lower the degree (nearest curve)" onClick={() => splineOp("decrease_degree")}>
+          Degree −
+        </button>
+        <button type="button" className={`secondary ${knotPick === spline.id ? "on" : ""}`} title="Insert a knot: click the curve where it goes" onClick={() => setKnotPick((v) => (v === spline.id ? null : spline.id))}>
+          Insert knot
+        </button>
+      </div>
+      {(() => {
+        const { knots, mults } = knotList(spline);
+        const inner = knots.map((k, i) => ({ k, m: mults[i], i })).filter((x) => spline.periodic || (x.i > 0 && x.i < knots.length - 1));
+        return inner.length ? (
+          <div className="spline-knots">
+            <span className="sketch-panel-note">Knots (multiplicity)</span>
+            {inner.map((x) => (
+              <span key={x.i} className="spline-knot">
+                {Number(x.k.toFixed(3))} ×{x.m}
+                <button type="button" title="Repeat this knot once more (less smooth there)" disabled={x.m >= spline.degree} onClick={() => splineOp("increase_multiplicity", { knot: x.i })}>
+                  +
+                </button>
+                <button type="button" title="Repeat this knot once less (smoother; removes it at 1)" onClick={() => splineOp("decrease_multiplicity", { knot: x.i })}>
+                  −
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null;
+      })()}
+      <div className="spline-weights">
+        <span className="sketch-panel-note">Weights</span>
+        {spline.poles.map((p, i) => (
+          <label key={p} className="sel-field" title={`Pole ${i + 1}: a heavier pole pulls the curve towards it`}>
+            {i + 1}
+            <input
+              defaultValue={String(spline.weights?.[i] ?? 1)}
+              key={`${p}-${spline.weights?.[i] ?? 1}`}
+              inputMode="decimal"
+              aria-label={`Weight of pole ${i + 1}`}
+              onBlur={(e) => {
+                const w = Number(e.target.value);
+                if (!(w > 0) || w === (spline.weights?.[i] ?? 1)) return;
+                const weights = spline.poles.map((_, j) => (j === i ? w : (spline.weights?.[j] ?? 1)));
+                void commit({ ...data.geometry, curves: data.geometry.curves.map((c) => (c.id === spline.id ? { ...spline, weights } : c)) });
+              }}
+              onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+            />
+          </label>
+        ))}
+      </div>
+      <div className="spline-toggles">
+        <label className="check">
+          <input type="checkbox" checked={polygons} onChange={(e) => setPolygons(e.target.checked)} /> Control polygons always
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={combs} onChange={(e) => setCombs(e.target.checked)} /> Curvature comb
+        </label>
+      </div>
+    </div>
+  );
+
+  // The constraint list, checking, and copying from another sketch.
+  const otherSketches = useMemo(() => [...entities.values()].filter((e) => e.id !== editing && sketchOf(e)).map((e) => ({ id: e.id, name: sketchOf(e)!.name })), [entities, editing]);
+  const sidePanel = (() => {
+    if (!data || !side) return null;
+    const g = data.geometry;
+    const s = solved?.solved;
+    if (side === "constraints") {
+      const stateOf = (i: number) =>
+        s?.conflicts.includes(i) ? "conflict" : s?.malformed?.includes(i) ? "malformed" : s?.redundant?.includes(i) ? "redundant" : s?.partially_redundant?.includes(i) ? "partial" : "";
+      const selectAll = (which: number[]) => {
+        setLit(which);
+        setSelection(new Set(which.flatMap((i) => refsOf(g.constraints[i]))));
+      };
+      return (
+        <div className="sketch-panel constraint-list" role="group" aria-label="Constraints">
+          <strong>Constraints ({g.constraints.length})</strong>
+          <div className="sel-group">
+            <button type="button" className="secondary" disabled={!s?.conflicts.length} onClick={() => selectAll(s!.conflicts)}>
+              Conflicting {s?.conflicts.length ? `(${s.conflicts.length})` : ""}
+            </button>
+            <button type="button" className="secondary" disabled={!s?.redundant?.length && !s?.partially_redundant?.length} onClick={() => selectAll([...(s?.redundant ?? []), ...(s?.partially_redundant ?? [])])}>
+              Redundant {(s?.redundant?.length ?? 0) + (s?.partially_redundant?.length ?? 0) || ""}
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={!s?.free_points?.length}
+              title="Select the points that can still move"
+              onClick={() => {
+                setLit([]);
+                setTool("select");
+                setSelection(new Set(s?.free_points ?? []));
+              }}
+            >
+              Free points {s?.free_points?.length || ""}
+            </button>
+          </div>
+          <ol className="constraint-rows">
+            {g.constraints.map((c, i) => {
+              const key = keyOf(c);
+              const d = key ? data.params.find((p) => p.key === key) : undefined;
+              const v = key ? (s?.measured?.[key] ?? d?.value) : undefined;
+              const st = stateOf(i);
+              const off = c.kind === "inactive";
+              const isRef = (off ? c.of : c).kind === "reference";
+              return (
+                <li key={i} className={`${st} ${lit.includes(i) ? "lit" : ""} ${off ? "inactive" : ""}`}>
+                  <button type="button" className="constraint-name" title={st ? `${st === "conflict" ? "Conflicts with others" : st === "malformed" ? "Makes no sense for what it refers to" : st === "partial" ? "Partly fixed by others already" : "Adds nothing: others fix it already"}` : "Select what it holds"} onClick={() => selectAll([i])}>
+                    {describe(c)}
+                    {v !== undefined && <span className="constraint-value">{Number(v.toFixed(3))}{innerOf(c).kind === "angle" ? "°" : ""}</span>}
+                  </button>
+                  {key && (
+                    <button type="button" className="mini" title={isRef ? "Reference (measures): make it drive" : "Driving: make it a reference (measures only)"} onClick={() => void changeConstraint(i, isRef ? "driving" : "reference")}>
+                      {isRef ? "ref" : "drive"}
+                    </button>
+                  )}
+                  <button type="button" className="mini" title={off ? "Switched off: switch on" : "Switch off (kept, not solved)"} onClick={() => void changeConstraint(i, off ? "on" : "off")}>
+                    {off ? "off" : "on"}
+                  </button>
+                  <button type="button" className="mini" title="Remove" aria-label="Remove constraint" onClick={() => void changeConstraint(i, "remove")}>
+                    ✕
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      );
+    }
+    if (side === "validate") {
+      const v = validation;
+      const rows: [string, number][] = v
+        ? [
+            ["Gaps between ends that nearly meet", v.gaps?.length ?? 0],
+            ["Curves of no size", v.degenerate?.length ?? 0],
+            ["Curves drawn twice", v.duplicates?.length ?? 0],
+            ["Constraints given twice", v.duplicate_constraints?.length ?? 0],
+            ["Open ends", v.open_ends?.length ?? 0],
+            ["Conflicting constraints", v.conflicts?.length ?? 0],
+            ["Redundant constraints", v.redundant?.length ?? 0],
+            ["Malformed constraints", v.malformed?.length ?? 0],
+          ]
+        : [];
+      const fixable = (v?.gaps?.length ?? 0) + (v?.degenerate?.length ?? 0) + (v?.duplicates?.length ?? 0) + (v?.duplicate_constraints?.length ?? 0);
+      return (
+        <div className="sketch-panel" role="group" aria-label="Check the sketch">
+          <strong>Check the sketch</strong>
+          {!v && <span className="sketch-panel-note">Checking…</span>}
+          {v && (
+            <ul className="validate-rows">
+              {rows.map(([label, n]) => (
+                <li key={label} className={n ? "found" : ""}>
+                  {label}: <b>{n}</b>
+                </li>
+              ))}
+            </ul>
+          )}
+          {v?.open_ends?.length ? (
+            <button type="button" className="secondary" onClick={() => setSelection(new Set(v.open_ends))}>
+              Select open ends
+            </button>
+          ) : null}
+          <button type="button" className="primary" disabled={!fixable} title="Join near-meeting ends, remove curves of no size, duplicate curves and repeated constraints" onClick={() => void validate(true)}>
+            Fix
+          </button>
+        </div>
+      );
+    }
+    return (
+      <form
+        className="sketch-panel"
+        aria-label="Copy from another sketch"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (!editing || !copyFrom.from) return;
+          const out = await run("sketch.carbon_copy", { target: editing, from: copyFrom.from, linked: copyFrom.linked }).catch(() => null);
+          if (out) {
+            selectOut(out);
+            setSide(null);
+          }
+        }}
+      >
+        <strong>Copy from another sketch</strong>
+        {otherSketches.length === 0 && <span className="sketch-panel-note">No other sketches yet</span>}
+        <select value={copyFrom.from} aria-label="Sketch to copy from" onChange={(e) => setCopyFrom({ ...copyFrom, from: e.target.value })}>
+          <option value="">Pick a sketch…</option>
+          {otherSketches.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.name}
+            </option>
+          ))}
+        </select>
+        <label className="check" title="Linked: the copy's dimensions follow the original's (formulas); unlinked: a plain merge">
+          <input type="checkbox" checked={copyFrom.linked} onChange={(e) => setCopyFrom({ ...copyFrom, linked: e.target.checked })} />
+          Linked (carbon copy)
+        </label>
+        <button type="submit" className="primary" disabled={!copyFrom.from}>
+          Copy in
+        </button>
+      </form>
+    );
+  })();
+
   const st = status(entity);
   const bar = data ? (
     <div className="sketch-bar floating" role="toolbar" aria-label="Sketch tools">
@@ -1041,23 +1624,63 @@ export function useSketchEditor(props: {
         <span className={`sketch-status ${st.tone}`}>{st.text}</span>
       </div>
       <div className="sketch-tools">
-        {TOOLS.map((t) => (
-          <button
-            key={t.tool}
-            type="button"
-            className={tool === t.tool ? "active" : ""}
-            title={`${t.label} (${t.key}) · ${t.hint}`}
-            onClick={() => {
-              setTool(t.tool);
-              setDraft({ kind: "none" });
-            }}
-          >
-            {t.label}
-            <kbd>{t.key}</kbd>
-          </button>
-        ))}
+        {FAMILIES.map((f) => {
+          const here = f.tools.find((x) => x.tool === tool);
+          const shown = here ?? f.tools.find((x) => x.tool === lastOf[f.key]) ?? f.tools[0];
+          return (
+            <span key={f.key} className={`tool-family ${here ? "active" : ""}`}>
+              <button type="button" className={here ? "active" : ""} title={`${shown.label} (${f.key}${f.tools.length > 1 ? `, again for ${f.tools.filter((x) => x !== shown).map((x) => x.label.toLowerCase()).join(", ")}` : ""}) · ${shown.hint}`} onClick={() => pick(shown.tool)}>
+                {shown.label}
+                <kbd>{f.key}</kbd>
+              </button>
+              {f.tools.length > 1 && (
+                <button type="button" className="family-more" aria-label={`More ${shown.label.toLowerCase()} tools`} aria-expanded={familyMenu === f.key} onClick={() => setFamilyMenu((m) => (m === f.key ? null : f.key))}>
+                  ▾
+                </button>
+              )}
+              {familyMenu === f.key && (
+                <span className="family-menu" role="menu">
+                  {f.tools.map((x) => (
+                    <button key={x.tool} type="button" role="menuitem" className={x.tool === tool ? "on" : ""} title={x.hint} onClick={() => pick(x.tool)}>
+                      {x.label}
+                    </button>
+                  ))}
+                </span>
+              )}
+            </span>
+          );
+        })}
+        <button type="button" className={`construction-mode ${constructionMode ? "active" : ""}`} aria-pressed={constructionMode} title="Construction mode (N): new geometry is construction (guides that make no outline)" onClick={() => setConstructionMode((v) => !v)}>
+          <Icon name="construction" />
+          <kbd>N</kbd>
+        </button>
       </div>
-      <p className="sketch-hint">{TOOLS.find((t) => t.tool === tool)?.hint} · Alt turns off grid snap</p>
+      <p className="sketch-hint">
+        {knotPick !== null ? "Click the B-spline where the new knot goes · Esc cancels" : toolInfo(tool).hint} · snaps to points, midpoints, crossings and curves · Alt turns snapping off{constructionMode ? " · drawing construction" : ""}
+      </p>
+      {(tool === "polygon" || tool === "rrect" || tool === "bspline") && (
+        <div className="sketch-options" role="group" aria-label="Tool options">
+          {tool === "polygon" && (
+            <label className="sel-field">
+              Sides
+              <input value={opts.sides} inputMode="numeric" aria-label="Number of sides" onChange={(e) => setOpts({ ...opts, sides: e.target.value })} />
+            </label>
+          )}
+          {tool === "rrect" && (
+            <label className="sel-field">
+              R
+              <input value={opts.radius} inputMode="decimal" aria-label="Corner radius in mm" onChange={(e) => setOpts({ ...opts, radius: e.target.value })} />
+              <small>mm</small>
+            </label>
+          )}
+          {tool === "bspline" && (
+            <label className="sel-field">
+              Degree
+              <input value={opts.degree} inputMode="numeric" aria-label="B-spline degree" onChange={(e) => setOpts({ ...opts, degree: e.target.value })} />
+            </label>
+          )}
+        </div>
+      )}
       {tool === "fillet" && (
         <div className="sketch-options" role="group" aria-label="Fillet options">
           <div className="seg-toggle">
@@ -1156,6 +1779,29 @@ export function useSketchEditor(props: {
         <button type="button" className={`secondary ${projectOpen ? "on" : ""}`} aria-pressed={projectOpen} title="Project parts' edges onto the sketch plane" onClick={() => setProjectOpen((v) => !v)}>
           <Icon name="project" /> Project
         </button>
+        <button type="button" className={`secondary ${side === "constraints" ? "on" : ""}`} aria-pressed={side === "constraints"} title="Every constraint: what conflicts or repeats, driving or reference, on or off" onClick={() => setSide((v) => (v === "constraints" ? null : "constraints"))}>
+          <Icon name="list" /> Constraints
+        </button>
+        <button
+          type="button"
+          className={`secondary ${side === "validate" ? "on" : ""}`}
+          aria-pressed={side === "validate"}
+          title="Check the sketch: gaps between ends, curves of no size, duplicates, repeated constraints"
+          onClick={() => {
+            setSide((v) => (v === "validate" ? null : "validate"));
+            void validate(false);
+          }}
+        >
+          <Icon name="check" /> Check
+        </button>
+        <button type="button" className={`secondary ${side === "copy" ? "on" : ""}`} aria-pressed={side === "copy"} title="Copy another sketch's geometry in (carbon copy, linked to its dimensions, or merge)" onClick={() => setSide((v) => (v === "copy" ? null : "copy"))}>
+          <Icon name="copy" /> Copy from
+        </button>
+        {props.requestFace && (
+          <button type="button" className="secondary" title="Put this sketch on a flat face of a part (click the face next)" onClick={moveToFace}>
+            <Icon name="cube" /> On a face
+          </button>
+        )}
         <button type="button" className="secondary" onClick={finish}>
           Done
         </button>
@@ -1204,20 +1850,41 @@ export function useSketchEditor(props: {
     [data],
   );
 
-  return { editing, picture, onPointer, bar, dimEditor, openDim, start, edit, finish };
+  // Panels beside the drawing (the B-spline's knots and weights, the constraint list, checks, copying).
+  const sidebar = data && (splinePanel || sidePanel) ? (
+    <div className="sketch-side floating" aria-label="Sketch panels">
+      {splinePanel}
+      {sidePanel}
+    </div>
+  ) : null;
+
+  return { editing, picture, onPointer, bar, sidebar, dimEditor, openDim, start, edit, finish };
 }
 
-/** Choose a plane for a new sketch. */
-export function PlaneMenu(props: { onPick: (p: keyof typeof PLANES) => void; onClose: () => void }) {
+/** Choose a plane for a new sketch: a named one (moved along its normal by an offset), or a face of a part. */
+export function PlaneMenu(props: { onPick: (p: keyof typeof PLANES, offset: number) => void; onFace?: () => void; onClose: () => void }) {
+  const [offset, setOffset] = useState("0");
+  const off = Number(offset) || 0;
   return (
     <div className="plane-menu floating" role="menu" aria-label="Sketch on which plane">
       <strong>New sketch on…</strong>
       {(Object.keys(PLANES) as (keyof typeof PLANES)[]).map((k) => (
-        <button key={k} type="button" role="menuitem" onClick={() => props.onPick(k)}>
+        <button key={k} type="button" role="menuitem" onClick={() => props.onPick(k, off)}>
           <span className={`plane-chip plane-${k.toLowerCase()}`}>{k}</span>
           {PLANES[k].label}
         </button>
       ))}
+      <label className="plane-offset" title="Moves the plane along its normal">
+        Offset
+        <input value={offset} inputMode="decimal" aria-label="Plane offset in mm" onChange={(e) => setOffset(e.target.value)} />
+        <small>mm</small>
+      </label>
+      {props.onFace && (
+        <button type="button" role="menuitem" onClick={props.onFace} title="Select a part, then click one of its flat faces">
+          <span className="plane-chip plane-face">▱</span>
+          On a face of a part…
+        </button>
+      )}
       <button type="button" className="plane-cancel" onClick={props.onClose}>
         Cancel
       </button>

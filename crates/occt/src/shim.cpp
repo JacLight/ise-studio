@@ -19,6 +19,9 @@
 #include <Geom_TrimmedCurve.hxx>
 #include <Geom_BezierCurve.hxx>
 #include <TColgp_Array1OfPnt.hxx>
+#include <TColStd_Array1OfReal.hxx>
+#include <BRepBuilderAPI_NurbsConvert.hxx>
+#include <TColStd_Array1OfInteger.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
@@ -423,6 +426,30 @@ int occ_sketch_profile(void* p, int nloops, const double* d, int len) {
             signed2 += prev.X() * q.Y() - q.X() * prev.Y();
             prev = q;
           }
+        } else if (kind == 4) {
+          // An exact rational B-spline (a conic, a spline): degree, poles
+          // (x, y, weight), then its distinct knots and their multiplicities.
+          int degree = (int)next(), np = (int)next();
+          TColgp_Array1OfPnt poles(1, np);
+          TColStd_Array1OfReal weights(1, np);
+          for (int i = 1; i <= np; i++) {
+            double x = next(), y = next();
+            poles.SetValue(i, gp_Pnt(x, y, 0));
+            weights.SetValue(i, next());
+          }
+          int nk = (int)next();
+          TColStd_Array1OfReal knots(1, nk);
+          TColStd_Array1OfInteger mults(1, nk);
+          for (int i = 1; i <= nk; i++) knots.SetValue(i, next());
+          for (int i = 1; i <= nk; i++) mults.SetValue(i, (int)next());
+          Handle(Geom_BSplineCurve) bs = new Geom_BSplineCurve(poles, weights, knots, mults, degree);
+          wire.Add(BRepBuilderAPI_MakeEdge(bs).Edge());
+          gp_Pnt prev = bs->Value(bs->FirstParameter());
+          for (int i = 1; i <= 64; i++) {
+            gp_Pnt q = bs->Value(bs->FirstParameter() + (bs->LastParameter() - bs->FirstParameter()) * i / 64.0);
+            signed2 += prev.X() * q.Y() - q.X() * prev.Y();
+            prev = q;
+          }
         } else if (kind == 2) {
           gp_Pnt c(next(), next(), 0);
           double r = next();
@@ -747,12 +774,37 @@ int occ_from_mesh(void* p, const double* pos, int npos, const int* tri, int ntri
 
 // ---- Queries -------------------------------------------------------------------
 
+/// Whether any face (or edge) is free-form: not a plane, cylinder, cone,
+/// sphere or torus bounded by lines and circles.
+static bool free_form(const TopoDS_Shape& s) {
+  for (TopExp_Explorer f(s, TopAbs_FACE); f.More(); f.Next()) {
+    BRepAdaptor_Surface surf(TopoDS::Face(f.Current()));
+    switch (surf.GetType()) {
+      case GeomAbs_Plane: case GeomAbs_Cylinder: case GeomAbs_Cone: case GeomAbs_Sphere: case GeomAbs_Torus: break;
+      default: return true;
+    }
+  }
+  for (TopExp_Explorer e(s, TopAbs_EDGE); e.More(); e.Next()) {
+    const TopoDS_Edge& ed = TopoDS::Edge(e.Current());
+    if (BRep_Tool::Degenerated(ed)) continue;
+    BRepAdaptor_Curve c(ed);
+    if (c.GetType() != GeomAbs_Line && c.GetType() != GeomAbs_Circle) return true;
+  }
+  return false;
+}
+
 double occ_volume(void* p, int h) {
   Arena* a = static_cast<Arena*>(p);
   const TopoDS_Shape* s = get(a, h);
   if (!s) return NAN;
   GProp_GProps g;
-  BRepGProp::VolumeProperties(*s, g);
+  if (free_form(*s)) {
+    // Faces swept from rational B-splines (conics, splines in sketches)
+    // integrate badly as they are: as NURBS, adaptively, they come out exact.
+    BRepGProp::VolumeProperties(BRepBuilderAPI_NurbsConvert(*s).Shape(), g, 1e-9);
+  } else {
+    BRepGProp::VolumeProperties(*s, g);
+  }
   return g.Mass();
 }
 
@@ -761,7 +813,11 @@ double occ_area(void* p, int h) {
   const TopoDS_Shape* s = get(a, h);
   if (!s) return NAN;
   GProp_GProps g;
-  BRepGProp::SurfaceProperties(*s, g);
+  if (free_form(*s)) {
+    BRepGProp::SurfaceProperties(*s, g, 1e-9);
+  } else {
+    BRepGProp::SurfaceProperties(*s, g);
+  }
   return g.Mass();
 }
 

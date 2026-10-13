@@ -182,6 +182,12 @@ impl Builder {
                         take(crate::sketch::bezier_at(at[&a], at[&c1], at[&c2], at[&b], i as f64 / 16.0));
                     }
                 }
+                // Conics and splines are not made by a file import; their points bound them.
+                ref other => {
+                    for p in other.points() {
+                        take(at[&p]);
+                    }
+                }
             }
         }
         for p in &mut self.g.points {

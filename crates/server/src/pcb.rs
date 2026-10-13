@@ -14,6 +14,8 @@
 //! - `GET /pcb/<id>/gerber-check?px=`        the package read back independently and compared with the board
 //! - `GET /pcb/<id>/layers`                  each fab file drawn (SVG) from what the reader made of it
 //! - `GET|POST /pcb/settings`                which API keys are set / set them
+//! - `GET /pcb/<id>/exports`                 files for other EDA tools (board or schematic), and what imports
+//! - `GET /pcb/schematic/<id>/file/<name>`   one of a schematic's files for other tools
 
 use crate::Server;
 use axum::{
@@ -153,7 +155,7 @@ pub async fn file(State(server): State<Arc<Server>>, Path((id, name)): Path<(Str
         "README.txt" => outputs::readme(&v, &b, query.get("fab").and_then(|f| fabs::fab(f))),
         _ => match de_pcb::gerber::files(&v).into_iter().find(|(n, _)| *n == name) {
             Some((_, s)) => s,
-            None => return fail(StatusCode::NOT_FOUND, format!("no file {name}")),
+            None => return interchange_file(&server, &query, &id, &name),
         },
     };
     let kind = if name.ends_with(".csv") { "text/csv; charset=utf-8" } else { "text/plain; charset=utf-8" };
@@ -221,6 +223,69 @@ pub async fn layers(State(server): State<Arc<Server>>, Path(id): Path<String>, Q
         Ok(j) => axum::Json(j).into_response(),
         Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
+}
+
+/// A file for another EDA tool (`de_pcb::io`): KiCad project and schematic, netlists, IPC-2581,
+/// ODB++, IPC-D-356, Gerber job, drill map and report, plots, VRML/glTF, position files.
+fn interchange_file(server: &Server, query: &HashMap<String, String>, id: &str, name: &str) -> axum::response::Response {
+    let app = match server.project(query.get("project")) {
+        Ok(a) => a,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let project = app.project.lock().unwrap();
+    let Ok(id) = serde_json::from_value::<StableId>(json!(id)) else { return fail(StatusCode::NOT_FOUND, "not a board") };
+    let out = if project.get::<Board>(id).is_some() { de_pcb::io::board_file(project.world(), id, name) } else { de_pcb::io::schematic_file(project.world(), id, name) };
+    match out {
+        Some(Ok(f)) => {
+            let inline = f.content_type.starts_with("text/") || f.content_type.starts_with("image/svg");
+            let disposition = if query.contains_key("download") || !inline { format!("attachment; filename=\"{name}\"") } else { "inline".into() };
+            ([(header::CONTENT_TYPE, f.content_type.to_string()), (header::CONTENT_DISPOSITION, disposition)], f.bytes).into_response()
+        }
+        Some(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        None => fail(StatusCode::NOT_FOUND, format!("no file {name}")),
+    }
+}
+
+/// `GET /pcb/schematic/<id>/file/<name>`: a schematic's files for other tools (KiCad schematic,
+/// netlists, sheet plots).
+pub async fn schematic_file(State(server): State<Arc<Server>>, Path((id, name)): Path<(String, String)>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    interchange_file(&server, &query, &id, &name)
+}
+
+/// `GET /pcb/<id>/exports`: every file for other tools, with what each is (boards and schematics),
+/// and the formats `pcb.import` reads.
+pub async fn exports(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    let app = match server.project(query.get("project")) {
+        Ok(a) => a,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let project = app.project.lock().unwrap();
+    let Ok(id) = serde_json::from_value::<StableId>(json!(id)) else { return fail(StatusCode::NOT_FOUND, "not a board or schematic") };
+    let list: Vec<(String, &str)> = if project.get::<Board>(id).is_some() {
+        let Some(v) = de_pcb::view(project.world(), id) else { return fail(StatusCode::UNPROCESSABLE_ENTITY, "the board is not worked out yet") };
+        let mut l: Vec<(String, &str)> = interop_names(&v)
+            .into_iter()
+            .map(|n| {
+                let what = if n.ends_with(".kicad_pcb") {
+                    "KiCad board"
+                } else if n.ends_with(".step") {
+                    "STEP of the populated board"
+                } else {
+                    "IDF 3.0 board / library"
+                };
+                (n, what)
+            })
+            .collect();
+        l.extend(de_pcb::io::board_exports(&v, de_pcb::schematic::of_board(project.world(), id).is_some()));
+        l
+    } else if let Some(v) = de_pcb::schematic::view(project.world(), id) {
+        de_pcb::io::schematic_exports(&v.name, v.sheets.len())
+    } else {
+        return fail(StatusCode::NOT_FOUND, "not a board or schematic");
+    };
+    let files: Vec<Value> = list.into_iter().map(|(n, w)| json!({ "name": n, "what": w })).collect();
+    let imports: Vec<Value> = de_pcb::io::FORMATS.iter().map(|(k, w)| json!({ "format": k, "what": w })).collect();
+    axum::Json(json!({ "files": files, "imports": imports })).into_response()
 }
 
 /// The board as KiCad text, with each pour's own settings (read from the project).
