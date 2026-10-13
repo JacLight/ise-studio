@@ -329,6 +329,34 @@ svg.icon {
   color: #b5b9c3;
 }
 
+/* Twenty-odd tools need about 930 px at full size: on shorter windows the
+   rail tightens so it stays between the project pill and the view bar
+   instead of running under them, and scrolls only when even that is too tall. */
+@media (max-height: 1010px) {
+  .tool-rail {
+    padding: 4px 6px;
+    gap: 2px;
+  }
+
+  .tool-rail .ib {
+    height: 30px;
+  }
+}
+
+@media (max-height: 840px) {
+  .tool-rail .ib {
+    height: 26px;
+  }
+}
+
+@media (max-height: 780px) {
+  .tool-rail {
+    max-height: calc(100% - 156px);
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+}
+
 .view-bar {
   position: absolute;
   bottom: 20px;
