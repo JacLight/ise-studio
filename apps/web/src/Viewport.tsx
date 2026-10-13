@@ -559,10 +559,32 @@ function stepFlight(t: Scene, now: number): boolean {
   return k < 1;
 }
 
-/** Shown part meshes whose box holds `eye` (by a margin), drawn last first. */
-function enclosing(t: Scene, eye: THREE.Vector3): THREE.Mesh[] {
+/** Each geometry group's box (a part of a many-part shape), in the geometry's own coordinates. */
+function groupBoxes(g: THREE.BufferGeometry): THREE.Box3[] {
+  const cached = g.userData.groupBoxes as THREE.Box3[] | undefined;
+  if (cached && cached.length === g.groups.length) return cached;
+  const pos = g.getAttribute("position");
+  const p = new THREE.Vector3();
+  const boxes = g.groups.map((gr) => {
+    const box = new THREE.Box3();
+    for (let k = gr.start; k < gr.start + gr.count; k++) box.expandByPoint(p.fromBufferAttribute(pos, g.index ? g.index.getX(k) : k));
+    return box;
+  });
+  g.userData.groupBoxes = boxes;
+  return boxes;
+}
+
+/**
+ * What steps aside for an eye inside it: shown part meshes whose box holds
+ * `eye` (by a margin); for a shape of many parts (a building: walls, slabs,
+ * doors in one program) only the parts whose own box holds it, so walking
+ * into a room hides the door passed through, not the whole house.
+ */
+function enclosing(t: Scene, eye: THREE.Vector3): { meshes: THREE.Mesh[]; materials: THREE.Material[] } {
   const out: THREE.Mesh[] = [];
+  const materials: THREE.Material[] = [];
   const box = new THREE.Box3();
+  const local = new THREE.Vector3();
   for (const part of t.parts.values()) {
     if (!part.group.visible) continue;
     for (const m of part.meshes) {
@@ -579,10 +601,21 @@ function enclosing(t: Scene, eye: THREE.Vector3): THREE.Mesh[] {
       box.copy(g.boundingBox!).applyMatrix4(m.matrixWorld);
       // Inside by more than a hair: grazing a face from outside does not hide it.
       const margin = Math.min(0.2, box.getSize(new THREE.Vector3()).length() * 0.002);
-      if (box.expandByScalar(-margin).containsPoint(eye)) out.push(m);
+      if (!box.expandByScalar(-margin).containsPoint(eye)) continue;
+      const mats = m.material;
+      if (Array.isArray(mats) && g.groups.length >= 2) {
+        // Each part on its own (the eye in the mesh's own coordinates).
+        local.copy(eye).applyMatrix4(new THREE.Matrix4().copy(m.matrixWorld).invert());
+        const scale = m.matrixWorld.getMaxScaleOnAxis() || 1;
+        groupBoxes(g).forEach((b, i) => {
+          const mat = mats[g.groups[i].materialIndex ?? i];
+          const pm = Math.min(0.2, b.getSize(new THREE.Vector3()).length() * 0.002) / scale;
+          if (mat && mat.visible && b.clone().expandByScalar(-pm).containsPoint(local)) materials.push(mat);
+        });
+      } else out.push(m);
     }
   }
-  return out;
+  return { meshes: out, materials };
 }
 
 /** Near plane follows the scale, so a tower and a bolt both render without z-fighting. */
@@ -1532,8 +1565,9 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       // shows instead of the inside of its walls.
       const t0 = performance.now();
       scene.updateMatrixWorld();
-      const aside = three.current ? enclosing(three.current, camera.position) : [];
-      for (const m of aside) m.visible = false;
+      const aside = three.current ? enclosing(three.current, camera.position) : { meshes: [], materials: [] };
+      for (const m of aside.meshes) m.visible = false;
+      for (const m of aside.materials) m.visible = false;
       const t1 = performance.now();
       const view = tools.beforeRender();
       // Instances of shared geometry go to the GPU as instances, culled and simplified by size.
@@ -1546,7 +1580,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       frameStats.matrices = t2 - t1;
       frameStats.batch = t3 - t2;
       frameStats.render = performance.now() - t3;
-      for (const m of aside) m.visible = true;
+      for (const m of aside.meshes) m.visible = true;
+      for (const m of aside.materials) m.visible = true;
       if (callbacks.current.comments?.pins.length) scheduleOcclusion();
     };
     raf = requestAnimationFrame(frame);
