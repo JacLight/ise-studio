@@ -190,7 +190,17 @@ fn board_copper(v: &BoardView, layer: &str) -> BTreeMap<String, Vec<Vec<Vec<P>>>
         }
     }
     for via in &v.vias {
-        by.entry(key(&via.net)).or_default().push(vec![prim_poly(&Prim::circle(via.at, via.diameter / 2.0))]);
+        if let Some(d) = crate::gerber::via_pad(v, via, layer) {
+            by.entry(key(&via.net)).or_default().push(vec![prim_poly(&Prim::circle(via.at, d / 2.0))]);
+        }
+    }
+    for t in v.teardrops.iter().filter(|t| t.layer == layer) {
+        by.entry(key(&t.net)).or_default().push(vec![t.polygon.clone()]);
+    }
+    for g in v.graphics.iter().filter(|g| g.layer == layer) {
+        for prim in crate::graphics::copper_prims(g) {
+            by.entry(key(&g.net)).or_default().push(vec![prim_poly(&prim)]);
+        }
     }
     for z in v.zones.iter().filter(|z| z.layer == layer) {
         for island in &z.fill {
@@ -539,7 +549,10 @@ fn check_paste(v: &BoardView, name: &str, function: &str, g: &GerberFile, r: &Ra
 
 fn check_drill(v: &BoardView, name: &str, d: &reader::DrillFile) -> DrillCheck {
     let plated = d.plated.unwrap_or(!name.to_ascii_uppercase().contains("NPTH"));
-    let board: Vec<&crate::board::Hole> = v.holes.iter().filter(|h| h.plated == plated).collect();
+    // A blind/buried pair's file ("board-1-2.drl") holds that pair's holes; the others, through holes.
+    let pair = name.rsplit_once('.').map(|(stem, _)| stem.rsplitn(3, '-').take(2).collect::<Vec<_>>()).filter(|p| p.len() == 2 && p.iter().all(|x| x.parse::<usize>().is_ok())).map(|p| (p[1].parse::<usize>().unwrap(), p[0].parse::<usize>().unwrap()));
+    let span_of = |h: &crate::board::Hole| h.span.as_ref().map(|s| (v.layers.iter().position(|l| *l == s[0]).unwrap_or(0) + 1, v.layers.iter().position(|l| *l == s[1]).unwrap_or(0) + 1));
+    let board: Vec<&crate::board::Hole> = v.holes.iter().filter(|h| h.plated == plated && span_of(h) == pair).collect();
     let mut problems = Vec::new();
     if !d.metric {
         problems.push("not metric".into());

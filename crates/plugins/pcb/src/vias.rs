@@ -265,8 +265,11 @@ impl Command for Stitch {
         let view = view_of(tx, self.board)?;
         // Region: the zone's fill (or outline), or the given outline, or the board.
         let zone_view = self.zone.and_then(|z| view.zones.iter().find(|v| v.id == z));
-        let region: Vec<Vec<Vec<P>>> = if let Some(zv) = zone_view {
+        // A pour with nothing of its net yet has no copper: stitch its outline (the vias then hold it).
+        let region: Vec<Vec<Vec<P>>> = if let Some(zv) = zone_view.filter(|z| !z.fill.is_empty()) {
             zv.fill.clone()
+        } else if let Some(zv) = zone_view {
+            vec![std::iter::once(zv.outline.clone()).chain(zone.as_ref().map(|z| z.cutouts.clone()).unwrap_or_default()).collect()]
         } else if self.outline.len() >= 3 {
             vec![vec![self.outline.clone()]]
         } else {

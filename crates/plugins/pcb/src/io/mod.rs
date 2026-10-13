@@ -328,12 +328,19 @@ impl Command for Import {
 
 // ---- Exports ----------------------------------------------------------------------
 
+/// The board's custom rules as a `.kicad_dru` file.
+fn dru(board: &Board) -> String {
+    let t = board.drc_rules.trim();
+    if t.contains("(version") { format!("{t}\n") } else { format!("(version 1)\n{t}\n") }
+}
+
 /// Files written for other tools, by name, with what each is.
 pub fn board_exports(view: &BoardView, has_schematic: bool) -> Vec<(String, &'static str)> {
     let s = crate::gerber::file_stem(&view.name);
     let mut v: Vec<(String, &'static str)> = vec![
         (format!("{s}.kicad_pro"), "KiCad project (net classes, rules)"),
-        (format!("{s}-kicad.zip"), "KiCad project bundle (.kicad_pro, .kicad_pcb, .kicad_sch)"),
+        (format!("{s}-kicad.zip"), "KiCad project bundle (.kicad_pro, .kicad_pcb, .kicad_sch, .kicad_dru)"),
+        (format!("{s}.kicad_dru"), "KiCad custom design rules"),
         (format!("{s}.net"), "KiCad netlist (S-expression)"),
         (format!("{s}-netlist.xml"), "KiCad XML netlist"),
         (format!("{s}-orcad.net"), "OrcadPCB2 netlist"),
@@ -388,8 +395,12 @@ pub fn board_file(world: &World, id: StableId, name: &str) -> Option<Result<File
     let rest = name.strip_prefix(&s)?;
     match rest {
         ".kicad_pro" => txt(kicad_pro::write(&view, &board)),
+        ".kicad_dru" => txt(dru(&board)),
         "-kicad.zip" => {
             let mut files = vec![(format!("{s}.kicad_pro"), kicad_pro::write(&view, &board).into_bytes()), (format!("{s}.kicad_pcb"), crate::kicad::export_world(world, id)?.into_bytes())];
+            if !board.drc_rules.trim().is_empty() {
+                files.push((format!("{s}.kicad_dru"), dru(&board).into_bytes()));
+            }
             if let Some((sid, _)) = &sch {
                 for (n, t) in kicad_sch::write_world(world, *sid, &s)? {
                     files.push((n, t.into_bytes()));

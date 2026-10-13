@@ -311,7 +311,7 @@ pub fn forma_layer(l: &str) -> String {
 }
 
 /// KiCad's name for a Forma layer, for comparisons written either way.
-fn kicad_layer(l: &str) -> String {
+pub fn kicad_layer(l: &str) -> String {
     match l {
         "top" => "F.Cu".into(),
         "bottom" => "B.Cu".into(),
@@ -321,6 +321,8 @@ fn kicad_layer(l: &str) -> String {
         "fab_bottom" => "B.Fab".into(),
         "mask_top" => "F.Mask".into(),
         "mask_bottom" => "B.Mask".into(),
+        "paste_top" => "F.Paste".into(),
+        "paste_bottom" => "B.Paste".into(),
         "courtyard_top" => "F.CrtYd".into(),
         "courtyard_bottom" => "B.CrtYd".into(),
         "user" => "Dwgs.User".into(),

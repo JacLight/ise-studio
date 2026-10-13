@@ -398,6 +398,9 @@ pub fn finish(mut b: BoardIn) -> Result<KicadBoard, String> {
         rules,
         notes,
         shift,
+        areas: vec![],
+        via_specs: vec![],
+        teardrops: false,
     })
 }
 
