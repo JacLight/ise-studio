@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/plugins/solid", "crates/plugins/intent", "crates/plugins/shape", "crates/plugins/assembly", "crates/plugins/draft", "crates/plugins/sourcing", "crates/plugins/pcb", "crates/occt", "crates/server", "crates/bench"]
+members = ["crates/core", "crates/plugins/solid", "crates/plugins/intent", "crates/plugins/shape", "crates/plugins/assembly", "crates/plugins/draft", "crates/plugins/sourcing", "crates/plugins/pcb", "crates/plugins/scan", "crates/occt", "crates/server", "crates/bench"]
 
 [workspace.package]
 version = "0.1.0"
@@ -17,6 +17,7 @@ de-draft = { path = "crates/plugins/draft" }
 de-sourcing = { path = "crates/plugins/sourcing" }
 de-pcb = { path = "crates/plugins/pcb" }
 de-occt = { path = "crates/occt" }
+de-scan = { path = "crates/plugins/scan" }
 bevy_ecs = "0.19"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

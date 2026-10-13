@@ -1,0 +1,11 @@
+[package]
+name = "de-scan"
+description = "Meshes and point clouds: analysis, repair, decimation, smoothing, remeshing, reconstruction, primitive and B-spline fitting, unwrapping and deviation inspection"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+rayon.workspace = true
