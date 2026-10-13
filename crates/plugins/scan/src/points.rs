@@ -632,6 +632,44 @@ pub fn remove_outliers(c: &Cloud, k: usize, sigma: f64) -> (Cloud, usize) {
     (c.select(&keep), dropped)
 }
 
+/// Groups of points joined by gaps of at most `radius` (single linkage),
+/// largest first: the separate things in a scan.
+pub fn clusters(c: &Cloud, radius: f64) -> Vec<Vec<u32>> {
+    fn root(parent: &mut [u32], mut i: u32) -> u32 {
+        while parent[i as usize] != i {
+            parent[i as usize] = parent[parent[i as usize] as usize];
+            i = parent[i as usize];
+        }
+        i
+    }
+    let tree = KdTree::new(&c.positions);
+    let near: Vec<Vec<u32>> = (0..c.len())
+        .into_par_iter()
+        .map(|i| {
+            let mut out = Vec::new();
+            tree.within(c.positions[i], radius, &mut out);
+            out.retain(|&j| j as usize > i);
+            out
+        })
+        .collect();
+    let mut parent: Vec<u32> = (0..c.len() as u32).collect();
+    for (i, js) in near.iter().enumerate() {
+        for &j in js {
+            let (a, b) = (root(&mut parent, i as u32), root(&mut parent, j));
+            if a != b {
+                parent[a.max(b) as usize] = a.min(b);
+            }
+        }
+    }
+    let mut groups: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+    for i in 0..c.len() as u32 {
+        groups.entry(root(&mut parent, i)).or_default().push(i);
+    }
+    let mut out: Vec<Vec<u32>> = groups.into_values().collect();
+    out.sort_by(|a, b| b.len().cmp(&a.len()).then(a[0].cmp(&b[0])));
+    out
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum Orient {
     /// Propagated over the neighbour graph, then pointing away from the centre (closed objects).
@@ -838,5 +876,19 @@ mod tests {
         let (clean, dropped) = remove_outliers(&noisy, 8, 2.0);
         assert!(dropped >= 20 && dropped < 80, "{dropped}");
         assert!(clean.positions.iter().all(|p| norm(*p) < 11.0));
+    }
+
+    #[test]
+    fn separate_things_are_separate_clusters() {
+        // A sphere, a smaller one 30 mm away, and a lone point.
+        let mut c = sample_mesh(&uv_sphere(10.0, 20, 40), 2000);
+        let big = c.len();
+        let small = sample_mesh(&uv_sphere(4.0, 12, 24), 300);
+        c.positions.extend(small.positions.iter().map(|p| [p[0] + 30.0, p[1], p[2]]));
+        c.positions.push([0.0, 0.0, 60.0]);
+        c.normals.clear();
+        let groups = clusters(&c, 2.0);
+        assert_eq!(groups.iter().map(Vec::len).collect::<Vec<_>>(), vec![big, small.len(), 1]);
+        assert!(groups[1].iter().all(|&i| c.positions[i as usize][0] > 20.0));
     }
 }
