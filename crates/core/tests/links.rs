@@ -378,7 +378,8 @@ fn linked_items_are_read_only_until_edited_locally_or_the_link_is_broken() {
     assert_eq!(t.get::<At>(bracket).unwrap().x, 7);
     let mut br = part(&t, bracket);
     br.name = "Renamed".into();
-    assert!(run(&mut t, "test.put", json!({ "target": bracket, "part": br })).is_err());
+    let err = run(&mut t, "test.put", json!({ "target": bracket, "part": br })).unwrap_err();
+    assert!(err.message.starts_with("“Bracket” is linked from"), "named as it was: {}", err.message);
 
     // A command touching a linked item and a local one is refused whole.
     let mine = put(&mut t, json!({ "part": { "name": "Mine", "size": 1 } }));

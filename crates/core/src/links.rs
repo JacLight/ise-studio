@@ -770,9 +770,11 @@ pub(crate) fn guard(project: &crate::Project, ops: &[crate::Op], operation: &str
         if hash(before) == hash(after) {
             continue; // only kept fields changed (where it is placed)
         }
-        let name = project
-            .entity_state(*id)
-            .and_then(|c| c.values().find_map(|v| v.get("name").and_then(Value::as_str).map(str::to_owned)))
+        // Its name as it was (the command may be the one renaming it).
+        let name = before
+            .as_ref()
+            .and_then(|v| v.to_json().get("name").and_then(Value::as_str).map(str::to_owned))
+            .or_else(|| project.entity_state(*id).and_then(|c| c.values().find_map(|v| v.get("name").and_then(Value::as_str).map(str::to_owned))))
             .map(|n| format!("“{n}”"))
             .unwrap_or_else(|| format!("item {id}"));
         let from = if link.title.is_empty() || link.title == link.project { link.project.clone() } else { format!("{} ({})", link.title, link.project) };
