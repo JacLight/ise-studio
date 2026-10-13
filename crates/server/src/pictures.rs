@@ -208,6 +208,44 @@ pub async fn look(State(server): State<Arc<Server>>, Query(query): Query<HashMap
         Ok(app) => app,
         Err(e) => return fail(StatusCode::BAD_REQUEST, e),
     };
+    // A canvas's outline measured in mm (no model needed): `measure=<canvas>`
+    // with trace options (channel, threshold, invert, largest, holes, region
+    // l,t,r,b) and `every` (mm between stations).
+    if let Some(what) = query.get("measure").filter(|s| !s.is_empty()) {
+        let found = {
+            let project = app.project.lock().unwrap();
+            de_shape::canvas::find(project.world(), what)
+        };
+        let Some((_, canvas)) = found else { return fail(StatusCode::NOT_FOUND, format!("no canvas called “{what}” (./forma canvas list)")) };
+        let mut o = serde_json::Map::new();
+        for key in ["channel", "threshold", "invert", "largest", "holes", "region", "smooth", "minArea"] {
+            if let Some(v) = query.get(key) {
+                let value = match key {
+                    "channel" => json!(v),
+                    "invert" | "largest" | "holes" => json!(v != "0" && v != "false"),
+                    "region" => json!(v.split(',').filter_map(|s| s.trim().parse::<f64>().ok()).collect::<Vec<f64>>()),
+                    _ => match v.parse::<f64>() {
+                        Ok(n) => json!(n),
+                        Err(_) => return fail(StatusCode::BAD_REQUEST, format!("{key} must be a number")),
+                    },
+                };
+                o.insert(key.to_string(), value);
+            }
+        }
+        if !o.contains_key("largest") && !o.contains_key("channel") {
+            o.insert("largest".into(), json!(true));
+        }
+        let options: de_shape::canvas::TraceOptions = match serde_json::from_value(serde_json::Value::Object(o)) {
+            Ok(v) => v,
+            Err(e) => return fail(StatusCode::BAD_REQUEST, e.to_string()),
+        };
+        let every = query.get("every").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+        let measured = tokio::task::spawn_blocking(move || de_shape::canvas::measure(&canvas, &options, every, 0.05)).await.unwrap_or_else(|e| Err(e.to_string()));
+        return match measured {
+            Ok(v) => axum::Json(v).into_response(),
+            Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        };
+    }
     let view = match de_shape::render::View::parse(query.get("view").map(String::as_str).unwrap_or("iso")) {
         Ok(v) => v,
         Err(e) => return fail(StatusCode::BAD_REQUEST, e),

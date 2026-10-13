@@ -50,6 +50,7 @@
 //        | --calibrate u1,v1,u2,v2,mm | --width mm | --scale mm/px] [--at x,y,z] [--anchor u,v] [--rotate deg | --level u1,v1,u2,v2]
 //        [--flip] [--aspect k] [--crop l,t,r,b] [--perspective u1,v1,…,u4,v4,WxH] [--opacity 0.5] [--through] [--name N]
 //        | list | update <canvas> [same] [--reset crop,…] | remove <canvas>   reference pictures placed and calibrated in the model
+//   node tools/forma.mjs canvas measure <canvas> [--every mm] [--channel brightness --threshold 0.35] [--region l,t,r,b] [--all]   the outline in mm: bounds, spans at stations
 //   node tools/forma.mjs canvas match [<canvas>|all] [--of <thing>] [--out f.png]  ·  look --overlay <canvas> [what]
 //        the model drawn square to the canvas over its photo: silhouette IoU, outline distance, regions of extra/missing material
 //   node tools/forma.mjs ops [filter]         the commands the engine accepts, with schemas
@@ -1290,6 +1291,29 @@ if (command === "run") {
         const cal = c.perspective ? `squared up to ${c.perspective.width} × ${c.perspective.height} mm` : c.calibration ? `calibrated ${c.calibration.distance} mm between (${c.calibration.a}) and (${c.calibration.b})` : c.sized ? `${(Math.round(c.scale * 10000) / 10000)} mm/px${c.aspect !== undefined && c.aspect !== 1 ? `, aspect ${Math.round(c.aspect * 1000) / 1000}` : ""}` : "NOT SIZED";
         console.log(`${c.id}  “${c.name}”  ${c.view ?? "custom"} plane, origin (${o}); ${c.pixels[0]} × ${c.pixels[1]} px, ${cal}; anchor px (${c.anchor.map((v) => Math.round(v)).join(", ")})${c.rotation ? `, turned ${c.rotation}°` : ""}${c.flip ? ", mirrored" : ""}${c.crop ? `, crop ${c.crop.join(",")}` : ""}; opacity ${c.opacity}${c.visible === false ? ", hidden" : ""}${c.through ? ", shown through" : ""}`);
       }
+    } else if (sub === "measure" || sub === "outline") {
+      // The canvas's outline in mm: bounds, area, and its extent at stations across and up.
+      const c = await pick(rest.shift());
+      const q = new URLSearchParams({ ...(project ? { project } : {}), measure: c.id });
+      for (const k of ["every", "channel", "threshold", "region"]) {
+        const v = flag(`--${k}`);
+        if (v !== undefined) q.set(k, v);
+      }
+      if (bool("--invert")) q.set("invert", "1");
+      if (bool("--all")) q.set("largest", "0");
+      if (bool("--no-holes")) q.set("holes", "0");
+      const res = await fetch(`${http}/look?${q}`);
+      if (!res.ok) throw new Error(await res.text());
+      const m = await res.json();
+      const f = (v) => (Math.round(v * 10) / 10).toString();
+      const axes = (v) => (v === "front" ? ["x", "z"] : v === "back" ? ["−x", "z"] : v === "left" ? ["−y", "z"] : v === "right" ? ["y", "z"] : v === "top" ? ["x", "y"] : v === "bottom" ? ["−x", "y"] : ["plane x", "plane y"]);
+      const [ax, ay] = axes(m.view);
+      console.log(`“${m.canvas}” (${m.view ?? "custom"} plane; plane x is world ${ax}, plane y is world ${ay}): outline ${f(m.bounds.size[0])} × ${f(m.bounds.size[1])} mm, from (${f(m.bounds.min[0])}, ${f(m.bounds.min[1])}) to (${f(m.bounds.max[0])}, ${f(m.bounds.max[1])}); area ${Math.round(m.area_mm2)} mm²; ${m.outlines} outline${m.outlines === 1 ? "" : "s"}, ${m.holes} hole${m.holes === 1 ? "" : "s"}`);
+      const row = (s) => `${f(s.at).padStart(7)}: ${s.spans.length ? s.spans.map(([a, b]) => `${f(a)}…${f(b)} (${f(b - a)})`).join(", ") : "—"}`;
+      console.log(`  across, every ${f(m.step)} mm — at plane x: the spans in plane y (length)`);
+      for (const s of m.across) console.log("  " + row(s));
+      console.log(`  up — at plane y: the spans in plane x (length)`);
+      for (const s of m.up) console.log("  " + row(s));
     } else if (sub === "match" || sub === "compare") {
       const which = rest.shift();
       const of = flag("--of");
@@ -1306,7 +1330,7 @@ if (command === "run") {
       if (!list.length) throw new Error("no canvases to compare with");
       for (const c of list) await match(c, ofId, list.length > 1 ? undefined : out);
     } else {
-      throw new Error("usage: forma canvas add <photo|id> [--plane front|back|left|right|top|bottom] [--object WxH --align 'left bottom' | --calibrate u1,v1,u2,v2,mm | --width mm | --scale mm/px] [--at x,y,z] [--anchor u,v] [--rotate deg | --level u1,v1,u2,v2] [--flip] [--aspect k] [--crop l,t,r,b] [--perspective u1,v1,…,u4,v4,WxH] [--opacity 0.5] [--through] [--name N]\n       | list | update <canvas> [same flags] [--reset crop,perspective,…] | remove <canvas> | match [<canvas>|all] [--of <thing>] [--out f.png]");
+      throw new Error("usage: forma canvas add <photo|id> [--plane front|back|left|right|top|bottom] [--object WxH --align 'left bottom' | --calibrate u1,v1,u2,v2,mm | --width mm | --scale mm/px] [--at x,y,z] [--anchor u,v] [--rotate deg | --level u1,v1,u2,v2] [--flip] [--aspect k] [--crop l,t,r,b] [--perspective u1,v1,…,u4,v4,WxH] [--opacity 0.5] [--through] [--name N]\n       | list | update <canvas> [same flags] [--reset crop,perspective,…] | remove <canvas> | measure <canvas> [--every mm] [--channel c --threshold t] [--region l,t,r,b] | match [<canvas>|all] [--of <thing>] [--out f.png]");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
@@ -1399,9 +1423,15 @@ if (command === "run") {
   }
 } else if (command === "get") {
   const s = await engine.snapshot;
-  const e = s.entities.find((x) => x.id === file);
+  // By id, or by name (a shape, instance, assembly, sketch, sheet or canvas).
+  const named = (x) => {
+    const c = x.components;
+    return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["assembly.definition"]?.name ?? c["shape.sketch"]?.name ?? c["shape.sheet"]?.name ?? c["shape.canvas"]?.name;
+  };
+  const byName = s.entities.filter((x) => file && named(x)?.toLowerCase() === file.toLowerCase());
+  const e = s.entities.find((x) => x.id === file) ?? (byName.length === 1 ? byName[0] : undefined);
   if (!e) {
-    console.error(`no entity ${file}`);
+    console.error(byName.length > 1 ? `“${file}” names ${byName.length} things: use an id (${byName.map((x) => x.id).join(", ")})` : `no entity ${file} (give an id or a name)`);
     failed = true;
   } else {
     // Meshes are for drawing, not reading: report their size instead.

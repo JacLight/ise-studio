@@ -861,6 +861,61 @@ pub fn trace(c: &Canvas, o: &TraceOptions, tolerance: f64) -> Result<Vec<Vec<[f6
     Ok(loops)
 }
 
+/// Where a straight line across outlines runs inside them: `vertical` (x =
+/// `c`) or horizontal (y = `c`) → spans along the line, in order.
+pub fn spans(loops: &[Vec<[f64; 2]>], c: f64, vertical: bool) -> Vec<[f64; 2]> {
+    let (i, j) = if vertical { (0, 1) } else { (1, 0) };
+    let mut hits = Vec::new();
+    for l in loops {
+        for k in 0..l.len() {
+            let (a, b) = (l[k], l[(k + 1) % l.len()]);
+            if (a[i] <= c && c < b[i]) || (b[i] <= c && c < a[i]) {
+                hits.push(a[j] + (c - a[i]) / (b[i] - a[i]) * (b[j] - a[j]));
+            }
+        }
+    }
+    hits.sort_by(f64::total_cmp);
+    hits.chunks_exact(2).map(|p| [p[0], p[1]]).collect()
+}
+
+/// A canvas's outline measured in plane mm: its bounds and area, and where
+/// it is at stations every `every` mm across and up (what `./forma canvas
+/// measure` prints).
+pub fn measure(c: &Canvas, o: &TraceOptions, every: f64, tolerance: f64) -> Result<Value, String> {
+    let loops = trace(c, o, tolerance)?;
+    let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
+    for p in loops.iter().flatten() {
+        lo = [lo[0].min(p[0]), lo[1].min(p[1])];
+        hi = [hi[0].max(p[0]), hi[1].max(p[1])];
+    }
+    let area: f64 = loops.iter().map(|l| crate::trace::area(l)).sum();
+    let step = if every > 0.0 { every } else { ((hi[0] - lo[0]).max(hi[1] - lo[1]) / 20.0).max(0.5) };
+    let round = |v: f64| (v * 100.0).round() / 100.0;
+    let stations = |a: f64, b: f64, vertical: bool| -> Vec<Value> {
+        let first = (a / step).ceil() * step;
+        let mut out = Vec::new();
+        let mut t = first;
+        while t <= b + 1e-9 && out.len() < 2000 {
+            let s: Vec<[f64; 2]> = spans(&loops, t, vertical).into_iter().map(|[p, q]| [round(p), round(q)]).collect();
+            out.push(json!({ "at": round(t), "spans": s }));
+            t += step;
+        }
+        out
+    };
+    Ok(json!({
+        "canvas": c.name,
+        "view": c.view,
+        "plane": c.plane,
+        "bounds": { "min": [round(lo[0]), round(lo[1])], "max": [round(hi[0]), round(hi[1])], "size": [round(hi[0] - lo[0]), round(hi[1] - lo[1])] },
+        "area_mm2": round(area),
+        "outlines": loops.iter().filter(|l| crate::trace::area(l) > 0.0).count(),
+        "holes": loops.iter().filter(|l| crate::trace::area(l) < 0.0).count(),
+        "step": step,
+        "across": stations(lo[0], hi[0], true),
+        "up": stations(lo[1], hi[1], false),
+    }))
+}
+
 fn inside(poly: &[[f64; 2]], p: [f64; 2]) -> bool {
     let mut c = false;
     let n = poly.len();
@@ -876,6 +931,30 @@ fn inside(poly: &[[f64; 2]], p: [f64; 2]) -> bool {
 /// `canvasTrace` in programs: the canvas as programs see it (its JSON) and
 /// trace options, to loops in plane mm (JSON).
 pub fn trace_json(canvas: &str, options: &str, tolerance: f64) -> Result<String, String> {
+    // A program is evaluated several times (the view, the exact solid, its
+    // mass) and on every change, while its canvases rarely change: keep the
+    // last traces.
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Vec<(u64, String)>>> = std::sync::OnceLock::new();
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (canvas, options, tolerance.to_bits()).hash(&mut h);
+        h.finish()
+    };
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some((_, v)) = cache.lock().unwrap().iter().find(|(k, _)| *k == key) {
+        return Ok(v.clone());
+    }
+    let out = trace_json_uncached(canvas, options, tolerance)?;
+    let mut c = cache.lock().unwrap();
+    if c.len() >= 48 {
+        c.remove(0);
+    }
+    c.push((key, out.clone()));
+    Ok(out)
+}
+
+fn trace_json_uncached(canvas: &str, options: &str, tolerance: f64) -> Result<String, String> {
     let c = from_view_json(canvas)?;
     let o: TraceOptions = serde_json::from_str(if options.trim().is_empty() { "{}" } else { options }).map_err(|e| format!("canvas trace: {e}"))?;
     let loops = trace(&c, &o, tolerance)?;
@@ -1097,6 +1176,27 @@ mod tests {
         assert!(close(mid, [0.0, -80.0]), "{mid:?}");
         let back = apply(&c.to_pixel(), [5.0, 5.0]);
         assert!(close(apply(&m, back), [5.0, 5.0]));
+    }
+
+    /// Timing on a real photo: FORMA_PHOTO=<file.jpg> cargo test … -- --ignored trace_timing --nocapture
+    #[test]
+    #[ignore]
+    fn trace_timing() {
+        let Ok(path) = std::env::var("FORMA_PHOTO") else { return };
+        crate::assets::set_dir(std::env::temp_dir().join(format!("forma-timing-{}", std::process::id())));
+        let sha = crate::assets::store(&std::fs::read(path).unwrap()).unwrap();
+        let p = crate::image::load(&sha).unwrap();
+        let mut c = canvas(p.width as u32, p.height as u32);
+        c.image = sha;
+        c.scale = 0.2;
+        let t = std::time::Instant::now();
+        let ink = object_ink(&c, &p);
+        eprintln!("object ink {:?}", t.elapsed());
+        let t = std::time::Instant::now();
+        let o: TraceOptions = serde_json::from_str(r#"{"largest": true}"#).unwrap();
+        let l = trace(&c, &o, 0.05).unwrap();
+        eprintln!("trace {:?}: {} loops, {} points", t.elapsed(), l.len(), l.iter().map(|x| x.len()).sum::<usize>());
+        let _ = ink;
     }
 
     #[test]

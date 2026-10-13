@@ -1153,10 +1153,12 @@ class CanvasRef {
 }
 
 /** A canvas placed in the project, by name (`./forma canvas list`). */
+const __canvasRefs = new Map();
 function canvas(name) {
   const data = __canvases[name];
   if (!data) throw new Error(`no canvas called “${name}” is linked to this program (./forma canvas list)`);
-  return new CanvasRef(name, data);
+  if (!__canvasRefs.has(name)) __canvasRefs.set(name, new CanvasRef(name, data));
+  return __canvasRefs.get(name);
 }
 
 /**
