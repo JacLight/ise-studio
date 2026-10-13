@@ -22,6 +22,7 @@ mod pcb_tools;
 mod pcb_libs;
 mod pcb_schematic;
 mod peers;
+mod photogrammetry;
 mod pictures;
 mod share;
 mod render;
@@ -2392,6 +2393,12 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/scans/{id}/remove", axum::routing::post(scans::remove))
         .route("/scans/{id}/{what}/{op}", axum::routing::post(scans::derive))
         .route("/mesh-from/{id}", axum::routing::post(scans::mesh_from))
+        .route("/photos", get(photogrammetry::list_photos))
+        .route("/photos/{set}/{file}", axum::routing::post(photogrammetry::add_photo).layer(axum::extract::DefaultBodyLimit::max(2048 * 1024 * 1024)))
+        .route("/photogrammetry", get(photogrammetry::list_jobs).post(photogrammetry::start))
+        .route("/photogrammetry/engines", get(photogrammetry::engines))
+        .route("/photogrammetry/markers.pdf", get(photogrammetry::markers_pdf))
+        .route("/photogrammetry/{job}/cancel", axum::routing::post(photogrammetry::cancel))
         .route("/images", get(pictures::list))
         .route("/images/{file}", get(pictures::get).post(pictures::add).layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)))
         .route("/ai/attachments/{file}", get(pictures::attachment).post(pictures::attach).layer(axum::extract::DefaultBodyLimit::max(40 * 1024 * 1024)))

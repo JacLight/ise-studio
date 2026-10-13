@@ -76,6 +76,11 @@
 //        | mesh from <part> [--tolerance] [--angle] [--max-edge]   mesh evaluation and repair, reworking, sections, flattening
 //   node tools/forma.mjs inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] [--require]
 //                                            deviation of a scan from its CAD part: statistics, pass/fail, as a requirement
+//   node tools/forma.mjs scan photos <folder | photos.zip | photo …> [--engine auto|object-capture|colmap] [--detail preview|reduced|medium|full] [--mask] [--name N] [--detach]
+//        photogrammetry: photos → a sized, levelled scan and a cleaned one, with quality (photos used, reprojection, scale, coverage)
+//   node tools/forma.mjs scan engines | jobs | cancel <job> | markers [--letter] [--out f.pdf] | quality <scan>
+//   node tools/forma.mjs scan scale <scan> --from x,y,z --to x,y,z --distance mm [--pick mm] | --factor f  ·  scan level <scan>
+//   node tools/forma.mjs scan render-photos <folder> [--count 40] [--rings 25,50] [--distance mm] [--fov 45] [--sheet]   a test photo set of the model
 //
 // steps.json is an array of { "operation": "...", "parameters": { ... } }.
 // Any string "$N.path" in parameters is replaced by step N's output at that
@@ -1532,6 +1537,121 @@ if (command === "run") {
       const list = await call("GET", "/scans");
       if (!list.length) console.log("no scans in this project yet (forma scan add <file>)");
       for (const e of list) console.log(`${e.id}  ${sayScan(e)}${e.parent ? `  ← ${e.parent.slice(0, 12)}` : ""}`);
+    } else if (command === "scan" && sub === "engines") {
+      const { engines } = await call("GET", "/photogrammetry/engines");
+      for (const e of engines) console.log(`${e.available ? "✓" : "✗"} ${e.name}${e.version ? ` (${e.version})` : ""}: ${e.detail}`);
+    } else if (command === "scan" && sub === "markers") {
+      const out = flag("--out") ?? "forma-scale-markers.pdf";
+      const res = await fetch(`${http}/photogrammetry/markers.pdf${has("--letter") ? "?paper=letter" : ""}`);
+      if (!res.ok) throw new Error(await res.text());
+      writeFileSync(out, Buffer.from(await res.arrayBuffer()));
+      console.log(`✓ ${out}: six 30 mm markers round a 250 × 170 mm field. Print at 100 % (check the 100 mm bar), lay it flat, stand the object in the middle, keep markers in every photo.`);
+    } else if (command === "scan" && (sub === "jobs" || sub === "cancel")) {
+      if (sub === "cancel") {
+        if (!id) throw new Error("forma scan cancel <job id>");
+        await call("POST", `/photogrammetry/${id}/cancel`);
+        console.log(`✓ cancelling ${id}`);
+      } else {
+        const list = await call("GET", "/photogrammetry");
+        if (!list.length) console.log("no photogrammetry jobs since the engine started");
+        for (const j of list) console.log(`${j.id}  ${j.name}: ${j.engine}, ${j.images} photos, ${j.state} ${Math.round(j.progress * 100)}% (${j.stage})${j.error ? ` — ${j.error}` : ""}`);
+      }
+    } else if (command === "scan" && sub === "render-photos") {
+      // A photo set of the model drawn by the engine from many angles (a known shape to test photogrammetry on).
+      const dir = args[2];
+      if (!dir) throw new Error("forma scan render-photos <folder> [--count 40] [--rings 25,50] [--distance mm] [--fov 45] [--size 1600x1200] [--sheet] [--light 30]");
+      const count = num(flag("--count")) ?? 40;
+      const rings = nums(flag("--rings")) ?? [25, 50];
+      const distance = flag("--distance");
+      const fov = flag("--fov") ?? "45";
+      const size = flag("--size") ?? "1600x1200";
+      const light = flag("--light") ?? "30";
+      const sheet = has("--sheet");
+      const { mkdirSync } = await import("node:fs");
+      mkdirSync(dir, { recursive: true });
+      const cameras = [];
+      const per = Math.ceil(count / rings.length);
+      let n = 0;
+      for (const [r, el] of rings.entries()) {
+        for (let i = 0; i < per && n < count; i++, n++) {
+          const az = (360 * i) / per + r * (180 / per);
+          const qs = new URLSearchParams({ ...(project ? { project } : {}), orbit: `${az.toFixed(2)},${el}${distance ? `,${distance}` : ""}`, fov, size, light, sheet: sheet ? "1" : "0" });
+          const res = await fetch(`${http}/look?${qs}`);
+          if (!res.ok) throw new Error(await res.text());
+          const name = `photo_${String(n + 1).padStart(3, "0")}.png`;
+          writeFileSync(`${dir}/${name}`, Buffer.from(await res.arrayBuffer()));
+          cameras.push({ image: name, azimuth: az, elevation: el, ...JSON.parse(res.headers.get("x-forma-camera")) });
+          process.stdout.write(`\r  ${n + 1}/${count} photos`);
+        }
+      }
+      writeFileSync(`${dir}/cameras.json`, JSON.stringify(cameras, null, 1));
+      console.log(`\n✓ ${count} photos in ${dir} (${size}, ${fov}° field of view, rings at ${rings.join("°, ")}°${sheet ? ", on the marker sheet" : ""}); the true cameras in ${dir}/cameras.json`);
+    } else if (command === "scan" && sub === "photos") {
+      // Photos from many angles → a scan (Object Capture or COLMAP), sized from the marker sheet.
+      const engineName = flag("--engine") ?? "auto";
+      const detail = flag("--detail") ?? "medium";
+      const name = flag("--name");
+      const mask = has("--mask");
+      const noClean = has("--no-clean");
+      const detach = has("--detach");
+      const paths = args.slice(2).filter((a) => !a.startsWith("--"));
+      if (!paths.length) throw new Error("forma scan photos <folder | photos.zip | photo …> [--engine auto|object-capture|colmap] [--detail preview|reduced|medium|full] [--mask] [--name N] [--no-clean] [--detach]");
+      const { statSync, readdirSync } = await import("node:fs");
+      let files = [];
+      for (const p of paths) {
+        if (statSync(p).isDirectory()) files.push(...readdirSync(p).filter((f) => /\.(jpe?g|png|heic|heif|zip)$/i.test(f)).sort().map((f) => `${p}/${f}`));
+        else files.push(p);
+      }
+      if (!files.length) throw new Error("no JPG, PNG, HEIC or zip files there");
+      const set = (flag("--set") ?? name ?? basename(paths[0]).replace(/\.zip$/i, "")).replace(/[^A-Za-z0-9 ._-]+/g, "-").slice(0, 80) || "photos";
+      let count = 0;
+      for (const f of files) {
+        const r = await call("POST", `/photos/${encodeURIComponent(set)}/${encodeURIComponent(basename(f))}`, readFileSync(f));
+        count = r.photos;
+        process.stdout.write(`\r  uploading: ${count} photos in “${set}”`);
+      }
+      const qs = new URLSearchParams({ set, engine: engineName, detail, ...(mask ? { mask: "1" } : {}), ...(noClean ? { clean: "0" } : {}), ...(name ? { name } : {}) });
+      const job = await call("POST", `/photogrammetry?${qs}`);
+      console.log(`\n✓ job ${job.id}: ${job.engine}, ${job.images} photos, detail ${job.detail}`);
+      if (detach) {
+        console.log(`  running in the background: forma scan jobs · forma scan cancel ${job.id}`);
+      } else {
+        let last = "";
+        let j = job;
+        while (j.state === "queued" || j.state === "running") {
+          await new Promise((r) => setTimeout(r, 1000));
+          j = (await call("GET", "/photogrammetry")).find((x) => x.id === job.id) ?? j;
+          const line = `  ${Math.round(j.progress * 100)}% ${j.stage}`;
+          if (line !== last) process.stdout.write(`\r${line.padEnd(60)}`);
+          last = line;
+        }
+        process.stdout.write("\n");
+        if (j.state !== "done") throw new Error(`${j.state}: ${j.error ?? ""}`);
+        const r = j.result;
+        const qa = r.quality;
+        const sc = r.scale;
+        console.log(`✓ ${sayScan(r.scan)}`);
+        if (r.clean) console.log(`✓ cleaned: ${sayScan(r.clean)}`);
+        else if (r.cleanError) console.log(`  cleaning failed: ${r.cleanError}`);
+        console.log(`  photos: ${qa.used} of ${qa.images} used${qa.rejected.length ? `; rejected: ${qa.rejected.map((x) => x.image ?? `#${x.sample}`).join(", ")}` : ""}${qa.reprojectionPx != null ? `; reprojection error ${qa.reprojectionPx.toFixed(2)} px` : ""}`);
+        console.log(`  scale: ${sc.method}${sc.uncertainty != null ? ` (±${(sc.uncertainty * 100).toFixed(2)} %)` : ""} — ${sc.detail}`);
+        console.log(`  coverage by 30° sector: ${qa.coverage.sectors.join(" ")}; elevations ${Math.round(qa.coverage.lowest_elevation)}°…${Math.round(qa.coverage.highest_elevation)}°${qa.holes != null ? `; ${qa.holes} open hole(s) in the raw surface` : ""}`);
+        for (const a of qa.advice) console.log(`  ! ${a}`);
+        console.log(`  next: forma mesh check ${(r.clean ?? r.scan).id.slice(0, 12)} · forma scan fit … · forma inspect ${(r.clean ?? r.scan).id.slice(0, 12)} <part> --tolerance 0.5 --align best`);
+      }
+    } else if (command === "scan" && (sub === "scale" || sub === "level")) {
+      if (!id) throw new Error("forma scan scale <scan> --from x,y,z --to x,y,z --distance mm [--pick mm] | --factor f  ·  forma scan level <scan>");
+      const body =
+        sub === "scale" ? (args.includes("--factor") ? { factor: num(flag("--factor")) } : { from: nums(flag("--from")), to: nums(flag("--to")), distance: num(flag("--distance")), pick: num(flag("--pick")) }) : { tolerance: num(flag("--tolerance")) };
+      const name = flag("--name");
+      const r = await call("POST", `/scans/${id}/transform/${sub}`, { ...body, ...(name ? { name } : {}) });
+      console.log(`✓ ${sayScan(r.scan)}\n  ${r.report.detail}`);
+    } else if (command === "scan" && sub === "quality") {
+      const e = (await call("GET", "/scans")).find((x) => x.id.startsWith(id) || x.name === id);
+      if (!e) throw new Error(`no scan ${id}`);
+      const p = e.provenance;
+      if (!p) console.log(`${sayScan(e)}: no record beyond “${e.source}”`);
+      else console.log(JSON.stringify({ ...p, cameras: p.cameras ? `${p.cameras.length} camera poses` : undefined }, null, 1));
     } else if (!id && !(command === "mesh" && sub === "from")) {
       throw new Error(`say which scan: forma ${command} ${command === "inspect" ? "<scan> <part> --tolerance mm" : `${sub ?? "<what>"} <scan>`}`);
     } else if (command === "scan" && sub === "info") {

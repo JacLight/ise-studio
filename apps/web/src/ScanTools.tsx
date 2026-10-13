@@ -12,6 +12,7 @@ import * as THREE from "three";
 import { type EntityView, projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
 import { isPart, partName, program } from "./model";
+import { PhotoScan } from "./PhotoScan";
 import { DEVIATION_STOPS, type ScanLayer, deviationColor } from "./scanLayer";
 import "./ScanTools.css";
 
@@ -74,6 +75,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 
 export function ScanTools(props: {
   entities: ReadonlyMap<string, EntityView>;
+  onJob: (listener: (job: unknown) => void) => () => void;
   run: (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
   notify: (message: string) => void;
   onLayer: (layer: ScanLayer | null) => void;
@@ -258,6 +260,8 @@ export function ScanTools(props: {
           <small>Points: XYZ, PLY, PCD, E57 · meshes: STL, OBJ, PLY, glTF, 3MF</small>
           <input ref={fileInput} type="file" style={{ display: "none" }} accept=".xyz,.asc,.pts,.csv,.txt,.ply,.pcd,.e57,.stl,.obj,.gltf,.glb,.3mf" onChange={(e) => (upload(e.target.files), (e.target.value = ""))} />
         </div>
+
+        <PhotoScan active={active} onJob={props.onJob} onScan={(id) => void refresh(id)} notify={props.notify} />
 
         {scans.length > 0 && (
           <div className="scan-list" role="listbox" aria-label="Scans">

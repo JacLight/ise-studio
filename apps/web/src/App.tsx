@@ -1756,7 +1756,7 @@ export function App({ engine }: { engine: Engine }) {
       )}
       {focus && <Restore onRestore={restoreAll} />}
 
-      {!focus && scansOpen && <ScanTools entities={state.entities} run={run} notify={notify} onLayer={setScanLayer} onClose={() => setScansOpen(false)} />}
+      {!focus && scansOpen && <ScanTools entities={state.entities} onJob={(l) => engine.onPhotogrammetry(l)} run={run} notify={notify} onLayer={setScanLayer} onClose={() => setScansOpen(false)} />}
 
       {!focus && bench && (
         <Workbench

@@ -201,3 +201,140 @@
   color: var(--bad, #d6455d);
   white-space: pre-wrap;
 }
+
+/* Photos to model. */
+.pg-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.pg-options label {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.pg-options select {
+  max-width: 130px;
+}
+.scan-panel a.btn {
+  text-decoration: none;
+  line-height: 26px;
+}
+.pg-engines {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  font-size: 11px;
+  color: var(--muted, #7a7f87);
+}
+.pg-engines li {
+  margin: 2px 0;
+  padding-left: 12px;
+  position: relative;
+}
+.pg-engines li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3e9a54;
+}
+.pg-engines li.missing::before {
+  background: #c9ccd1;
+}
+.pg-engines strong {
+  color: var(--text, #2a2d33);
+  font-weight: 650;
+}
+.pg-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: #ece8f6;
+  overflow: hidden;
+}
+.pg-bar span {
+  display: block;
+  height: 100%;
+  background: #6d4ae0;
+  transition: width 0.4s ease;
+}
+.pg-job-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+.pg-quality {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 4px 10px;
+  align-items: center;
+  margin: 6px 0;
+}
+.pg-ring {
+  width: 76px;
+  height: 76px;
+}
+.pg-ring path {
+  fill: #6d4ae0;
+}
+.pg-ring path.gap {
+  fill: #f0b9b4;
+}
+.pg-ring text {
+  font-size: 15px;
+  font-weight: 650;
+  fill: var(--text, #2a2d33);
+}
+.pg-quality dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  margin: 0;
+  font-size: 12px;
+}
+.pg-quality dt {
+  color: var(--muted, #7a7f87);
+}
+.pg-quality dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.pg-advice {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  padding-left: 16px;
+  font-size: 11.5px;
+  color: #a2561c;
+}
+.pg-guide {
+  font-size: 12px;
+  margin-top: 4px;
+}
+.pg-guide summary {
+  cursor: pointer;
+  color: #5b3fc4;
+  font-weight: 600;
+}
+.pg-guide ol {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  line-height: 1.45;
+}
+.pg-scale {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.pg-scale input {
+  width: 92px;
+}

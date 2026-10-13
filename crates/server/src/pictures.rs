@@ -226,6 +226,49 @@ pub async fn look(State(server): State<Arc<Server>>, Query(query): Query<HashMap
     if sources.is_empty() {
         return fail(StatusCode::NOT_FOUND, "nothing placed to look at".into());
     }
+    // A photo-like picture from an orbiting perspective camera (photogrammetry test sets).
+    if let Some(orbit) = query.get("orbit") {
+        let v: Vec<f64> = orbit.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        if v.len() < 2 {
+            return fail(StatusCode::BAD_REQUEST, "orbit is azimuth,elevation[,distance mm] in degrees".into());
+        }
+        let fov = query.get("fov").and_then(|s| s.parse::<f64>().ok()).unwrap_or(40.0).clamp(5.0, 120.0);
+        let on = |k: &str, d: bool| query.get(k).map(|s| s != "0" && s != "false").unwrap_or(d);
+        let scene = de_shape::render::PhotoScene {
+            speckle: on("speckle", true),
+            sheet: on("sheet", false).then(de_scan::markers::Sheet::default),
+            light: query.get("light").and_then(|s| s.parse().ok()).unwrap_or(30.0),
+        };
+        let drawn = tokio::task::spawn_blocking(move || -> Result<de_shape::render::Photo, String> {
+            let mut meshes = Vec::new();
+            for s in &sources {
+                s.meshes(&mut meshes)?;
+            }
+            let mut b = [f64::MAX, f64::MAX, f64::MAX, f64::MIN, f64::MIN, f64::MIN];
+            for m in &meshes {
+                for p in m.positions.chunks_exact(3) {
+                    for k in 0..3 {
+                        b[k] = b[k].min(p[k] as f64);
+                        b[k + 3] = b[k + 3].max(p[k] as f64);
+                    }
+                }
+            }
+            let centre = [(b[0] + b[3]) / 2.0, (b[1] + b[4]) / 2.0, b[2] + (b[5] - b[2]) * 0.35];
+            let diag = ((b[3] - b[0]).powi(2) + (b[4] - b[1]).powi(2) + (b[5] - b[2]).powi(2)).sqrt();
+            let distance = v.get(2).copied().unwrap_or(diag * 2.6);
+            let cam = de_shape::render::PhotoCamera::orbit(centre, v[0], v[1], distance, fov);
+            de_shape::render::render_photo(&meshes, cam, w, h, &scene)
+        })
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
+        return match drawn {
+            Ok(p) => {
+                let camera = json!({ "focal": p.focal, "centre": p.centre, "rotation": p.rotation, "translation": p.translation, "width": w, "height": h }).to_string();
+                ([(header::CONTENT_TYPE, "image/png".to_string()), (header::HeaderName::from_static("x-forma-camera"), camera)], p.png).into_response()
+            }
+            Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        };
+    }
     let drawn = tokio::task::spawn_blocking(move || -> Result<de_shape::render::Picture, String> {
         let mut meshes = Vec::new();
         for s in &sources {

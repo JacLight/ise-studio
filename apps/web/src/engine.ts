@@ -511,6 +511,16 @@ export class Engine {
     };
   }
 
+  private jobListeners = new Set<(job: unknown) => void>();
+
+  /** Photogrammetry jobs' progress as the engine reports it. Returns the unsubscribe. */
+  onPhotogrammetry(listener: (job: unknown) => void) {
+    this.jobListeners.add(listener);
+    return () => {
+      this.jobListeners.delete(listener);
+    };
+  }
+
   /** Called when the team, its connections or its conflicts change. Returns the unsubscribe. */
   onTeam(listener: () => void) {
     this.teamListeners.add(listener);
@@ -683,6 +693,9 @@ export class Engine {
       }
       case "cursor":
         for (const l of this.cursorListeners) l(message as TeamCursor);
+        break;
+      case "photogrammetry":
+        for (const l of this.jobListeners) l(message.job);
         break;
       case "resync":
         this.send({ type: "snapshot" });
