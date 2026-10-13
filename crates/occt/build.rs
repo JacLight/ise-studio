@@ -17,6 +17,7 @@ fn main() {
     // solids.cpp is #included by shim.cpp (one translation unit).
     println!("cargo:rerun-if-changed=src/solids.cpp");
     println!("cargo:rerun-if-changed=src/scan.cpp");
+    println!("cargo:rerun-if-changed=src/surfaces.cpp");
     println!("cargo:rerun-if-env-changed=OCCT_DIR");
     cc::Build::new()
         .cpp(true)

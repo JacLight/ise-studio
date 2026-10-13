@@ -8,6 +8,7 @@
 //   node tools/forma.mjs motion <joint id> [steps] [--set '{"Elbow":40}']   sweep a joint through its limits: what moves, closest approaches, clashes, where it binds
 //   node tools/forma.mjs fit <assembly or instance id | project> [--motion]   do screws, inserts, nuts, bearings and joined parts fit (and, with --motion, every joint's sweep)
 //   node tools/forma.mjs check-geometry <id> [part]   the exact kernel's check of each part: valid, self-intersections, tolerances
+//   node tools/forma.mjs surfaces <id> [part] [--pull x,y,z] [--min deg]   surface analysis: continuity across every seam (gap, crease, curvature jump), tightest bend, draft
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
 //   node tools/forma.mjs set-study <shape id> study.json [--part X]   save a part's stress/heat study (faces as { normal, near: [x, y, z] })
 //   node tools/forma.mjs stress|fatigue|modes|buckle|heat|converge|inp <shape id> [--part X] [--count N] [--resolutions 32,48,64]
@@ -499,6 +500,38 @@ if (command === "run") {
       for (const x of c.faults) console.log(`       ${x.check}${x.shapes ? ` (${x.shapes})` : ""}${x.distance ? `, off by ${x.distance} mm` : ""}`);
     }
     failed = !r.ok;
+  }
+} else if (command === "surfaces") {
+  // Surface analysis of every part, exactly: G0/G1/G2 across each seam, curvature, draft.
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const pull = flag("--pull");
+  const min = flag("--min");
+  const [, id, part] = args;
+  if (!id) {
+    console.error("✗ say which: forma surfaces <id> [part] [--pull x,y,z] [--min deg]");
+    process.exit(1);
+  }
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const q = new URLSearchParams({ ...(project ? { project } : {}), ...(part ? { part } : {}), ...(pull ? { pull } : {}), ...(min ? { min } : {}) });
+  const res = await fetch(`${http}/surfaces/${id}?${q}`);
+  if (!res.ok) {
+    console.error(`✗ ${await res.text()}`);
+    failed = true;
+  } else {
+    const r = await res.json();
+    const f = (v, d = 4) => (v == null ? "-" : Math.abs(v) < 1e-4 && v !== 0 ? v.toExponential(1) : +v.toFixed(d));
+    console.log(`${r.name}: ${r.parts.length} part${r.parts.length === 1 ? "" : "s"}`);
+    for (const p of r.parts) {
+      const b = p.body, c = p.continuity;
+      console.log(`  ${p.name}: ${b.solids ? `${b.solids} solid` : b.closed ? "closed shell" : `open sheet (${b.free_edges} free edges)`}, ${b.faces} faces`);
+      console.log(`    seams: ${c.edges} shared edges, ${c.smooth} tangent (G1); worst gap ${f(c.max.g0)} mm, crease ${f(c.max.g1, 3)}°, curvature jump ${f(c.max.g2)} 1/mm`);
+      for (const e of c.worst.filter((e) => e.g1 >= 0.1).slice(0, 5)) console.log(`      edge ${e.edge} (faces ${e.faces.join("/")}, ${f(e.length, 1)} mm): crease ${f(e.g1, 2)}°, curvature jump ${f(e.g2)} 1/mm`);
+      console.log(`    tightest bend: radius ${p.curvature.min_radius == null ? "flat" : `${f(p.curvature.min_radius, 2)} mm`}`);
+      console.log(`    draft along [${p.draft.pull.map((v) => f(v, 3)).join(", ")}]: ${p.draft.under.length ? `faces ${p.draft.under.join(", ")} within ${p.draft.min}° of square (need draft)` : `every face has ${p.draft.min}°+`}`);
+    }
   }
 } else if (command === "pcb") {
   // Electronics: KiCad library parts, footprint verification, the Gerber read-back check.
@@ -1921,7 +1954,7 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
     failed = true;
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | flat [id] [part] | render [--width] | get <id> | tree | list | check | ops | bim | schedule | ifc export|import | plan | check-geometry <id> [part] | measure <part> [other] | sheet <name> | draft | view <action> [what] | import <file> [--name N] | export <id> <file> | --format <fmt> [--part P] [--out path] | bundle [file] | image add <file> | image list | look [what] [--view v]  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | flat [id] [part] | render [--width] | get <id> | tree | list | check | ops | bim | schedule | ifc export|import | plan | check-geometry <id> [part] | surfaces <id> [part] | measure <part> [other] | sheet <name> | draft | view <action> [what] | import <file> [--name N] | export <id> <file> | --format <fmt> [--part P] [--out path] | bundle [file] | image add <file> | image list | look [what] [--view v]  [--project name] [--url ws://…]");
   failed = true;
 }
 

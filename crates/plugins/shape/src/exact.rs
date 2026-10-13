@@ -172,8 +172,62 @@ fn to_manifold(a: &mut Arena, s: Shape, tolerance: f64) -> Result<Manifold, Stri
         // vertices; weld them so the mesh is closed.
         let (pos, tri) = weld(&m.positions, &m.triangles, tolerance * 1e-3);
         let tris: Vec<u64> = tri.iter().map(|t| *t as u64).collect();
-        Manifold::from_mesh_f64(&pos, 3, &tris).map_err(|e| format!("could not mesh the exact shape ({e})"))
+        Manifold::from_mesh_f64(&pos, 3, &tris).or_else(|e| {
+            // A sheet (an open surface): drawn as a thin skin either side of it.
+            let (spos, stri) = skin(&pos, &tri, (tolerance * 0.5).clamp(0.01, 0.05)).ok_or_else(|| format!("could not mesh the exact shape ({e})"))?;
+            Manifold::from_mesh_f64(&spos, 3, &stri).map_err(|e| format!("could not mesh the surface ({e})"))
+        })
     })
+}
+
+/// An open (welded) mesh thickened `t` mm about itself, its open edges
+/// walled: how a sheet shows in the view. None when nothing is open.
+fn skin(pos: &[f64], tri: &[u32], t: f64) -> Option<(Vec<f64>, Vec<u64>)> {
+    use std::collections::HashMap;
+    let n = pos.len() / 3;
+    let p = |i: u32| [pos[i as usize * 3], pos[i as usize * 3 + 1], pos[i as usize * 3 + 2]];
+    let mut normal = vec![[0.0f64; 3]; n];
+    let mut count: HashMap<(u32, u32), i32> = HashMap::new();
+    for c in tri.chunks_exact(3) {
+        let (a, b, d) = (p(c[0]), p(c[1]), p(c[2]));
+        let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let v = [d[0] - a[0], d[1] - a[1], d[2] - a[2]];
+        let f = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        for k in c {
+            for j in 0..3 {
+                normal[*k as usize][j] += f[j];
+            }
+        }
+        for (x, y) in [(c[0], c[1]), (c[1], c[2]), (c[2], c[0])] {
+            *count.entry((x.min(y), x.max(y))).or_default() += 1;
+        }
+    }
+    if !count.values().any(|c| *c == 1) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(pos.len() * 2);
+    for side in [0.5, -0.5] {
+        for (i, nv) in normal.iter().enumerate() {
+            let l = (nv[0] * nv[0] + nv[1] * nv[1] + nv[2] * nv[2]).sqrt().max(1e-300);
+            for j in 0..3 {
+                out.push(pos[i * 3 + j] + nv[j] / l * t * side);
+            }
+        }
+    }
+    let nn = n as u64;
+    let mut tris = Vec::with_capacity(tri.len() * 2 + 64);
+    for c in tri.chunks_exact(3) {
+        let [a, b, d] = [c[0] as u64, c[1] as u64, c[2] as u64];
+        tris.extend([a, b, d]);
+        tris.extend([a + nn, d + nn, b + nn]);
+        for (x, y) in [(a, b), (b, d), (d, a)] {
+            if count[&((x as u32).min(y as u32), (x as u32).max(y as u32))] == 1 {
+                tris.extend([x, x + nn, y + nn]);
+                tris.extend([x, y + nn, y]);
+            }
+        }
+    }
+    Some((out, tris))
 }
 
 /// Joins vertices closer than `eps`: faces of an exact shape are meshed
@@ -927,6 +981,8 @@ fn install<'js>(ctx: &Ctx<'js>, state: &Rc<RefCell<State>>) -> rquickjs::Result<
 
     // Sweeps, lofts, offsets and the rest (see `sweep`).
     crate::sweep::install_exact(ctx, &native, state)?;
+    // Surfaces (see `surfacing`).
+    crate::surfacing::install_exact(ctx, &native, state)?;
 
     ctx.globals().set("__native", native)?;
     Ok(())

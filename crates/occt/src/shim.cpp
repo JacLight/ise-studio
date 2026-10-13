@@ -131,7 +131,13 @@ struct Arena {
   std::vector<double> view_data;
   // Faces or whole shapes given a colour (r g b, 0–1; r < 0 for none) and a name, for STEP (solids.cpp).
   std::vector<std::tuple<TopoDS_Shape, std::array<double, 3>, std::string>> painted;
+  // Surface results: numbers and reports (surfaces.cpp).
+  std::vector<double> surf_data;
+  std::string surf_text;
 };
+
+/// The arena the current call works in (paths can name its shapes' edges).
+thread_local Arena* current_arena = nullptr;
 
 int push(Arena* a, const TopoDS_Shape& s) {
   if (s.IsNull()) {
@@ -152,6 +158,7 @@ const TopoDS_Shape* get(Arena* a, int h) {
 
 template <typename F>
 int guard(Arena* a, F f) {
+  current_arena = a;
   try {
     return f();
   } catch (Standard_Failure& e) {
@@ -226,6 +233,9 @@ TopoDS_Wire section(const TopoDS_Wire& w, double z, double twist_deg, double sx,
   t.SetTranslation(gp_Vec(0, 0, z));
   return TopoDS::Wire(transformed(transformed(s, r), t));
 }
+
+/// The shape as the view meshes it (big free-form faces cut into patches; surfaces.cpp).
+TopoDS_Shape for_view(const TopoDS_Shape& s);
 
 /// Paint (colours, face names) onto a part's STEP label (solids.cpp).
 void apply_paint(Arena* a, const Handle(XCAFDoc_ShapeTool) & tool, const Handle(XCAFDoc_ColorTool) & colours, const TDF_Label& label, const TopoDS_Shape& part);
@@ -859,10 +869,11 @@ int occ_mesh(void* p, int h, double deflection, const double** positions, int* n
   return guard(a, [&] {
     const TopoDS_Shape* s = get(a, h);
     if (!s) return -1;
-    BRepMesh_IncrementalMesh mesher(*s, deflection, false, 0.2, true);
+    TopoDS_Shape view = for_view(*s);
+    BRepMesh_IncrementalMesh mesher(view, deflection, false, 0.2, true);
     a->mesh_positions.clear();
     a->mesh_triangles.clear();
-    for (TopExp_Explorer e(*s, TopAbs_FACE); e.More(); e.Next()) {
+    for (TopExp_Explorer e(view, TopAbs_FACE); e.More(); e.Next()) {
       TopoDS_Face f = TopoDS::Face(e.Current());
       TopLoc_Location loc;
       Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(f, loc);
@@ -1681,3 +1692,6 @@ int occ_draft(void* p, int h, const int* idx, int n, double degrees, double dx, 
 
 // B-spline faces from scans, merged flat faces, tessellation with angle control.
 #include "scan.cpp"
+
+// Surfaces: filling, networks, blends, sewing, trimming, analysis.
+#include "surfaces.cpp"

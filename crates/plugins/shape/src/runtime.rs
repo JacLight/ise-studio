@@ -979,6 +979,7 @@ fn install_native<'js>(ctx: &Ctx<'js>, arena: &Rc<RefCell<Arena>>, tolerance: f6
     )?;
     // Sweeps, lofts, offsets and the rest (see `sweep`).
     crate::sweep::install_mesh(ctx, &native, arena, tolerance)?;
+    crate::surfacing::install_mesh(ctx, &native)?;
 
     ctx.globals().set("__native", native)?;
     Ok(())

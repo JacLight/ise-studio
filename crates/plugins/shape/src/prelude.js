@@ -1575,7 +1575,12 @@ function __mapSegs(segs, fp, fd) {
       num(2);
       for (let k = 0; k < n; k++) pt();
     } else if (kind === 4) (pt(), dir(), dir(), num(4));
-    else throw new Error("unknown path segment");
+    else if (kind === 5) {
+      // Edges taken from a body: moved exactly, by the same affine map.
+      const o = fp([0, 0, 0]);
+      const [x, y, z] = [fd([1, 0, 0]), fd([0, 1, 0]), fd([0, 0, 1])];
+      out.push(__n.sop("transform", segs[i++], [x[0], y[0], z[0], o[0], x[1], y[1], z[1], o[1], x[2], y[2], z[2], o[2]]));
+    } else throw new Error("unknown path segment");
   }
   return out;
 }
@@ -1611,6 +1616,7 @@ class Path {
       const k = segs[i];
       if (k === 2) (segs[i + 14] = segs[i + 14] ? 0 : 1), (i += 15);
       else if (k === 4) (segs[i + 13] = segs[i + 13] ? 0 : 1), (i += 14);
+      else if (k === 5) i += 2;
       else i += k === 0 ? 7 : k === 1 ? 10 : 3 + 3 * segs[i + 1];
     }
     return new Path(segs);
@@ -1828,10 +1834,14 @@ function loft(sections, { ruled = false, closed = false, continuity = 2 } = {}) 
 /**
  * Grows the whole solid by `distance` mm (negative shrinks it). join "round"
  * (default: the true offset, grown edges become rounds) or "sharp" (faces
- * extended to meet: a box stays a box). Exact.
+ * extended to meet: a box stays a box). On a sheet (an open surface): the
+ * surface `distance` mm off it along its normal (negative: the other side).
+ * Exact.
  */
 Solid.prototype.offset = function (distance, { join = "round" } = {}) {
   if (typeof distance !== "number" || !Number.isFinite(distance)) throw new Error("offset: the distance must be a number of mm");
+  // A sheet: the offset surface (its normal side for positive distances).
+  if (this.isSheet) return new Solid(__n.offsetSheet(this.h, distance));
   if (join !== "round" && join !== "sharp") throw new Error('offset: join is "round" or "sharp"');
   return new Solid(__n.offsetSolid(this.h, distance, join === "sharp"));
 };
@@ -1928,3 +1938,381 @@ function __blendVar(solid, op, size, which) {
   if (!chosen.length) throw new Error(`${op}: no edge matches`);
   return new Solid(__n.blendVar(op, solid.h, size[0], size[1], chosen.map((e) => e.index)));
 }
+
+// ---- Surfaces --------------------------------------------------------------------
+//
+// Sheets: open surfaces built from curves and edges, joined G0/G1/G2 to their
+// neighbours, trimmed, sewn into shells and closed into solids, the way
+// consumer products, car panels and vessels are surfaced. A sheet is a body
+// like any other (a Solid whose faces do not close): it can be moved,
+// painted, thickened into a solid or sewn with others. Every surface here is
+// exact (B-spline) in STEP; the view meshes it within `tolerance`, and draws
+// a sheet left open as a thin skin. Curves are Paths (spline, arcPath,
+// polyline, …), or edges taken from a body (body.border(…)).
+
+const __sheetInfo = new Map();
+const __report = (s, info) => (__sheetInfo.set(s.h, Object.freeze(info)), s);
+/** A curve as an exact wire in the kernel. */
+const __curveH = (c, what) => {
+  if (c instanceof __Border) return c.wire;
+  if (c instanceof Path) return __n.curve(c.segs);
+  throw new TypeError(`${what}: expected a curve (a Path such as spline(…), or body.border(…))`);
+};
+const __pt = (q) => vec3(q);
+/** The edges' end points (to chain them). */
+const __ends = (e) => [e.points[0], e.points[e.points.length - 1]];
+
+/**
+ * Edges of a body with how a surface meets them: what fillSurface and
+ * blendSurface take (and a Path, as `.path`).
+ */
+class __Border {
+  constructor(body, edges, continuity) {
+    this.body = body;
+    this.edges = edges;
+    this.continuity = continuity;
+    this.wire = __n.edgeWire(body.h, edges);
+    Object.freeze(this);
+  }
+  /** The same edges as a curve (sweep along it, loft or project with it). */
+  get path() {
+    return new Path([5, this.wire]);
+  }
+  /** The same edges, met with another continuity (0 G0, 1 G1 tangent, 2 G2 curvature). */
+  with(continuity) {
+    return new __Border(this.body, this.edges, continuity);
+  }
+}
+
+/** Groups edges into chains running end to end. */
+function __chains(edges) {
+  const left = [...edges];
+  const out = [];
+  const eps = Math.max(1e-4, tolerance * 0.1);
+  while (left.length) {
+    const chain = [left.shift()];
+    let grew = true;
+    while (grew) {
+      grew = false;
+      const ends = chain.flatMap(__ends);
+      for (let i = 0; i < left.length; i++) {
+        if (__ends(left[i]).some((p) => ends.some((q) => __dist(p, q) < eps))) {
+          chain.push(left.splice(i, 1)[0]);
+          grew = true;
+          break;
+        }
+      }
+    }
+    out.push(chain);
+  }
+  return out;
+}
+
+/**
+ * Edges of this body for a surface to meet: by default its open boundary
+ * (the edges with a face on one side only). `which`:
+ *   undefined                 the open boundary, if it is one loop or run
+ *   { near: [x, y, z] }       the open loop (or run) nearest the point
+ *   anything selectEdges takes (a filter, points, edges from body.edges)
+ * `continuity`: 0 (G0, position), 1 (G1, tangent: the default), 2 (G2, curvature).
+ *   fender.border({ near: [0, 0, 30] }, { continuity: 1 })
+ */
+Solid.prototype.border = function (which, { continuity = 1 } = {}) {
+  const all = this.edges;
+  const free = new Set(__n.freeEdges(this.h));
+  let picked;
+  if (which == null || (which && which.near && !Array.isArray(which.near[0]) && Object.keys(which).length === 1)) {
+    const open = all.filter((e) => free.has(e.index));
+    if (!open.length) throw new Error("border: the body has no open boundary (it is closed): pick edges");
+    const chains = __chains(open);
+    if (which == null) {
+      if (chains.length > 1) throw new Error(`border: the body has ${chains.length} open loops: pick one with { near: [x, y, z] }`);
+      picked = chains[0];
+    } else {
+      const q = vec3(which.near);
+      const d = (c) => Math.min(...c.map((e) => edgeDistance(e, q)));
+      picked = chains.reduce((a, b) => (d(b) < d(a) ? b : a));
+    }
+  } else picked = selectEdges(this, which);
+  if (!picked.length) throw new Error("border: no edge matches");
+  if (![0, 1, 2].includes(continuity)) throw new Error("border: continuity is 0, 1 or 2");
+  return new __Border(this, picked.map((e) => e.index), continuity);
+};
+
+/** True when the body is an open surface (faces that do not close into a solid). */
+Object.defineProperty(Solid.prototype, "isSheet", {
+  get() {
+    const [solids, , faces, , free] = __n.bodyInfo(this.h);
+    return solids === 0 && faces > 0 && free > 0;
+  },
+});
+/** { solids, shells, faces, edges, freeEdges, closed }: what the body is made of. */
+Object.defineProperty(Solid.prototype, "body", {
+  get() {
+    const [solids, shells, faces, edges, freeEdges, closed] = __n.bodyInfo(this.h);
+    return { solids, shells, faces, edges, freeEdges, closed: !!closed };
+  },
+});
+/**
+ * What built this surface reported: fillSurface { g0 (mm), g1 (degrees),
+ * g2 } against its constraints; networkSurface { gap (mm, where the curves
+ * cross), deviation (mm, from the curves) }; sew { freeEdges }.
+ */
+Object.defineProperty(Solid.prototype, "report", {
+  get() {
+    return __sheetInfo.get(this.h) ?? null;
+  },
+});
+
+/**
+ * Fills a hole with one smooth surface (an N-sided patch, GeomPlate). The
+ * boundary is a list of curves and borders running round the hole: a Path
+ * is passed through (G0); a body's border (body.border(…)) is met with its
+ * continuity: 0 position, 1 tangent (G1), 2 curvature (G2) to the face
+ * beside it. Options:
+ *   continuity: the default for borders given as plain edge lists
+ *   points: [[x, y, z], …] the patch must pass through (shape its crown)
+ *   through: [Path, …] curves inside the patch it must pass through
+ *   degree, points (per curve), iterations, maxDegree, segments: the solver's knobs
+ * Its .report gives { g0 (mm), g1 (degrees), g2 } against the constraints;
+ * continuity(patch, neighbour) measures the seams. Exact.
+ *   const holed = panel.trimWith(box(40, 30, 200, { center: true }), { keep: [-50, -50, 0] });
+ *   const patch = fillSurface([holed.border({ near: [0, 0, 20] }, { continuity: 1 })]);
+ *   sew([holed, patch])
+ */
+function fillSurface(boundary, { points = [], through = [], degree, iterations, maxDegree, segments, ...rest } = {}) {
+  const list = Array.isArray(boundary) ? boundary : [boundary];
+  if (!list.length) throw new Error("fillSurface: give the boundary: curves and borders running round the hole");
+  const constraints = [];
+  for (const b of list) {
+    if (b instanceof __Border) for (const e of b.edges) constraints.push({ h: b.body.h, edge: e, order: b.continuity });
+    else if (b instanceof Path) constraints.push({ segs: b.segs });
+    else if (b instanceof Solid) for (const e of b.border(undefined, { continuity: 1 }).edges) constraints.push({ h: b.h, edge: e, order: 1 });
+    else throw new TypeError("fillSurface: the boundary is Paths and body.border(…)s");
+  }
+  for (const c of through) constraints.push({ through: __asPath(c).segs });
+  for (const q of points) constraints.push({ point: __pt(q) });
+  const spec = { constraints, degree, iterations, max_degree: maxDegree, segments, points: rest.pointsPerCurve };
+  const [h, g0, g1, g2] = __n.fill(JSON.stringify(spec));
+  return __report(new Solid(h), { g0, g1, g2 });
+}
+
+/**
+ * A surface through a network of curves: `profiles` (cross-sections, in
+ * order) and `guides` (running across them, in order); every profile must
+ * cross every guide. Closed profiles make a tube (a vase, a handle, a
+ * fuselage); open ones a panel. A Gordon surface: it passes through every
+ * curve (to `tolerance`, default 0.001 mm) and is C2 in between. Its
+ * .report gives { gap, deviation } (mm). Exact.
+ *   networkSurface([ring(30, 0), ring(42, 40), ring(24, 80)], [spline(…), …])
+ */
+function networkSurface(profiles, guides, { tolerance: tol = 1e-3 } = {}) {
+  if (!Array.isArray(profiles) || profiles.length < 2 || !Array.isArray(guides) || guides.length < 2) throw new Error("networkSurface: give two profiles and two guides at least");
+  const [h, gap, deviation] = __n.networkSurface(profiles.map((c) => __curveH(c, "networkSurface")), guides.map((c) => __curveH(c, "networkSurface")), tol);
+  return __report(new Solid(h), { gap, deviation });
+}
+
+/**
+ * A surface swept along two rails through profiles: networkSurface with the
+ * rails as guides (each profile must run from one rail to the other).
+ *   sweep2(leftRail, rightRail, [startSection, endSection])
+ */
+function sweep2(rail1, rail2, profiles, opts) {
+  return networkSurface(profiles, [rail1, rail2], opts);
+}
+
+/**
+ * A patch bounded by 2–4 curves meeting corner to corner. style: "coons"
+ * (default: blended from all sides), "stretch" (flattest), "curved"
+ * (roundest). Exact.
+ *   boundarySurface([front, side, back, otherSide])
+ */
+function boundarySurface(curves, { style = "coons" } = {}) {
+  const k = { stretch: 0, coons: 1, curved: 2 }[style];
+  if (k === undefined) throw new Error('boundarySurface: style is "coons", "stretch" or "curved"');
+  if (!Array.isArray(curves) || curves.length < 2 || curves.length > 4) throw new Error("boundarySurface: give two, three or four curves");
+  return new Solid(__n.boundarySurface(curves.map((c) => __curveH(c, "boundarySurface")), k));
+}
+
+/**
+ * A sheet skinned through curves in order (open or closed curves: a
+ * section surface, uncapped). ruled: flat between curves; closed: back to the
+ * first. Exact.
+ */
+function sectionSurface(curves, { ruled = false, closed = false } = {}) {
+  if (!Array.isArray(curves) || curves.length < 2) throw new Error("sectionSurface: give two curves or more");
+  return new Solid(__n.sectionSurface(curves.map((c) => __curveH(c, "sectionSurface")), ruled, closed));
+}
+
+/** The ruled surface between two curves: straight lines from one to the other. Exact. */
+function ruledSurface(a, b) {
+  return sectionSurface([a, b], { ruled: true });
+}
+
+/**
+ * A blend surface bridging two borders (body.border(…) on each side; closed
+ * loops or open runs): it leaves each with that border's continuity (G2 by
+ * default: tangent and curvature), bulging `bulge` (a number, or [a, b]) as
+ * far as it runs out along each side before turning. Exact (degree 5 across).
+ *   blendSurface(top.border(undefined, { continuity: 2 }), wall.border({ near: [0, 0, 30] }, { continuity: 2 }))
+ */
+function blendSurface(a, b, { bulge = 1, samples = 0 } = {}) {
+  if (!(a instanceof __Border) || !(b instanceof __Border)) throw new TypeError("blendSurface: give two borders (body.border(…))");
+  const [ba, bb] = Array.isArray(bulge) ? bulge : [bulge, bulge];
+  return new Solid(__n.blendSurface(a.body.h, a.edges, b.body.h, b.edges, [a.continuity, ba, b.continuity, bb, samples]));
+}
+
+/**
+ * A curve bridging two curves' ends: from `a`'s end (or start, `from:
+ * "start"`) to `b`'s start (or end, `to: "end"`), G0–G2 (`continuity`, a
+ * number or [a, b]; default 2), `bulge` scaling its tangent runs. Exact
+ * (a degree-5 Bezier).
+ */
+function blendCurve(a, b, { from = "end", to = "start", continuity = 2, bulge = 1 } = {}) {
+  const [ca, cb] = Array.isArray(continuity) ? continuity : [continuity, continuity];
+  const [ba, bb] = Array.isArray(bulge) ? bulge : [bulge, bulge];
+  return new Path([5, __n.blendCurve(__curveH(a, "blendCurve"), __curveH(b, "blendCurve"), [from === "end" ? 1 : 0, ca, ba, to === "end" ? 1 : 0, cb, bb])]);
+}
+
+/**
+ * Sews sheets (and faces) along their shared edges into one shell, and,
+ * when nothing is left open, into a solid (`solid: false` keeps a shell).
+ * Edges closer than `tolerance` (mm, default 0.01) are joined. Its .report
+ * gives { freeEdges }. Exact.
+ *   sew([top, blend, wall, floor])       // a closed solid
+ */
+function sew(bodies, { tolerance: tol = 0.01, solid = true } = {}) {
+  const list = bodies.flat();
+  if (!list.length) throw new Error("sew: nothing to sew");
+  const [h, freeEdges] = __n.sew(list.map((b) => asSolid(b).h), tol, solid);
+  return __report(new Solid(h), { freeEdges });
+}
+
+/** The body's faces, each as its own sheet (unknit; sew puts them back). */
+Solid.prototype.unknit = function () {
+  return __n.pieces(this.h, 0).map((h) => new Solid(h));
+};
+
+/**
+ * Splits the body by tools (bodies, sheets, or curves lying on it): every
+ * piece, as a list (faces of a sheet, solids of a solid).
+ */
+Solid.prototype.split = function (...tools) {
+  const hs = tools.flat().map((t) => (t instanceof Solid ? t.h : __curveH(t, "split")));
+  const parts = __n.split(this.h, hs);
+  const solids = __n.pieces(parts, 2);
+  return (solids.length ? solids : __n.pieces(parts, 0)).map((h) => new Solid(h));
+};
+
+/**
+ * Trims a sheet by a tool: a body or sheet crossing it, or a curve (projected
+ * onto the sheet along its normals, or along `direction`). Keeps the side
+ * holding `keep` ([x, y, z]), or drops the side holding `drop`. Exact.
+ *   fender.trimWith(spline(outline, { closed: true }), { drop: [0, 0, 0], direction: [0, 0, 1] })
+ */
+Solid.prototype.trimWith = function (tool, { keep, drop, direction } = {}) {
+  if (!keep === !drop) throw new Error("trimWith: give keep: [x, y, z] (the side to keep) or drop: [x, y, z]");
+  let h;
+  if (tool instanceof Solid) h = tool.h;
+  else h = __n.project(__curveH(tool, "trimWith"), this.h, direction ? __unit(vec3(direction)) : []);
+  return new Solid(__n.trim(this.h, [h], __pt(keep ?? drop), !keep));
+};
+
+/**
+ * One face carried on past its edges by `length` mm, as a new sheet (to
+ * overlap a neighbour before trimming). `which` picks the face as push
+ * does (default the first); `sides`: any of "u-", "u+", "v-", "v+" (default all).
+ */
+Solid.prototype.extendFace = function (which, length, { sides = ["u-", "u+", "v-", "v+"] } = {}) {
+  if (typeof which === "number" && length === undefined) [which, length] = [undefined, which];
+  if (!(length > 0)) throw new Error("extendFace: the length must be a positive number of mm");
+  const face = which == null ? 0 : selectFace(this, which).index;
+  const bits = { "u-": 1, "u+": 2, "v-": 4, "v+": 8 };
+  const mask = (Array.isArray(sides) ? sides : [sides]).reduce((m, s) => m | (bits[s] ?? 0), 0);
+  if (!mask) throw new Error('extendFace: sides are "u-", "u+", "v-", "v+"');
+  return new Solid(__n.extendFace(this.h, face, length, mask));
+};
+
+/**
+ * A curve projected onto this body: along the surface normals (default) or
+ * along `direction`. The landing nearest the curve, as a Path. Exact.
+ *   shell.project(spline(logoOutline), { direction: [0, 0, -1] })
+ */
+Solid.prototype.project = function (curve, { direction } = {}) {
+  return new Path([5, __n.project(__curveH(curve, "project"), this.h, direction ? __unit(vec3(direction)) : [])]);
+};
+
+/**
+ * An iso-parametric curve of a face: the line of constant u (`dir` "u") or v
+ * at fraction `t` (0–1) of its range, kept to the face. `which` picks the
+ * face as push does (default the first). Exact.
+ */
+Solid.prototype.iso = function (dir = "u", t = 0.5, which) {
+  const face = which == null ? 0 : selectFace(this, which).index;
+  return new Path([5, __n.iso(this.h, face, dir === "v", t)]);
+};
+
+/**
+ * Continuity measured across edges: every edge two faces of `a` share, or
+ * (with `b`) where `a`'s open boundary lies on `b`'s. { edges: [{ edge,
+ * faces, g0, g1, g2, length }], max: { g0, g1, g2 } }: g0 the gap (mm), g1
+ * the crease angle (degrees), g2 the jump in curvature across (1/mm).
+ * G1 holds where g1 ≈ 0; G2 where g2 ≈ 0 too.
+ */
+function continuity(a, b, { samples = 24 } = {}) {
+  return JSON.parse(__n.continuity(asSolid(a).h, b ? asSolid(b).h : -1, samples));
+}
+
+/**
+ * How far `b` lies from `a`, sampled over `a`'s faces (samples × samples
+ * each): { max, mean, rms (mm), at: [x, y, z] where it is worst, samples }.
+ */
+function deviation(a, b, { samples = 12 } = {}) {
+  const [max, mean, rms, x, y, z, n] = __n.deviation(asSolid(a).h, asSolid(b).h, samples);
+  return { max, mean, rms, at: [x, y, z], samples: n };
+}
+
+/**
+ * Curvature over the body's faces (samples × samples each): per face {
+ * index, k1: [min, max], k2: [min, max], gaussian: [min, max], mean: [min,
+ * max] } (1/mm; positive bulges out), and overall { minRadius (mm, the
+ * tightest bend), flat (no curvature anywhere) }.
+ */
+Solid.prototype.curvature = function ({ samples = 12 } = {}) {
+  const d = __n.faceSamples(this.h, samples);
+  const faces = new Map();
+  let tight = 0;
+  const span = (r, v) => (r ? [Math.min(r[0], v), Math.max(r[1], v)] : [v, v]);
+  for (let i = 0; i < d.length; i += 9) {
+    const [f, k1, k2] = [d[i], d[i + 7], d[i + 8]];
+    const e = faces.get(f) ?? { index: f };
+    e.k1 = span(e.k1, k1), e.k2 = span(e.k2, k2), e.gaussian = span(e.gaussian, k1 * k2), e.mean = span(e.mean, (k1 + k2) / 2);
+    faces.set(f, e);
+    tight = Math.max(tight, Math.abs(k1), Math.abs(k2));
+  }
+  return { faces: [...faces.values()], minRadius: tight > 1e-12 ? 1 / tight : Infinity, flat: tight <= 1e-12 };
+};
+
+/**
+ * Draft over the body's faces for a mould pulled along `pull` (default
+ * [0, 0, 1]): per face { index, min, max } (degrees, signed: the face's
+ * angle off the pull, positive facing along it so it releases that way,
+ * negative facing back (the other mould half, or an undercut), 0 a wall
+ * square to it), and `under`: the faces anywhere within `min` degrees
+ * (default 1) of square (they need draft).
+ */
+Solid.prototype.draftAnalysis = function ({ pull = [0, 0, 1], min = 1, samples = 12 } = {}) {
+  const p = __unit(vec3(pull));
+  const d = __n.faceSamples(this.h, samples);
+  const faces = new Map();
+  for (let i = 0; i < d.length; i += 9) {
+    const f = d[i];
+    const n = [d[i + 4], d[i + 5], d[i + 6]];
+    const a = (Math.asin(Math.max(-1, Math.min(1, __dot(n, p)))) * 180) / Math.PI;
+    const e = faces.get(f) ?? { index: f, min: Infinity, max: -Infinity, square: Infinity };
+    e.min = Math.min(e.min, a), e.max = Math.max(e.max, a), e.square = Math.min(e.square, Math.abs(a));
+    faces.set(f, e);
+  }
+  const list = [...faces.values()];
+  return { faces: list.map(({ square, ...f }) => f), under: list.filter((f) => f.square < min).map((f) => f.index) };
+};

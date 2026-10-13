@@ -4,7 +4,7 @@
 // 5 bottom, 6 left).
 
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { DISPLAY_MODES } from "./display";
+import { ANALYSIS_MODES, DISPLAY_MODES } from "./display";
 import type { Axis, DisplayMode, SectionPlane, ViewName, ViewTools } from "./viewTools";
 
 const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
@@ -17,6 +17,9 @@ const DISPLAY_ICONS: Record<DisplayMode, string> = {
   wireframe: "M3 5.5 8 3l5 2.5v5L8 13l-5-2.5zM3 5.5 8 8l5-2.5M8 8v5M3 10.5 8 8l5 2.5M8 3v5",
   hidden: "M3 5.5 8 3l5 2.5v5L8 13l-5-2.5zM3 5.5 8 8l5-2.5M8 8v5",
   xray: "M3 5.5 8 3l5 2.5v5L8 13l-5-2.5zM3 10.5 8 8l5 2.5M8 3v5",
+  zebra: "M3 4h10M3 6.5h10M3 9h10M3 11.5h10",
+  curvature: "M2.5 12C4 5 12 5 13.5 12M5 12c1-3 5-3 6 0",
+  draft: "M5 13 6.5 3h3L11 13zM3 13h10",
 };
 
 export function ViewToolbar({ tools, selected, onFitAll }: { tools: ViewTools; selected: string | null; onFitAll: () => void }) {
@@ -64,6 +67,14 @@ export function ViewToolbar({ tools, selected, onFitAll }: { tools: ViewTools; s
         <span className="vt-sep" />
         {DISPLAY_MODES.map((d) => (
           <button key={d.mode} type="button" className={`vt-btn vt-icon ${s.display === d.mode ? "is-on" : ""}`} onClick={() => tools.setDisplay(d.mode)} title={`${d.label} (W cycles)`} aria-label={d.label} aria-pressed={s.display === d.mode}>
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden className={`vt-mode-${d.mode}`}>
+              <path d={DISPLAY_ICONS[d.mode]} />
+            </svg>
+          </button>
+        ))}
+        <span className="vt-sep" />
+        {ANALYSIS_MODES.map((d) => (
+          <button key={d.mode} type="button" className={`vt-btn vt-icon ${s.display === d.mode ? "is-on" : ""}`} onClick={() => tools.setDisplay(s.display === d.mode ? "shaded" : d.mode)} title={d.label} aria-label={d.label} aria-pressed={s.display === d.mode}>
             <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden className={`vt-mode-${d.mode}`}>
               <path d={DISPLAY_ICONS[d.mode]} />
             </svg>

@@ -263,7 +263,7 @@ export function App({ engine }: { engine: Engine }) {
             viewport.current?.tools()?.setOrthographic(/^ortho/i.test(value ?? ""));
             break;
           case "display":
-            if (value && ["shaded", "edges", "wireframe", "hidden", "xray"].includes(value)) viewport.current?.tools()?.setDisplay(value as DisplayMode);
+            if (value && ["shaded", "edges", "wireframe", "hidden", "xray", "zebra", "curvature", "draft"].includes(value)) viewport.current?.tools()?.setDisplay(value as DisplayMode);
             break;
           case "section": {
             // "x 25", "x 25 flip", "box x0 y0 z0 x1 y1 z1", "box", "off".
