@@ -121,7 +121,7 @@ impl Reader<'_> {
                 Some("text") => {
                     let (at, _) = at_of(e);
                     let size = e.find("effects").and_then(|x| x.find("font")).map(|f| f.nums("size")).and_then(|v| v.first().copied()).unwrap_or(1.27);
-                    self.out.texts.push(SchText { schematic: placeholder, sheet: id.into(), at, text: e.arg_text(0).unwrap_or("").replace("\\n", "\n"), size: size.max(0.5) });
+                    self.out.texts.push(SchText { schematic: placeholder, sheet: id.into(), at, text: e.arg_text(0).unwrap_or("").replace("\\n", "\n"), size: size.max(0.5), justify: String::new(), angle: 0.0, bold: false, italic: false, color: None });
                 }
                 Some("bus") | Some("bus_entry") => self.out.note_once("buses are not read (their member nets join through labels)"),
                 Some("symbol") => self.symbol(e, id, &libs, &power_libs, placeholder),
@@ -293,7 +293,7 @@ impl Reader<'_> {
         let base = file.rsplit(['/', '\\']).next().unwrap_or(&file).to_string();
         let text = self.files.get(&file).or_else(|| self.files.get(&base)).or_else(|| self.files.iter().find(|(k, _)| k.rsplit(['/', '\\']).next() == Some(base.as_str())).map(|(_, v)| v));
         let (paper, portrait) = text.and_then(|t| sexpr::parse(t).ok()).and_then(|v| v.into_iter().find(|x| x.is("kicad_sch"))).map(|r| paper_of(&r)).unwrap_or(("A4".into(), false));
-        self.out.sheets.push(Sheet { id: id.clone(), name, paper, portrait, parent: Some(parent.to_string()), at: Some(at), size: Some(size), pins });
+        self.out.sheets.push(Sheet { id: id.clone(), name, paper, portrait, parent: Some(parent.to_string()), at: Some(at), size: Some(size), pins, ..Default::default() });
         match text {
             Some(t) if self.depth < 16 => match sexpr::parse(t).ok().and_then(|v| v.into_iter().find(|x| x.is("kicad_sch"))) {
                 Some(r) => {
@@ -336,7 +336,7 @@ pub fn read(text: &str, file: &str, files: &BTreeMap<String, String>) -> Result<
     };
     let stem = file.rsplit(['/', '\\']).next().unwrap_or(file).trim_end_matches(".kicad_sch").to_string();
     let mut r = Reader { files, out: SchIn { name: (!title.title.is_empty()).then(|| title.title.clone()).or_else(|| (!stem.is_empty()).then(|| stem.clone())), title, ..Default::default() }, next_sheet: 1, depth: 0 };
-    r.out.sheets.push(Sheet { id: "1".into(), name: "Root".into(), paper, portrait, parent: None, at: None, size: None, pins: vec![] });
+    r.out.sheets.push(Sheet { id: "1".into(), name: "Root".into(), paper, portrait, parent: None, at: None, size: None, pins: vec![], ..Default::default() });
     r.sheet(root, "1");
     Ok(r.out)
 }
@@ -535,7 +535,7 @@ fn paper_sexp(sh: &Sheet) -> Sexp {
 pub fn write(stem: &str, sch: &schematic::Schematic, it: &schematic::SchItems) -> Vec<(String, String)> {
     let project = stem.to_string();
     let root_uuid = crate::kicad::uuid(&format!("{stem}/root"));
-    let sheets: Vec<Sheet> = if sch.sheets.is_empty() { vec![Sheet { id: "1".into(), name: "Root".into(), paper: "A4".into(), portrait: false, parent: None, at: None, size: None, pins: vec![] }] } else { sch.sheets.clone() };
+    let sheets: Vec<Sheet> = if sch.sheets.is_empty() { vec![Sheet { id: "1".into(), name: "Root".into(), paper: "A4".into(), portrait: false, parent: None, at: None, size: None, pins: vec![], ..Default::default() }] } else { sch.sheets.clone() };
     let root_id = sheets[0].id.clone();
     // Each non-root sheet hangs off its parent (or the root): its file, its box's uuid, its path.
     let file_of = |sh: &Sheet| if sh.id == root_id { format!("{stem}.kicad_sch") } else { format!("{stem}-{}.kicad_sch", safe(&sh.name)) };
@@ -656,6 +656,8 @@ pub fn write(stem: &str, sch: &schematic::Schematic, it: &schematic::SchItems) -
                     }
                     items.push(list(head, v));
                 }
+                // A net-class directive has no KiCad label of its own here; net classes go in the project file.
+                LabelKind::Directive => {}
                 LabelKind::Power => {
                     pwr_n += 1;
                     let lib = format!("power:{}", safe(&l.text));
