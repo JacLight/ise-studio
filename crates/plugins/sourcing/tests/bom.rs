@@ -449,3 +449,26 @@ fn cut_to_length_stock_is_costed_by_its_length() {
     assert!((beam.mass_kg.unwrap() - 22.4 * len / 1000.0).abs() < 1e-6, "22.4 kg/m");
     assert!((beam.length_m.unwrap() - 3.0 * len / 1000.0).abs() < 1e-9);
 }
+
+/// A part listed in another currency (a German spring priced in euros in a
+/// dollar BOM) is flagged until an exchange rate is given, then converted.
+#[test]
+fn prices_in_another_currency_convert_at_the_projects_exchange_rate() {
+    let mut p = project();
+    let spring = id(&run(&mut p, "shape.create", json!({ "name": "Spring", "definition": true, "params": [],
+        "source": r#"stock({ partNumber: "RZ-075NI", manufacturer: "Gutekunst Federn", unitPrice: 6.40, currency: "EUR", pack: 1, massG: 3.5 }); return cylinder(50, 3);"# })).unwrap());
+    let asm = id(&run(&mut p, "assembly.create", json!({ "name": "Arm" })).unwrap());
+    run(&mut p, "assembly.instance.create", json!({ "of": spring, "parent": asm, "name": "Spring", "at": [0, 0, 0] })).unwrap();
+    let price = |b: &Bom| b.buy.iter().find(|l| l.stock.as_ref().is_some_and(|s| s.part_number == "RZ-075NI")).and_then(|l| l.unit_price);
+    let b = compute(&p, Scope::Entity(asm), 1);
+    assert_eq!(price(&b), Some(6.40), "no rate: counted as it stands");
+    assert!(b.flags.iter().any(|f| f.level == "warning" && f.text.contains("listed in EUR, costs are in USD (not converted")), "{:?}", b.flags);
+    run(&mut p, "sourcing.rates.set", json!({ "exchange": { "eur": 1.1 } })).unwrap();
+    let b = compute(&p, Scope::Entity(asm), 1);
+    assert!((price(&b).unwrap() - 7.04).abs() < 1e-9, "{:?}", price(&b));
+    assert!((b.totals.buy - 7.04).abs() < 1e-9);
+    assert!(b.flags.iter().any(|f| f.level == "info" && f.text.contains("converted to USD at 1.1")), "{:?}", b.flags);
+    assert!(run(&mut p, "sourcing.rates.set", json!({ "exchange": { "EUR": -1 } })).is_err());
+    run(&mut p, "sourcing.rates.set", json!({ "exchange": { "EUR": 0 } })).unwrap();
+    assert_eq!(price(&compute(&p, Scope::Entity(asm), 1)), Some(6.40), "0 removes the rate");
+}

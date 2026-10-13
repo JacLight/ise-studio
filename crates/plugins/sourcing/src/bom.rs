@@ -819,7 +819,7 @@ pub fn compute(world: &World, scope: Scope, options: &Options, sources: &[&dyn B
         if let Some(a) = find_award(&l.key) {
             l.award = Some(award_view(a, l.qty * q));
             if a.1.currency != rates.currency() {
-                bom.flags.push(Flag { line: Some(l.key.clone()), level: "warning", text: format!("{}: awarded in {}, costs are in {} (not converted)", l.name, a.1.currency, rates.currency()) });
+                bom.flags.push(converted(&l.key, &l.name, "awarded", &a.1.currency, &rates));
             }
         }
     }
@@ -831,7 +831,7 @@ pub fn compute(world: &World, scope: Scope, options: &Options, sources: &[&dyn B
         }
         if let Some(c) = l.stock.as_ref().and_then(|s| s.currency.clone()).filter(|c| *c != rates.currency()) {
             if l.award.is_none() {
-                bom.flags.push(Flag { line: Some(l.key.clone()), level: "warning", text: format!("{}: listed in {c}, costs are in {} (not converted)", l.name, rates.currency()) });
+                bom.flags.push(converted(&l.key, &l.name, "listed", &c, &rates));
             }
         }
     }
@@ -847,7 +847,7 @@ pub fn compute(world: &World, scope: Scope, options: &Options, sources: &[&dyn B
     // Costs at this BOM's quantity, then at each break.
     let mut unpriced = 0;
     for l in &mut bom.make {
-        let (unit, source) = make_unit(l, &awards, l.qty * q);
+        let (unit, source) = make_unit(l, &awards, l.qty * q, &rates);
         l.unit_cost = unit;
         l.cost_source = source;
         l.extended = unit.map(|u| u * (l.qty * q) as f64);
@@ -856,7 +856,7 @@ pub fn compute(world: &World, scope: Scope, options: &Options, sources: &[&dyn B
         }
     }
     for l in &mut bom.buy {
-        let (unit, source) = buy_unit(l, &awards, l.order_qty);
+        let (unit, source) = buy_unit(l, &awards, l.order_qty, &rates);
         l.unit_price = unit;
         l.cost_source = source;
         l.extended = unit.map(|u| u * l.order_qty as f64);
@@ -875,14 +875,14 @@ pub fn compute(world: &World, scope: Scope, options: &Options, sources: &[&dyn B
         let mut buy = 0.0;
         let mut complete = true;
         for l in &bom.make {
-            match make_unit(l, &awards, l.qty * qty).0 {
+            match make_unit(l, &awards, l.qty * qty, &rates).0 {
                 Some(u) => make += u * (l.qty * qty) as f64,
                 None => complete = false,
             }
         }
         for l in &bom.buy {
             let order = pack_round(l.qty * qty, l.stock.as_ref().and_then(|s| s.pack));
-            match buy_unit(l, &awards, order).0 {
+            match buy_unit(l, &awards, order, &rates).0 {
                 Some(u) => buy += u * order as f64,
                 None => complete = false,
             }
@@ -900,10 +900,29 @@ fn empty_totals(rates: &Rates, q: u32) -> Totals {
     Totals { currency: rates.currency(), quantity: q, make: 0.0, buy: 0.0, per_unit: 0.0, total: 0.0, unpriced: 0, mass_kg: None, breaks: vec![] }
 }
 
+/// A price in another currency: converted when the rates know it (said as
+/// info), else flagged and counted as it stands.
+fn converted(key: &str, name: &str, how: &str, currency: &str, rates: &Rates) -> Flag {
+    let own = rates.currency();
+    match rates.to_own(currency) {
+        Some(r) => Flag { line: Some(key.to_string()), level: "info", text: format!("{name}: {how} in {currency}, converted to {own} at {r}") },
+        None => Flag {
+            line: Some(key.to_string()),
+            level: "warning",
+            text: format!("{name}: {how} in {currency}, costs are in {own} (not converted: give an exchange rate with sourcing.rates.set {{ exchange: {{ {currency}: … }} }})"),
+        },
+    }
+}
+
+/// A price in `currency` in the project's currency (as it stands when no rate is known).
+fn in_own(price: f64, currency: Option<&str>, rates: &Rates) -> f64 {
+    price * currency.and_then(|c| rates.to_own(c)).unwrap_or(1.0)
+}
+
 /// Unit cost of a Make line in a batch: the award's price, else the estimate.
-fn make_unit(l: &MakeLine, awards: &[(StableId, Award)], batch: u32) -> (Option<f64>, &'static str) {
-    if let Some(p) = awards.iter().find(|a| a.1.line == l.key).and_then(|a| price_at(&a.1.prices, batch)) {
-        return (Some(p), "award");
+fn make_unit(l: &MakeLine, awards: &[(StableId, Award)], batch: u32, rates: &Rates) -> (Option<f64>, &'static str) {
+    if let Some((p, c)) = awards.iter().find(|a| a.1.line == l.key).and_then(|a| Some((price_at(&a.1.prices, batch)?, a.1.currency.as_str()))) {
+        return (Some(in_own(p, Some(c), rates)), "award");
     }
     match l.estimate.unit(batch) {
         Some(u) => (Some(u), "estimate"),
@@ -913,13 +932,13 @@ fn make_unit(l: &MakeLine, awards: &[(StableId, Award)], batch: u32) -> (Option<
 
 /// Unit price of a Buy line at an order quantity: the award's, else the
 /// item's own list price, else the cheapest source's.
-fn buy_unit(l: &BuyLine, awards: &[(StableId, Award)], order: u32) -> (Option<f64>, &'static str) {
-    if let Some(p) = awards.iter().find(|a| a.1.line == l.key).and_then(|a| price_at(&a.1.prices, order)) {
-        return (Some(p), "award");
+fn buy_unit(l: &BuyLine, awards: &[(StableId, Award)], order: u32, rates: &Rates) -> (Option<f64>, &'static str) {
+    if let Some((p, c)) = awards.iter().find(|a| a.1.line == l.key).and_then(|a| Some((price_at(&a.1.prices, order)?, a.1.currency.as_str()))) {
+        return (Some(in_own(p, Some(c), rates)), "award");
     }
     let list = l.stock.as_ref().and_then(|s| s.unit_price.or_else(|| s.sources.iter().filter_map(|x| x.unit_price).min_by(f64::total_cmp)));
     match list {
-        Some(p) => (Some(p), "list"),
+        Some(p) => (Some(in_own(p, l.stock.as_ref().and_then(|s| s.currency.as_deref()), rates)), "list"),
         None => (None, "none"),
     }
 }

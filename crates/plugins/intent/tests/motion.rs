@@ -79,4 +79,14 @@ fn a_margin_worked_out_from_a_joint_is_a_live_requirement() {
     // A key the set does not have, or no bound, is refused.
     assert!(run(&mut p, "intent.requirement.create", json!({ "rule": { "kind": "parameter_range", "target": set, "key": "torque", "min": 1 } })).is_err());
     assert!(run(&mut p, "intent.requirement.create", json!({ "rule": { "kind": "parameter_range", "target": set, "key": "margin" } })).is_err());
+
+    // A spreadsheet's cell, by alias or address: the spring's longest stretch against its catalogue maximum.
+    let sheet = id(&run(&mut p, "sheet.create", json!({ "name": "Spring", "cells": { "A1": "Longest (mm)", "B1": "=60 + Swing.angle / 5", "B2": "101.25" }, "aliases": { "B1": "longest" } })).unwrap());
+    let r = id(&run(&mut p, "intent.requirement.create", json!({ "rule": { "kind": "parameter_range", "target": sheet, "key": "longest", "max": 81 } })).unwrap());
+    let result = p.get::<RequirementResult>(r).unwrap();
+    assert!(result.passed && result.summary == "Spring › longest (B1) is 80, at most 81", "{}", result.summary);
+    run(&mut p, "parameters.set", json!({ "target": j, "values": { "angle": 110 } })).unwrap();
+    let result = p.get::<RequirementResult>(r).unwrap();
+    assert!(!result.passed && (result.measured - 82.0).abs() < 1e-9 && result.upper_bound, "{result:?}");
+    assert!(run(&mut p, "intent.requirement.create", json!({ "rule": { "kind": "parameter_range", "target": sheet, "key": "B9", "max": 1 } })).is_err(), "an empty cell");
 }

@@ -329,6 +329,19 @@ fn evaluate(world: &World, entity: Entity) -> Option<Result<RequirementResult, S
 /// A parameter's value now (a formula worked out) and its label and unit.
 fn parameter_now(world: &World, id: StableId, key: &str) -> Result<(f64, String, String, String), String> {
     let e = world.resource::<de_core::IdIndex>().get(id).ok_or_else(|| format!("{id} does not exist"))?;
+    // A spreadsheet: a cell by address or alias.
+    if let Some(sheet) = world.get::<de_shape::sheet::Sheet>(e) {
+        let found = sheet.cells.iter().find(|(a, c)| a.as_str() == key || c.alias.as_deref() == Some(key));
+        let Some((address, cell)) = found.filter(|(_, c)| !c.input.is_empty()) else {
+            return Err(format!("{} has no cell or alias “{key}”", sheet.name));
+        };
+        let value = match world.get::<de_shape::ResolvedParams>(e).and_then(|r| r.0.get(key).copied()) {
+            Some(v) => v,
+            None => *de_shape::sheet::evaluate(world, sheet).numbers().get(key).ok_or_else(|| format!("{} › {key} is not a number", sheet.name))?,
+        };
+        let label = if address == key { key.to_string() } else { format!("{key} ({address})") };
+        return Ok((value, sheet.name.clone(), label, cell.unit.clone().unwrap_or_default()));
+    }
     let (name, params) = de_shape::params::params_of(world, e).ok_or_else(|| format!("{id} has no parameters"))?;
     let p = params.iter().find(|p| p.key == key).ok_or_else(|| {
         let keys: Vec<&str> = params.iter().map(|p| p.key.as_str()).collect();
