@@ -46,7 +46,6 @@ const PATHS = {
   image: "M3 5h18v14H3z M3 16l5-5 4 4 3-3 6 6 M15.5 9.5h.01",
   crop: "M6 2v16h16 M2 6h16v16",
   perspective: "M7 5h10l4 14H3z M12 5v14 M5 12h14",
-  grip: "M9 6h.01 M15 6h.01 M9 12h.01 M15 12h.01 M9 18h.01 M15 18h.01",
   download: "M12 3v12 M7 10l5 5 5-5 M4 16v5h16v-5",
   grid: "M3 3h18v18H3z M3 9h18 M3 15h18 M9 3v18 M15 3v18",
   dots: "M5 12h.01 M12 12h.01 M19 12h.01",

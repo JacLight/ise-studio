@@ -2,7 +2,7 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useDraggable } from "./drag";
-import type { DockPlace } from "./Dock";
+import { CollapseButton, type DockPlace, dockState, stackHeader } from "./Dock";
 import { AXIS_COLORS } from "./gizmo";
 import { type EntityView, type HistoryEntry, type PartStats, type ProjectEntry, type ShapeStats, projectName, projectTitle, projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
@@ -95,8 +95,9 @@ export function ToolPanel(props: {
   const side = docked ? (docked.side as "left" | "right") : (props.dockSide ?? "left");
   const other = side === "left" ? "right" : "left";
   return (
-    <aside ref={ref} className={docked ? `tool-panel docked dock-${side}` : "tool-panel floating"} style={docked?.style} aria-label={title}>
-      <header className="panel-handle" tabIndex={docked ? -1 : 0} aria-label={docked ? title : `Move ${title} panel using arrow keys`} {...(docked ? {} : handle)}>
+    <aside ref={ref} className={docked ? `tool-panel docked dock-${side}${dockState(docked)}` : "tool-panel floating"} style={docked?.style} aria-label={title}>
+      <header className="panel-handle" tabIndex={docked ? -1 : 0} aria-label={docked ? title : `Move ${title} panel using arrow keys`} {...(docked ? stackHeader(docked.stack, TITLES[props.kind].split(":")[0]) : handle)}>
+        {docked?.stack && <CollapseButton stack={docked.stack} name={name} />}
         <strong>{title}</strong>
         <div className="panel-actions">
           {props.onDock && docked && <IconButton icon={other === "left" ? "dockLeft" : "dock"} label={`Move the ${name} panel to the ${other} edge`} onClick={() => props.onDock!(other)} />}

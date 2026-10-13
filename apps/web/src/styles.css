@@ -753,6 +753,186 @@ svg.icon {
   padding-left: 16px;
 }
 
+/* A docked column: panels on one side stacked full height, one width. Its
+   ground shows under folded panels; its width splitter rides over them. */
+.dock-col {
+  position: absolute;
+  z-index: 6;
+  background: #fbfafc;
+  transition: width 0.2s ease;
+}
+
+.dock-col.dock-left {
+  border-right: 1px solid #e4e4ea;
+}
+
+.dock-col.dock-right {
+  border-left: 1px solid #e4e4ea;
+}
+
+.dock-col-edge {
+  position: absolute;
+  z-index: 9;
+  pointer-events: none;
+  transition: width 0.2s ease;
+}
+
+.dock-col-edge .dock-splitter {
+  pointer-events: auto;
+}
+
+.app.is-resizing .dock-col,
+.app.is-resizing .dock-col-edge {
+  transition: none;
+}
+
+.docked.dock-left,
+.docked.dock-right {
+  transition: left 0.2s ease, right 0.2s ease, width 0.2s ease, height 0.2s ease, top 0.2s ease;
+}
+
+.docked.is-stacked {
+  border-top: 1px solid #e4e4ea;
+}
+
+/* The header of a stacked panel: the fold chevron, the title, then its actions; dragged to move it. */
+.docked.dock-left > header,
+.docked.dock-right > header {
+  justify-content: flex-start;
+  gap: 4px;
+  cursor: grab;
+}
+
+.docked.dock-left > header button,
+.docked.dock-right > header button {
+  cursor: pointer;
+}
+
+.docked.dock-left > header > strong,
+.docked.dock-right > header > strong {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.docked.dock-left > header > .panel-actions,
+.docked.dock-right > header > .panel-actions,
+.docked.dock-left > header > .bench-actions,
+.docked.dock-right > header > .bench-actions {
+  margin-left: auto;
+}
+
+.tool-panel.docked.dock-left .panel-handle,
+.tool-panel.docked.dock-right .panel-handle,
+.ai-docked.dock-left .panel-handle,
+.ai-docked.dock-right .panel-handle {
+  padding-left: 8px;
+}
+
+.ib.dock-fold {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  color: #a39db0;
+}
+
+.ib.dock-fold .icon {
+  width: 11px;
+  height: 11px;
+  transition: transform 0.15s;
+}
+
+.ib.dock-fold.open .icon {
+  transform: rotate(90deg);
+}
+
+.ib.dock-fold:hover {
+  color: var(--purple);
+}
+
+/* Folded: the header only. */
+.docked.is-collapsed > :not(header) {
+  display: none !important;
+}
+
+.docked.is-collapsed > header {
+  height: 41px;
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  align-items: center;
+  border-bottom: 0;
+}
+
+.docked.is-dragging {
+  opacity: 0.5;
+}
+
+/* Between two stacked panels: drag to share the height. */
+.dock-splitter.stack {
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 7px;
+  cursor: row-resize;
+}
+
+.dock-splitter.stack::after {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+}
+
+.app.is-resizing:has(.dock-splitter.active.stack) {
+  cursor: row-resize;
+}
+
+/* Moving a panel by its header: where it would land, and its name by the pointer. */
+.dock-drop {
+  position: absolute;
+  z-index: 60;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--purple);
+  box-shadow: 0 0 0 4px #7c5cf033, 0 2px 10px #7c5cf055;
+  pointer-events: none;
+}
+
+.dock-drop.band {
+  top: 0;
+  bottom: 0;
+  height: auto;
+  border-radius: 0;
+  background: #7c5cf00f;
+  box-shadow: inset 0 0 0 2px #7c5cf05c;
+}
+
+.dock-ghost {
+  position: fixed;
+  z-index: 61;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: #221d33;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 8px 24px #1b153033;
+}
+
+.app:has(.dock-ghost),
+.app:has(.dock-ghost) * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+body:has(.dock-ghost) .app-tip {
+  display: none !important;
+}
+
 .ai-expanded {
   inset: 24px 12%;
   max-width: 900px;
