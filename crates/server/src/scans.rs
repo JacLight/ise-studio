@@ -191,6 +191,20 @@ pub async fn derive(State(server): State<Arc<Server>>, Path((id, what, op)): Pat
                     }
                     Ok(json!({ "scans": out, "pieces": pieces.len() }))
                 }
+                "points" if op == "merge" => {
+                    let mut c = d.cloud.clone();
+                    for other in o.get("with").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+                        let oc = scans::load(&find(&s, &project, other)?.id)?;
+                        let keep_n = !c.normals.is_empty() && !oc.cloud.normals.is_empty();
+                        let keep_c = !c.colors.is_empty() && !oc.cloud.colors.is_empty();
+                        c.positions.extend_from_slice(&oc.cloud.positions);
+                        if keep_n { c.normals.extend_from_slice(&oc.cloud.normals) } else { c.normals.clear() }
+                        if keep_c { c.colors.extend_from_slice(&oc.cloud.colors) } else { c.colors.clear() }
+                    }
+                    let name = label("merged");
+                    let entry = add(&s, &project, &de_scan::points::write_ply(&Cloud { positions: c.positions, normals: c.normals, colors: c.colors }), "ply", &name, "merge", Some(&e.id))?;
+                    Ok(json!({ "scan": entry }))
+                }
                 "mesh" if op == "merge" => {
                     let mut m = d.mesh.clone().ok_or("this scan is points only")?;
                     for other in o.get("with").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
@@ -274,6 +288,9 @@ struct InspectOptions {
     /// Values for at most this many points (every step-th, as /view sends them).
     #[serde(default)]
     max: Option<usize>,
+    /// The deviation at the scan point nearest this place (FreeCAD's inspect element).
+    #[serde(default)]
+    at: Option<[f64; 3]>,
 }
 
 /// `POST /scans/<id>/inspect` with { target, part?, tolerance, required?,
@@ -299,7 +316,7 @@ pub async fn inspect(State(server): State<Arc<Server>>, Path(id): Path<String>, 
             let d = scans::load(&e.id)?;
             let (target_id, target_name, mesh) = target_mesh(&app, &o.target, o.part.as_deref(), (o.tolerance / 10.0).clamp(0.0005, 0.05))?;
             let bvh = de_scan::spatial::TriBvh::new(&mesh);
-            let r = deviation_report(&d.cloud, &bvh, o.tolerance, o.required.unwrap_or(1.0), o.align.as_deref().unwrap_or("none"), o.max.unwrap_or(200_000))?;
+            let r = deviation_report(&d.cloud, &bvh, o.tolerance, o.required.unwrap_or(1.0), o.align.as_deref().unwrap_or("none"), o.max.unwrap_or(200_000), o.at)?;
             let mut v = r;
             v["scan"] = json!(e);
             v["target"] = json!({ "id": target_id, "name": target_name, "part": o.part });
@@ -310,7 +327,7 @@ pub async fn inspect(State(server): State<Arc<Server>>, Path(id): Path<String>, 
 }
 
 /// Deviation of a cloud from a surface, optionally aligned first, as the reply.
-pub fn deviation_report(cloud: &Cloud, bvh: &de_scan::spatial::TriBvh, tolerance: f64, required: f64, align: &str, max: usize) -> Result<Value, String> {
+pub fn deviation_report(cloud: &Cloud, bvh: &de_scan::spatial::TriBvh, tolerance: f64, required: f64, align: &str, max: usize, at: Option<[f64; 3]>) -> Result<Value, String> {
     use de_scan::inspect;
     let (points, alignment) = match align {
         "none" | "" => (cloud.positions.clone(), None),
@@ -327,6 +344,11 @@ pub fn deviation_report(cloud: &Cloud, bvh: &de_scan::spatial::TriBvh, tolerance
     let mut order: Vec<usize> = (0..d.values.len()).collect();
     order.sort_by(|a, b| d.values[*b].abs().total_cmp(&d.values[*a].abs()));
     let worst: Vec<Value> = order.iter().take(5).map(|&i| json!({ "at": points[i], "deviation": d.values[i] })).collect();
+    let probe = at.and_then(|q| {
+        let i = (0..points.len()).min_by(|&a, &b| de_scan::linalg::dist2(points[a], q).total_cmp(&de_scan::linalg::dist2(points[b], q)))?;
+        let c = bvh.closest(points[i])?;
+        Some(json!({ "point": points[i], "deviation": d.values[i], "on_part": c.point, "distance_from_probe": de_scan::linalg::dist(points[i], q) }))
+    });
     Ok(json!({
         "stats": d.stats,
         "tolerance": d.tolerance,
@@ -340,6 +362,7 @@ pub fn deviation_report(cloud: &Cloud, bvh: &de_scan::spatial::TriBvh, tolerance
         "step": step,
         "values": values,
         "worst": worst,
+        "probe": probe,
     }))
 }
 

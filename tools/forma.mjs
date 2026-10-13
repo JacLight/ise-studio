@@ -1538,6 +1538,17 @@ if (command === "run") {
       console.log(`${r.solid ? "✓" : "✗"} ${report(r)}`);
       for (const [k, list] of Object.entries(r.at)) for (const p of list.slice(0, 3)) console.log(`    ${k.replace(/_/g, " ")} at ${Array.isArray(p[0]) ? p3(p[0]) : p3(p)}`);
       failed = !r.solid;
+    } else if (command === "scan" && ["crop", "merge"].includes(sub)) {
+      const r = await call("POST", `/scans/${id}/points/${sub}`, { ...region(), ...(sub === "merge" ? { with: args.slice(3) } : {}) });
+      console.log(`✓ ${sub}: new scan ${sayScan(r.scan)}`);
+    } else if (command === "mesh" && sub === "trim") {
+      const r = await call("POST", `/scans/${id}/mesh/trim`, { origin: nums(flag("--origin")), normal: nums(flag("--normal")) ?? [0, 0, 1] });
+      console.log(`✓ trimmed: ${r.report.triangles[0]} → ${r.report.triangles[1]} triangles\n  new scan ${sayScan(r.scan)}`);
+    } else if (command === "mesh" && sub === "project") {
+      const pts = JSON.parse(args[3] ?? "[]");
+      const r = await call("POST", `/scans/${id}/query/projectCurve`, { points: pts, step: num(flag("--step") ?? "1") });
+      console.log(`✓ ${r.points.length} points on the surface`);
+      console.log(JSON.stringify(r.points.map((p) => p.map(r3))));
     } else if (command === "mesh" && ["repair", "decimate", "smooth", "remesh", "fill-holes", "flip", "harmonize", "largest", "split", "merge", "sample"].includes(sub)) {
       const op = { "fill-holes": "fillHoles" }[sub] ?? sub;
       const maxEdges = num(flag("--max-edges"));
@@ -1617,13 +1628,15 @@ if (command === "run") {
       const part = flag("--part");
       const required = num(flag("--required"));
       const require = has("--require");
-      const r = await call("POST", `/scans/${id}/inspect`, { target, tolerance, ...(part ? { part } : {}), ...(required ? { required } : {}), ...(align ? { align } : {}), max: 1 });
+      const at = nums(flag("--at"));
+      const r = await call("POST", `/scans/${id}/inspect`, { target, tolerance, ...(part ? { part } : {}), ...(required ? { required } : {}), ...(align ? { align } : {}), ...(at ? { at } : {}), max: 1 });
       const s = r.stats;
       console.log(`${r.passed ? "✓ PASS" : "✗ FAIL"} ${r.scan.name} against ${r.target.name}${part ? ` › ${part}` : ""}: ${(r.within * 100).toFixed(2)}% of ${s.count} points within ±${tolerance} mm (${((r.required ?? 1) * 100).toFixed(0)}% required)`);
       console.log(`  deviation min ${r3(s.min)}  max ${r3(s.max)}  mean ${r3(s.mean)}  |mean| ${r3(s.mean_abs)}  RMS ${r3(s.rms)}  σ ${r3(s.std)}  95% within ±${r3(s.p95)} mm`);
       console.log(`  ${r.over} points over (material where there should be none), ${r.under} under (missing material)`);
       if (r.alignment) console.log(`  best-fit aligned: RMS ${r3(r.alignment.rms_before)} → ${r3(r.alignment.rms_after)} mm in ${r.alignment.iterations} steps`);
       for (const w of r.worst.slice(0, 3)) console.log(`  worst ${w.deviation >= 0 ? "+" : ""}${r3(w.deviation)} mm at ${p3(w.at)}`);
+      if (r.probe) console.log(`  at ${p3(r.probe.point)} (nearest scan point, ${r3(r.probe.distance_from_probe)} mm from the spot asked): ${r.probe.deviation >= 0 ? "+" : ""}${r3(r.probe.deviation)} mm from the part (its surface at ${p3(r.probe.on_part)})`);
       const bins = r.histogram;
       const top = Math.max(...bins, 1);
       console.log(`  histogram (−4…+4 × tol/2): ${bins.map((b) => " ▁▂▃▄▅▆▇█"[Math.ceil((b / top) * 8)]).join("")}`);

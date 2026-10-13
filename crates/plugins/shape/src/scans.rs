@@ -271,13 +271,18 @@ pub fn mesh_op(m: &Mesh, op: &str, o: &Value) -> Result<(Mesh, Value), String> {
             f.flip();
             (f, json!({}))
         }
+        "trim" => {
+            let origin = v3(o, "origin").ok_or("trim: give the plane's origin [x, y, z]")?;
+            let normal = v3(o, "normal").unwrap_or([0.0, 0.0, 1.0]);
+            (section::trim(m, origin, normal), json!({}))
+        }
         "largest" | "removeComponents" => {
             let mut f = m.clone();
             let n = repair::remove_components(&mut f, num(o, "fraction").unwrap_or(0.0), op == "largest");
             f.compact();
             (f, json!({ "removed": n }))
         }
-        other => return Err(format!("unknown mesh operation {other} (repair, decimate, smooth, remesh, fillHoles, harmonize, flip, largest, removeComponents)")),
+        other => return Err(format!("unknown mesh operation {other} (repair, decimate, smooth, remesh, fillHoles, harmonize, flip, trim, largest, removeComponents)")),
     };
     let mut report = json!({ "operation": op, "vertices": [before.0, out.positions.len()], "triangles": [before.1, out.triangles.len()] });
     if let (Some(r), Some(e)) = (report.as_object_mut(), extra.as_object()) {
@@ -313,7 +318,8 @@ pub fn cloud_op(c: &Cloud, op: &str, o: &Value) -> Result<(Cloud, Value), String
             points::estimate_normals(&mut n, num(o, "neighbours").unwrap_or(12.0) as usize, orient);
             (n, json!({}))
         }
-        other => return Err(format!("unknown point operation {other} (downsample, outliers, normals)")),
+        "crop" => (region(c, o), json!({})),
+        other => return Err(format!("unknown point operation {other} (downsample, outliers, normals, crop)")),
     };
     let mut report = json!({ "operation": op, "points": [before, out.len()] });
     if let (Some(r), Some(e)) = (report.as_object_mut(), extra.as_object()) {
@@ -536,6 +542,15 @@ pub fn query(op: &str, sha: &str, o: &Value) -> Result<Value, String> {
         "surface" => {
             let s = fit_surface(&data()?.cloud, o)?;
             Ok(serde_json::to_value(s).unwrap())
+        }
+        "projectCurve" => {
+            let pts: Vec<V3> = o.get("points").and_then(Value::as_array).map(|list| list.iter().filter_map(|p| p.as_array().and_then(|a| Some([a.first()?.as_f64()?, a.get(1)?.as_f64()?, a.get(2)?.as_f64()?]))).collect()).unwrap_or_default();
+            if pts.len() < 2 {
+                return Err("projectCurve: give at least two points".into());
+            }
+            let bvh = spatial::TriBvh::new(&mesh_of(sha)?);
+            let step = num(o, "step").unwrap_or(1.0);
+            Ok(json!({ "points": section::project_curve(&bvh, &pts, step) }))
         }
         other => Err(format!("unknown scan query {other}")),
     }

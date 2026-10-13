@@ -138,6 +138,44 @@ pub fn sections(m: &Mesh, normal: V3, count: usize) -> Vec<Section> {
         .collect()
 }
 
+/// The part of a mesh behind a plane (FreeCAD's Mesh_TrimByPlane): triangles
+/// in front of it dropped, those crossing it cut along it. The cut is left
+/// open (a scan trimmed, not a solid capped).
+pub fn trim(m: &Mesh, origin: V3, normal: V3) -> Mesh {
+    let n = unit(normal);
+    let d: Vec<f64> = m.positions.iter().map(|p| dot(sub(*p, origin), n)).collect();
+    let mut out = Mesh { positions: m.positions.clone(), triangles: Vec::new() };
+    let mut cut: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut at = |a: u32, b: u32, out: &mut Mesh| -> u32 {
+        let key = crate::mesh::edge_key(a, b);
+        *cut.entry(key).or_insert_with(|| {
+            let (da, db) = (d[key.0 as usize], d[key.1 as usize]);
+            out.positions.push(lerp(m.positions[key.0 as usize], m.positions[key.1 as usize], da / (da - db)));
+            (out.positions.len() - 1) as u32
+        })
+    };
+    for t in &m.triangles {
+        let keep = t.map(|v| d[v as usize] <= 0.0);
+        match keep.iter().filter(|k| **k).count() {
+            3 => out.triangles.push(*t),
+            0 => {}
+            count => {
+                // Rotate so the odd corner is first.
+                let odd = if count == 1 { keep.iter().position(|k| *k).unwrap() } else { keep.iter().position(|k| !*k).unwrap() };
+                let (a, b, c) = (t[odd], t[(odd + 1) % 3], t[(odd + 2) % 3]);
+                let (ab, ac) = (at(a, b, &mut out), at(a, c, &mut out));
+                if count == 1 {
+                    out.triangles.push([a, ab, ac]);
+                } else {
+                    out.triangles.push([ab, b, c]);
+                    out.triangles.push([ab, c, ac]);
+                }
+            }
+        }
+    }
+    out.compacted()
+}
+
 /// A polyline laid onto a mesh (FreeCAD's MeshPart_CurveOnMesh): densified
 /// to `step` mm and each point moved to the closest point of the surface.
 pub fn project_curve(bvh: &crate::spatial::TriBvh, points: &[V3], step: f64) -> Vec<V3> {
@@ -168,6 +206,22 @@ mod tests {
         assert!(p.closed);
         assert!((p.length - std::f64::consts::TAU * 10.0).abs() < 0.05, "{}", p.length);
         assert!((p.area - std::f64::consts::PI * 100.0).abs() < 0.5, "{}", p.area);
+    }
+
+    #[test]
+    fn trimming_keeps_what_is_behind_the_plane_and_curves_lie_on_the_surface() {
+        let m = cylinder(10.0, 20.0, 64, 4);
+        let t = trim(&m, [0.0, 0.0, 7.0], [0.0, 0.0, 1.0]);
+        assert!(t.positions.iter().all(|p| p[2] <= 7.0 + 1e-9));
+        // The side's area below z = 7 and the bottom cap.
+        let side = 64.0 * 2.0 * 10.0 * (std::f64::consts::PI / 64.0).sin() * 7.0;
+        let cap = 0.5 * 64.0 * 100.0 * (std::f64::consts::TAU / 64.0).sin();
+        assert!((t.area() - side - cap).abs() < 1e-6, "{} vs {}", t.area(), side + cap);
+        assert_eq!(t.boundary_loops().len(), 1);
+        let bvh = crate::spatial::TriBvh::new(&m);
+        let c = project_curve(&bvh, &[[12.0, 0.0, 5.0], [0.0, 12.0, 15.0]], 0.5);
+        assert!(c.len() > 30);
+        assert!(c.iter().all(|p| bvh.closest(*p).unwrap().distance < 1e-9));
     }
 
     #[test]

@@ -256,7 +256,7 @@ export function ScanTools(props: {
             <Icon name="upload" /> Add a scan
           </button>
           <small>Points: XYZ, PLY, PCD, E57 · meshes: STL, OBJ, PLY, glTF, 3MF</small>
-          <input ref={fileInput} type="file" hidden accept=".xyz,.asc,.pts,.csv,.txt,.ply,.pcd,.e57,.stl,.obj,.gltf,.glb,.3mf" onChange={(e) => (upload(e.target.files), (e.target.value = ""))} />
+          <input ref={fileInput} type="file" style={{ display: "none" }} accept=".xyz,.asc,.pts,.csv,.txt,.ply,.pcd,.e57,.stl,.obj,.gltf,.glb,.3mf" onChange={(e) => (upload(e.target.files), (e.target.value = ""))} />
         </div>
 
         {scans.length > 0 && (
@@ -397,7 +397,7 @@ export function ScanTools(props: {
                     </strong>
                     <small>{inspection.stats.count.toLocaleString()} points</small>
                   </div>
-                  <div className="legend" aria-label="Deviation colours">
+                  <div className="dev-legend" aria-label="Deviation colours">
                     <span className="bar" style={{ background: `linear-gradient(90deg, ${DEVIATION_STOPS.join(", ")})` }} />
                     <span className="ticks">
                       <i>{signed(-Math.max(Math.abs(inspection.stats.min), Math.abs(inspection.stats.max), inspection.tolerance * 2))}</i>

@@ -975,6 +975,11 @@ function fitSurfaceInfo(sha, options = {}) {
   return JSON.parse(__n.scanQuery("surface", sha, JSON.stringify(options)));
 }
 
+/** A polyline laid onto a scan's mesh (densified to `step` mm): points for polyline() or spline(). */
+function curveOnScan(sha, points, { step = 1 } = {}) {
+  return JSON.parse(__n.scanQuery("projectCurve", sha, JSON.stringify({ points, step }))).points;
+}
+
 /** A smooth curve through ordered points (or a region of a scan): { poles, rms, max, samples } — spline(samples) draws it. */
 function fitCurve(points, { poles = 8, degree = 3 } = {}) {
   const sha = typeof points === "string" ? points : "0".repeat(64);

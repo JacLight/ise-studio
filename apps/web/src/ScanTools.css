@@ -16,6 +16,31 @@
   gap: 10px;
   padding: 10px 12px 14px;
 }
+.scan-panel .panel-body > * {
+  flex-shrink: 0;
+}
+.scan-panel .btn {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  background: #f3effa;
+  color: #5b3fc4;
+  font-size: 11.5px;
+  font-weight: 650;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.scan-panel .btn:hover:not(:disabled) {
+  background: #ebe3fb;
+}
+.scan-panel .btn.primary {
+  background: #6d4ae0;
+  color: #fff;
+}
+.scan-panel .btn:disabled {
+  opacity: 0.55;
+}
 .scan-add {
   display: flex;
   flex-direction: column;
@@ -114,18 +139,24 @@
   margin-left: auto;
   color: var(--muted, #7a7f87);
 }
-.legend .bar {
+.dev-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dev-legend .bar {
+  width: 100%;
   display: block;
   height: 8px;
   border-radius: 4px;
 }
-.legend .ticks {
+.dev-legend .ticks {
   display: flex;
   justify-content: space-between;
   font-size: 10px;
   color: var(--muted, #7a7f87);
 }
-.legend .ticks i {
+.dev-legend .ticks i {
   font-style: normal;
 }
 .histogram {
