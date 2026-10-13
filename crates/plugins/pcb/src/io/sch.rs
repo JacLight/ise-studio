@@ -45,13 +45,13 @@ pub fn create(tx: &mut Tx, s: &SchIn, name: Option<String>, board: Option<Stable
     }
     let mut sheets = s.sheets.clone();
     if sheets.is_empty() {
-        sheets.push(Sheet { id: "1".into(), name: "Root".into(), paper: "A4".into(), portrait: false, parent: None, at: None, size: None, pins: vec![] });
+        sheets.push(Sheet { id: "1".into(), name: "Root".into(), paper: "A4".into(), portrait: false, parent: None, at: None, size: None, pins: vec![], ..Default::default() });
     }
     let mut title = s.title.clone();
     if title.title.is_empty() {
         title.title = name.clone();
     }
-    let sch = Schematic { name: name.clone(), board, sheets, title, board_only: vec![] };
+    let sch = Schematic { name: name.clone(), board, sheets, title, board_only: vec![], ..Default::default() };
     let id = tx.create();
     tx.set(id, sch)?;
     macro_rules! put {
@@ -221,7 +221,7 @@ impl Draft {
             let y_up = self.y_up;
             let oy = if y_up { (20.0 / g).round() * g + (b[3] / g).round() * g } else { (20.0 / g).round() * g - (b[1] / g).round() * g };
             let f = move |p: P| -> P { if y_up { [snap(p[0] + ox), snap(oy - p[1])] } else { [snap(p[0] + ox), snap(p[1] + oy)] } };
-            out.sheets.push(Sheet { id: sid.clone(), name: sname.clone(), paper: paper.into(), portrait: false, parent: None, at: None, size: None, pins: vec![] });
+            out.sheets.push(Sheet { id: sid.clone(), name: sname.clone(), paper: paper.into(), portrait: false, parent: None, at: None, size: None, pins: vec![], ..Default::default() });
             for s in self.symbols.iter().filter(|s| sheet_of(&s.sheet) == *sid) {
                 let at = f(s.at);
                 let rel = |p: P| -> P {
@@ -297,7 +297,7 @@ impl Draft {
             }
             for (_, at, text, size) in self.texts.iter().filter(|t| sheet_of(&t.0) == *sid) {
                 if !text.trim().is_empty() {
-                    out.texts.push(SchText { schematic: placeholder, sheet: sid.clone(), at: f(*at), text: text.clone(), size: if *size > 0.3 { *size } else { 1.8 } });
+                    out.texts.push(SchText { schematic: placeholder, sheet: sid.clone(), at: f(*at), text: text.clone(), size: if *size > 0.3 { *size } else { 1.8 }, justify: String::new(), angle: 0.0, bold: false, italic: false, color: None });
                 }
             }
         }

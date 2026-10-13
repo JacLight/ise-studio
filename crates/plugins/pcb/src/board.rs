@@ -137,6 +137,11 @@ pub struct TrackView {
     /// Its end was dragged with a part: check it, or re-route it.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub reroute: bool,
+    /// A track with arcs: `points` is the centreline flattened, these are its corners and bulges.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub vertices: Vec<P>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bulges: Vec<f64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -411,9 +416,12 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
             cu.push(Cu { bbox: p.prim.bbox(), prim: p.prim.clone(), layers: mask, net: p.net.clone(), owner: Owner::Pad(i) });
         }
     }
+    // Arcs flattened: everything downstream (copper, clearance, Gerber) sees the centreline as a polyline.
+    let flat: BTreeMap<StableId, Vec<P>> = items.tracks.iter().filter(|(_, t)| t.bulges.iter().any(|b| *b != 0.0)).map(|(id, t)| (*id, crate::pns::flatten(&t.points, &t.bulges))).collect();
+    let line_of = |id: &StableId, t: &crate::Track| -> Vec<P> { flat.get(id).cloned().unwrap_or_else(|| t.points.clone()) };
     for (tid, t) in &items.tracks {
         let Some(k) = layer_index(&layers, &t.layer) else { continue };
-        for (s, w) in t.points.windows(2).enumerate() {
+        for (s, w) in line_of(tid, t).windows(2).enumerate() {
             let prim = Prim::capsule(w[0], w[1], t.width / 2.0);
             cu.push(Cu { bbox: prim.bbox(), prim, layers: 1 << k, net: t.net.clone(), owner: Owner::Track(*tid, s) });
         }
@@ -529,7 +537,7 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
             roots.entry(uf.find(m)).or_default().push(m);
         }
         let islands = roots.len();
-        let length: f64 = items.tracks.iter().filter(|(_, t)| t.net.as_deref() == Some(name)).map(|(_, t)| t.points.windows(2).map(|w| geom::dist(w[0], w[1])).sum::<f64>()).sum();
+        let length: f64 = items.tracks.iter().filter(|(_, t)| t.net.as_deref() == Some(name)).map(|(id, t)| line_of(id, t).windows(2).map(|w| geom::dist(w[0], w[1])).sum::<f64>()).sum();
         if islands > 1 {
             // Anchors of each island: its pads, plus the vias and track points joined to it.
             let groups: Vec<Vec<P>> = roots
@@ -556,7 +564,10 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
     }
     nets.sort_by(|a, b| crate::natural(&a.name, &b.name));
 
-    let tracks: Vec<TrackView> = items.tracks.iter().map(|(id, t)| TrackView { id: *id, net: t.net.clone(), layer: t.layer.clone(), width: t.width, points: t.points.clone(), auto: t.auto, reroute: t.reroute }).collect();
+    let tracks: Vec<TrackView> = items.tracks.iter().map(|(id, t)| {
+            let arcs = flat.contains_key(id);
+            TrackView { id: *id, net: t.net.clone(), layer: t.layer.clone(), width: t.width, points: line_of(id, t), auto: t.auto, reroute: t.reroute, vertices: if arcs { t.points.clone() } else { vec![] }, bulges: if arcs { t.bulges.clone() } else { vec![] } }
+        }).collect();
     let vias: Vec<ViaView> = items.vias.iter().map(|(id, v)| ViaView { id: *id, net: v.net.clone(), at: v.at, drill: v.drill, diameter: v.diameter }).collect();
 
     let mut view = BoardView {

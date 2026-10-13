@@ -9,6 +9,14 @@
 //   node tools/forma.mjs fit <assembly or instance id | project> [--motion]   do screws, inserts, nuts, bearings and joined parts fit (and, with --motion, every joint's sweep)
 //   node tools/forma.mjs check-geometry <id> [part]   the exact kernel's check of each part: valid, self-intersections, tolerances
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
+//   node tools/forma.mjs set-study <shape id> study.json [--part X]   save a part's stress/heat study (faces as { normal, near: [x, y, z] })
+//   node tools/forma.mjs stress|fatigue|modes|buckle|heat|converge|inp <shape id> [--part X] [--count N] [--resolutions 32,48,64]
+//                                             run the part's saved study (inp: a CalculiX deck on stdout)
+//   node tools/forma.mjs probe <key> x,y,z · section <key> x,y,z nx,ny,nz · path <key> x,y,z x,y,z [n] · csv <key>
+//                                             read a stress result back (the key a stress run prints)
+//   node tools/forma.mjs frame frame.json     a frame of beams (joints, members with sections, supports, loads)
+//   node tools/forma.mjs plate <shape id> plate.json [--part X]   a flat sheet part as a plate (edges clamped or simply held, pressure)
+//   node tools/forma.mjs materials [search]   the material library with sources, and the project's materials
 //   node tools/forma.mjs dof <assembly | top>   what can still move (and how), mobility, redundant and conflicting joints
 //   node tools/forma.mjs interference <assembly | instance | top> [clearance mm]   parts that overlap (volume, where), touch, or come close
 //   node tools/forma.mjs exploded <view>      a saved exploded view's steps and trails
@@ -16,6 +24,7 @@
 //   node tools/forma.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]'] [--tool connector]
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
+//   node tools/forma.mjs pcb route|drag|cleanup|optimize …   the interactive router: pad to pad (walkaround/shove), drag a track or via, tidy copper
 //   node tools/forma.mjs pcb import <file> [--format f] [--name n] [--board id] [companions…]   a board/schematic from KiCad, Eagle, EasyEDA, Altium, CADSTAR, Fabmaster, PADS, gEDA
 //   node tools/forma.mjs pcb exports <id> | export <id> <file name | kicad_sch | ipc2581 | odb | d356 | …> [--out path]   files for other EDA tools
 //   node tools/forma.mjs sch export <schematic> netlist|bom|svg|pdf [--format kicad|orcad|cadstar|spice] [--out f]   schematic files; sch find|erc|buses|sheets <schematic>
@@ -60,6 +69,7 @@
 
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { request as httpRequest } from "node:http";
 import { pcbLib } from "./forma-pcblib.mjs";
 
 const args = process.argv.slice(2);
@@ -233,6 +243,125 @@ if (command === "run") {
     for (const n of r.notes) console.log(`  ! ${n}`);
     failed = !r.ok;
   }
+} else if (["stress", "fatigue", "modes", "buckle", "heat", "converge", "inp", "probe", "section", "path", "csv", "frame", "materials", "set-study", "plate"].includes(command)) {
+  // Simulation: a part's saved study run as kept, results read back, frames, materials.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const part = flag("--part");
+  const count = flag("--count");
+  const resolutions = flag("--resolutions");
+  const [, id, ...rest] = args;
+  const q = new URLSearchParams({ ...(project ? { project } : {}), ...(part ? { part } : {}) });
+  const n = (v, d = 2) => (v == null || !Number.isFinite(v) ? String(v) : Number(v.toFixed(d)).toString());
+  const v3 = (v) => `[${v.map((x) => n(x, 2)).join(", ")}]`;
+  // A study can take minutes: plain node:http, which (unlike fetch) never gives up waiting for the answer.
+  const get = (path, init = {}) =>
+    new Promise((done, fail) => {
+      const req = httpRequest(`${http}${path}`, { method: init.method ?? "GET", headers: init.headers ?? {} }, (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const body = Buffer.concat(chunks);
+          if (res.statusCode >= 400) return fail(new Error(body.toString() || `HTTP ${res.statusCode}`));
+          done({ text: async () => body.toString(), json: async () => JSON.parse(body.toString()), arrayBuffer: async () => body });
+        });
+      });
+      req.on("error", fail);
+      req.setTimeout(0);
+      if (init.body) req.write(init.body);
+      req.end();
+    });
+  try {
+    if (command === "set-study") {
+      // forma set-study <shape id> study.json [--part X]: save a study (faces as { normal, near: [x, y, z] }).
+      const study = JSON.parse(readFileSync(rest[0], "utf8"));
+      const r = await engine.commit("shape.set_study", { target: id, study: { ...study, part: part ?? study.part ?? null } });
+      if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
+      console.log(`✓ study saved on ${id}${part ? ` (${part})` : ""}`);
+    } else if (command === "materials") {
+      const m = await (await get(`/materials?${q}`)).json();
+      const words = rest.join(" ").toLowerCase();
+      for (const x of m.library.filter((x) => !words || x.name.toLowerCase().includes(words))) {
+        console.log(`${x.name} (${x.family}): E ${n(x.e / 1000, 1)} GPa, ν ${x.nu}, ρ ${x.density} kg/m³, yield ${x.yield_strength} MPa, UTS ${x.uts} MPa, Et ${x.tangent_modulus} MPa, fatigue ${x.fatigue_strength ?? "—"} MPa @ ${x.fatigue_cycles.toExponential(0)}${x.endurance_limit ? " (limit)" : ""}, k ${x.conductivity} W/m·K, c ${x.specific_heat} J/kg·K, α ${n(x.expansion * 1e6, 1)} µm/m·K\n    source: ${x.source}`);
+      }
+      for (const x of m.project) console.log(`project material ${x.id} “${x.name}”${x.set ? ` — set here: ${JSON.stringify(x.set)}` : ""}${x.properties ? "" : " — no figures (unknown name: set its properties)"}`);
+    } else if (command === "plate") {
+      // forma plate <shape id> plate.json [--part X]: a flat sheet as a plate ({ supports: [{ face: { normal, near }, hold: "clamped" | "simple" }], pressure, loads, resolution }).
+      const body = { ...JSON.parse(readFileSync(rest[0], "utf8")), ...(part ? { part } : {}) };
+      const r = await (await get(`/plate/${id}?${q}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+      const x = r.result;
+      console.log(`${x.safety >= 1 ? "✓" : "✗"} ${r.material} sheet ${n(x.thickness, 2)} mm: sags ${n(x.max_sag, 4)} mm at most (at ${v3(x.max_sag_at)}), bending stress ${n(x.max_stress, 1)} MPa at most (at ${v3(x.max_stress_at)}), safety ×${n(x.safety)}`);
+      for (const t of x.notes) console.log(`  ! ${t}`);
+    } else if (command === "frame") {
+      const f = JSON.parse(readFileSync(id, "utf8"));
+      const r = await (await get(`/frame`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(f) })).json();
+      console.log(`${r.safety >= 1 ? "✓" : "✗"} frame: safety ×${n(r.safety)} (${n(r.max_stress, 1)} MPa at most), moves ${n(r.max_displacement, 3)} mm at most, ${n(r.mass, 3)} kg${r.buckling != null ? `, lowest buckling ×${n(r.buckling)}` : ""}`);
+      r.members.forEach((m, i) => console.log(`  member ${i + 1} (${m.a}→${m.b}, ${n(m.length, 0)} mm, ${m.material}): ${n(m.axial, 0)} N axial, ${n(m.max_stress, 1)} MPa, ×${n(m.safety)}${m.buckling_factor != null ? `, buckles ×${n(m.buckling_factor)}` : ""}`));
+      for (const [node, f] of r.reactions) console.log(`  support at joint ${node}: ${v3(f.slice(0, 3))} N, ${v3(f.slice(3))} N·mm`);
+      for (const x of r.notes) console.log(`  ! ${x}`);
+    } else if (["probe", "section", "path", "csv"].includes(command)) {
+      // forma probe <key> x,y,z · section <key> x,y,z nx,ny,nz · path <key> x,y,z x,y,z [points] · csv <key>
+      const key = id;
+      if (command === "csv") process.stdout.write(await (await get(`/results/${key}/csv`)).text());
+      else if (command === "probe") {
+        const p = await (await get(`/results/${key}/probe?at=${rest[0]}`)).json();
+        console.log(`at ${v3(p.at)}: von Mises ${n(p.von_mises, 2)} MPa, principal ${v3(p.principal)} MPa, stress [xx yy zz xy yz zx] ${v3(p.stress)}, moves ${v3(p.displacement.map((x) => x * 1000))} µm, safety ×${n(p.safety)}${p.plastic_strain != null ? `, plastic strain ${n(p.plastic_strain, 5)}` : ""}`);
+      } else if (command === "section") {
+        const s = await (await get(`/results/${key}/section?point=${rest[0]}&normal=${rest[1]}`)).json();
+        console.log(`section through ${v3(s.point)} square to ${v3(s.normal)}: ${s.cells.length} cubes, ${n(s.area, 1)} mm² cut, up to ${n(s.max, 1)} MPa, force across ${v3(s.force)} N`);
+      } else {
+        const p = await (await get(`/results/${key}/path?a=${rest[0]}&b=${rest[1]}&points=${rest[2] ?? 21}`)).json();
+        console.log("distance_mm,von_mises_mpa,dx_um,dy_um,dz_um");
+        for (const s of p.samples) console.log(`${n(s.distance, 2)},${n(s.probe.von_mises, 2)},${s.probe.displacement.map((x) => n(x * 1000, 2)).join(",")}`);
+      }
+    } else {
+      if (!id) throw new Error(`say which shape: forma ${command} <shape id> [--part Name]`);
+      q.set("kind", command);
+      if (count) q.set("count", count);
+      if (resolutions) q.set("resolutions", resolutions);
+      const res = await get(`/simulate/${id}?${q}`, { method: "POST" });
+      if (command === "inp") process.stdout.write(await res.text());
+      else {
+        const r = await res.json();
+        if (command === "stress" || command === "fatigue") {
+          const x = r.result;
+          console.log(`${x.safety >= 1 ? "✓" : "✗"} ${r.material}: safety ×${n(x.safety)} against yield (${n(x.max_stress, 1)} MPa at ${v3(x.max_stress_at)}, yield ${n(x.yield_strength, 0)} MPa); moves ${n(x.max_displacement, 4)} mm at most (at ${v3(x.max_displacement_at)}); ${x.elements} cubes of ${n(x.cell, 2)} mm`);
+          for (const p of x.parts ?? []) console.log(`  ${p.name}: ${n(p.max_stress, 1)} MPa, ${n(p.max_displacement, 4)} mm, ×${n(p.safety)}${p.floating ? " (not held: slides away)" : ""}`);
+          for (const rc of x.reactions ?? []) console.log(`  ${rc.name} holds with ${v3(rc.force)} N, ${v3(rc.moment)} N·mm about ${v3(rc.at)}`);
+          for (const b of x.bolts ?? []) console.log(`  bolt in ${b.part}: preload ${n(b.preload, 0)} N, now ${n(b.force, 0)} N`);
+          if (x.plastic) console.log(`  yielded: ${x.plastic.yielded} cubes, plastic strain up to ${n(x.plastic.max_strain, 5)} at ${v3(x.plastic.at)}${x.plastic.settled ? "" : " (not settled)"}`);
+          if (r.fatigue) console.log(`  fatigue: Goodman ×${n(r.fatigue.min_factor)} at ${v3(r.fatigue.at)}, life ${r.fatigue.life === null || r.fatigue.life > 1e15 ? "unlimited" : r.fatigue.life.toExponential(2) + " cycles"} (σa ${n(r.fatigue.amplitude, 1)}, σm ${n(r.fatigue.mean, 1)} MPa, Se ${n(r.fatigue.strength, 1)} MPa)`);
+          for (const t of [...x.notes, ...(r.fatigue?.notes ?? [])]) console.log(`  ! ${t}`);
+          console.log(`  result key ${r.key} (forma probe|section|path|csv ${r.key} …)`);
+          failed = x.safety < 1;
+        } else if (command === "modes") {
+          r.modes.forEach((m, i) => console.log(`  mode ${i + 1}: ${n(m.frequency, 1)} Hz (${n(m.frequency * 60, 0)} rpm), mostly ${m.direction}`));
+          console.log(`  mass ${n(r.mass, 4)} kg${r.prestress ? ", prestressed" : ""}`);
+          for (const t of r.notes) console.log(`  ! ${t}`);
+        } else if (command === "buckle") {
+          r.modes.forEach((m, i) => console.log(`  buckling mode ${i + 1}: ×${n(m.factor)} the loads, mostly ${m.direction}`));
+          console.log(`  largest stress ${n(r.max_stress, 1)} MPa (yields at ×${n(r.yield_factor)})`);
+          for (const t of r.notes) console.log(`  ! ${t}`);
+        } else if (command === "heat") {
+          if (r.times) console.log(`  after ${n(r.times.at(-1), 1)} s: ${n(r.last.min, 1)}–${n(r.last.max, 1)} °C (hottest through time ${n(Math.max(...r.max), 1)} °C)`);
+          else console.log(`  ${n(r.min, 1)}–${n(r.max, 1)} °C; ${n(r.heat_in, 2)} W in, ${n(r.to_holds, 2)} W to held faces, ${n(r.to_air, 2)} W to air`);
+          for (const t of r.notes) console.log(`  ! ${t}`);
+        } else if (command === "converge") {
+          console.log("  resolution  cube_mm  cubes   max_stress_MPa  change  max_move_mm  change  seconds");
+          for (const row of r.rows) console.log(`  ${String(row.resolution).padEnd(10)}  ${n(row.cell, 3).padEnd(7)}  ${String(row.elements).padEnd(6)}  ${n(row.max_stress, 2).padEnd(14)}  ${row.stress_change == null ? "—     " : n(row.stress_change * 100, 1) + " %"}  ${n(row.max_displacement, 5).padEnd(11)}  ${row.displacement_change == null ? "—     " : n(row.displacement_change * 100, 1) + " %"}  ${n(row.seconds, 1)}`);
+          if (r.displacement_limit != null) console.log(`  movement extrapolated to fine cubes: ${n(r.displacement_limit, 5)} mm`);
+          for (const t of r.notes) console.log(`  ! ${t}`);
+          failed = !r.converged;
+        }
+      }
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
 } else if (command === "check-geometry") {
   // The exact kernel's check of every part (as FreeCAD's Check geometry).
   const [, id, part] = args;
@@ -394,10 +523,42 @@ if (command === "run") {
       }
       const s = await get("/pcb/kicad");
       console.log(`KiCad libraries in ${s.root}\n  footprints: ${s.footprints ?? "not downloaded yet"}\n  symbols:    ${s.symbols ?? "not downloaded yet"}\n  ${s.licence}`);
+    } else if (sub === "route" || sub === "drag" || sub === "cleanup" || sub === "optimize") {
+      // The interactive router from the shell: lay a route pad to pad, drag a track or via, tidy copper.
+      const point = (v) => (/^-?[\d.]+,-?[\d.]+$/.test(v) ? v.split(",").map(Number) : v);
+      const mode = flag("--mode");
+      const layer = flag("--layer");
+      const index = flag("--index");
+      const kind = flag("--kind");
+      const [, , board, a, b] = args;
+      let op;
+      let params;
+      if (sub === "route") {
+        if (!board || !a || !b) throw new Error("usage: forma pcb route <board> <from: U1.3 | x,y> <to: R4.1 | x,y> [--mode walkaround|shove|highlight] [--layer top]");
+        op = "pcb.route.interactive";
+        params = { board, from: point(a), to: point(b), ...(mode ? { mode } : {}), ...(layer ? { layer } : {}) };
+      } else if (sub === "drag") {
+        if (!board || !a || !b) throw new Error("usage: forma pcb drag <board> <track or via id> <x,y> [--index n] [--kind segment|corner|arc|via] [--mode shove|highlight]");
+        op = "pcb.route.drag";
+        params = { board, target: a, to: point(b), ...(index ? { index: Number(index) } : {}), ...(kind ? { kind } : {}), ...(mode ? { mode } : {}) };
+      } else {
+        if (!board) throw new Error(`usage: forma pcb ${sub} <board>`);
+        op = sub === "cleanup" ? "pcb.route.cleanup" : "pcb.route.optimize";
+        params = { board };
+      }
+      const r = await engine.commit(op, params);
+      if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
+      const o = r.value.output;
+      if (sub === "route" || sub === "drag") {
+        console.log(`${o.ok ? "✓" : "✗"} ${sub === "route" ? `${o.net ?? "no net"}: ${o.tracks.length} track(s), ${o.vias.length} via(s)` : "dragged"} in ${o.mode}${o.reached === false ? ", stopped short" : ""}; pushed ${o.pushed_tracks} track(s), ${o.pushed_vias} via(s) (rev ${r.value.revision})`);
+        for (const c of o.collisions) console.log(`  ✗ ${c.layer ?? ""} too close to ${c.with}: ${c.gap} mm (needs ${c.need}) at ${c.at.map((x) => x.toFixed(2)).join(", ")}`);
+        for (const n of o.notes) console.log(`  · ${n}`);
+        failed = !o.ok;
+      } else console.log(`✓ ${JSON.stringify(o)} (rev ${r.value.revision})`);
     } else if (["lib", "logo", "assign", "variant", "block"].includes(sub)) {
       failed = await pcbLib(sub, args, { engine, get, http, q });
     } else {
-      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | import <file> [--format f] | exports <id> | export <id> <name|kind> [--out path] | library [update] | lib … | logo <image> | assign <schematic> | variant <schematic> … | block …");
+      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | import <file> [--format f] | exports <id> | export <id> <name|kind> [--out path] | library [update] | lib … | logo <image> | assign <schematic> | variant <schematic> … | block … | route <board> <from> <to> [--mode shove] | drag <board> <item> <x,y> | cleanup <board> | optimize <board>");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);

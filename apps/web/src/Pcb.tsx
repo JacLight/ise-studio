@@ -54,7 +54,7 @@ type Comp = {
   pin_names: Record<string, string>;
   known: boolean;
 };
-type Track = { id: string; net: string | null; layer: string; width: number; points: P[]; auto: boolean; reroute?: boolean };
+type Track = { id: string; net: string | null; layer: string; width: number; points: P[]; auto: boolean; reroute?: boolean; vertices?: P[]; bulges?: number[] };
 type Via = { id: string; net: string | null; at: P; drill: number; diameter: number };
 type Zone = { id: string; net: string; layer: string; outline: P[]; fill: P[][][]; priority: number; area: number };
 type Hole = { at: P; size: P; rotation: number; plated: boolean; owner: string };
@@ -132,11 +132,89 @@ type Run = (operation: string, parameters: Record<string, unknown>) => Promise<u
 type Tab = "parts" | "nets" | "checks" | "fab" | "bom" | "sim";
 type Selection = { kind: "component" | "track" | "via" | "zone"; id: string } | null;
 type LayerKey = "top" | "bottom" | "inner" | "silk" | "courtyard" | "ratsnest" | "zones" | "drc";
+// The interactive router (engine: POST /pcb/<id>/router, pcb.route.interactive / pcb.route.drag).
+type RouterMode = "walkaround" | "shove" | "highlight";
+type AngleMode = "45" | "90" | "free";
+type Collision = { at: P; layer: string | null; with: string; gap: number; need: number };
+type Plan = {
+  ok: boolean;
+  reached: boolean;
+  mode: RouterMode;
+  net: string | null;
+  width: number;
+  via_drill: number;
+  via_diameter: number;
+  clearance: number;
+  runs: { layer: string; points: P[]; bulges?: number[] }[];
+  vias: P[];
+  tracks: { id: string; points: P[]; bulges?: number[] }[];
+  moved_vias: { id: string; at: P }[];
+  collisions: Collision[];
+  end: P;
+  layer: string;
+  notes: string[];
+};
+type RouteStep = { at: P | string; layer: string; diagonal_first: boolean };
+type ItemDrag = { id: string; kind: "segment" | "corner" | "arc" | "via"; index: number; from: P; client: P; moved: boolean };
+const ROUTER_MODES: RouterMode[] = ["walkaround", "shove", "highlight"];
+const ANGLES: AngleMode[] = ["45", "90", "free"];
+const WIDTHS = [0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.5, 2.0];
+const LAYER_NAME = (l: string) => (l === "top" ? "Top" : l === "bottom" ? "Bottom" : l.replace(/^in/, "Inner "));
 
 const MASKS: Record<string, string> = { green: "#1d4a33", black: "#16181c", blue: "#173a63", red: "#6b1f22", white: "#d9dad6", purple: "#3f2463", yellow: "#8a7a1c" };
 const COPPER: Record<string, string> = { top: "#e0614f", bottom: "#4f8fe6", in1: "#d6a43a", in2: "#5cc78a" };
 const FMT = (v: number, d = 2) => (Math.abs(v) < 1e-9 ? "0" : v.toFixed(d).replace(/\.?0+$/, ""));
 const money = (v: number, cur: string) => new Intl.NumberFormat(undefined, { style: "currency", currency: cur, maximumFractionDigits: v < 1 ? 4 : 2 }).format(v);
+
+/** A centreline with arc segments (bulge = tan(sweep / 4), counter-clockwise positive) as points. */
+function flatten(points: P[], bulges?: number[]): P[] {
+  if (!bulges || !bulges.some((x) => Math.abs(x) > 1e-9)) return points;
+  const out: P[] = [points[0]];
+  for (let i = 0; i + 1 < points.length; i++) {
+    const [a, c] = [points[i], points[i + 1]];
+    const bu = bulges[i] ?? 0;
+    const ch = Math.hypot(c[0] - a[0], c[1] - a[1]);
+    if (Math.abs(bu) < 1e-9 || ch < 1e-9) {
+      out.push(c);
+      continue;
+    }
+    const right = [(c[1] - a[1]) / ch, -(c[0] - a[0]) / ch];
+    const sag = (bu * ch) / 2;
+    const mid = [(a[0] + c[0]) / 2 + right[0] * sag, (a[1] + c[1]) / 2 + right[1] * sag];
+    const r = (ch * ch) / 4 / (2 * Math.abs(sag)) + Math.abs(sag) / 2;
+    const cen = [mid[0] - right[0] * Math.sign(sag) * r, mid[1] - right[1] * Math.sign(sag) * r];
+    const a0 = Math.atan2(a[1] - cen[1], a[0] - cen[0]);
+    const sweep = 4 * Math.atan(bu);
+    const n = Math.max(4, Math.ceil(Math.abs(sweep) / 0.08));
+    for (let k = 1; k < n; k++) out.push([cen[0] + r * Math.cos(a0 + (sweep * k) / n), cen[1] + r * Math.sin(a0 + (sweep * k) / n)]);
+    out.push(c);
+  }
+  return out;
+}
+
+function segDist(p: P, a: P, b: P) {
+  const ab = [b[0] - a[0], b[1] - a[1]];
+  const l2 = ab[0] * ab[0] + ab[1] * ab[1];
+  const t = l2 < 1e-18 ? 0 : Math.max(0, Math.min(1, ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / l2));
+  return { d: Math.hypot(p[0] - a[0] - ab[0] * t, p[1] - a[1] - ab[1] * t), q: [a[0] + ab[0] * t, a[1] + ab[1] * t] as P };
+}
+
+function stored<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  try {
+    const v = localStorage.getItem(key) as T | null;
+    return v && allowed.includes(v) ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function store(key: string, v: string) {
+  try {
+    localStorage.setItem(key, v);
+  } catch {
+    /* private window */
+  }
+}
 
 function pts(list: P[]) {
   return list.map((p) => `${p[0]},${p[1]}`).join(" ");
@@ -173,7 +251,12 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
   const [tab, setTab] = useState<Tab>("parts");
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({ top: true, bottom: true, inner: true, silk: true, courtyard: false, ratsnest: true, zones: true, drc: true });
   const [fromBelow, setFromBelow] = useState(false);
-  const [active, setActive] = useState<"top" | "bottom">("top");
+  const [active, setActive] = useState<string>("top");
+  // Tracks and vias picked together ("select connection", U).
+  const [group, setGroup] = useState<string[]>([]);
+  // While the router is drawing, its keys are its own.
+  const routingFlag = useRef(false);
+  const boardKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
   const [sel, setSel] = useState<Selection>(null);
   const [net, setNet] = useState<string | null>(null);
   const [focusViolation, setFocusViolation] = useState<number | null>(null);
@@ -302,11 +385,23 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
         if (k.length === 1 && !e.altKey && k !== "a" && k !== "l") e.stopImmediatePropagation();
         return;
       }
+      if (boardKeys.current?.(e)) return handled();
+      if (routingFlag.current) {
+        if (k === "v" && b) {
+          handled();
+          setActive((a) => (a === "top" ? "bottom" : "top"));
+        } else if ((e.key === "PageDown" || e.key === "PageUp") && b) {
+          handled();
+          setActive((a) => b.layers[(b.layers.indexOf(a) + (e.key === "PageDown" ? 1 : b.layers.length - 1)) % b.layers.length]);
+        }
+        return;
+      }
       if (e.key === "Escape") {
         handled();
-        if (sel || net) {
+        if (sel || net || group.length) {
           setSel(null);
           setNet(null);
+          setGroup([]);
         } else props.onClose();
       } else if (k === "r" && selComp) {
         handled();
@@ -314,6 +409,11 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
       } else if (k === "f" && selComp) {
         handled();
         void commit("pcb.component.update", { target: selComp.id, side: selComp.side === "top" ? "bottom" : "top" }, `${selComp.reference} to the ${selComp.side === "top" ? "bottom" : "top"}`);
+      } else if ((e.key === "Delete" || e.key === "Backspace") && group.length) {
+        handled();
+        void commit("pcb.delete", { targets: group }, `Deleted ${group.length} item${group.length > 1 ? "s" : ""}`);
+        setGroup([]);
+        setSel(null);
       } else if ((e.key === "Delete" || e.key === "Backspace") && sel) {
         handled();
         void commit("pcb.delete", { targets: [sel.id] }, "Deleted");
@@ -321,6 +421,9 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
       } else if (k === "v" && b) {
         handled();
         setActive((a) => (a === "top" ? "bottom" : "top"));
+      } else if ((e.key === "PageDown" || e.key === "PageUp") && b) {
+        handled();
+        setActive((a) => b.layers[(b.layers.indexOf(a) + (e.key === "PageDown" ? 1 : b.layers.length - 1)) % b.layers.length]);
       } else if (k.length === 1 && !e.altKey && k !== "a" && k !== "l") {
         // The 3D view's tool keys stay with it while the board is open.
         e.stopImmediatePropagation();
@@ -328,7 +431,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [sel, net, selComp, commit, props, b]);
+  }, [sel, net, selComp, commit, props, b, group]);
 
   const autoroute = async () => {
     if (!b) return;
@@ -501,6 +604,11 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
                 onActive={setActive}
                 sel={sel}
                 onSel={setSel}
+                group={group}
+                onGroup={setGroup}
+                routingFlag={routingFlag}
+                keys={boardKeys}
+                notify={props.notify}
                 net={net}
                 onNet={setNet}
                 focus={null}
@@ -525,6 +633,11 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
             onActive={setActive}
             sel={sel}
             onSel={setSel}
+            group={group}
+            onGroup={setGroup}
+            routingFlag={routingFlag}
+            keys={boardKeys}
+            notify={props.notify}
             net={net}
             onNet={setNet}
             focus={focusViolation !== null ? (b.violations[focusViolation] ?? null) : null}
@@ -688,10 +801,15 @@ function BoardCanvas(props: {
   onLayers: (l: Record<LayerKey, boolean>) => void;
   fromBelow: boolean;
   onFromBelow: (v: boolean) => void;
-  active: "top" | "bottom";
-  onActive: (a: "top" | "bottom") => void;
+  active: string;
+  onActive: (a: string) => void;
   sel: Selection;
   onSel: (s: Selection) => void;
+  group: string[];
+  onGroup: (g: string[]) => void;
+  routingFlag: React.MutableRefObject<boolean>;
+  keys: React.MutableRefObject<((e: KeyboardEvent) => boolean) | null>;
+  notify: (m: string) => void;
   net: string | null;
   onNet: (n: string | null) => void;
   focus: Violation | null;
@@ -708,11 +826,64 @@ function BoardCanvas(props: {
   const [drag, setDrag] = useState<{ id: string; start: P; at: P; delta: P; moved: boolean } | null>(null);
   const pan = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const [routing, setRouting] = useState(false);
-  const [route, setRoute] = useState<P[]>([]);
-  // Finished runs of the track being drawn on other layers (a via joins each to the next).
-  const [runs, setRuns] = useState<{ layer: string; points: P[] }[]>([]);
+  const [routerMode, setRouterMode] = useState<RouterMode>(() => stored("forma.pcb.router", ROUTER_MODES, "walkaround"));
+  const [angle, setAngle] = useState<AngleMode>(() => stored("forma.pcb.angle", ANGLES, "45"));
+  const [arcCorners, setArcCorners] = useState(false);
+  const [width, setWidth] = useState<number | null>(null);
+  // "/" flips which way a leg bends (diagonal first or straight first).
+  const [posture, setPosture] = useState(false);
+  // The route being laid: where it starts, the clicks so far, and the router's plan to the cursor.
+  const [start, setStart] = useState<{ at: P; layer: string } | null>(null);
+  const [steps, setSteps] = useState<RouteStep[]>([]);
+  const [plan, setPlan] = useState<Plan | null>(null);
+  // A track segment, corner or arc, or a via, being dragged.
+  const [itemDrag, setItemDrag] = useState<ItemDrag | null>(null);
+  const lastDrag = useRef<{ to: P; free: boolean } | null>(null);
+  const mouse = useRef<P | null>(null);
   const routeLayer = useRef(props.active);
   const [cursor, setCursor] = useState<P | null>(null);
+  useEffect(() => {
+    props.routingFlag.current = routing;
+    return () => {
+      props.routingFlag.current = false;
+    };
+  }, [routing, props.routingFlag]);
+  useEffect(() => store("forma.pcb.router", routerMode), [routerMode]);
+  useEffect(() => store("forma.pcb.angle", angle), [angle]);
+
+  // The router's plan for each cursor position: one request at a time, the latest wins; nothing is changed until a click.
+  const gen = useRef(0);
+  const asking = useRef(false);
+  const nextAsk = useRef<{ body: Record<string, unknown>; g: number } | null>(null);
+  const ask = useCallback(
+    (body: Record<string, unknown>) => {
+      const g = gen.current;
+      if (asking.current) {
+        nextAsk.current = { body, g };
+        return;
+      }
+      asking.current = true;
+      fetch(projectUrl(`/pcb/${b.id}/router`), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+        .then(async (r) => (r.ok ? ((await r.json()) as Plan) : null))
+        .then((p) => {
+          if (g === gen.current) setPlan(p);
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          asking.current = false;
+          const n = nextAsk.current;
+          nextAsk.current = null;
+          if (n && n.g === gen.current) ask(n.body);
+        });
+    },
+    [b.id],
+  );
+  const dropPlan = () => {
+    gen.current++;
+    nextAsk.current = null;
+    setPlan(null);
+  };
+
   const fitted = useRef<string | null>(null);
 
   useEffect(() => {
@@ -778,69 +949,204 @@ function BoardCanvas(props: {
 
   const padAt = (p: P) => b.pads.find((q) => q.kind !== "npth" && Math.hypot(q.at[0] - p[0], q.at[1] - p[1]) < Math.max(q.size[0], q.size[1]) / 2);
 
+  const head = (at: P | string): RouteStep => ({ at, layer: props.active, diagonal_first: posture });
+  const routeSpec = (from: { at: P; layer: string }, to: RouteStep[]) => ({ board: b.id, from: from.at, layer: from.layer, to, mode: routerMode, angle, corners: arcCorners ? "arc" : "sharp", ...(width ? { width } : {}) });
+  const dragSpec = (d: ItemDrag, to: P, free: boolean) => ({ board: b.id, target: d.id, kind: d.kind, index: d.index, from: d.from, to, mode: routerMode === "highlight" ? "highlight" : "shove", angle: free || angle === "free" ? "free" : "45" });
+
+  // A route starts on a pad, a via, a track's end or a point on a track (its net, width and layer), or anywhere.
+  const startFrom = (raw: P, alt: boolean): { at: P; layer: string } => {
+    const pad = padAt(raw);
+    if (pad) return { at: pad.at, layer: pad.kind === "smd" ? pad.layers[0] : props.active };
+    const via = b.vias.find((v) => Math.hypot(v.at[0] - raw[0], v.at[1] - raw[1]) <= v.diameter / 2);
+    if (via) return { at: via.at, layer: props.active };
+    const reach = Math.max(0.2, 6 / (view?.s ?? 10));
+    let best: { d: number; at: P; layer: string } | null = null;
+    for (const t of b.tracks) {
+      if (!showLayer(t.layer)) continue;
+      for (const end of [t.points[0], t.points[t.points.length - 1]]) {
+        const d = Math.hypot(end[0] - raw[0], end[1] - raw[1]);
+        if (d <= Math.max(t.width, reach) && (!best || d < best.d)) best = { d, at: end, layer: t.layer };
+      }
+    }
+    if (!best)
+      for (const t of b.tracks) {
+        if (!showLayer(t.layer)) continue;
+        for (let i = 0; i + 1 < t.points.length; i++) {
+          const { d, q } = segDist(raw, t.points[i], t.points[i + 1]);
+          if (d <= t.width / 2 && (!best || d < best.d)) best = { d, at: [+q[0].toFixed(4), +q[1].toFixed(4)], layer: t.layer };
+        }
+      }
+    return best ? { at: best.at, layer: best.layer } : { at: snap(raw, alt), layer: props.active };
+  };
+
+  const resetRoute = () => {
+    dropPlan();
+    setStart(null);
+    setSteps([]);
+  };
+
+  const finishRoute = async (all: RouteStep[]) => {
+    const from = start;
+    // Walkaround and shove never place copper that breaks a clearance (a via dropped too close, an end on another net).
+    if (plan && !plan.ok && routerMode !== "highlight") {
+      const c = plan.collisions[0];
+      props.notify(`Not placed: ${c ? `too close to ${c.with}` : "it would break a clearance"} — move it, Backspace, or use Highlight mode to place it anyway`);
+      return;
+    }
+    resetRoute();
+    if (!from || !all.length) return;
+    const out = (await props.commit("pcb.route.interactive", routeSpec(from, all))) as { output?: { tracks: string[]; vias: string[]; ok: boolean; reached: boolean; pushed_tracks: number; pushed_vias: number; collisions: Collision[] } } | null;
+    const o = out?.output;
+    if (!o) return;
+    const parts = [`${o.tracks.length} track${o.tracks.length === 1 ? "" : "s"}`];
+    if (o.vias.length) parts.push(`${o.vias.length} via${o.vias.length === 1 ? "" : "s"}`);
+    if (o.pushed_tracks || o.pushed_vias) parts.push(`pushed ${o.pushed_tracks + o.pushed_vias}`);
+    props.notify(`Routed: ${parts.join(", ")}${o.collisions.length ? ` · ${o.collisions.length} clearance problem${o.collisions.length === 1 ? "" : "s"}` : ""}`);
+  };
+
   const onDown = (e: ReactPointerEvent) => {
     if (!view) return;
     if (routing && e.button === 0) {
       const raw = toBoard(e);
+      if (!start) {
+        const s0 = startFrom(raw, e.altKey);
+        setStart(s0);
+        setSteps([]);
+        if (s0.layer !== props.active) {
+          routeLayer.current = s0.layer;
+          props.onActive(s0.layer);
+        }
+        return;
+      }
+      if (e.detail >= 2) return void finishRoute(steps);
       const pad = padAt(raw);
       const p = pad ? pad.at : snap(raw, e.altKey);
-      if (e.detail >= 2 && route.length >= 1) return finishRoute([...route, p]);
-      setRoute((r) => [...r, p]);
+      // A click on a pad of the net (not the one it started from) finishes the route there.
+      const from = padAt(start.at);
+      if (pad && plan?.net && pad.net === plan.net && pad !== from && plan.reached) return void finishRoute([...steps, head(pad.at)]);
+      setSteps((list) => [...list, head(plan && !plan.reached ? plan.end : p)]);
       return;
     }
     (e.target as Element).setPointerCapture?.(e.pointerId);
     pan.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty };
   };
 
-  // Switching layer (V) mid-track places a via at the last point and goes on from it on the other layer.
+  // Switching layer (V, PageUp/PageDown) mid-route: the line so far ends at the head, and the next leg starts there through a via.
   useEffect(() => {
     const was = routeLayer.current;
     routeLayer.current = props.active;
-    if (!routing || was === props.active || route.length === 0) return;
-    const last = route[route.length - 1];
-    if (route.length >= 1) setRuns((r) => [...r, { layer: was, points: route }]);
-    setRoute([last]);
+    if (!routing || !start || was === props.active) return;
+    if (plan) setSteps((list) => [...list, { at: plan.end, layer: was, diagonal_first: posture }]);
+    else if (!steps.length) setStart({ ...start, layer: props.active });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.active]);
 
-  const finishRoute = async (points: P[]) => {
-    const clean = (list: P[]) => list.filter((p, i) => i === 0 || Math.hypot(p[0] - list[i - 1][0], p[1] - list[i - 1][1]) > 1e-6);
-    const usable = [...runs, { layer: props.active, points }].map((r) => ({ layer: r.layer, points: clean(r.points) }));
-    // A via with nothing after it is dropped.
-    while (usable.length > 1 && usable[usable.length - 1].points.length < 2) usable.pop();
-    setRoute([]);
-    setRuns([]);
-    if (usable.length === 1 && usable[0].points.length < 2) return;
-    if (usable.length === 1) await props.commit("pcb.track.create", { board: b.id, layer: usable[0].layer, points: usable[0].points }, "Track added");
-    else await props.commit("pcb.route.create", { board: b.id, runs: usable }, `Track added with ${usable.length - 1} via${usable.length > 2 ? "s" : ""}`);
+  // Ask again when a setting or the clicks change.
+  useEffect(() => {
+    if (routing && start && cursor) ask({ op: "route", ...routeSpec(start, [...steps, head(cursor)]) });
+    else if (!start) dropPlan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [posture, routerMode, angle, arcCorners, width, steps, start, props.active, routing]);
+
+  const selTrackNow = sel?.kind === "track" ? b.tracks.find((t) => t.id === sel.id) : null;
+  const selectConnection = async () => {
+    if (!sel || (sel.kind !== "track" && sel.kind !== "via")) return;
+    const r = await fetch(projectUrl(`/pcb/${b.id}/router`), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "connection", targets: [sel.id] }) });
+    if (!r.ok) return;
+    const { items } = (await r.json()) as { items: string[] };
+    props.onGroup(items);
+    props.notify(`${items.length} track${items.length === 1 ? "" : "s"} and vias in this connection · Del removes them`);
   };
 
-  useEffect(() => {
-    if (!routing) return;
-    const onKey = (e: KeyboardEvent) => {
+  const cleanup = async () => {
+    const out = (await props.commit("pcb.route.cleanup", { board: b.id })) as { output?: Record<string, number> } | null;
+    const o = out?.output;
+    if (!o) return;
+    const said = [
+      o.points_merged && `${o.points_merged} corners merged`,
+      o.joined && `${o.joined} tracks joined`,
+      o.trimmed && `${o.trimmed} stubs trimmed`,
+      o.duplicates && `${o.duplicates} duplicates`,
+      o.redundant_vias && `${o.redundant_vias} vias removed`,
+    ].filter(Boolean);
+    props.notify(said.length ? `Cleaned up: ${said.join(", ")}` : "Nothing to clean up");
+  };
+
+  // Keys over the board (the workspace asks these first).
+  const keyHandler = (e: KeyboardEvent): boolean => {
+    const k = e.key.toLowerCase();
+    if (routing) {
       if (e.key === "Enter") {
-        e.preventDefault();
-        void finishRoute(route);
+        void finishRoute(start && cursor ? [...steps, head(plan && !plan.reached ? plan.end : cursor)] : steps);
       } else if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        if (route.length || runs.length) {
-          setRoute([]);
-          setRuns([]);
-        } else setRouting(false);
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+        if (start) resetRoute();
+        else setRouting(false);
+      } else if (e.key === "Backspace") {
+        if (steps.length) setSteps((l) => l.slice(0, -1));
+        else resetRoute();
+      } else if (e.key === "/") {
+        setPosture((p) => !p);
+      } else if (k === "f" && start && plan?.net) {
+        // Finish to the nearest pad of the net.
+        const lastAt = steps.length ? steps[steps.length - 1].at : start.at;
+        const from: P = typeof lastAt === "string" ? start.at : lastAt;
+        const target = b.pads
+          .filter((q) => q.net === plan.net && q.kind !== "npth" && Math.hypot(q.at[0] - start.at[0], q.at[1] - start.at[1]) > 1e-6)
+          .sort((a, c) => Math.hypot(a.at[0] - from[0], a.at[1] - from[1]) - Math.hypot(c.at[0] - from[0], c.at[1] - from[1]))[0];
+        if (target) void finishRoute([...steps, head(`${target.reference}.${target.number}`)]);
+      } else if (k === "w") {
+        const now = width ?? plan?.width ?? 0.25;
+        const next = e.shiftKey ? [...WIDTHS].reverse().find((w) => w < now - 1e-9) : WIDTHS.find((w) => w > now + 1e-9);
+        if (next) setWidth(next);
+      } else if (k === "m") {
+        setRouterMode((m) => ROUTER_MODES[(ROUTER_MODES.indexOf(m) + 1) % ROUTER_MODES.length]);
+      } else return false;
+      return true;
+    }
+    if (k === "x" && props.canEdit) {
+      setRouting(true);
+      return true;
+    }
+    if (k === "u" && (sel?.kind === "track" || sel?.kind === "via")) {
+      void selectConnection();
+      return true;
+    }
+    if (k === "b" && selTrackNow && mouse.current && props.canEdit) {
+      void props.commit("pcb.track.break", { target: selTrackNow.id, at: mouse.current }, "Track broken in two");
+      return true;
+    }
+    return false;
+  };
+  useEffect(() => {
+    props.keys.current = keyHandler;
+  });
+  useEffect(
+    () => () => {
+      props.keys.current = null;
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routing, route, runs]);
+    [],
+  );
 
   const onMove = (e: ReactPointerEvent) => {
     if (!view) return;
+    mouse.current = toBoard(e);
     if (routing) {
       const raw = toBoard(e);
       const pad = padAt(raw);
-      setCursor(pad ? pad.at : snap(raw, e.altKey));
+      const c = pad ? pad.at : snap(raw, e.altKey);
+      setCursor(c);
+      if (start) ask({ op: "route", ...routeSpec(start, [...steps, head(c)]) });
+    }
+    if (itemDrag) {
+      const to = snap(toBoard(e), e.altKey);
+      const moved = itemDrag.moved || Math.hypot(e.clientX - itemDrag.client[0], e.clientY - itemDrag.client[1]) > 3;
+      if (moved !== itemDrag.moved) setItemDrag({ ...itemDrag, moved });
+      if (moved) {
+        lastDrag.current = { to, free: e.altKey };
+        ask({ op: "drag", ...dragSpec(itemDrag, to, e.altKey) });
+      }
+      return;
     }
     if (drag) {
       const p = toBoard(e);
@@ -855,6 +1161,21 @@ function BoardCanvas(props: {
   };
 
   const onUp = (e: ReactPointerEvent) => {
+    if (itemDrag) {
+      const d = itemDrag;
+      const last = lastDrag.current;
+      setItemDrag(null);
+      lastDrag.current = null;
+      const seen = plan;
+      dropPlan();
+      if (!d.moved || !last) return;
+      if (seen && !seen.ok && routerMode !== "highlight") {
+        props.notify(`Cannot drag there: ${seen.notes[0]?.replace(/^cannot shove: /, "") ?? "it would break a clearance"} (Highlight mode places it anyway)`);
+        return;
+      }
+      void props.commit("pcb.route.drag", dragSpec(d, last.to, last.free));
+      return;
+    }
     if (drag) {
       const d = drag;
       setDrag(null);
@@ -868,8 +1189,47 @@ function BoardCanvas(props: {
       if (!moved && !routing) {
         props.onSel(null);
         props.onNet(null);
+        props.onGroup([]);
       }
     }
+  };
+
+  const onTrackDown = (e: ReactPointerEvent, t: Track) => {
+    if (routing) return;
+    e.stopPropagation();
+    props.onSel({ kind: "track", id: t.id });
+    props.onNet(t.net);
+    if (!props.group.includes(t.id)) props.onGroup([]);
+    grabTrack(e, t);
+  };
+  const onViaDown = (e: ReactPointerEvent, v: Via) => {
+    if (routing) return;
+    e.stopPropagation();
+    props.onSel({ kind: "via", id: v.id });
+    props.onNet(v.net);
+    if (!props.group.includes(v.id)) props.onGroup([]);
+    beginItemDrag(e, v.id, "via", 0);
+  };
+
+  // Tracks and vias are dragged by the router (45°, pushing neighbours; Alt: free angle).
+  const beginItemDrag = (e: ReactPointerEvent, id: string, kind: ItemDrag["kind"], index: number) => {
+    if (!props.canEdit || e.button !== 0 || !view) return;
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+    setItemDrag({ id, kind, index, from: toBoard(e), client: [e.clientX, e.clientY], moved: false });
+  };
+  const grabTrack = (e: ReactPointerEvent, t: Track) => {
+    const raw = toBoard(e);
+    const verts = t.vertices?.length ? t.vertices : t.points;
+    const arcs = !!t.bulges?.length;
+    const tol = Math.max(t.width / 2, 5 / (view?.s ?? 10));
+    const corner = arcs ? -1 : verts.findIndex((q) => Math.hypot(q[0] - raw[0], q[1] - raw[1]) <= tol);
+    let seg = 0;
+    let bd = Infinity;
+    for (let i = 0; i + 1 < verts.length; i++) {
+      const { d } = segDist(raw, verts[i], verts[i + 1]);
+      if (d < bd) [bd, seg] = [d, i];
+    }
+    beginItemDrag(e, t.id, arcs ? "arc" : corner >= 0 ? "corner" : "segment", corner >= 0 ? corner : seg);
   };
 
   const startDrag = (e: ReactPointerEvent, c: Comp) => {
@@ -909,6 +1269,12 @@ function BoardCanvas(props: {
   const selTrack = sel?.kind === "track" ? b.tracks.find((t) => t.id === sel.id) : null;
   const selVia = sel?.kind === "via" ? b.vias.find((t) => t.id === sel.id) : null;
   const errorsAt = useMemo(() => b.violations.filter((v) => v.code !== "unrouted"), [b.violations]);
+  // What the router's plan moves is drawn where it would go, not where it is.
+  const replaced = useMemo(() => new Set(plan?.tracks.map((t) => t.id) ?? []), [plan]);
+  const movedVias = useMemo(() => new Map((plan?.moved_vias ?? []).map((m) => [m.id, m.at] as [string, P])), [plan]);
+  const groupSet = useMemo(() => new Set(props.group), [props.group]);
+  const selComp = sel?.kind === "component" ? b.components.find((c) => c.id === sel.id) : null;
+  const legNet = plan?.net ?? null;
 
   const hoverPad = (e: ReactPointerEvent, p: Pad) => {
     const r = host.current!.getBoundingClientRect();
@@ -956,7 +1322,7 @@ function BoardCanvas(props: {
                         />
                       ))}
                   {b.tracks
-                    .filter((t) => t.layer === l)
+                    .filter((t) => t.layer === l && !replaced.has(t.id))
                     .map((t) => (
                       <polyline
                         key={t.id}
@@ -968,12 +1334,7 @@ function BoardCanvas(props: {
                         strokeLinejoin="round"
                         opacity={dimmed && !lit(t.net) ? 0.18 : 1}
                         className="pcb-track"
-                        onPointerDown={(e) => {
-                          if (routing) return;
-                          e.stopPropagation();
-                          props.onSel({ kind: "track", id: t.id });
-                          props.onNet(t.net);
-                        }}
+                        onPointerDown={(e) => onTrackDown(e, t)}
                       />
                     ))}
                   {b.pads
@@ -999,17 +1360,12 @@ function BoardCanvas(props: {
                 {b.vias.map((v) => (
                   <circle
                     key={v.id}
-                    cx={v.at[0]}
-                    cy={v.at[1]}
+                    cx={(movedVias.get(v.id) ?? v.at)[0]}
+                    cy={(movedVias.get(v.id) ?? v.at)[1]}
                     r={v.diameter / 2}
                     fill={lit(v.net) ? "#fff2b0" : "#c9c4b4"}
                     opacity={dimmed && !lit(v.net) ? 0.3 : 1}
-                    onPointerDown={(e) => {
-                      if (routing) return;
-                      e.stopPropagation();
-                      props.onSel({ kind: "via", id: v.id });
-                      props.onNet(v.net);
-                    }}
+                    onPointerDown={(e) => onViaDown(e, v)}
                   />
                 ))}
                 {b.holes.map((h, i) => {
@@ -1056,6 +1412,18 @@ function BoardCanvas(props: {
                 </g>
               );
             })}
+            {/* Tracks and vias take the pointer before the parts they cross */}
+            {!routing && (
+              <g className="pcb-hit">
+                {b.tracks
+                  .filter((t) => showLayer(t.layer) && !replaced.has(t.id))
+                  .map((t) => (
+                    <polyline key={`hit${t.id}`} points={pts(t.points)} fill="none" stroke="transparent" strokeWidth={Math.max(t.width, 6 / view.s)} strokeLinecap="round" strokeLinejoin="round" pointerEvents="stroke" onPointerDown={(e) => onTrackDown(e, t)} />
+                  ))}
+                {(layers.top || layers.bottom) &&
+                  b.vias.map((v) => <circle key={`hit${v.id}`} cx={v.at[0]} cy={v.at[1]} r={Math.max(v.diameter / 2, 5 / view.s)} fill="transparent" pointerEvents="all" onPointerDown={(e) => onViaDown(e, v)} />)}
+              </g>
+            )}
             {/* Connections still to make */}
             {layers.ratsnest &&
               b.ratsnest.map((w, i) => {
@@ -1074,16 +1442,57 @@ function BoardCanvas(props: {
               .map((t) => (
                 <polyline key={`rr${t.id}`} points={pts(t.points)} className="pcb-reroute" fill="none" strokeWidth={t.width + 0.18} strokeLinecap="round" strokeLinejoin="round" />
               ))}
-            {routing &&
-              runs.map((r, i) => (
-                <g key={`run${i}`}>
-                  <polyline points={pts(r.points)} fill="none" stroke={COPPER[r.layer]} strokeWidth={0.25} strokeLinecap="round" strokeLinejoin="round" opacity={0.9} />
-                  <circle cx={r.points[r.points.length - 1][0]} cy={r.points[r.points.length - 1][1]} r={0.3} className="pcb-via-preview" />
-                </g>
-              ))}
+            {/* The router's plan: pushed copper where it would go, the new line with its clearance, what it would break */}
+            {plan && (
+              <g pointerEvents="none" className="pcb-plan">
+                {plan.tracks.map((m) => {
+                  const t = b.tracks.find((x) => x.id === m.id);
+                  if (!t) return null;
+                  const line = pts(flatten(m.points, m.bulges));
+                  return (
+                    <g key={`pt${m.id}`}>
+                      <polyline points={line} fill="none" stroke="#ffffff" strokeOpacity={0.1} strokeWidth={t.width + 2 * plan.clearance} strokeLinecap="round" strokeLinejoin="round" />
+                      <polyline points={line} fill="none" stroke={COPPER[t.layer] ?? "#999"} strokeWidth={t.width} strokeLinecap="round" strokeLinejoin="round" opacity={0.95} />
+                    </g>
+                  );
+                })}
+                {plan.runs.map((r, i) => {
+                  const line = pts(flatten(r.points, r.bulges));
+                  return (
+                    <g key={`pr${i}`}>
+                      <polyline points={line} fill="none" stroke="#ffffff" strokeOpacity={0.13} strokeWidth={plan.width + 2 * plan.clearance} strokeLinecap="round" strokeLinejoin="round" />
+                      <polyline points={line} fill="none" stroke={COPPER[r.layer] ?? "#999"} strokeWidth={plan.width} strokeLinecap="round" strokeLinejoin="round" opacity={0.92} />
+                    </g>
+                  );
+                })}
+                {plan.vias.map((at, i) => (
+                  <g key={`pv${i}`}>
+                    <circle cx={at[0]} cy={at[1]} r={plan.via_diameter / 2 + plan.clearance} fill="#ffffff" fillOpacity={0.1} />
+                    <circle cx={at[0]} cy={at[1]} r={plan.via_diameter / 2} fill="#e3dfcf" />
+                    <circle cx={at[0]} cy={at[1]} r={plan.via_drill / 2} fill="#15161a" />
+                  </g>
+                ))}
+                {plan.collisions.map((c, i) => (
+                  <g key={`pc${i}`} transform={`translate(${c.at[0]} ${c.at[1]})`} className="pcb-collision">
+                    <circle r={0.5} fill="none" stroke="#ff4d4d" strokeWidth={0.1} />
+                    <path d="M-0.3 -0.3L0.3 0.3M-0.3 0.3L0.3 -0.3" stroke="#ff4d4d" strokeWidth={0.1} strokeLinecap="round" />
+                  </g>
+                ))}
+              </g>
+            )}
             {/* Selection */}
             {selTrack && <polyline points={pts(selTrack.points)} fill="none" className="pcb-chosen-line" strokeWidth={selTrack.width + 0.25} strokeLinecap="round" strokeLinejoin="round" />}
             {selVia && <circle cx={selVia.at[0]} cy={selVia.at[1]} r={selVia.diameter / 2 + 0.15} className="pcb-chosen-line" fill="none" strokeWidth={0.12} />}
+            {b.tracks
+              .filter((t) => groupSet.has(t.id))
+              .map((t) => (
+                <polyline key={`g${t.id}`} points={pts(t.points)} fill="none" className="pcb-chosen-line" strokeWidth={t.width + 0.25} strokeLinecap="round" strokeLinejoin="round" />
+              ))}
+            {b.vias
+              .filter((v) => groupSet.has(v.id))
+              .map((v) => (
+                <circle key={`g${v.id}`} cx={v.at[0]} cy={v.at[1]} r={v.diameter / 2 + 0.15} className="pcb-chosen-line" fill="none" strokeWidth={0.12} />
+              ))}
             {/* Design-rule markers */}
             {layers.drc &&
               errorsAt.map((v, i) => (
@@ -1093,9 +1502,8 @@ function BoardCanvas(props: {
                 </g>
               ))}
             {/* A track being drawn */}
-            {routing && route.length > 0 && (
-              <polyline points={pts(cursor ? [...route, cursor] : route)} fill="none" stroke={COPPER[props.active]} strokeWidth={0.25} strokeLinecap="round" strokeLinejoin="round" opacity={0.9} className="pcb-route-preview" />
-            )}
+            {routing && start && !plan && cursor && <polyline points={pts([start.at, cursor])} fill="none" stroke={COPPER[props.active]} strokeWidth={0.12} strokeDasharray="0.4 0.3" opacity={0.7} className="pcb-route-preview" />}
+            {routing && start && <circle cx={start.at[0]} cy={start.at[1]} r={0.3} fill="none" stroke={COPPER[start.layer] ?? "#fff"} strokeWidth={0.08} className="pcb-route-preview" />}
             {routing && cursor && <circle cx={cursor[0]} cy={cursor[1]} r={0.22} className="pcb-cursor" />}
           </g>
         </svg>
@@ -1131,23 +1539,94 @@ function BoardCanvas(props: {
         <IconButton icon="fit" label="Fit the board" onClick={fit} />
       </div>
       <div className="pcb-tools floating" role="toolbar" aria-label="Route">
-        <button type="button" className={`pcb-chip ${routing ? "on" : ""}`} disabled={!props.canEdit} onClick={() => (setRouting(!routing), setRoute([]))} title="Draw a track: click points, double-click or Enter to finish, Esc to stop">
+        <button
+          type="button"
+          className={`pcb-chip ${routing ? "on" : ""}`}
+          disabled={!props.canEdit}
+          onClick={() => {
+            if (routing) resetRoute();
+            setRouting(!routing);
+          }}
+          title="Route (X): click a pad or track end, click corners, click a pad of the net to finish"
+        >
           <Icon name="pencil" /> Route
         </button>
-        <button type="button" className="pcb-chip layer-switch" onClick={() => props.onActive(props.active === "top" ? "bottom" : "top")} title="Layer to route on (V)">
+        <button type="button" className="pcb-chip" onClick={() => setRouterMode(ROUTER_MODES[(ROUTER_MODES.indexOf(routerMode) + 1) % ROUTER_MODES.length])} title="Router mode (M): walk round obstacles, shove tracks and vias aside, or go straight and highlight collisions">
+          {routerMode === "walkaround" ? "Walkaround" : routerMode === "shove" ? "Shove" : "Highlight"}
+        </button>
+        <button type="button" className="pcb-chip" onClick={() => setAngle(ANGLES[(ANGLES.indexOf(angle) + 1) % ANGLES.length])} title="Line angles: 45°, 90° or free (/ flips the bend)">
+          {angle === "free" ? "Free" : `${angle}°`}
+        </button>
+        <button type="button" className={`pcb-chip ${arcCorners ? "on" : ""}`} onClick={() => setArcCorners(!arcCorners)} title="Round the corners of new routes into arcs">
+          Arcs
+        </button>
+        <button type="button" className="pcb-chip layer-switch" onClick={() => props.onActive(b.layers[(b.layers.indexOf(props.active) + 1) % b.layers.length])} title="Layer to route on (V top/bottom, PageUp/PageDown every layer)">
           <i className="sw" style={{ background: COPPER[props.active] }} />
-          {props.active === "top" ? "Top" : "Bottom"}
+          {LAYER_NAME(props.active)}
         </button>
         <button type="button" className="pcb-chip" disabled={!props.canEdit || !!props.busy} onClick={props.onAutoroute} title="Route every unrouted net">
           <Icon name="spark" /> {props.busy ?? "Autoroute"}
         </button>
+        {!routing && props.canEdit && (
+          <>
+            <i className="sep" />
+            {(selTrack || props.group.length > 0) && (
+              <button type="button" className="pcb-chip" onClick={() => void props.commit("pcb.route.optimize", { board: b.id, targets: props.group.length ? props.group : [selTrack!.id] }, "Smoothed")} title="Fewer corners, shorter, every clearance kept">
+                Optimize
+              </button>
+            )}
+            {selTrack && !selTrack.bulges?.length && (
+              <button type="button" className="pcb-chip" onClick={() => void props.commit("pcb.track.fillet", { targets: [selTrack.id], radius: +(3 * selTrack.width).toFixed(3) }, "Corners rounded")} title="Round the track's corners into arcs">
+                Round
+              </button>
+            )}
+            {(selTrack || selVia) && (
+              <button type="button" className="pcb-chip" onClick={() => void selectConnection()} title="Select the copper between the pads (U)">
+                Connection
+              </button>
+            )}
+            {(selTrack || selVia) && (
+              <button type="button" className="pcb-chip" onClick={() => void props.commit("pcb.route.unroute", { board: b.id, targets: [sel!.id] }, "Connection unrouted")} title="Remove this connection's tracks and vias, pad to pad">
+                Unroute
+              </button>
+            )}
+            {selComp && (
+              <button type="button" className="pcb-chip" onClick={() => void props.commit("pcb.fanout", { component: selComp.id }, `${selComp.reference} fanned out`)} title="A short stub and a via from each unrouted SMD pad">
+                Fan out
+              </button>
+            )}
+            {selComp && (
+              <button type="button" className="pcb-chip" onClick={() => void props.commit("pcb.route.unroute", { board: b.id, components: [selComp.id] }, `${selComp.reference} unrouted`)} title="Remove the copper joined to this part's pads">
+                Unroute part
+              </button>
+            )}
+            {net && !selTrack && !selVia && (
+              <button type="button" className="pcb-chip" onClick={() => void props.commit("pcb.route.unroute", { board: b.id, nets: [net] }, `${net} unrouted`)} title="Remove every track and via of this net">
+                Unroute {net}
+              </button>
+            )}
+            <button type="button" className="pcb-chip" onClick={() => void cleanup()} title="Merge straight-through points, join tracks end to end, trim dangling stubs, drop redundant vias">
+              Clean up
+            </button>
+          </>
+        )}
       </div>
       <div className="pcb-legend">
         {routing ? (
-          <span>Click to place points · snaps to pads and a 0.25 mm grid (Alt: 0.05) · V drops a via and goes on on the other layer · double-click or Enter finishes · Esc</span>
+          <span>
+            {start ? (
+              <>
+                {legNet ?? "no net"} · {FMT(width ?? plan?.width ?? 0.25, 3)} mm · {routerMode}
+                {plan && !plan.reached ? " · blocked" : ""}
+                {plan?.collisions.length ? ` · ${plan.collisions.length} clearance problem${plan.collisions.length === 1 ? "" : "s"}` : ""} · <kbd>/</kbd> bend · <kbd>V</kbd> via · <kbd>W</kbd> width · <kbd>⌫</kbd> undo corner · <kbd>F</kbd> finish to pad · <kbd>Enter</kbd> finish · <kbd>Esc</kbd>
+              </>
+            ) : (
+              <>Click a pad, track end or via to start (anywhere: free) · <kbd>M</kbd> mode · <kbd>Esc</kbd> stop</>
+            )}
+          </span>
         ) : (
           <span>
-            Drag parts to move · <kbd>R</kbd> turn · <kbd>F</kbd> flip side · <kbd>Del</kbd> remove · scroll to zoom, drag to pan
+            Drag parts, tracks and vias (Alt: free angle) · <kbd>X</kbd> route · <kbd>U</kbd> connection · <kbd>B</kbd> break track · <kbd>R</kbd> turn · <kbd>F</kbd> flip side · <kbd>Del</kbd> remove
           </span>
         )}
       </div>
