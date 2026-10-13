@@ -88,6 +88,9 @@ impl Attachment {
     }
 }
 
+/// A view command for every open view of the project.
+pub const EVERYONE: &str = "*";
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
@@ -118,6 +121,8 @@ pub struct Ai {
     state: Mutex<State>,
     chat: std::sync::Mutex<Vec<ChatRecord>>,
     /// Who spoke to the AI last: its view commands go to that person's views.
+    /// Taken from the conversation when the engine starts, so they still do
+    /// after a restart (the browser reconnects as the same person).
     last_user: std::sync::Mutex<Option<String>>,
 }
 
@@ -140,10 +145,11 @@ impl Ai {
         // Absolute, so the session's permission rules (written as absolute paths) match it
         // even when the engine was started with a relative projects folder.
         let folder = projects_dir.canonicalize().unwrap_or_else(|_| projects_dir.to_path_buf()).join(format!("{project}.ai"));
-        let chat = std::fs::read_to_string(folder.join("chat.jsonl"))
+        let chat: Vec<ChatRecord> = std::fs::read_to_string(folder.join("chat.jsonl"))
             .map(|t| t.lines().filter_map(|l| serde_json::from_str(l).ok()).collect())
             .unwrap_or_default();
-        Ai { config, project: project.to_string(), folder, state: Mutex::new(State::default()), chat: std::sync::Mutex::new(chat), last_user: std::sync::Mutex::new(None) }
+        let last_user = chat.iter().rev().find(|r| r.role == "user").and_then(|r| r.user.clone());
+        Ai { config, project: project.to_string(), folder, state: Mutex::new(State::default()), chat: std::sync::Mutex::new(chat), last_user: std::sync::Mutex::new(last_user) }
     }
 
     pub fn available(&self) -> bool {
@@ -239,8 +245,9 @@ impl Ai {
         std::fs::create_dir_all(self.folder.join("memory"))?;
         let tool = self.folder.join("forma");
         let script = format!(
-            "#!/bin/sh\n# Acts on project \"{p}\" through the engine API, as Forma AI.\nexec node \"{cli}\" --project \"{p}\" --url \"ws://127.0.0.1:{port}/ws?user=forma-ai\" \"$@\"\n",
+            "#!/bin/sh\n# Acts on project \"{p}\" through the engine API, as Forma AI.\n# `./forma files ls|rm|mv` works inside this folder only.\nexport FORMA_FILES_ROOT=\"{folder}\"\nexec node \"{cli}\" --project \"{p}\" --url \"ws://127.0.0.1:{port}/ws?user=forma-ai\" \"$@\"\n",
             p = self.project,
+            folder = self.folder.display(),
             cli = self.config.repo.join("tools/forma.mjs").display(),
             port = self.config.port,
         );
@@ -561,9 +568,11 @@ impl Ai {
         Ok(())
     }
 
-    /// Who the AI is talking to now (its view commands go to them).
+    /// Who the AI is talking to now (its view commands go to them): the
+    /// person who spoke last, kept across engine restarts; before anyone has
+    /// spoken, every open view of the project ("*").
     pub fn audience(&self) -> Option<String> {
-        self.last_user.lock().unwrap().clone()
+        Some(self.last_user.lock().unwrap().clone().unwrap_or_else(|| EVERYONE.to_string()))
     }
 
     /// Stops the current turn. The conversation resumes with the next message.
@@ -667,6 +676,80 @@ fn describe(project: &Project, id: StableId) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("forma-ai-{}", StableId::new()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_tool_keeps_file_commands_inside_the_session_folder() {
+        let dir = temp_dir();
+        let ai = Ai::new(Arc::new(AiConfig { repo: PathBuf::from("/repo"), port: 7484, claude: None, model: None }), "demo", &dir);
+        ai.prepare().unwrap();
+        let tool = std::fs::read_to_string(ai.folder.join("forma")).unwrap();
+        assert!(tool.contains(&format!("export FORMA_FILES_ROOT=\"{}\"\n", ai.folder.display())), "{tool}");
+        assert!(tool.contains("--project \"demo\"") && tool.contains("ws://127.0.0.1:7484/ws?user=forma-ai"), "{tool}");
+    }
+
+    #[test]
+    fn who_the_ai_talks_to_survives_a_restart() {
+        let dir = temp_dir();
+        let config = Arc::new(AiConfig { repo: PathBuf::from("."), port: 0, claude: None, model: None });
+        // Nobody has spoken yet: every view of the project.
+        assert_eq!(Ai::new(config.clone(), "demo", &dir).audience().as_deref(), Some(EVERYONE));
+        std::fs::create_dir_all(dir.join("demo.ai")).unwrap();
+        let line = |role: &str, user: Option<&str>| serde_json::to_string(&ChatRecord { role: role.into(), text: "hi".into(), user: user.map(str::to_owned), at: 1, attachments: vec![] }).unwrap();
+        let chat = [line("user", Some("user-ada")), line("assistant", None), line("user", Some("user-bo")), line("assistant", None), line("tool", None)].join("\n");
+        std::fs::write(dir.join("demo.ai/chat.jsonl"), chat).unwrap();
+        // The engine starts again: the person who spoke last.
+        assert_eq!(Ai::new(config, "demo", &dir).audience().as_deref(), Some("user-bo"));
+    }
+
+    /// After a restart, the AI's view commands reach the view of the person
+    /// it was talking to as soon as that view reconnects (no new message).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn view_commands_reach_the_reconnected_view_after_a_restart() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message as Ws;
+        type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+        async fn next(ws: &mut Socket, kind: &str) -> serde_json::Value {
+            loop {
+                let m = tokio::time::timeout(std::time::Duration::from_secs(10), ws.next()).await.expect("in time").expect("open").expect("ok");
+                if let Ws::Text(t) = m {
+                    let v: serde_json::Value = serde_json::from_str(t.as_str()).unwrap();
+                    if v["type"] == kind {
+                        return v;
+                    }
+                }
+            }
+        }
+        let dir = temp_dir();
+        std::fs::create_dir_all(dir.join("demo.ai")).unwrap();
+        let said = ChatRecord { role: "user".into(), text: "show me the plate".into(), user: Some("user-ada".into()), at: 1, attachments: vec![] };
+        std::fs::write(dir.join("demo.ai/chat.jsonl"), serde_json::to_string(&said).unwrap()).unwrap();
+        // A fresh engine (as after a restart); the person's view reconnects as the same user.
+        let at = crate::tests::serve(crate::tests::server_in(&dir)).await;
+        let (mut view, _) = tokio_tungstenite::connect_async(format!("ws://{at}/ws?project=demo&user=user-ada")).await.unwrap();
+        next(&mut view, "snapshot").await;
+        let (mut tool, _) = tokio_tungstenite::connect_async(format!("ws://{at}/ws?project=demo&user=forma-ai")).await.unwrap();
+        next(&mut tool, "snapshot").await;
+        tool.send(Ws::Text(json!({ "type": "view", "request_id": 1, "action": "camera", "value": "top" }).to_string().into())).await.unwrap();
+        let reply = next(&mut tool, "result").await;
+        assert_eq!(reply["value"]["shown_to"], "user-ada", "{reply}");
+        let shown = next(&mut view, "view").await;
+        assert_eq!((shown["to"].as_str(), shown["action"].as_str(), shown["value"].as_str()), (Some("user-ada"), Some("camera"), Some("top")));
+
+        // A project nobody has talked about yet: every open view follows.
+        let (mut other, _) = tokio_tungstenite::connect_async(format!("ws://{at}/ws?project=fresh&user=user-cy")).await.unwrap();
+        next(&mut other, "snapshot").await;
+        let (mut tool, _) = tokio_tungstenite::connect_async(format!("ws://{at}/ws?project=fresh&user=forma-ai")).await.unwrap();
+        next(&mut tool, "snapshot").await;
+        tool.send(Ws::Text(json!({ "type": "view", "request_id": 2, "action": "show_all" }).to_string().into())).await.unwrap();
+        assert_eq!(next(&mut tool, "result").await["value"]["shown_to"], EVERYONE);
+        assert_eq!(next(&mut other, "view").await["to"], EVERYONE);
+    }
 
     #[test]
     fn the_session_folder_is_absolute_even_from_a_relative_projects_folder() {

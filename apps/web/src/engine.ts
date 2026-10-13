@@ -628,8 +628,9 @@ export class Engine {
         break;
       }
       case "view": {
-        // Only the person the AI is talking to (or this person's own command).
-        if (message.to && message.to !== this.state.userId) break;
+        // Only the person the AI is talking to (or this person's own command);
+        // "*": every view of the project (the AI has no one person to show yet).
+        if (message.to && message.to !== "*" && message.to !== this.state.userId) break;
         for (const l of this.viewListeners) l({ action: message.action, target: message.target ?? null, value: message.value ?? null });
         break;
       }

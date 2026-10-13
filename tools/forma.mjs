@@ -2415,7 +2415,7 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
   }
   if (!failed) {
     const r = await engine.send("view", { action, target, value });
-    if (r.ok) console.log(`✓ ${action}${arg ? ` ${arg}` : ""} shown to ${r.value.shown_to}`);
+    if (r.ok) console.log(`✓ ${action}${arg ? ` ${arg}` : ""} shown to ${r.value.shown_to === "*" ? "every open view of the project" : r.value.shown_to}`);
     else {
       console.error(`✗ ${r.error.message}`);
       failed = true;
