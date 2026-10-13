@@ -43,9 +43,17 @@ pub struct Registry {
     by_kind: FxHashMap<&'static str, usize>,
     commands: BTreeMap<&'static str, CommandInfo>,
     pub(crate) derived: Vec<DerivedInfo>,
+    pub(crate) guards: Vec<Guard>,
     plugins: Vec<&'static str>,
     current_plugin: &'static str,
 }
+
+/// A check run after every command, on the world as the command left it and
+/// the ops it made: an error refuses the command (everything is undone). For
+/// rules no single command owns (an interlock between joints refuses any
+/// change that sets them into a region it forbids). Keep it cheap: it runs
+/// on every command, so look at the ops first.
+pub type Guard = fn(&World, &[Op]) -> Result<(), CommandError>;
 
 impl Default for Registry {
     fn default() -> Self {
@@ -60,6 +68,7 @@ impl Registry {
             by_kind: FxHashMap::default(),
             commands: BTreeMap::new(),
             derived: Vec::new(),
+            guards: Vec::new(),
             plugins: vec!["core"],
             current_plugin: "core",
         };
@@ -122,6 +131,12 @@ impl Registry {
     /// level, so a later one may read an earlier one's output on the same entity.
     pub fn derived<Out: Component>(&mut self, spec: Derived<Out>) -> &mut Self {
         self.derived.push(DerivedInfo::new(spec));
+        self
+    }
+
+    /// A check run after every command (see [`Guard`]).
+    pub fn guard(&mut self, guard: Guard) -> &mut Self {
+        self.guards.push(guard);
         self
     }
 

@@ -703,6 +703,8 @@ impl Project {
         let mut tx = Tx::new(&mut self.world, &registry, &envelope.actor);
         let result = (info.exec)(envelope.parameters.clone(), &mut tx);
         let ops = tx.into_ops();
+        // Rules no single command owns may still refuse what it did.
+        let result = result.and_then(|out| registry.guards.iter().try_for_each(|g| g(&self.world, &ops)).map(|_| out));
         match result {
             Ok(output) => Ok((output, ops)),
             Err(err) => {
