@@ -3,6 +3,7 @@ import { usePersisted, usePersistedSet } from "./persist";
 import { AiPanel } from "./AiPanel";
 import { RenderView } from "./RenderView";
 import { type Studio, renderImage } from "./render";
+import { modelForWeb } from "./webModel";
 import { type Proposal, interpret } from "./assistant";
 import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
@@ -349,7 +350,7 @@ export function App({ engine }: { engine: Engine }) {
             break;
           case "render": {
             // A render asked for from ./forma render: made here, sent back to the engine.
-            const job = value ? (JSON.parse(value) as { job?: string; width?: number; height?: number; samples?: number; open?: boolean; studio?: Studio }) : {};
+            const job = value ? (JSON.parse(value) as { job?: string; width?: number; height?: number; samples?: number; open?: boolean; studio?: Studio; format?: string }) : {};
             if (job.studio === "white" || job.studio === "studio") studioNow.current = job.studio;
             if (job.studio) setStudio(studioNow.current);
             if (!job.job) {
@@ -362,6 +363,13 @@ export function App({ engine }: { engine: Engine }) {
               fetch(projectUrl(`/render/${job.job}${error ? `?error=${encodeURIComponent(error)}` : ""}`), { method: "POST", body }).catch(() => undefined);
             if (!source) {
               back("", "the view is not ready");
+              break;
+            }
+            // A model for a website (./forma render --glb) rather than a picture.
+            if (job.format === "glb") {
+              modelForWeb(source)
+                .then((glb) => back(new Blob([glb], { type: "model/gltf-binary" })))
+                .catch((e) => back("", String(e)));
               break;
             }
             renderImage(source, { width: job.width ?? 1920, height: job.height ?? 1080, samples: job.samples ?? 256, studio: studioNow.current })

@@ -1,8 +1,10 @@
 // Render mode: the view path-traced live over the model (orbit and zoom as
-// usual; each move starts the image over), and Save PNG at a chosen size.
+// usual; each move starts the image over), and Save PNG at a chosen size, or
+// Save 3D for web: the same materials as a .glb for a website's 3D viewer.
 
 import { useEffect, useRef, useState } from "react";
 import { LiveRender, renderImage, type RenderSource, type Studio } from "./render";
+import { modelForWeb } from "./webModel";
 
 const SIZES: { label: string; width: number; height: number }[] = [
   { label: "1920 × 1080", width: 1920, height: 1080 },
@@ -56,6 +58,27 @@ export function RenderView(props: { source: () => RenderSource | null; name: str
     }
   };
 
+  // The same model, materials and labels as a .glb for a website's 3D viewer.
+  const [exporting, setExporting] = useState(false);
+  const saveModel = async () => {
+    const source = props.source();
+    if (!source || exporting) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const glb = await modelForWeb(source);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([glb], { type: "model/gltf-binary" }));
+      a.download = `${props.name || "Forma"} 3D.glb`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="render-view" ref={host}>
       <div className="render-bar" role="toolbar" aria-label="Render">
@@ -81,6 +104,9 @@ export function RenderView(props: { source: () => RenderSource | null; name: str
         </select>
         <button type="button" className="primary" title="Render the picture at the chosen size and samples, and download it as a PNG" onClick={save} disabled={saving !== null}>
           {saving === null ? "Save PNG" : `Rendering ${saving}/${quality}…`}
+        </button>
+        <button type="button" className="secondary" title="Download what the view shows as a 3D model for a website (.glb: the render's materials and printed labels, metres, Y up, standing on the ground) for <model-viewer>, Shopify, WooCommerce or AR on phones" onClick={saveModel} disabled={exporting}>
+          {exporting ? "Exporting…" : "Save 3D for web"}
         </button>
         <button type="button" className="secondary" title="Leave the render and go back to the model" onClick={props.onClose}>
           Close

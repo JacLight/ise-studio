@@ -29,6 +29,7 @@
 //   node tools/forma.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]' | controller [json|arduino] [--out f]] [--tool connector]
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs render [--width 1920] [--height 1080] [--samples 256] [--studio white|studio] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open); white: a seamless white sweep for product shots
+//   node tools/forma.mjs render --glb product.glb   the shown model as a .glb for a website (the render's materials and printed labels; metres, Y up, on the ground)
 //   node tools/forma.mjs flat [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
 //   node tools/forma.mjs pcb calc|panel|gerbview|glb …   board calculators, panelization, the Gerber viewer, the board as glTF
@@ -479,7 +480,9 @@ if (command === "run") {
   const width = Number(opt("width", 1920));
   const height = Number(opt("height", Math.round((width * 9) / 16)));
   const samples = Number(opt("samples", 256));
-  const out = opt("out", `render-${width}x${height}.png`);
+  // --glb file.glb: the shown model for a website's 3D viewer (the render's materials and labels) instead of a picture.
+  const glbOut = opt("glb", null);
+  const out = glbOut ?? opt("out", `render-${width}x${height}.png`);
   // The room: the grey studio, or the white sweep (pure white backdrop and floor, soft shadows) for catalogue shots.
   const studio = opt("studio", null);
   if (studio && !["white", "studio"].includes(studio)) {
@@ -489,7 +492,7 @@ if (command === "run") {
   // To every open view of the project, as the render job itself goes to whichever view answers first
   // (sent only to the person the AI last spoke to, a view opened since rendered the grey studio).
   if (studio) await engine.send("view", { action: "render", target: null, value: JSON.stringify({ studio, open: false }), to: "*" });
-  const q = new URLSearchParams({ ...(project ? { project } : {}), width, height, samples });
+  const q = new URLSearchParams({ ...(project ? { project } : {}), width, height, samples, ...(glbOut ? { format: "glb" } : {}) });
   // A render can take minutes: no header timeout (fetch gives up after five).
   const { request } = await import("node:http");
   const ask = () =>
@@ -531,7 +534,7 @@ if (command === "run") {
   } else {
     const png = Buffer.from(await res.arrayBuffer());
     writeFileSync(out, png);
-    console.log(`✓ ${out}: ${width} × ${height} px, ${samples} samples, ${(png.length / 1024).toFixed(0)} KB${chrome ? " (rendered headless)" : ""}`);
+    console.log(glbOut ? `✓ ${out}: 3D model for the web (.glb, metres, Y up), ${(png.length / 1024).toFixed(0)} KB${chrome ? " (made headless)" : ""}` : `✓ ${out}: ${width} × ${height} px, ${samples} samples, ${(png.length / 1024).toFixed(0)} KB${chrome ? " (rendered headless)" : ""}`);
   }
   chrome?.kill();
 } else if (command === "flat") {
