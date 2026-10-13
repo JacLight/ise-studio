@@ -426,9 +426,11 @@ type Props = {
   scan?: ScanLayer | null;
   /** Picking geometry for a mate: a click on a part reports where and which face (project mm), instead of selecting. */
   onGeometryPick?: ((hit: GeometryHit) => void) | null;
-  /** Picking points on a canvas (calibrating it): clicks on its picture report the pixel, instead of selecting. */
+  /** Picking points on a canvas (calibrating, cropping, squaring it up): clicks on its picture report the pixel, instead of selecting; a crop reports its drag too. */
   canvasPick?: CanvasPicking;
-  onCanvasPick?: (pixel: [number, number]) => void;
+  onCanvasPick?: (pixel: [number, number], phase: "down" | "move" | "up") => void;
+  /** Reference pictures stay in view while one item is shown alone. */
+  canvasesWithIsolate?: boolean;
   /** A selection box closed on these items (add: Shift held, adding to what is selected). */
   onSelectMany?: (ids: string[], add: boolean) => void;
 };
@@ -849,11 +851,11 @@ function fitGround(t: Scene, bounds: THREE.Box3) {
  * Frames every part (or only `only`'s meshes), keeping the viewing direction
  * (or the one a glide is heading for, or `direction`); gliding there if asked.
  */
-function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vector3, up?: THREE.Vector3) {
-  if (t.parts.size === 0) return;
+function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vector3, up?: THREE.Vector3, box?: THREE.Box3) {
+  if (t.parts.size === 0 && !box) return;
   // Only what is shown: an isolated floor frames itself, not the whole tower.
-  const bounds = new THREE.Box3();
-  for (const [id, part] of t.parts) {
+  const bounds = box?.clone() ?? new THREE.Box3();
+  for (const [id, part] of box ? [] : t.parts) {
     if (!part.group.visible) continue;
     for (const m of part.meshes) {
       if (!m.visible) continue;
@@ -1867,15 +1869,34 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         }
         return;
       }
-      // Calibrating a canvas: a click on its picture reports the pixel; anywhere else orbits.
+      // Calibrating or squaring up a canvas: a click on its picture reports the pixel; anywhere else orbits.
+      // Cropping one: a drag from a point on the picture reports where it goes (on the plane, past the edge too).
       const cp = callbacks.current.canvasPick;
       if (cp && e.button === 0) {
-        const px = canvasLayer.hit(rayAt(e.clientX, e.clientY).ray, callbacks.current.entities, cp.id);
+        const crop = cp.mode === "crop";
+        const px = canvasLayer.hit(rayAt(e.clientX, e.clientY).ray, callbacks.current.entities, cp.id, crop ? "image" : "region");
         if (!px) return;
         e.stopPropagation();
         e.preventDefault();
-        callbacks.current.onCanvasPick?.(px);
+        callbacks.current.onCanvasPick?.(px, "down");
         dirty = true;
+        if (crop) {
+          el.setPointerCapture(e.pointerId);
+          const move = (m: PointerEvent) => {
+            const q = canvasLayer.hit(rayAt(m.clientX, m.clientY).ray, callbacks.current.entities, cp.id, "plane");
+            if (q) callbacks.current.onCanvasPick?.(q, "move");
+          };
+          const up = (u: PointerEvent) => {
+            el.removeEventListener("pointermove", move);
+            el.removeEventListener("pointerup", up);
+            el.removeEventListener("pointercancel", up);
+            const q = canvasLayer.hit(rayAt(u.clientX, u.clientY).ray, callbacks.current.entities, cp.id, "plane");
+            callbacks.current.onCanvasPick?.(q ?? px, "up");
+          };
+          el.addEventListener("pointermove", move);
+          el.addEventListener("pointerup", up);
+          el.addEventListener("pointercancel", up);
+        }
         return;
       }
       // Picking geometry for a mate: a click on a part reports the face under it; anywhere else orbits.
@@ -2474,6 +2495,11 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     const onCanvasUp = (e: PointerEvent) => {
       if (callbacks.current.sketch || callbacks.current.edges || connectorLayer.active) return;
       renderer.domElement.classList.remove("dragging");
+      // Working on a canvas: a click off its picture keeps the selection (the canvas stays in Properties).
+      if (callbacks.current.canvasPick) {
+        down = null;
+        return;
+      }
       if (tools.click(e, rayAt)) {
         down = null;
         return;
@@ -2794,12 +2820,13 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
 
   // Lines and dots an assembly tool draws over the model (never picked: clicks reach the parts).
   // Reference pictures (canvases) on their planes, and points picked to calibrate one.
+  // They follow hidden items and show-only like parts do (kept in view while isolating, if asked).
   useEffect(() => {
-    canvasLayer.update(entities, selected, props.canvasPick ?? null);
+    canvasLayer.update(entities, selected, props.canvasPick ?? null, { hidden: props.hidden, isolated: props.isolated, withIsolate: !!props.canvasesWithIsolate });
     const t = three.current;
     if (t) t.renderer.domElement.style.cursor = props.canvasPick ? "crosshair" : "";
     t?.invalidate();
-  }, [entities, selected, props.canvasPick, canvasLayer]);
+  }, [entities, selected, props.canvasPick, props.hidden, props.isolated, props.canvasesWithIsolate, canvasLayer]);
   useEffect(() => () => canvasLayer.dispose(), [canvasLayer]);
 
   // A scan (points, mesh, deviation colours, problem markers), drawn in place.
@@ -2879,10 +2906,13 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     if (lastIsolated.current === props.isolated) return;
     lastIsolated.current = props.isolated;
     if (three.current) {
-      fitView(three.current);
+      // A reference picture shown alone frames itself.
+      const picture = props.isolated ? canvasLayer.bounds(props.isolated) : null;
+      if (picture) fitView(three.current, undefined, false, undefined, undefined, picture);
+      else fitView(three.current);
       three.current.invalidate();
     }
-  }, [props.isolated]);
+  }, [props.isolated, canvasLayer]);
 
   // Intent overlays: rebuilt when requirements or the displayed shapes change.
   useEffect(() => {

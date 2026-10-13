@@ -14,8 +14,8 @@ import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, sugg
 import { type Bench, Workbench } from "./Bom";
 import { ScanTools } from "./ScanTools";
 import type { ScanLayer } from "./scanLayer";
-import { canvasOf } from "./canvasLayer";
-import { CalibrateBar, CanvasInsertDialog, CanvasProperties, CanvasSection } from "./CanvasTools";
+import { type CanvasTool, canvasOf } from "./canvasLayer";
+import { CalibrateBar, CanvasInsertDialog, CanvasProperties, CanvasSection, CropBar, PerspectiveBar } from "./CanvasTools";
 import { RequirementsPanel } from "./RequirementsPanel";
 import { type Attachment, type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, type TeamCursor, mm, projectInfo, projectName, projectTitle, projectUrl } from "./engine";
 import { type ConfigRow, type EdgeFinish, type Frac, type LiveEdit, type Shape, assemblyParts, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
@@ -106,7 +106,10 @@ export function App({ engine }: { engine: Engine }) {
   const [scansOpen, setScansOpen] = usePersisted("scansOpen", false);
   // Reference pictures: placing them, and a canvas being calibrated (the points clicked on it so far).
   const [canvasInsert, setCanvasInsert] = useState(false);
-  const [calibrating, setCalibrating] = useState<{ id: string; points: [number, number][] } | null>(null);
+  // A canvas being worked on in the view: calibrated by two points, cropped by a dragged rectangle, or squared up by four corners.
+  const [calibrating, setCalibrating] = useState<{ id: string; points: [number, number][]; mode: CanvasTool; dragging?: boolean } | null>(null);
+  // Reference pictures stay in view while one item is shown alone, if asked.
+  const [canvasesWithIsolate, setCanvasesWithIsolate] = usePersisted("canvasesWithIsolate", false);
   const [scanLayer, setScanLayer] = useState<ScanLayer | null>(null);
   // More items picked with Shift: they move and delete together with the selected one.
   const [also, setAlso] = useState<string[]>([]);
@@ -1700,16 +1703,46 @@ export function App({ engine }: { engine: Engine }) {
           scan={scanLayer}
           onGeometryPick={geometryPick}
           canvasPick={calibrating}
-          onCanvasPick={(px) => setCalibrating((c) => (c && c.points.length < 2 ? { ...c, points: [...c.points, px] } : c))}
+          canvasesWithIsolate={canvasesWithIsolate}
+          onCanvasPick={(px, phase) =>
+            setCalibrating((c) => {
+              if (!c) return c;
+              // A crop is the rectangle from where the drag began to where it is.
+              if (c.mode === "crop") return phase === "down" ? { ...c, points: [px, px], dragging: true } : c.dragging ? { ...c, points: [c.points[0], px], dragging: phase !== "up" } : c;
+              const most = c.mode === "perspective" ? 4 : 2;
+              return phase === "down" && c.points.length < most ? { ...c, points: [...c.points, px] } : c;
+            })
+          }
           onTurnInstance={async (id, at, rotation) => (await run("assembly.instance.update", { target: id, at, rotation })) !== null}
         />
-        {calibrating && (
+        {calibrating?.mode === "calibrate" && (
           <CalibrateBar
             entity={state.entities.get(calibrating.id)}
             points={calibrating.points}
             run={run}
             onDone={() => setCalibrating(null)}
             onUndoPoint={() => setCalibrating((c) => (c ? { ...c, points: [] } : c))}
+          />
+        )}
+        {calibrating?.mode === "crop" && (
+          <CropBar
+            entity={state.entities.get(calibrating.id)}
+            points={calibrating.points}
+            dragging={!!calibrating.dragging}
+            run={run}
+            onDone={() => setCalibrating(null)}
+            onRedo={() => setCalibrating((c) => (c ? { ...c, points: [], dragging: false } : c))}
+          />
+        )}
+        {calibrating?.mode === "perspective" && (
+          <PerspectiveBar
+            entity={state.entities.get(calibrating.id)}
+            points={calibrating.points}
+            run={run}
+            notify={notify}
+            onDone={() => setCalibrating(null)}
+            onUndoPoint={() => setCalibrating((c) => (c ? { ...c, points: c.points.slice(0, -1) } : c))}
+            onRestart={() => setCalibrating((c) => (c ? { ...c, points: [] } : c))}
           />
         )}
         {rendering && <RenderView source={renderSource} name={projectTitle()} onClose={() => setRendering(false)} />}
@@ -2003,7 +2036,7 @@ export function App({ engine }: { engine: Engine }) {
             <ComponentsBody
               query={componentQuery}
               onQuery={setComponentQuery}
-              empty={parts.length === 0}
+              empty={parts.length === 0 && ![...state.entities.values()].some((e) => canvasOf(e))}
               onAdd={addPart}
               onImport={importFile}
               onInsertFrom={() => setInsertOpen(true)}
@@ -2035,6 +2068,11 @@ export function App({ engine }: { engine: Engine }) {
                     }
                     onIsolate={setIsolated}
                     links={links.byItem}
+                    onCanvasVisible={(ids, visible) =>
+                      void (ids.length === 1 ? run("canvas.update", { target: ids[0], visible }) : run("core.batch", { steps: ids.map((target) => ({ operation: "canvas.update", parameters: { target, visible } })) }))
+                    }
+                    canvasesWithIsolate={canvasesWithIsolate}
+                    onCanvasesWithIsolate={setCanvasesWithIsolate}
                   />
                 );
                 if (!building) return tree;
@@ -2137,7 +2175,7 @@ export function App({ engine }: { engine: Engine }) {
               entity={selectedPart}
               run={run}
               notify={notify}
-              onCalibrate={(id) => setCalibrating({ id, points: [] })}
+              onTool={(id, mode) => setCalibrating({ id, points: [], mode })}
               onDeleted={() => setSelected(null)}
             />
           )}

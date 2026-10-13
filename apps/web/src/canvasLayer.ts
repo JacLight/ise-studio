@@ -152,8 +152,37 @@ export const VIEW_LABEL: Record<string, string> = { front: "Front", back: "Back"
 
 const GRID = 24;
 
-/** What the layer draws besides the pictures: points picked for a calibration. */
-export type CanvasPicking = { id: string; points: V2[] } | null;
+/**
+ * A tool drawing on a canvas, and what it has picked so far (pixels):
+ * two points a known distance apart (calibrate), the corners of a crop
+ * rectangle as dragged (crop), or four corners of a known rectangle
+ * (perspective). Cropping shows the whole picture, the crop dimmed round.
+ */
+export type CanvasTool = "calibrate" | "crop" | "perspective";
+export type CanvasPicking = { id: string; points: V2[]; mode?: CanvasTool } | null;
+
+/** Which canvases the view shows besides their own Visible: hidden ones, and the isolated item. */
+export type CanvasShow = { hidden: ReadonlySet<string>; isolated: string | null; withIsolate: boolean };
+
+/** Whether a canvas shows, by its own switch, the viewer's hidden items and show-only. */
+export const canvasShown = (id: string, c: CanvasData, show: CanvasShow | null | undefined) =>
+  c.visible && !show?.hidden.has(id) && (!show?.isolated || show.isolated === id || show.withIsolate);
+
+/** Four corners in order round the rectangle: top-left, top-right, bottom-right, bottom-left (pixel rows run down). */
+export function cornerOrder(points: V2[]): V2[] {
+  const cx = points.reduce((s, p) => s + p[0], 0) / points.length;
+  const cy = points.reduce((s, p) => s + p[1], 0) / points.length;
+  const round = [...points].sort((a, b) => Math.atan2(a[1] - cy, a[0] - cx) - Math.atan2(b[1] - cy, b[0] - cx));
+  const first = round.reduce((best, p, i) => (p[0] + p[1] < round[best][0] + round[best][1] ? i : best), 0);
+  return [...round.slice(first), ...round.slice(0, first)];
+}
+
+/** A crop dragged between two pixels, in the picture: [left, top, right, bottom]. */
+export function cropOf(c: CanvasData, a: V2, b: V2): [number, number, number, number] {
+  const [w, h] = c.pixels;
+  const cl = (v: number, hi: number) => Math.round(Math.max(0, Math.min(hi, v)));
+  return [cl(Math.min(a[0], b[0]), w), cl(Math.min(a[1], b[1]), h), cl(Math.max(a[0], b[0]), w), cl(Math.max(a[1], b[1]), h)];
+}
 
 type Drawn = { key: string; mesh: THREE.Mesh; frame: THREE.LineSegments };
 
@@ -184,21 +213,35 @@ export class CanvasLayer {
   }
 
   /** Brings the drawn canvases up to date (only what changed is rebuilt). */
-  update(entities: ReadonlyMap<string, EntityView>, selected: string | null, picking: CanvasPicking) {
+  update(entities: ReadonlyMap<string, EntityView>, selected: string | null, picking: CanvasPicking, show?: CanvasShow | null) {
     const seen = new Set<string>();
     for (const e of entities.values()) {
-      const c = canvasOf(e);
-      if (!c) continue;
+      const c0 = canvasOf(e);
+      if (!c0) continue;
       seen.add(e.id);
       const chosen = selected === e.id || picking?.id === e.id;
+      // Cropping: the whole picture, so a new crop can reach past the old one.
+      const c = picking?.id === e.id && picking.mode === "crop" ? { ...c0, crop: null } : c0;
       const key = JSON.stringify([c, chosen]);
       const old = this.drawn.get(e.id);
-      if (old && old.key === key) continue;
-      if (old) this.drop(e.id);
-      this.drawn.set(e.id, { key, ...this.build(e.id, c, chosen) });
+      if (!old || old.key !== key) {
+        if (old) this.drop(e.id);
+        this.drawn.set(e.id, { key, ...this.build(e.id, c, chosen) });
+      }
+      // The one being worked on always shows.
+      const d = this.drawn.get(e.id)!;
+      d.mesh.visible = d.frame.visible = picking?.id === e.id || canvasShown(e.id, c0, show);
     }
     for (const id of [...this.drawn.keys()]) if (!seen.has(id)) this.drop(id);
     this.drawPicks(entities, picking);
+  }
+
+  /** The box round a shown canvas (null: none, or hidden). */
+  bounds(id: string): THREE.Box3 | null {
+    const d = this.drawn.get(id);
+    if (!d || !d.mesh.visible) return null;
+    d.mesh.geometry.computeBoundingBox();
+    return d.mesh.geometry.boundingBox?.clone() ?? null;
   }
 
   private build(id: string, c: CanvasData, chosen: boolean) {
@@ -280,22 +323,51 @@ export class CanvasLayer {
       (m.material as THREE.Material).dispose();
     }
     const c = picking ? canvasOf(entities.get(picking.id)) : null;
-    if (!picking || !c || !picking.points.length) return;
-    const pts = picking.points.map((p) => new THREE.Vector3(...pixelToWorld(c, p)));
-    const dots = new THREE.Points(new THREE.BufferGeometry().setFromPoints(pts), new THREE.PointsMaterial({ color: 0xe0761f, size: 10, sizeAttenuation: false, depthTest: false, transparent: true }));
-    dots.renderOrder = 950;
-    dots.raycast = () => {};
-    this.pickRoot.add(dots);
+    if (!picking || !c) return;
+    const add = (o: THREE.Object3D, order = 950) => {
+      o.renderOrder = order;
+      o.raycast = () => {};
+      this.pickRoot.add(o);
+    };
+    const at = (p: V2) => new THREE.Vector3(...pixelToWorld(c, p));
+    if (picking.mode === "crop") {
+      // The rectangle being dragged (or the crop there is), the rest of the picture dimmed.
+      const r = picking.points.length >= 2 ? cropOf(c, picking.points[0], picking.points[1]) : c.crop ? region(c) : null;
+      if (!r) return;
+      const [w, h] = c.pixels;
+      const [x0, y0, x1, y1] = r;
+      const dim: number[] = [];
+      const band = (l: number, t: number, r: number, b: number) => {
+        if (r - l < 0.5 || b - t < 0.5) return;
+        const [p, q, s, u] = ([[l, t], [r, t], [r, b], [l, b]] as V2[]).map((x) => at(x).toArray());
+        dim.push(...p, ...q, ...s, ...p, ...s, ...u);
+      };
+      band(0, 0, w, y0);
+      band(0, y1, w, h);
+      band(0, y0, x0, y1);
+      band(x1, y0, w, y1);
+      if (dim.length) {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.Float32BufferAttribute(dim, 3));
+        add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x1b1530, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthTest: false, depthWrite: false })), 940);
+      }
+      const corners = ([[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]] as V2[]).map(at);
+      add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(corners), new THREE.LineBasicMaterial({ color: 0xe0761f, depthTest: false, transparent: true })));
+      add(new THREE.Points(new THREE.BufferGeometry().setFromPoints(corners.slice(0, 4)), new THREE.PointsMaterial({ color: 0xe0761f, size: 7, sizeAttenuation: false, depthTest: false, transparent: true })));
+      return;
+    }
+    if (!picking.points.length) return;
+    const pts = picking.points.map(at);
+    add(new THREE.Points(new THREE.BufferGeometry().setFromPoints(pts), new THREE.PointsMaterial({ color: 0xe0761f, size: 10, sizeAttenuation: false, depthTest: false, transparent: true })));
     if (pts.length > 1) {
-      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xe0761f, depthTest: false, transparent: true }));
-      line.renderOrder = 950;
-      line.raycast = () => {};
-      this.pickRoot.add(line);
+      // The rectangle's outline closes once its fourth corner is in, in order round it.
+      const path = picking.mode === "perspective" && pts.length === 4 ? [...cornerOrder(picking.points), cornerOrder(picking.points)[0]].map(at) : pts;
+      add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(path), new THREE.LineBasicMaterial({ color: 0xe0761f, depthTest: false, transparent: true })));
     }
   }
 
   /** Where a ray meets a canvas's picture, as a pixel of it (null: it misses). */
-  hit(ray: THREE.Ray, entities: ReadonlyMap<string, EntityView>, id: string): V2 | null {
+  hit(ray: THREE.Ray, entities: ReadonlyMap<string, EntityView>, id: string, within: "region" | "image" | "plane" = "region"): V2 | null {
     const c = canvasOf(entities.get(id));
     if (!c) return null;
     const n = new THREE.Vector3(...c.plane.x).cross(new THREE.Vector3(...c.plane.y)).normalize();
@@ -303,7 +375,8 @@ export class CanvasLayer {
     const at = ray.intersectPlane(plane, new THREE.Vector3());
     if (!at) return null;
     const px = worldToPixel(c, at.toArray() as V3);
-    const [x0, y0, x1, y1] = region(c);
+    if (within === "plane") return px;
+    const [x0, y0, x1, y1] = within === "image" ? [0, 0, c.pixels[0], c.pixels[1]] : region(c);
     if (!(px[0] >= x0 && px[0] <= x1 && px[1] >= y0 && px[1] <= y1)) return null;
     return px;
   }

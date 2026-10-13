@@ -32,6 +32,7 @@ import { IDENTITY, worldOf } from "./model";
 import { FitCheck } from "./FitCheck";
 import { AssemblyStudio, PatternSection, isMate } from "./AssemblyTools";
 import { LinkBadge, type LinkStatus } from "./InsertFromProject";
+import { canvasOf } from "./canvasLayer";
 
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
 
@@ -96,6 +97,11 @@ export function ComponentTree(props: {
   onHover?: (key: string | null) => void;
   /** Items linked from another project, with their link's state (badged in the tree). */
   links?: ReadonlyMap<string, LinkStatus>;
+  /** Shows or hides reference photos (their own Visible, which everyone sees). */
+  onCanvasVisible?: (ids: string[], visible: boolean) => void;
+  /** Reference photos stay in view while one item is shown alone. */
+  canvasesWithIsolate?: boolean;
+  onCanvasesWithIsolate?: (keep: boolean) => void;
 }) {
   const top = useMemo(() => [...props.entities.values()].filter(isPart), [props.entities]);
   // Open rows are remembered across refreshes.
@@ -239,15 +245,83 @@ export function ComponentTree(props: {
   };
 
   const rows = top.map((e) => row(e, 0)).filter(Boolean);
+
+  // Reference photos (canvases), after the parts: each with show-only and an eye; the group's eye shows or hides them all.
+  const pictures = [...props.entities.values()].filter((e) => canvasOf(e));
+  const shownPictures = pictures.filter((e) => hit(canvasOf(e)!.name));
+  const pictureOff = (e: EntityView) => !canvasOf(e)!.visible || props.hidden.has(e.id);
+  const setPictures = (list: EntityView[], visible: boolean) => {
+    // The viewer's own hide is lifted too, so showing one always shows it.
+    for (const e of list) if (visible && props.hidden.has(e.id)) props.onToggleHidden(e.id);
+    const change = list.filter((e) => canvasOf(e)!.visible !== visible).map((e) => e.id);
+    if (change.length) props.onCanvasVisible?.(change, visible);
+  };
+  const allOff = pictures.length > 0 && pictures.every(pictureOff);
+  const picturesOpen = !open.has("canvases:closed") || !!q;
+  const pictureRows = shownPictures.length > 0 && (
+    <div className="tree-group" key="canvases">
+      <div className={`tree-row tree-group-row ${allOff ? "is-hidden" : ""}`} style={{ paddingLeft: 6 }} onPointerEnter={() => props.onHover?.(null)}>
+        <button type="button" className={`tree-twist ${picturesOpen ? "open" : ""}`} aria-label={picturesOpen ? "Collapse reference photos" : "Expand reference photos"} title={picturesOpen ? "Collapse" : "Expand"} onClick={() => toggle("canvases:closed")}>
+          <Icon name="chevron" />
+        </button>
+        <button type="button" className="tree-name" title="Reference photos and drawings placed on planes (canvases): to model over and check the model against" onClick={() => toggle("canvases:closed")}>
+          <Icon name="image" />
+          <span>Reference photos</span>
+          <small>{pictures.length}</small>
+        </button>
+        <span className="tree-actions">
+          <button
+            type="button"
+            className={props.canvasesWithIsolate ? "on" : ""}
+            aria-pressed={!!props.canvasesWithIsolate}
+            title={props.canvasesWithIsolate ? "Hide reference photos while one item is shown alone" : "Keep reference photos in view while one item is shown alone"}
+            aria-label={props.canvasesWithIsolate ? "Hide reference photos while one item is shown alone" : "Keep reference photos in view while one item is shown alone"}
+            onClick={() => props.onCanvasesWithIsolate?.(!props.canvasesWithIsolate)}
+          >
+            <Icon name="fit" />
+          </button>
+          <button type="button" className={allOff ? "on" : ""} title={allOff ? "Show every reference photo" : "Hide every reference photo"} aria-label={allOff ? "Show every reference photo" : "Hide every reference photo"} onClick={() => setPictures(pictures, allOff)}>
+            <Icon name="eye" />
+          </button>
+        </span>
+      </div>
+      {picturesOpen &&
+        shownPictures.map((e) => {
+          const c = canvasOf(e)!;
+          const off = pictureOff(e);
+          const only = props.isolated === e.id;
+          // Hidden by show-only of another item (unless kept in view).
+          const away = !!props.isolated && !only && !props.canvasesWithIsolate;
+          return (
+            <div key={e.id} className={`tree-row ${props.selected === e.id ? "active" : ""} ${off || away ? "is-hidden" : ""} ${q && hit(c.name) ? "is-match" : ""}`} style={{ paddingLeft: 20 }} onPointerEnter={() => props.onHover?.(null)}>
+              <span className="tree-twist" />
+              <button type="button" className="tree-name" title={`${c.name}: a reference picture${c.view ? ` on the ${c.view} plane` : ""}${away ? " (hidden while another item is shown alone)" : ""}`} onClick={() => props.onSelect(e.id)}>
+                <img className="tree-thumb" src={projectUrl(`/images/${c.image}`)} alt="" loading="lazy" />
+                <span>{c.name}</span>
+              </button>
+              <span className="tree-actions">
+                <button type="button" title={only ? "Show everything" : `Show only ${c.name}`} aria-label={only ? "Show everything" : `Show only ${c.name}`} className={only ? "on" : ""} onClick={() => props.onIsolate(only ? null : e.id)}>
+                  <Icon name="fit" />
+                </button>
+                <button type="button" title={off ? `Show ${c.name}` : `Hide ${c.name}`} aria-label={off ? `Show ${c.name}` : `Hide ${c.name}`} className={off ? "on" : ""} onClick={() => setPictures([e], off)}>
+                  <Icon name="eye" />
+                </button>
+              </span>
+            </div>
+          );
+        })}
+    </div>
+  );
   return (
     <div className="component-tree" onPointerLeave={() => props.onHover?.(null)}>
       {props.isolated && (
         <button type="button" className="isolate-banner" title="Leave show-only and show every part again" onClick={() => props.onIsolate(null)}>
-          Showing only {props.isolated.includes("#") ? props.isolated.slice(props.isolated.indexOf("#") + 1) : partName(props.entities.get(props.isolated) ?? ({ components: {} } as EntityView))} · Show everything
+          Showing only {props.isolated.includes("#") ? props.isolated.slice(props.isolated.indexOf("#") + 1) : (canvasOf(props.entities.get(props.isolated))?.name ?? partName(props.entities.get(props.isolated) ?? ({ components: {} } as EntityView)))} · Show everything
         </button>
       )}
       {rows}
-      {q && rows.length === 0 && <p className="muted small">Nothing named “{props.query}”.</p>}
+      {pictureRows}
+      {q && rows.length === 0 && !pictureRows && <p className="muted small">Nothing named “{props.query}”.</p>}
     </div>
   );
 }

@@ -3729,6 +3729,33 @@ dialog p {
   height: 12px;
 }
 
+/* Reference photos: their own group under the parts, a thumbnail for each. */
+.tree-group {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #f0edf4;
+}
+
+.tree-group:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.tree-group-row .tree-name span {
+  font-weight: 600;
+  color: #5f586d;
+}
+
+.tree-thumb {
+  width: 18px;
+  height: 14px;
+  flex: none;
+  object-fit: cover;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px #e4e0ea;
+}
+
 .isolate-banner {
   margin: 0 6px 6px;
   padding: 7px 10px;
