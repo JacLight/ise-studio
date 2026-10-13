@@ -472,6 +472,50 @@ pub fn floor(points: &[V3], tolerance: f64) -> Option<Floor> {
     Some(Floor { normal: n, offset, inliers: inl.len() * step, rms })
 }
 
+/// A floor seen from the cameras: up is the side they stand on (one looks
+/// down at a table). None when as many as a quarter stand on each side: that
+/// plane is a wall or a ground the photos walk across, not a floor under an
+/// object.
+pub fn face_cameras(f: Floor, eyes: &[V3]) -> Option<Floor> {
+    if eyes.is_empty() {
+        return Some(f);
+    }
+    let above = eyes.iter().filter(|e| dot(f.normal, **e) > f.offset).count();
+    let below = eyes.len() - above;
+    if above.min(below) * 4 >= eyes.len() {
+        return None;
+    }
+    Some(if below > above { Floor { normal: scale(f.normal, -1.0), offset: -f.offset, ..f } } else { f })
+}
+
+/// Where the cameras look: the point nearest all their axes, and how far
+/// the axes pass from it for their distance (RMS over median). An object
+/// photographed round about is near 0; a room, a street or a façade walked
+/// through is well over 0.25.
+pub struct Aim {
+    pub point: V3,
+    pub spread: f64,
+}
+
+pub fn aim(cameras: &[Camera]) -> Option<Aim> {
+    if cameras.len() < 3 {
+        return None;
+    }
+    let rays: Vec<(V3, V3)> = cameras.iter().map(|c| (c.centre(), c.forward())).collect();
+    let (point, rms) = triangulate(&rays)?;
+    let mut d: Vec<f64> = rays.iter().map(|r| crate::linalg::dist(r.0, point)).collect();
+    d.sort_by(|a, b| a.total_cmp(b));
+    let median = d[d.len() / 2].max(1e-12);
+    // Behind most of them: they do not look at it.
+    let ahead = rays.iter().filter(|r| dot(sub(point, r.0), r.1) > 0.0).count();
+    Some(Aim { point, spread: if ahead * 2 < rays.len() { f64::INFINITY } else { rms / median } })
+}
+
+/// Whether the photos are of a scene (walked through) rather than of one object (gone round).
+pub fn is_scene(cameras: &[Camera]) -> bool {
+    aim(cameras).is_none_or(|a| a.spread > 0.25)
+}
+
 /// The turn and shift putting a floor at z = 0, facing up, with the object
 /// (what stands above it) centred on the origin.
 pub fn level(points: &[V3], f: &Floor, tolerance: f64) -> Similarity {
@@ -673,5 +717,31 @@ mod tests {
         let c = coverage(&centres, [0.0; 3], [0.0, 0.0, 1.0]);
         assert!(c.gaps.iter().any(|g| g.contains("gap")), "{:?}", c.gaps);
         assert!(c.lowest_elevation > 25.0 && c.gaps.iter().any(|g| g.contains("lower sides")));
+    }
+
+    #[test]
+    fn an_object_gone_round_is_not_a_scene_walked_through() {
+        // Round an object: every camera looks at it.
+        let round: Vec<Camera> = (0..24).map(|i| look_at([300.0 * (i as f64 * 0.26).cos(), 300.0 * (i as f64 * 0.26).sin(), 150.0 + (i % 3) as f64 * 60.0], [0.0, 0.0, 20.0], 1100.0)).collect();
+        let a = aim(&round).unwrap();
+        assert!(dist(a.point, [0.0, 0.0, 20.0]) < 1.0 && a.spread < 0.01 && !is_scene(&round), "{:?} {}", a.point, a.spread);
+        // Along a street, looking at the façades on either side.
+        let street: Vec<Camera> = (0..24).map(|i| {
+            let x = i as f64 * 500.0;
+            look_at([x, 0.0, 1600.0], [x + 300.0, if i % 2 == 0 { 4000.0 } else { -4000.0 }, 1500.0], 1100.0)
+        }).collect();
+        assert!(is_scene(&street), "spread {}", aim(&street).map(|a| a.spread).unwrap_or(-1.0));
+    }
+
+    #[test]
+    fn the_floor_faces_the_cameras() {
+        let f = Floor { normal: [0.0, 0.0, -1.0], offset: 0.0, inliers: 100, rms: 0.1 };
+        // Cameras above z = 0: the floor is turned to face them.
+        let eyes: Vec<V3> = (0..10).map(|i| [i as f64, 0.0, 300.0]).collect();
+        let up = face_cameras(Floor { ..f }, &eyes).unwrap();
+        assert_eq!((up.normal, up.offset), ([0.0, 0.0, 1.0], 0.0));
+        // Half above, half below: not a floor under an object.
+        let split: Vec<V3> = (0..10).map(|i| [i as f64, 0.0, if i % 2 == 0 { 300.0 } else { -300.0 }]).collect();
+        assert!(face_cameras(f, &split).is_none());
     }
 }
