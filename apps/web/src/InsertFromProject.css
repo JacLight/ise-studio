@@ -692,3 +692,40 @@ dialog.xp-dialog .xp-search input {
 .link-section label.link-auto {
   margin: 9px 0 2px;
 }
+
+/* A linked item's fields in Properties while its link is read-only. */
+fieldset.props-lock {
+  display: contents;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+
+fieldset.props-lock:disabled > * {
+  opacity: 0.5;
+  pointer-events: none;
+  user-select: none;
+}
+
+.props-lock-note {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f4f0fc;
+  border: 1px solid #e6defa;
+  color: #3a3346;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.props-lock-note .icon {
+  flex: none;
+  margin-top: 2px;
+  width: 13px;
+  height: 13px;
+  color: #7352d6;
+}

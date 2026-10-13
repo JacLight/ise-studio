@@ -2,7 +2,9 @@
 // Talk to a running Forma engine from the command line, through the same API
 // the UI and the AI use.
 //
-//   node tools/forma.mjs run steps.json [--project name] [--url ws://127.0.0.1:7420/ws]
+//   node tools/forma.mjs run steps.json [--from N] [--fresh] [--project name] [--url ws://127.0.0.1:7420/ws]
+//        steps already applied (same step, same parameters) are skipped, so a rerun after a failure
+//        continues from it; --from N starts at step N; --fresh applies every step again
 //   node tools/forma.mjs check
 //   node tools/forma.mjs gears <id> [torque N·m] [rpm]   turn a gear train through a full turn; tooth strength with a load
 //   node tools/forma.mjs motion <joint id> [steps] [--set '{"Elbow":40}']   sweep a joint through its limits: what moves, closest approaches, clashes, where it binds
@@ -10,6 +12,8 @@
 //   node tools/forma.mjs check-geometry <id> [part]   the exact kernel's check of each part: valid, self-intersections, tolerances
 //   node tools/forma.mjs surfaces <id> [part] [--pull x,y,z] [--min deg]   surface analysis: continuity across every seam (gap, crease, curvature jump), tightest bend, draft
 //   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
+//   node tools/forma.mjs rates [refresh [EUR GBP…]]   the exchange and process rates in use, with when each exchange rate was set;
+//        refresh: today's ECB reference rates (fetched only then) for the currencies listed or already used
 //   node tools/forma.mjs set-study <shape id> study.json [--part X]   save a part's stress/heat study (faces as { normal, near: [x, y, z] })
 //   node tools/forma.mjs stress|fatigue|modes|buckle|heat|converge|inp <shape id> [--part X] [--count N] [--resolutions 32,48,64]
 //                                             run the part's saved study (inp: a CalculiX deck on stdout)
@@ -79,7 +83,9 @@
 //   node tools/forma.mjs bundle [file.forma]   the whole project (history, assets) as one file
 //   node tools/forma.mjs insert --from <project> [ids or names…] [--all] [--copy] [--auto] [--at x,y,z | --origin] [--list] [--dry-run]
 //        items of another project (parts, assemblies, sub-assemblies, boards… or --all), linked to follow it unless --copy
-//   node tools/forma.mjs links [update [id] | break <id> | auto <id> on|off]   this project's links: up to date or not; take, cut, automate
+//   node tools/forma.mjs links [update [id] | break <id> | auto <id> on|off | local <id> on|off]   this project's links: up to date or not;
+//        take, cut, automate; local: edit the linked items here (else they are read-only, as their source made them)
+//   node tools/forma.mjs files ls [path] | rm <path…> [-r] | mv <from> <to> [-f]   files in your folder (the Forma AI's own), never outside it
 //   node tools/forma.mjs scan add <file> [--source colmap] | list | info | fit <scan> [kind] [--near x,y,z --within r] | detect
 //        | downsample | outliers | normals | reconstruct [--depth 7] | surface [--poles 8] | shape | export | remove
 //                                            point clouds (XYZ/PLY/PCD/E57) and meshes: add, thin, fit primitives, rebuild surfaces
@@ -93,13 +99,20 @@
 //   node tools/forma.mjs scan scale <scan> --from x,y,z --to x,y,z --distance mm [--pick mm] | --factor f  ·  scan level <scan>
 //   node tools/forma.mjs scan render-photos <folder> [--count 40] [--rings 25,50] [--distance mm] [--fov 45] [--sheet]   a test photo set of the model
 //
-// steps.json is an array of { "operation": "...", "parameters": { ... } }.
+// steps.json is an array of { "operation": "...", "parameters": { ... }, "id"?: "name" }.
 // Any string "$N.path" in parameters is replaced by step N's output at that
 // path (e.g. "$0.id"), and { "$file": "path.js" } inlines a file's text (paths
 // are relative to steps.json; several files can be joined with an array).
+// Each step has a key: its "id" when given (stable across files and edits
+// elsewhere), else the file, the operation and its parameters as resolved.
+// What each key applied is kept beside the file (.<name>.run.json, per
+// project) and the command goes to the engine under an id made from the key
+// (the engine never applies one id twice), so running a file again skips
+// what is already in the project and continues where it stopped.
 
 import fsModule, { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { request as httpRequest } from "node:http";
@@ -158,9 +171,10 @@ function connect() {
             ws.send(JSON.stringify({ type, request_id: id, ...extra }));
           });
         },
-        commit(operation, parameters) {
-          return this.send("commit", { operation, parameters, expected_revision: revision });
+        commit(operation, parameters, command_id) {
+          return this.send("commit", { operation, parameters, expected_revision: revision, ...(command_id ? { command_id } : {}) });
         },
+        revision: () => revision,
         close: () => ws.close(),
       });
   });
@@ -171,6 +185,8 @@ function resolveRefs(value, outputs, base) {
     const m = value.match(/^\$(\d+)\.(.+)$/);
     if (!m) return value;
     let v = outputs[Number(m[1])];
+    if (v === null && Number(m[1]) < outputs.length)
+      throw new Error(`${value}: step ${m[1]} was applied in an earlier run whose output is not known here (its record is gone): run again with --fresh, or give the id itself`);
     for (const key of m[2].split(".")) v = v?.[key];
     if (v === undefined) throw new Error(`${value} does not resolve`);
     return v;
@@ -184,6 +200,18 @@ function resolveRefs(value, outputs, base) {
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, resolveRefs(v, outputs, base)]));
   }
   return value;
+}
+
+// Files in the folder (the Forma AI's own): no engine needed.
+if (command === "files") {
+  const { files } = await import("./forma-files.mjs");
+  try {
+    for (const line of files(args.slice(1))) console.log(line.startsWith("removed") || line.startsWith("moved") ? `✓ ${line}` : line);
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    process.exit(1);
+  }
+  process.exit(0);
 }
 
 const engine = await connect();
@@ -208,20 +236,154 @@ if (["check-geometry", "surfaces", "drawing", "flat"].includes(command) && args[
 }
 
 if (command === "run") {
-  const steps = JSON.parse(readFileSync(file, "utf8"));
-  const base = dirname(resolve(file));
+  // Resumable: a step already applied (same key, same parameters) is skipped; see the top of this file.
+  const rest = args.slice(1);
+  const fromAt = rest.indexOf("--from");
+  const from = fromAt >= 0 ? Number(rest.splice(fromAt, 2)[1]) : 0;
+  const freshAt = rest.indexOf("--fresh");
+  const fresh = freshAt >= 0 && rest.splice(freshAt, 1).length > 0;
+  const path = rest[0];
+  if (!path || !Number.isInteger(from) || from < 0) {
+    console.error("✗ forma run <steps.json> [--from N] [--fresh]");
+    process.exit(1);
+  }
+  const steps = JSON.parse(readFileSync(path, "utf8"));
+  const base = dirname(resolve(path));
+  const snap = await engine.snapshot;
+  const live = new Set(snap.entities.map((e) => e.id));
+  // What earlier runs of this file applied to this project, by step key.
+  const recordPath = join(base, `.${basename(path)}.run.json`);
+  let record = {};
+  try {
+    record = JSON.parse(readFileSync(recordPath, "utf8"));
+  } catch {}
+  const mine = fresh ? {} : { ...(record[snap.project_id] ?? {}) };
+  const save = () => {
+    record[snap.project_id] = mine;
+    writeFileSync(recordPath, JSON.stringify(record, null, 1));
+  };
+  const canonical = (v) => (Array.isArray(v) ? `[${v.map(canonical).join(",")}]` : v && typeof v === "object" ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}` : JSON.stringify(v));
+  const hash = (text) => createHash("sha256").update(text).digest("hex").slice(0, 32);
+  const isId = (v) => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+  // Still in the project: what the step made (its output's id) has not been undone or deleted.
+  const present = (out) => !isId(out?.id) || live.has(out.id);
+  const nonce = Date.now().toString(36);
+  const scope = resolve(path);
+  const counts = new Map();
   const outputs = [];
+  let skipped = 0;
+  let applied = 0;
   for (const [i, step] of steps.entries()) {
-    const parameters = resolveRefs(step.parameters ?? {}, outputs, base);
-    const started = Date.now();
-    const r = await engine.commit(step.operation, parameters);
-    if (!r.ok) {
-      console.error(`✗ ${i} ${step.operation}: ${r.error.code} ${r.error.message}`);
+    const label = `${i}${step.id != null ? ` (${step.id})` : ""} ${step.operation}`;
+    let parameters;
+    try {
+      parameters = resolveRefs(step.parameters ?? {}, outputs, base);
+    } catch (e) {
+      console.error(`✗ ${label}: ${e.message}`);
       failed = true;
       break;
     }
-    outputs.push(r.value.output);
-    console.log(`✓ ${i} ${step.operation} → ${JSON.stringify(r.value.output)} (rev ${r.value.revision}, ${Date.now() - started} ms)`);
+    // The step's key: its id, or the file; with what it does (identical steps in one file are told apart by order).
+    const what = `${step.id != null ? `id:${step.id}` : `file:${scope}`}\n${step.operation}\n${canonical(parameters)}`;
+    const n = counts.get(what) ?? 0;
+    counts.set(what, n + 1);
+    const key = hash(`${what}\n${n}`);
+    const done = mine[key];
+    if (i < from) {
+      outputs.push(done?.output ?? null);
+      console.log(`· ${label}: not run (--from ${from})`);
+      continue;
+    }
+    if (done && present(done.output)) {
+      outputs.push(done.output);
+      skipped++;
+      console.log(`↷ ${label}: already applied (rev ${done.revision}${done.at ? `, ${done.at.slice(0, 16).replace("T", " ")}` : ""}), skipped`);
+      continue;
+    }
+    // The same step with other parameters before (an edited step): applied as it is now.
+    const earlier = Object.values(mine).find((d) => (step.id != null ? d.id === step.id : d.index === i && d.id == null) && d.operation === step.operation && d.key !== key && d.file === scope);
+    if (earlier) console.log(`! ${label}: changed since it was applied (rev ${earlier.revision}); applying it as it is now (what the earlier one made stays: undo or remove it if it should not)`);
+    // Applied before but undone or deleted since: a new command id (the engine would take the old one as done).
+    const commandId = done ? `run-${key}-${nonce}` : fresh ? `run-${key}-${nonce}` : `run-${key}`;
+    if (done) console.log(`! ${label}: applied before (rev ${done.revision}) but what it made is gone (undone or deleted): applying it again`);
+    const started = Date.now();
+    const before = engine.revision();
+    const r = await engine.commit(step.operation, parameters, commandId);
+    if (!r.ok) {
+      console.error(`✗ ${label}: ${r.error.code} ${r.error.message}`);
+      failed = true;
+      break;
+    }
+    // The engine had it already (its record here was lost): the same change, not a new one.
+    const known = r.value.op_count > 0 && r.value.revision <= before;
+    const output = r.value.output ?? done?.output ?? null;
+    outputs.push(output);
+    mine[key] = { key, index: i, ...(step.id != null ? { id: step.id } : {}), file: scope, operation: step.operation, command_id: commandId, revision: r.value.revision, at: new Date().toISOString(), output };
+    save();
+    if (known) {
+      skipped++;
+      console.log(`↷ ${label}: already in the project (rev ${r.value.revision}), skipped`);
+    } else {
+      applied++;
+      console.log(`✓ ${label} → ${JSON.stringify(r.value.output)} (rev ${r.value.revision}, ${Date.now() - started} ms)`);
+    }
+  }
+  const notRun = Math.min(from, steps.length);
+  const parts = [`${applied} applied`, skipped && `${skipped} already applied (skipped)`, notRun && `${notRun} before --from not run`].filter(Boolean).join(", ");
+  if (failed) console.error(`stopped: ${parts}. Fix the step and run the file again: the steps applied are skipped and it continues from there.`);
+  else if (skipped || notRun) console.log(`${steps.length} steps: ${parts}`);
+} else if (command === "rates") {
+  // The rates costs are reckoned with; refresh fetches the ECB's reference rates, only when asked.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const q = project ? `?project=${encodeURIComponent(project)}` : "";
+  const get = async () => {
+    const res = await fetch(`${http}/rates${q}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  };
+  const show = (r) => {
+    console.log(`Costs are in ${r.currency}.`);
+    if (!r.exchange.length) console.log("  no exchange rates: prices in other currencies are flagged, not converted (forma rates refresh EUR, or sourcing.rates.set { exchange: { EUR: … } })");
+    for (const e of r.exchange) console.log(`  1 ${e.currency} = ${e.rate} ${r.currency}   ${e.note}${e.by ? ` (by ${e.by}, revision ${e.revision})` : ""}`);
+    const own = r.processes.filter((p) => !p.default);
+    console.log(`Process rates: ${own.length ? own.map((p) => `${p.process} ${p.rate.per_hour}/h`).join(", ") : "the typical defaults"}${own.length < r.processes.length ? ` (${r.processes.length - own.length} at the defaults: GET /rates lists them)` : ""}`);
+  };
+  try {
+    const sub = file ?? "list";
+    if (sub === "list") show(await get());
+    else if (sub === "refresh") {
+      const r = await get();
+      const asked = args.slice(2).map((c) => c.toUpperCase());
+      const wanted = (asked.length ? asked : r.exchange.map((e) => e.currency)).filter((c) => c !== r.currency);
+      if (!wanted.length) throw new Error("no exchange rates to refresh: name the currencies (forma rates refresh EUR GBP)");
+      const url = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml";
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`the ECB's reference rates could not be fetched (${res.status} ${res.statusText}): nothing changed`);
+      const xml = await res.text();
+      const day = xml.match(/time=['"](\d{4}-\d{2}-\d{2})['"]/)?.[1];
+      const ecb = { EUR: 1 };
+      for (const m of xml.matchAll(/currency=['"]([A-Z]{3})['"]\s+rate=['"]([0-9.]+)['"]/g)) ecb[m[1]] = Number(m[2]);
+      if (!day || Object.keys(ecb).length < 10) throw new Error("the ECB's file did not read as its daily reference rates: nothing changed");
+      if (!ecb[r.currency]) throw new Error(`the ECB publishes no reference rate for ${r.currency} (the project's currency): nothing changed`);
+      const exchange = {};
+      for (const c of wanted) {
+        if (!ecb[c]) {
+          console.log(`  ${c}: the ECB publishes no reference rate for it; left as it is`);
+          continue;
+        }
+        // One unit of c in the project's currency, through the euro.
+        exchange[c] = Number((ecb[r.currency] / ecb[c]).toPrecision(6));
+      }
+      if (!Object.keys(exchange).length) throw new Error("nothing to change");
+      const before = Object.fromEntries(r.exchange.map((e) => [e.currency, e.rate]));
+      const out = await engine.commit("sourcing.rates.set", { exchange, source: `ECB reference rate of ${day}` });
+      if (!out.ok) throw new Error(`${out.error.code} ${out.error.message}`);
+      for (const [c, v] of Object.entries(exchange)) console.log(`✓ 1 ${c} = ${v} ${r.currency}${before[c] != null ? ` (was ${before[c]})` : ""}: ECB reference rate of ${day}`);
+      show(await get());
+    } else throw new Error("forma rates [refresh [EUR GBP…]]");
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
   }
 } else if (command === "check") {
   const r = await engine.send("check");
@@ -1188,7 +1350,7 @@ if (command === "run") {
         }
       }
     } else {
-      // forma links | links update [id] | links break <id> | links auto <id> on|off
+      // forma links | links update [id] | links break <id> | links auto <id> on|off | links local <id> on|off
       const sub = args[1] ?? "list";
       const id = args[2];
       if (sub === "list") {
@@ -1196,7 +1358,7 @@ if (command === "run") {
         if (!links.length) console.log("no links: insert with `forma insert --from <project> …` (linked unless --copy)");
         for (const l of links) {
           console.log(`${l.id}  from ${l.project} (“${l.title}”) · ${l.whole ? "the whole project" : l.names.join(", ") || "items"} · ${l.items} items · at its revision ${l.revision}${l.source_revision != null ? ` (source at ${l.source_revision})` : ""}`);
-          console.log(`  ${state(l)}${l.auto_update ? " · updates by itself" : ""}`);
+          console.log(`  ${state(l)}${l.auto_update ? " · updates by itself" : ""}${l.local_edits ? " · edited locally (updates merge)" : " · read-only here (forma links local <id> on to edit)"}`);
         }
       } else if (sub === "update") {
         const out = await call("POST", `/links/update${q()}`, id ? { link: id } : {});
@@ -1223,7 +1385,12 @@ if (command === "run") {
         if (!id || !["on", "off"].includes(on)) throw new Error("forma links auto <id> on|off");
         await call("POST", `/links/settings${q()}`, { link: id, auto_update: on === "on" });
         console.log(`✓ ${on === "on" ? "updates by itself when its source changes" : "updates when asked (forma links update)"}`);
-      } else throw new Error("forma links [list] | update [id] | break <id> | auto <id> on|off");
+      } else if (sub === "local") {
+        const on = args[3];
+        if (!id || !["on", "off"].includes(on)) throw new Error("forma links local <id> on|off");
+        await call("POST", `/links/settings${q()}`, { link: id, local_edits: on === "on" });
+        console.log(`✓ ${on === "on" ? "its items can be edited here; updates merge the source's changes with yours (the source's wins where both changed the same thing)" : "its items are read-only here again, as the source makes them (where they are placed stays yours)"}`);
+      } else throw new Error("forma links [list] | update [id] | break <id> | auto <id> on|off | local <id> on|off");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
@@ -2415,7 +2582,7 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
   }
   if (!failed) {
     const r = await engine.send("view", { action, target, value });
-    if (r.ok) console.log(`✓ ${action}${arg ? ` ${arg}` : ""} shown to ${r.value.shown_to}`);
+    if (r.ok) console.log(`✓ ${action}${arg ? ` ${arg}` : ""} shown to ${r.value.shown_to === "*" ? "every open view of the project" : r.value.shown_to}`);
     else {
       console.error(`✗ ${r.error.message}`);
       failed = true;

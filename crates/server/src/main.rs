@@ -2237,6 +2237,8 @@ async fn main() -> std::io::Result<()> {
             }
         }
     }
+    // Every project's links checked against their sources now, not when a view opens.
+    xproj::start(&server);
     axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;

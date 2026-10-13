@@ -50,11 +50,14 @@ pub struct Options {
     pub quantity: u32,
     /// Production quantities to total at (price breaks).
     pub breaks: Vec<u32>,
+    /// When each exchange rate was set (ISO date, by currency code), from
+    /// the project's history: converted lines say it.
+    pub rate_dates: BTreeMap<String, String>,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { config: None, quantity: 1, breaks: vec![1, 10, 100] }
+        Options { config: None, quantity: 1, breaks: vec![1, 10, 100], rate_dates: BTreeMap::new() }
     }
 }
 
@@ -287,6 +290,10 @@ pub struct Bom {
     pub tree: Vec<Node>,
     pub flags: Vec<Flag>,
     pub totals: Totals,
+    /// Lines priced in another currency and converted, by line key: from
+    /// what, at which rate, and when (or from where) the rate was set.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub converted: BTreeMap<String, String>,
 }
 
 impl Bom {
@@ -805,7 +812,7 @@ pub fn compute(world: &World, scope: Scope, options: &Options, sources: &[&dyn B
     let rates = rates::rates_of(world);
     let awards = crate::all::<Award>(world);
     let suppliers: HashMap<StableId, Supplier> = crate::all::<Supplier>(world).into_iter().collect();
-    let mut bom = Bom { name, root, config, make: vec![], buy, tree, flags: vec![], totals: empty_totals(&rates, options.quantity) };
+    let mut bom = Bom { name, root, config, make: vec![], buy, tree, flags: vec![], totals: empty_totals(&rates, options.quantity), converted: BTreeMap::new() };
 
     // Estimates.
     for acc in make {
@@ -860,7 +867,9 @@ pub fn compute(world: &World, scope: Scope, options: &Options, sources: &[&dyn B
         if let Some(a) = find_award(&l.key) {
             l.award = Some(award_view(a, l.qty * q));
             if a.1.currency != rates.currency() {
-                bom.flags.push(converted(&l.key, &l.name, "awarded", &a.1.currency, &rates));
+                let (flag, note) = converted(&l.key, &l.name, "awarded", &a.1.currency, &rates, options);
+                bom.flags.push(flag);
+                bom.converted.extend(note.map(|n| (l.key.clone(), n)));
             }
         }
     }
@@ -872,7 +881,9 @@ pub fn compute(world: &World, scope: Scope, options: &Options, sources: &[&dyn B
         }
         if let Some(c) = l.stock.as_ref().and_then(|s| s.currency.clone()).filter(|c| *c != rates.currency()) {
             if l.award.is_none() {
-                bom.flags.push(converted(&l.key, &l.name, "listed", &c, &rates));
+                let (flag, note) = converted(&l.key, &l.name, "listed", &c, &rates, options);
+                bom.flags.push(flag);
+                bom.converted.extend(note.map(|n| (l.key.clone(), n)));
             }
         }
     }
@@ -942,16 +953,38 @@ fn empty_totals(rates: &Rates, q: u32) -> Totals {
 }
 
 /// A price in another currency: converted when the rates know it (said as
-/// info), else flagged and counted as it stands.
-fn converted(key: &str, name: &str, how: &str, currency: &str, rates: &Rates) -> Flag {
+/// info, with when or where the rate was set), else flagged and counted as it
+/// stands. Also the line's note when converted ("EUR at 1.15, rate set on …").
+fn converted(key: &str, name: &str, how: &str, currency: &str, rates: &Rates, options: &Options) -> (Flag, Option<String>) {
     let own = rates.currency();
     match rates.to_own(currency) {
-        Some(r) => Flag { line: Some(key.to_string()), level: "info", text: format!("{name}: {how} in {currency}, converted to {own} at {r}") },
-        None => Flag {
-            line: Some(key.to_string()),
-            level: "warning",
-            text: format!("{name}: {how} in {currency}, costs are in {own} (not converted: give an exchange rate with sourcing.rates.set {{ exchange: {{ {currency}: … }} }})"),
-        },
+        Some(r) => {
+            let when = rate_note(currency, rates, options);
+            (
+                Flag { line: Some(key.to_string()), level: "info", text: format!("{name}: {how} in {currency}, converted to {own} at {r} ({when})") },
+                Some(format!("{} at {r} to {own}, {when}", currency.to_ascii_uppercase())),
+            )
+        }
+        None => (
+            Flag {
+                line: Some(key.to_string()),
+                level: "warning",
+                text: format!("{name}: {how} in {currency}, costs are in {own} (not converted: give an exchange rate with sourcing.rates.set {{ exchange: {{ {currency}: … }} }})"),
+            },
+            None,
+        ),
+    }
+}
+
+/// When and from where an exchange rate was set: "rate set on 2026-10-01
+/// by hand", "ECB reference rate of 2026-10-10, set on 2026-10-13".
+pub fn rate_note(currency: &str, rates: &Rates, options: &Options) -> String {
+    let code = currency.to_ascii_uppercase();
+    match (rates.exchange_source.get(&code), options.rate_dates.get(&code)) {
+        (Some(src), Some(d)) => format!("{src}, set on {d}"),
+        (Some(src), None) => src.clone(),
+        (None, Some(d)) => format!("rate set on {d} by hand"),
+        (None, None) => "rate set by hand, date not recorded".into(),
     }
 }
 
@@ -990,6 +1023,15 @@ pub(crate) fn csv(field: &str) -> String {
     if field.contains([',', '"', '\n']) { format!("\"{}\"", field.replace('"', "\"\"")) } else { field.to_string() }
 }
 
+/// A line's cost source, with the conversion when it was priced in another
+/// currency ("list (EUR at 1.15 to USD, rate set on 2026-10-01 by hand)").
+fn cost_source(bom: &Bom, key: &str, source: &str) -> String {
+    match bom.converted.get(key) {
+        Some(note) => csv(&format!("{source} ({note})")),
+        None => source.to_string(),
+    }
+}
+
 fn num(v: Option<f64>, digits: usize) -> String {
     v.map(|v| format!("{v:.digits$}")).unwrap_or_default()
 }
@@ -1017,7 +1059,7 @@ pub fn flat_csv(bom: &Bom) -> String {
             num(l.unit_cost, 2),
             num(l.extended, 2),
             cur,
-            l.cost_source,
+            cost_source(bom, &l.key, l.cost_source),
             csv(l.award.as_ref().map(|a| a.supplier_name.as_str()).unwrap_or("")),
             l.award.as_ref().and_then(|a| a.lead_days).map(|d| d.to_string()).unwrap_or_default(),
             csv(&l.used_in.join("; ")),
@@ -1044,7 +1086,7 @@ pub fn flat_csv(bom: &Bom) -> String {
             num(l.unit_price, 4),
             num(l.extended, 2),
             cur,
-            l.cost_source,
+            cost_source(bom, &l.key, l.cost_source),
             csv(l.award.as_ref().map(|a| a.supplier_name.clone()).or_else(|| s.and_then(|s| s.sources.first()).map(|x| x.supplier.clone())).as_deref().unwrap_or("")),
             l.award.as_ref().and_then(|a| a.lead_days).map(|d| d.to_string()).unwrap_or_default(),
             csv(&l.used_in.join("; ")),

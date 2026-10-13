@@ -19,7 +19,15 @@
 //! - `POST /links/settings`            update automatically or not
 //!
 //! A link updates by itself (when set to) as soon as its source changes,
-//! while this engine runs: a watcher notices the source's file change.
+//! while this engine runs: a watcher notices the source's file change. When
+//! the engine starts ([`start`]), every project with links is checked against
+//! its sources at once: links set to update by themselves catch up with what
+//! changed while it was off, and the others say an update is available.
+//!
+//! Linked items are read-only here (the engine refuses edits to them, see
+//! `de_core::links::guard`) unless their link allows local edits
+//! (`/links/settings {link, local_edits}`); where they are placed stays
+//! editable.
 
 use crate::{App, Server, bad_request, info_of, pretty_name, valid_name};
 use axum::{
@@ -261,7 +269,7 @@ fn policy(entities: &Entities) -> Value {
     let mut rename = serde_json::Map::new();
     for (id, c) in entities {
         if top_instance(c) {
-            keep.insert(id.to_string(), json!({ "assembly.instance": ["at", "rotation", "name", "properties"] }));
+            keep.insert(id.to_string(), json!({ "assembly.instance": ["at", "rotation", "name", "properties", "parent"] }));
         } else if c.contains_key("solid.placement") {
             keep.insert(id.to_string(), json!({ "solid.placement": ["x", "y", "z"] }));
         }
@@ -689,7 +697,7 @@ fn status(server: &Server, app: &App, id: StableId, link: &Link) -> Value {
     let items = link.ids.len();
     let mut out = json!({
         "id": id, "project": link.project, "title": link.title, "whole": link.whole, "names": names, "items": items,
-        "revision": link.revision, "auto_update": link.auto_update, "updates_here": link.engine.is_empty() || link.engine == server.engine,
+        "revision": link.revision, "auto_update": link.auto_update, "local_edits": link.local_edits, "updates_here": link.engine.is_empty() || link.engine == server.engine,
         "inserted": link.inserted, "synced": link.synced, "placed": link.placed,
     });
     match read_source(server, &link.project) {
@@ -730,13 +738,39 @@ fn update_link(server: &Server, app: &App, actor: &Actor, id: StableId, link: &L
 /// project's views (their "update available" shows), and links set to update
 /// by themselves take it at once.
 fn watch(server: &Arc<Server>) {
-    static STARTED: OnceLock<()> = OnceLock::new();
-    if STARTED.set(()).is_err() {
+    watch_from(server, false);
+}
+
+/// When the engine starts: opens every project of the folder that has links
+/// and checks them against their sources right away (links set to update by
+/// themselves take what changed while the engine was off; the others are
+/// reported as having an update), then keeps watching.
+pub fn start(server: &Arc<Server>) {
+    watch_from(server, true);
+}
+
+fn watch_from(server: &Arc<Server>, open_all: bool) {
+    // One watcher per engine (tests run several in one process).
+    static STARTED: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+    if !STARTED.get_or_init(Default::default).lock().unwrap().insert(Arc::as_ptr(server) as usize) {
         return;
     }
     let server = server.clone();
     tokio::spawn(async move {
         let mut seen: HashMap<(String, StableId), Option<(u64, u128)>> = HashMap::new();
+        if open_all {
+            let s = server.clone();
+            seen = tokio::task::spawn_blocking(move || {
+                let opened = open_linking(&s);
+                if !opened.is_empty() {
+                    println!("checking the links of {} against their sources", opened.join(", "));
+                }
+                tick(&s, &mut seen);
+                seen
+            })
+            .await
+            .unwrap_or_default();
+        }
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
             let s = server.clone();
@@ -748,6 +782,34 @@ fn watch(server: &Arc<Server>) {
             .unwrap_or_default();
         }
     });
+}
+
+/// Opens every project of the folder whose log holds a link (read as text
+/// first: projects without links stay closed). Returns their names.
+fn open_linking(server: &Server) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(&server.dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().to_str().and_then(|f| f.strip_suffix(".jsonl")).map(str::to_owned))
+        .filter(|n| valid_name(n))
+        .collect();
+    names.sort();
+    let mut opened = Vec::new();
+    for name in names {
+        let has = std::fs::File::open(server.dir.join(format!("{name}.jsonl")))
+            .map(|f| std::io::BufReader::new(f).lines().map_while(Result::ok).any(|l| l.contains("\"kind\":\"core.link\"")))
+            .unwrap_or(false);
+        if !has {
+            continue;
+        }
+        match server.project(Some(&name)) {
+            Ok(app) if !links_in(&app.project.lock().unwrap()).is_empty() => opened.push(name),
+            Ok(_) => {}
+            Err(e) => eprintln!("{name}: could not open it to check its links: {e}"),
+        }
+    }
+    opened
 }
 
 fn tick(server: &Server, seen: &mut HashMap<(String, StableId), Option<(u64, u128)>>) {
@@ -763,8 +825,23 @@ fn tick(server: &Server, seen: &mut HashMap<(String, StableId), Option<(u64, u12
                 let _ = app.events.send(json!({ "type": "links" }).to_string().into());
                 told = true;
             }
+            // A link that does not update by itself, first seen (the engine just
+            // started, or the project just opened): say whether its source changed.
+            let automatic = link.auto_update && (link.engine.is_empty() || link.engine == server.engine);
+            if before.is_none() && !automatic {
+                let st = status(server, &app, id, &link);
+                if st["state"] == "update_available" {
+                    println!("{name}: the link to {} has an update available (forma links update)", link.project);
+                    if !told {
+                        let _ = app.events.send(json!({ "type": "links" }).to_string().into());
+                        told = true;
+                    }
+                } else if st["state"] == "missing" {
+                    eprintln!("{name}: the link to {}: {}", link.project, st["message"].as_str().unwrap_or("its source is missing"));
+                }
+            }
             // Automatic links catch up when first seen (the engine was off) and on every change.
-            if link.auto_update && (link.engine.is_empty() || link.engine == server.engine) && (changed || before.is_none()) {
+            if automatic && (changed || before.is_none()) {
                 let who = Actor { user_id: "forma-links".into(), session_id: StableId::new().to_string() };
                 match update_link(server, &app, &who, id, &link) {
                     Ok(out) if out["up_to_date"] != true => {
@@ -940,6 +1017,9 @@ pub struct LinkBody {
     link: Option<StableId>,
     #[serde(default)]
     auto_update: Option<bool>,
+    /// Allow editing the linked items here ("Edit locally").
+    #[serde(default)]
+    local_edits: Option<bool>,
 }
 
 /// The link an id names: the link itself, or an item it brought.
@@ -981,14 +1061,24 @@ pub async fn unlink(State(server): State<Arc<Server>>, Query(query): Q, axum::Js
     .await
 }
 
-/// `POST /links/settings`: `{link, auto_update}`.
+/// `POST /links/settings`: `{link, auto_update?, local_edits?}`.
 pub async fn settings(State(server): State<Arc<Server>>, Query(query): Q, axum::Json(body): axum::Json<LinkBody>) -> axum::response::Response {
     watch(&server);
     blocking(move || {
         let (_, app) = target(&server, &query)?;
-        let (Some(id), Some(auto)) = (body.link, body.auto_update) else { return Err(bad_request("give the link and auto_update (true or false)")) };
+        let Some(id) = body.link else { return Err(bad_request("say which link (or an item it brought)")) };
+        if body.auto_update.is_none() && body.local_edits.is_none() {
+            return Err(bad_request("give auto_update and/or local_edits (true or false)"));
+        }
         let (link, _) = link_named(&app, id).map_err(bad_request)?;
-        commit_as(&app, &actor(query.get("user")), "link.settings", json!({ "link": link, "auto_update": auto, "engine": server.engine })).map_err(|e| fail(StatusCode::UNPROCESSABLE_ENTITY, e))
+        let mut params = json!({ "link": link, "engine": server.engine });
+        if let Some(a) = body.auto_update {
+            params["auto_update"] = json!(a);
+        }
+        if let Some(l) = body.local_edits {
+            params["local_edits"] = json!(l);
+        }
+        commit_as(&app, &actor(query.get("user")), "link.settings", params).map_err(|e| fail(StatusCode::UNPROCESSABLE_ENTITY, e))
     })
     .await
 }
@@ -1220,8 +1310,18 @@ return box(100, 10, 10);
         let links = http(at, "GET", "/links?project=dst", None).await;
         assert_eq!(links[0]["state"], "up_to_date", "{links}");
         assert_eq!(links[0]["auto_update"], true);
-        ok(&a.app, "pcb.component.update", json!({ "target": a.r1, "at": [5, 5] }));
+        assert_eq!(links[0]["local_edits"], false);
+        // Read-only here: an edit is refused with what to do; edited locally it goes through.
         let dst = server.project(Some(&"dst".to_string())).unwrap();
+        let refused = dst.commit_here("pcb.component.update", json!({ "target": r1, "value": "22k" })).unwrap_err();
+        assert!(refused.contains("is linked from Arm project (arm)") && refused.contains("links break") && refused.contains("links local"), "{refused}");
+        let set = http(at, "POST", "/links/settings?project=dst", Some(json!({ "link": r1, "local_edits": true }))).await;
+        assert_eq!((set["local_edits"].clone(), set["auto_update"].clone()), (json!(true), json!(true)), "{set}");
+        assert_eq!(http(at, "GET", "/links?project=dst", None).await[0]["local_edits"], true);
+        dst.commit_here("pcb.component.update", json!({ "target": r1, "value": "22k" })).unwrap();
+        http(at, "POST", "/links/settings?project=dst", Some(json!({ "link": r1, "local_edits": false }))).await;
+        assert!(http(at, "POST", "/links/settings?project=dst", Some(json!({ "link": r1 }))).await["error"].as_str().unwrap().contains("local_edits"));
+        ok(&a.app, "pcb.component.update", json!({ "target": a.r1, "at": [5, 5] }));
         let mut moved = false;
         for _ in 0..40 {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
@@ -1241,5 +1341,50 @@ return box(100, 10, 10);
         let broke = http(at, "POST", "/links/break?project=dst", Some(json!({ "link": r1 }))).await;
         assert_eq!(broke["project"], "arm");
         assert_eq!(http(at, "GET", "/links?project=dst", None).await, json!([]));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn when_the_engine_starts_links_catch_up_with_what_changed_while_it_was_off() {
+        let dir = temp_dir();
+        // One engine: the arm's board linked twice, updating by itself and by hand; then it stops.
+        let (r1_auto, r1_hand) = {
+            let server = server_in(&dir);
+            let a = arm(&server);
+            let src = read_source(&server, "arm").unwrap();
+            let auto = server.project(Some(&"auto".to_string())).unwrap();
+            let out = ok(&auto, "link.insert", insert_parameters(&src, &[a.board.to_string()], false, true, true, Place::Same, &server.engine).unwrap());
+            let r1_auto = sid(&out["ids"][a.r1.to_string()]);
+            let hand = server.project(Some(&"hand".to_string())).unwrap();
+            let out = ok(&hand, "link.insert", insert_parameters(&src, &[a.board.to_string()], false, true, false, Place::Same, &server.engine).unwrap());
+            let r1_hand = sid(&out["ids"][a.r1.to_string()]);
+            let plain = server.project(Some(&"plain".to_string())).unwrap();
+            ok(&plain, "solid.material.create", json!({ "name": "Oak", "density": { "value": 700, "unit": "kg/m3" } }));
+            // The source changes while no engine watches the links (only its file changes).
+            ok(&a.app, "pcb.component.update", json!({ "target": a.r1, "at": [3, 4] }));
+            (r1_auto, r1_hand)
+        };
+        // The engine starts again: nothing is open until the links are checked.
+        let server = server_in(&dir);
+        assert!(server.open.lock().unwrap().is_empty());
+        start(&server);
+        let mut caught_up = false;
+        for _ in 0..80 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let open = server.open.lock().unwrap().get("auto").cloned();
+            if let Some(app) = open
+                && state(&app)[&r1_auto]["pcb.component"]["at"] == json!([3.0, 4.0])
+            {
+                caught_up = true;
+                break;
+            }
+        }
+        assert!(caught_up, "the automatic link took the change at start, with no view open");
+        let mut open: Vec<String> = server.open.lock().unwrap().keys().cloned().collect();
+        open.sort();
+        assert_eq!(open, vec!["auto".to_string(), "hand".to_string()], "only projects with links are opened");
+        let hand = server.project(Some(&"hand".to_string())).unwrap();
+        assert_eq!(state(&hand)[&r1_hand]["pcb.component"]["at"], json!([8.0, 10.0]), "a link updated by hand waits");
+        let (link, rec) = link_named(&hand, r1_hand).unwrap();
+        assert_eq!(status(&server, &hand, link, &rec)["state"], "update_available");
     }
 }

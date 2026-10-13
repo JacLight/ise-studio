@@ -7,7 +7,7 @@ import { type Proposal, interpret } from "./assistant";
 import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
 import { StockBrowser } from "./StockBrowser";
-import { type InsertRequest, type InsertResult, InsertFromProjectDialog, LinkSection, insertFromProject, insertedNote, useLinks } from "./InsertFromProject";
+import { type InsertRequest, type InsertResult, InsertFromProjectDialog, LinkSection, insertFromProject, insertedNote, linkLock, useLinks } from "./InsertFromProject";
 import { EDA_DROP, PcbWorkspace, importEdaFile } from "./Pcb";
 import { Board3DBar } from "./Board3DBar";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
@@ -2279,6 +2279,7 @@ export function App({ engine }: { engine: Engine }) {
           {kind === "properties" && !(selectedPart && (instance(selectedPart) || draftOf(selectedPart) || canvasOf(selectedPart))) && (
             <PropertiesBody
               part={selectedPart}
+              locked={linkLock(selectedPart, state.entities)}
               shape={selectedPart && isPart(selectedPart) ? (live?.id === selectedPart.id ? live : shapeOf(selectedPart)) : null}
               previewing={!!live && live.id === selected}
               materials={materials}

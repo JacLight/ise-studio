@@ -18,6 +18,11 @@
 //! named in `keep` (where a part is placed, a name given here to avoid a
 //! clash) always stay as they are here. Breaking the link drops the record
 //! and the marks: what remains is an ordinary local copy.
+//!
+//! Linked items are read-only here, like a linked component in other CAD:
+//! a command that changes one (beyond its kept fields) is refused with
+//! `LINKED_READ_ONLY` (see [`guard`]), unless its link allows local edits
+//! (`link.settings { local_edits: true }`, "Edit locally").
 
 use crate::{
     command::Command,
@@ -63,6 +68,12 @@ pub struct Link {
     /// Take the source's changes as soon as they happen.
     #[serde(default)]
     pub auto_update: bool,
+    /// The items may be edited here ("Edit locally"): updates then merge the
+    /// source's changes with the edits (three-way). Off, the items are
+    /// read-only here, as the source made them; where they are placed stays
+    /// editable either way.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub local_edits: bool,
     /// The engine that inserted it (the one that updates automatically, so
     /// two teammates' engines never both bring the same change).
     #[serde(default)]
@@ -509,6 +520,7 @@ impl Command for Insert {
                     placed: placed.clone(),
                     revision: self.revision,
                     auto_update: self.auto_update,
+                    local_edits: false,
                     engine: self.engine,
                     inserted: self.time,
                     synced: self.time,
@@ -686,12 +698,18 @@ impl Command for Break {
     }
 }
 
-/// `link.settings`: whether a link takes its source's changes by itself.
+/// `link.settings`: whether a link takes its source's changes by itself,
+/// and whether its items may be edited here ("Edit locally").
 #[derive(Deserialize, JsonSchema)]
 pub(crate) struct Settings {
     /// The link, or any item linked by it.
     link: StableId,
-    auto_update: bool,
+    #[serde(default)]
+    auto_update: Option<bool>,
+    /// Allow editing the linked items here (updates then merge the source's
+    /// changes with the edits); off, they are read-only as the source made them.
+    #[serde(default)]
+    local_edits: Option<bool>,
     /// The engine that updates it (this one, when turning it on).
     #[serde(default)]
     engine: Option<String>,
@@ -701,13 +719,74 @@ impl Command for Settings {
     const NAME: &'static str = "link.settings";
 
     fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        if self.auto_update.is_none() && self.local_edits.is_none() {
+            return Err(bad("say what to set: auto_update and/or local_edits (true or false)"));
+        }
         let link = link_id(tx, self.link)?;
         let mut rec = link_of(tx, link)?;
-        rec.auto_update = self.auto_update;
-        if let Some(e) = self.engine {
-            rec.engine = e;
+        if let Some(a) = self.auto_update {
+            rec.auto_update = a;
+            if let Some(e) = self.engine {
+                rec.engine = e;
+            }
         }
+        if let Some(l) = self.local_edits {
+            rec.local_edits = l;
+        }
+        let out = json!({ "link": link, "auto_update": rec.auto_update, "local_edits": rec.local_edits });
         tx.set(link, rec)?;
-        Ok(json!({ "link": link, "auto_update": self.auto_update }))
+        Ok(out)
     }
+}
+
+// ---- Read-only linked items ------------------------------------------------------------
+
+/// Kinds a command may write on a linked item without editing it: the link's
+/// own mark and record, and dependency bookkeeping.
+const BOOKKEEPING: &[&str] = &[Linked::KIND, Link::KIND, crate::derived::DependsOn::KIND];
+
+/// Refuses a command (other than the `link.*` ones) that changed an item
+/// linked from another project, beyond the fields kept here (where it is
+/// placed), unless its link allows local edits. Removing a linked item is
+/// allowed (an update leaves it removed). Runs after the command, on what it
+/// wrote, before it is kept.
+pub(crate) fn guard(project: &crate::Project, ops: &[crate::Op], operation: &str) -> Result<(), CommandError> {
+    if operation.starts_with("link.") {
+        return Ok(());
+    }
+    for op in ops {
+        let crate::Op::Set { id, kind, before, after } = op else { continue };
+        if BOOKKEEPING.contains(kind) {
+            continue;
+        }
+        // Gone by the end of the command: a removal, which is allowed.
+        let Some(mark) = project.get::<Linked>(*id) else { continue };
+        let Some(link) = project.get::<Link>(mark.link) else { continue };
+        if link.local_edits {
+            continue;
+        }
+        let keep = mark.keep.get(*kind).map(Vec::as_slice).unwrap_or(&[]);
+        let hash = |v: &Option<crate::value::CompValue>| v.as_ref().map(|v| hash_of(&v.to_json(), keep));
+        if hash(before) == hash(after) {
+            continue; // only kept fields changed (where it is placed)
+        }
+        // Its name as it was (the command may be the one renaming it).
+        let name = before
+            .as_ref()
+            .and_then(|v| v.to_json().get("name").and_then(Value::as_str).map(str::to_owned))
+            .or_else(|| project.entity_state(*id).and_then(|c| c.values().find_map(|v| v.get("name").and_then(Value::as_str).map(str::to_owned))))
+            .map(|n| format!("“{n}”"))
+            .unwrap_or_else(|| format!("item {id}"));
+        let from = if link.title.is_empty() || link.title == link.project { link.project.clone() } else { format!("{} ({})", link.title, link.project) };
+        let placed = if mark.keep.is_empty() { "" } else { " Where it is placed stays yours to change." };
+        return Err(CommandError::new(
+            ErrorCode::LinkedReadOnly,
+            format!(
+                "{name} is linked from {from} and follows it, so it cannot be changed here ({kind}).{placed} To change it: break the link (it becomes a local copy: `./forma links break {l}`), or edit it locally (`./forma links local {l} on`: updates then merge the source's changes with yours), or change it in {p}.",
+                l = mark.link,
+                p = link.project,
+            ),
+        ));
+    }
+    Ok(())
 }

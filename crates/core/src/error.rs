@@ -24,6 +24,9 @@ pub enum ErrorCode {
     NothingToRedo,
     /// A view that cannot change anything (a past version, a shared link).
     ReadOnly,
+    /// An item linked from another project, which follows its source: break
+    /// the link or allow local edits on it to change it here.
+    LinkedReadOnly,
     Internal,
 }
 

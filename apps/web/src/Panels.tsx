@@ -365,6 +365,8 @@ export type PropertiesProps = {
   /** The exploded view (of this or another shape), and changing it. */
   explode: Explode | null;
   onExplode: (e: Explode | null) => void;
+  /** Why the part cannot be changed here (linked from another project, read-only); its position stays editable. */
+  locked?: string | null;
 };
 
 function StatusPill({ status }: { status: EntityView["status"] }) {
@@ -479,6 +481,13 @@ export function PropertiesBody(props: PropertiesProps) {
         <StatusPill status={part.status} />
       </div>
 
+      {props.locked && (
+        <p className="props-lock-note" role="note">
+          <Icon name="link" /> {props.locked}
+        </p>
+      )}
+
+      <fieldset className="props-lock" disabled={!!props.locked} title={props.locked ?? undefined}>
       {prog ? (
         <section className="props-section">
           <header>
@@ -565,6 +574,7 @@ export function PropertiesBody(props: PropertiesProps) {
           </div>
         </section>
       )}
+      </fieldset>
 
       {props.pivotMode && (
         <section className="props-section pivot-section">
@@ -615,6 +625,7 @@ export function PropertiesBody(props: PropertiesProps) {
         </div>
       </section>
 
+      <fieldset className="props-lock" disabled={!!props.locked} title={props.locked ?? undefined}>
       {perPart.length > 0 ? (
         <section className="props-section">
           <header>
@@ -663,6 +674,7 @@ export function PropertiesBody(props: PropertiesProps) {
         </div>
       </section>
       )}
+      </fieldset>
 
       <div className={`stats ${props.previewing ? "is-preview" : ""}`}>
         <div>

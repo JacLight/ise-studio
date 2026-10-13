@@ -473,7 +473,21 @@ fn prices_in_another_currency_convert_at_the_projects_exchange_rate() {
     let b = compute(&p, Scope::Entity(asm), 1);
     assert!((price(&b).unwrap() - 7.04).abs() < 1e-9, "{:?}", price(&b));
     assert!((b.totals.buy - 7.04).abs() < 1e-9);
-    assert!(b.flags.iter().any(|f| f.level == "info" && f.text.contains("converted to USD at 1.1")), "{:?}", b.flags);
+    assert!(b.flags.iter().any(|f| f.level == "info" && f.text.contains("converted to USD at 1.1 (rate set by hand, date not recorded)")), "{:?}", b.flags);
+    // The line says so: in the BOM and in its CSV.
+    let key = b.buy.iter().find(|l| l.stock.as_ref().is_some_and(|s| s.part_number == "RZ-075NI")).unwrap().key.clone();
+    assert_eq!(b.converted.get(&key).map(String::as_str), Some("EUR at 1.1 to USD, rate set by hand, date not recorded"));
+    assert!(bom::flat_csv(&b).contains("\"list (EUR at 1.1 to USD, rate set by hand, date not recorded)\""), "{}", bom::flat_csv(&b));
+    // When the engine knows the day it was set (from the history), and a reference rate says where it came from.
+    let dated = |p: &Project| bom::compute(p.world(), Scope::Entity(asm), &Options { rate_dates: [("EUR".to_string(), "2026-10-13".to_string())].into(), ..Default::default() }, &[]).unwrap();
+    assert_eq!(dated(&p).converted[&key], "EUR at 1.1 to USD, rate set on 2026-10-13 by hand");
+    run(&mut p, "sourcing.rates.set", json!({ "exchange": { "EUR": 1.17 }, "source": "ECB reference rate of 2026-10-12" })).unwrap();
+    let b = dated(&p);
+    assert_eq!(b.converted[&key], "EUR at 1.17 to USD, ECB reference rate of 2026-10-12, set on 2026-10-13");
+    assert!(b.flags.iter().any(|f| f.text.contains("converted to USD at 1.17 (ECB reference rate of 2026-10-12, set on 2026-10-13)")), "{:?}", b.flags);
+    // Set by hand again: no longer the reference rate.
+    run(&mut p, "sourcing.rates.set", json!({ "exchange": { "EUR": 1.15 } })).unwrap();
+    assert_eq!(dated(&p).converted[&key], "EUR at 1.15 to USD, rate set on 2026-10-13 by hand");
     assert!(run(&mut p, "sourcing.rates.set", json!({ "exchange": { "EUR": -1 } })).is_err());
     run(&mut p, "sourcing.rates.set", json!({ "exchange": { "EUR": 0 } })).unwrap();
     assert_eq!(price(&compute(&p, Scope::Entity(asm), 1)), Some(6.40), "0 removes the rate");
