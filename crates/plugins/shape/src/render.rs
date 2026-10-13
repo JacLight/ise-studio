@@ -213,9 +213,11 @@ pub fn render_framed(meshes: &[Mesh], view: View, width: u32, height: u32, frame
             }
         }
     }
-    // Shade: a raking key light from the upper left (it brings out reliefs and
-    // engraving), a fill from the right, sky ambient.
-    let key = unit([-0.62 * right[0] + 0.66 * up[0] - 0.42 * d[0], -0.62 * right[1] + 0.66 * up[1] - 0.42 * d[1], -0.62 * right[2] + 0.66 * up[2] - 0.42 * d[2]]);
+    // Shade: a key light from the upper left (raking enough to bring out
+    // reliefs), a fill from the right, sky ambient; balanced, as the view's
+    // lights are, so a face turned to the camera shows its material's own
+    // colour and the sides step down from it.
+    let key = unit([-0.55 * right[0] + 0.6 * up[0] - 0.6 * d[0], -0.55 * right[1] + 0.6 * up[1] - 0.6 * d[1], -0.55 * right[2] + 0.6 * up[2] - 0.6 * d[2]]);
     let fill = unit([0.6 * right[0] - 0.2 * up[0] - 0.75 * d[0], 0.6 * right[1] - 0.2 * up[1] - 0.75 * d[1], 0.6 * right[2] - 0.2 * up[2] - 0.75 * d[2]]);
     let half = unit([key[0] - d[0], key[1] - d[1], key[2] - d[2]]);
     let lin = |c: f32| c.powf(2.2);
@@ -236,7 +238,7 @@ pub fn render_framed(meshes: &[Mesh], view: View, width: u32, height: u32, frame
             let m = &meshes[part[k] as usize];
             let n = normal[k];
             let n = [n[0] as f64, n[1] as f64, n[2] as f64];
-            let diffuse = 0.78 * dot(n, key).max(0.0) + 0.2 * dot(n, fill).max(0.0) + 0.14 + 0.06 * dot(n, [0.0, 0.0, 1.0]).max(0.0);
+            let diffuse = 0.85 * dot(n, key).max(0.0) + 0.25 * dot(n, fill).max(0.0) + 0.2 + 0.06 * dot(n, [0.0, 0.0, 1.0]).max(0.0);
             let spec = dot(n, half).max(0.0).powf(if m.metal { 24.0 } else { 48.0 }) * if m.metal { 0.45 } else { 0.12 };
             let base = m.color.map(lin);
             rgb[k] = [0, 1, 2].map(|i| base[i] * diffuse as f32 + spec as f32);
@@ -533,7 +535,7 @@ pub fn material_color(name: Option<&str>) -> ([f32; 3], bool) {
         ("stainless steel", 0xd0d5d9, true),
         ("galvanised steel", 0xb8c0c6, true),
         ("painted steel", 0x34373d, false),
-        ("steel", 0xa9b6bf, true),
+        ("steel", 0xa2a9ae, true),
         ("aluminium", 0xc8d2da, true),
         ("aluminum", 0xc8d2da, true),
         ("brass", 0xc9a85c, true),
@@ -550,9 +552,21 @@ pub fn material_color(name: Option<&str>) -> ([f32; 3], bool) {
         ("walnut", 0x6f4a2f, false),
         ("oak", 0xc69c6d, false),
         ("mdf", 0xb99b77, false),
-        ("concrete", 0xc3bfb6, false),
+        ("concrete", 0xb3afa6, false),
         ("glass", 0x8fb9cc, false),
         ("fr4", 0x2f7a4a, false),
+        ("gypsum", 0xf4f3ef, false),
+        ("brick", 0x985a45, false),
+        ("roof tile", 0xa4523a, false),
+        ("clay tile", 0xa4523a, false),
+        ("timber", 0xc19467, false),
+        ("stone", 0xb5aa95, false),
+        ("granite", 0x8e8a86, false),
+        ("marble", 0xe9e6e0, false),
+        ("slate", 0x50565d, false),
+        ("plaster", 0xebe6dc, false),
+        ("asphalt", 0x3e3f42, false),
+        ("block", 0xb2afa7, false),
     ];
     const WORDS: &[(&str, u32)] = &[
         ("dark grey", 0x4a4d52),

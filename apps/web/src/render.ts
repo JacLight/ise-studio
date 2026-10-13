@@ -16,9 +16,10 @@ export type RenderOptions = { width: number; height: number; samples: number };
  * A studio as an equirectangular HDR, Y up: a soft grey dome brighter
  * overhead, a dark floor bounce, and softboxes (a big key above front left, a
  * fill right, a strip overhead, a rim behind) that metals mirror as clean
- * highlights.
+ * highlights. `softboxes` scales the softboxes (the live view uses them
+ * dimmed, beside its own sun).
  */
-export function studioEnvironment(width = 1024): THREE.DataTexture {
+export function studioEnvironment(width = 1024, softboxes = 1): THREE.DataTexture {
   const height = width / 2;
   const data = new Float32Array(width * height * 4);
   // Softboxes: centre (azimuth, elevation in degrees), half sizes (degrees), intensity.
@@ -49,7 +50,7 @@ export function studioEnvironment(width = 1024): THREE.DataTexture {
         // Soft edges: full inside, falling off over two degrees.
         const fa = THREE.MathUtils.clamp((ha - da) / 2 + 0.5, 0, 1);
         const fe = THREE.MathUtils.clamp((he - de) / 2 + 0.5, 0, 1);
-        const f = fa * fe * intensity;
+        const f = fa * fe * intensity * softboxes;
         r += f;
         g += f;
         b += f * 0.97;
