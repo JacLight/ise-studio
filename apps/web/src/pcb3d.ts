@@ -181,10 +181,11 @@ const UNIT = {
 
 function bodiesGroup(scene: Scene3D) {
   const group = new THREE.Group();
-  const buckets = new Map<string, Solid[]>();
+  group.name = "pcb-bodies";
+  const buckets = new Map<string, (Solid & { ref: string })[]>();
   for (const b of scene.bodies) for (const s of b.solids) {
     const key = `${s.shape}|${s.mat}`;
-    (buckets.get(key) ?? buckets.set(key, []).get(key)!).push(s);
+    (buckets.get(key) ?? buckets.set(key, []).get(key)!).push({ ...s, ref: b.reference });
   }
   const m4 = new THREE.Matrix4();
   const q = new THREE.Quaternion();
@@ -198,6 +199,10 @@ function bodiesGroup(scene: Scene3D) {
       mesh.setMatrixAt(i, m4);
     });
     mesh.instanceMatrix.needsUpdate = true;
+    // Which part each instance belongs to, and where it sits, so the components
+    // tree can light up, hide or show alone one part of the board.
+    mesh.userData.refs = list.map((s) => s.ref);
+    mesh.userData.base = Float32Array.from(mesh.instanceMatrix.array as ArrayLike<number>);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.computeBoundingSphere();
@@ -424,7 +429,67 @@ function dispose(o: THREE.Object3D) {
 
 type Entry = { board: string; text: string; look: THREE.Group | null; group: THREE.Group | null; meshes: THREE.Mesh[] };
 
+/** How the components tree shows a board's pieces: hidden, shown alone, lit up ("*" for all). */
+export type BoardPaint = { pieces: string[]; hidden: (piece: string) => boolean; isolated: string | null; hot: string | null };
+
+const HOT_TINT = new THREE.Color("#c4b2ff");
+const PLAIN = new THREE.Color("#ffffff");
+const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+
 class PcbLooks {
+  private paints = new Map<string, BoardPaint>(); // model id → how the tree shows it
+
+  /** Applies the tree's hide / show-only / hover to a board's own drawing. */
+  paint(model: string, how: BoardPaint) {
+    this.paints.set(model, how);
+    const e = this.entries.get(model);
+    if (e?.look) this.apply(e.look, how);
+  }
+
+  private apply(look: THREE.Group, how: BoardPaint) {
+    // A piece is named by its reference first ("C1 10uF"); the rest of the board is the "PCB" piece.
+    const refs = new Set<string>();
+    look.traverse((o) => (o.userData.refs as string[] | undefined)?.forEach((r) => refs.add(r)));
+    const pieceOf = new Map<string, string>();
+    let boardPiece: string | null = null;
+    for (const name of how.pieces) {
+      const ref = name.split(/\s+/)[0];
+      if (refs.has(ref)) pieceOf.set(ref, name);
+      else boardPiece ??= name;
+    }
+    const shown = (piece: string | null) => !piece || (!how.hidden(piece) && (!how.isolated || how.isolated === piece));
+    const hot = (piece: string | null) => how.hot === "*" || (!!piece && how.hot === piece);
+    look.traverse((o) => {
+      const refsOf = o.userData.refs as string[] | undefined;
+      if (o instanceof THREE.InstancedMesh && refsOf) {
+        const base = o.userData.base as Float32Array;
+        const m = new THREE.Matrix4();
+        const coloured = !!o.instanceColor;
+        refsOf.forEach((ref, i) => {
+          const piece = pieceOf.get(ref) ?? null;
+          if (shown(piece)) o.setMatrixAt(i, m.fromArray(base, i * 16));
+          else o.setMatrixAt(i, ZERO);
+          o.setColorAt(i, hot(piece) ? HOT_TINT : PLAIN);
+        });
+        o.instanceMatrix.needsUpdate = true;
+        if (o.instanceColor) o.instanceColor.needsUpdate = true;
+        // The first tint switches the material to per-instance colour.
+        if (!coloured) for (const mat of Array.isArray(o.material) ? o.material : [o.material]) mat.needsUpdate = true;
+        return;
+      }
+      if (o instanceof THREE.Mesh && !o.parent?.userData.refs && !insideBodies(o)) {
+        o.visible = shown(boardPiece);
+        for (const mat of Array.isArray(o.material) ? o.material : [o.material]) {
+          if (mat instanceof THREE.MeshStandardMaterial) {
+            mat.emissive.set(hot(boardPiece) ? "#9a7cf0" : "#000000");
+            mat.emissiveIntensity = hot(boardPiece) ? 0.35 : 0;
+          }
+        }
+      }
+    });
+    this.invalidate();
+  }
+
   private models = new Map<string, string>(); // model id → board id
   private entries = new Map<string, Entry>(); // model id → look
   private seen = new Map<string, { group: THREE.Group; meshes: THREE.Mesh[] }>(); // every drawn part
@@ -534,6 +599,8 @@ class PcbLooks {
         }
         entry.look = look;
         entry.group?.add(look);
+        const how = this.paints.get(model);
+        if (how) this.apply(look, how);
         this.hideEngine(entry);
         void model;
         this.invalidate();
@@ -554,6 +621,12 @@ class PcbLooks {
   isBoard(id: string) {
     return this.models.has(id);
   }
+}
+
+/** Whether a mesh is one of the component bodies (they are painted per instance). */
+function insideBodies(o: THREE.Object3D) {
+  for (let p: THREE.Object3D | null = o.parent; p; p = p.parent) if (p.name === "pcb-bodies") return true;
+  return false;
 }
 
 export const pcbLooks = new PcbLooks();

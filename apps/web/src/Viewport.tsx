@@ -2580,6 +2580,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         m.needsUpdate = true;
       });
       part.body.castShadow = !(id === selected && props.selectedPart);
+      // A board's own drawing follows the tree too (its parts are drawn per component).
+      if (pieces.length) pcbLooks.paint(id, { pieces: pieces.map((p) => p.name), hidden: (n) => props.hidden.has(subPartKey(id, n)), isolated: isoId === id ? isoPiece : null, hot: hotAll ? "*" : hotPiece });
     }
     const sel = selected ? t.parts.get(selected) : undefined;
     shape.current = sel ? (live?.id === selected ? { ...live } : { ...sel.base }) : null;
