@@ -702,8 +702,9 @@ const lookKey = (e: EntityView, entities: ReadonlyMap<string, EntityView>) => JS
 
 function surface(look: Look, wireframe: boolean) {
   const glass = look.opacity !== undefined && look.opacity < 1;
+  const { texture: _texture, ...shading } = look;
   const m = new THREE.MeshStandardMaterial({
-    ...look,
+    ...shading,
     wireframe,
     transparent: glass,
     opacity: look.opacity ?? 1,

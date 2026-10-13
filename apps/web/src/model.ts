@@ -415,7 +415,8 @@ export const describeOperation = (op: string) => {
   return verb.charAt(0).toUpperCase() + verb.slice(1) + what;
 };
 
-export type Look = { color: string; metalness: number; roughness: number; opacity?: number };
+/** How a material looks: colour, metal or not, how rough, see-through; `texture` a moulded surface texture the render draws ("stipple": a grip's pebbled rubber). */
+export type Look = { color: string; metalness: number; roughness: number; opacity?: number; texture?: "stipple" };
 
 const LOOKS: Record<string, Look> = {
   // Printed circuit boards (the PCB workspace's 3D part): exact names, matched before any family.
@@ -472,6 +473,12 @@ const LOOKS: Record<string, Look> = {
   steel: { color: "#a2a9ae", metalness: 0.62, roughness: 0.36 },
   aluminium: { color: "#c8d2da", metalness: 0.75, roughness: 0.28 },
   "abs plastic": { color: "#e7e2d8", metalness: 0, roughness: 0.6 },
+  // Moulded plastics and labels by their short names ("ABS (yellow)", "TPE rubber", "Polycarbonate (clear)").
+  "epoxy dome": { color: "#232427", metalness: 0, roughness: 0.08 },
+  polycarbonate: { color: "#e4ecf0", metalness: 0, roughness: 0.3 },
+  abs: { color: "#e7e2d8", metalness: 0, roughness: 0.45 },
+  tpe: { color: "#25272b", metalness: 0, roughness: 0.85 },
+  pom: { color: "#f1eee6", metalness: 0, roughness: 0.4 },
   oak: { color: "#c69c6d", metalness: 0, roughness: 0.75 },
   brass: { color: "#c9a85c", metalness: 0.8, roughness: 0.3 },
   copper: { color: "#c27c56", metalness: 0.8, roughness: 0.3 },
@@ -534,7 +541,16 @@ export function materialLook(name: string | undefined): Look {
     .sort((a, b) => b.length - a.length) // "dark grey" before "grey"
     .find((w) => new RegExp(`\\b${w}\\b`).test(key));
   const color = hex ?? (word ? COLOUR_WORDS[word] : undefined);
-  return color ? { ...look, color } : look;
+  const out: Look = color ? { ...look, color } : { ...look };
+  // Finish words: "ABS (black, matte)", "PC (clear)", "Badge rim (chrome)", "TPE (black, stippled)".
+  const has = (re: RegExp) => re.test(key);
+  if (has(/\b(chrome|mirror)\b/)) Object.assign(out, { metalness: 1, roughness: 0.06, color: hex ?? "#eceef0" });
+  else if (has(/\b(gloss|glossy|polished)\b/)) out.roughness = out.metalness >= 0.5 ? 0.12 : 0.1;
+  else if (has(/\bsatin\b/)) out.roughness = out.metalness >= 0.5 ? 0.3 : 0.42;
+  else if (has(/\b(matte|matt|frosted|bead[- ]blasted)\b/)) out.roughness = out.metalness >= 0.5 ? 0.45 : 0.72;
+  if (has(/\b(stippled|textured|pebbled)\b/)) Object.assign(out, { texture: "stipple", roughness: 0.55 });
+  if (has(/\b(clear|transparent)\b/) && out.metalness < 0.5) Object.assign(out, { opacity: Math.min(out.opacity ?? 1, 0.45), roughness: Math.min(out.roughness, 0.06), ...(color ? {} : { color: "#e4ecf0" }) });
+  return out;
 }
 
 /** A part's size and position in millimeters, as edited live in the UI. */

@@ -96,18 +96,87 @@ export function studioEnvironment(width = 1024, softboxes = 1, white = false): T
   return tex;
 }
 
+/** Size of one tile of a surface texture, mm. */
+const TEXTURE_TILE_MM = 10;
+
+let stippleMap: THREE.DataTexture | null = null;
+/**
+ * A moulded stipple (a grip's pebbled rubber) as a tiling normal map: round
+ * bumps 0.2–0.35 mm across, packed at random over a 10 mm tile.
+ */
+function stipple(): THREE.DataTexture {
+  if (stippleMap) return stippleMap;
+  const n = 512;
+  const height = new Float32Array(n * n);
+  let seed = 7;
+  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let k = 0; k < 2600; k++) {
+    const cx = rand() * n, cy = rand() * n, r = 8 + rand() * 7, h = 0.6 + rand() * 0.4;
+    for (let dy = -Math.ceil(r); dy <= Math.ceil(r); dy++)
+      for (let dx = -Math.ceil(r); dx <= Math.ceil(r); dx++) {
+        const d = Math.hypot(dx, dy) / r;
+        if (d >= 1) continue;
+        const x = (Math.floor(cx) + dx + n) % n, y = (Math.floor(cy) + dy + n) % n;
+        const bump = h * Math.sqrt(1 - d * d);
+        if (bump > height[y * n + x]) height[y * n + x] = bump;
+      }
+  }
+  const data = new Uint8Array(n * n * 4);
+  const at = (x: number, y: number) => height[((y + n) % n) * n + ((x + n) % n)];
+  const strength = 3;
+  for (let y = 0; y < n; y++)
+    for (let x = 0; x < n; x++) {
+      const nx = (at(x - 1, y) - at(x + 1, y)) * strength, ny = (at(x, y - 1) - at(x, y + 1)) * strength;
+      const len = Math.hypot(nx, ny, 1);
+      const i = (y * n + x) * 4;
+      data[i] = Math.round(((nx / len) * 0.5 + 0.5) * 255);
+      data[i + 1] = Math.round(((ny / len) * 0.5 + 0.5) * 255);
+      data[i + 2] = Math.round(((1 / len) * 0.5 + 0.5) * 255);
+      data[i + 3] = 255;
+    }
+  const tex = new THREE.DataTexture(data, n, n, THREE.RGBAFormat);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.needsUpdate = true;
+  return (stippleMap = tex);
+}
+
+/** The geometry with texture coordinates projected from the box side each vertex faces (mm / tile), for surface textures. */
+function boxUvs(geometry: THREE.BufferGeometry, mmPerUnit: number): THREE.BufferGeometry {
+  const g = geometry.clone();
+  const pos = g.getAttribute("position");
+  if (!g.getAttribute("normal")) g.computeVertexNormals();
+  const nor = g.getAttribute("normal");
+  const uv = new Float32Array(pos.count * 2);
+  const k = mmPerUnit / TEXTURE_TILE_MM;
+  for (let i = 0; i < pos.count; i++) {
+    const [x, y, z] = [pos.getX(i) * k, pos.getY(i) * k, pos.getZ(i) * k];
+    const [ax, ay, az] = [Math.abs(nor.getX(i)), Math.abs(nor.getY(i)), Math.abs(nor.getZ(i))];
+    const [u, v] = ax >= ay && ax >= az ? [y, z] : ay >= az ? [x, z] : [x, y];
+    uv[i * 2] = u;
+    uv[i * 2 + 1] = v;
+  }
+  g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  return g;
+}
+
 /** A view material made physical for the path tracer. */
 function physical(m: THREE.Material): THREE.Material {
   if (!(m instanceof THREE.MeshStandardMaterial)) return m;
-  const look = (m.userData.look ?? {}) as { opacity?: number };
+  const look = (m.userData.look ?? {}) as { opacity?: number; color?: string; texture?: string };
   const out = new THREE.MeshPhysicalMaterial({
-    color: m.color.clone(),
+    // The part's own colour (a layer tint or status paint in the view is not part of the object).
+    color: look.color ? new THREE.Color(look.color) : m.color.clone(),
     map: m.map,
     roughness: m.roughness,
     metalness: m.metalness,
     roughnessMap: m.roughnessMap,
     metalnessMap: m.metalnessMap,
-    normalMap: m.normalMap,
+    // A moulded texture the look names ("stippled" rubber) as a normal map.
+    normalMap: look.texture === "stipple" ? stipple() : m.normalMap,
     // A part's look has no glow of its own: what glows in the view is its
     // selection or hover highlight, which a render leaves out.
     emissive: m.userData.look ? 0x000000 : m.emissive.clone(),
@@ -115,6 +184,7 @@ function physical(m: THREE.Material): THREE.Material {
     emissiveIntensity: m.userData.look ? 0 : m.emissiveIntensity,
     side: THREE.DoubleSide,
   });
+  if (look.texture) out.userData.texture = look.texture;
   const hsl = { h: 0, s: 0, l: 0 };
   m.color.getHSL(hsl);
   const seeThrough = (look.opacity ?? m.opacity) < 0.999;
@@ -140,11 +210,12 @@ function physical(m: THREE.Material): THREE.Material {
       out.metalness = 0.85;
     }
   } else if (m.metalness < 0.2) {
-    // Plastics, masks, wood, paint: a dielectric with a faint satin coat.
+    // Plastics, masks, wood, paint: a dielectric; only a glossy one (an epoxy dome, a polished
+    // moulding) gets a clear coat, so satin and matte mouldings keep their full colour.
     out.metalness = 0;
     out.specularIntensity = 0.6;
-    out.clearcoat = m.roughness < 0.5 ? 0.25 : 0.05;
-    out.clearcoatRoughness = 0.4;
+    out.clearcoat = m.roughness < 0.3 ? 0.35 : 0;
+    out.clearcoatRoughness = Math.max(0.04, m.roughness * 0.5);
   }
   return out;
 }
@@ -213,7 +284,10 @@ export function buildRenderScene(source: RenderSource, environment: THREE.Textur
       let added = false;
       for (const [geometry, m] of pieces(mesh)) {
         if (!shaded(m)) continue;
-        const copy = new THREE.Mesh(geometry, convert(m));
+        const material = convert(m);
+        // A textured surface needs texture coordinates: projected from the box side it faces, in mm.
+        const scale = new THREE.Vector3().setFromMatrixScale(mesh.matrixWorld).x || 1;
+        const copy = new THREE.Mesh(material.userData.texture ? boxUvs(geometry, 1000 * scale) : geometry, material);
         mesh.matrixWorld.decompose(copy.position, copy.quaternion, copy.scale);
         scene.add(copy);
         added = true;

@@ -486,7 +486,9 @@ if (command === "run") {
     console.error(`✗ --studio is white or studio, not ${studio}`);
     process.exit(1);
   }
-  if (studio) await engine.send("view", { action: "render", target: null, value: JSON.stringify({ studio, open: false }) });
+  // To every open view of the project, as the render job itself goes to whichever view answers first
+  // (sent only to the person the AI last spoke to, a view opened since rendered the grey studio).
+  if (studio) await engine.send("view", { action: "render", target: null, value: JSON.stringify({ studio, open: false }), to: "*" });
   const q = new URLSearchParams({ ...(project ? { project } : {}), width, height, samples });
   // A render can take minutes: no header timeout (fetch gives up after five).
   const { request } = await import("node:http");
