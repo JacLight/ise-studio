@@ -18,6 +18,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { attachTumble, attachWalk, type Tumble } from "./tumble";
 import { pcbLooks } from "./pcb3d";
 import { type RenderSource, studioEnvironment } from "./render";
+import { fitSunShadow } from "./sunShadow";
 import { type DisplayMode, type SectionPlane, type ViewName, ViewTools } from "./viewTools";
 import { ViewToolbar } from "./ViewToolbar";
 import type { EntityView, MeshData } from "./engine";
@@ -550,6 +551,8 @@ type Scene = {
   flight: Flight | null;
   /** Everything placed, as a sphere: zoom walks on and fog starts by its size. */
   extent: THREE.Sphere;
+  /** Everything placed, as a box: the sun's shadow is fitted to it each frame. */
+  bounds: THREE.Box3;
 };
 
 type View3 = { position: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3 };
@@ -1107,7 +1110,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     renderer.setClearColor(0x000000, 0);
     renderer.shadowMap.enabled = true;
     renderer.localClippingEnabled = true; // section planes cut the parts, not the ground
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Filtered (soft-edged) depth comparisons; the shadow's radius and fit are set each frame (sunShadow).
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     // Neutral tone mapping shows a material's colour as it is (ACES pushed every
     // light colour to white and washed the rest out): brick reads red-brown,
     // black stays black, yellow ABS stays yellow.
@@ -1142,9 +1146,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xfff6e8, 2.2);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.bias = -0.0008;
-    sun.shadow.normalBias = 0.6;
+    const shadowSize = Math.min(4096, renderer.capabilities.maxTextureSize);
+    sun.shadow.mapSize.set(shadowSize, shadowSize);
     sun.position.set(-450, -650, 1000); // until the model arrives and it is placed off its centre
     scene.add(sun, sun.target);
     const rim = new THREE.DirectionalLight(0xdfe8ff, 0.45);
@@ -1710,6 +1713,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       for (const m of aside.materials) m.visible = false;
       const t1 = performance.now();
       const view = tools.beforeRender();
+      if (three.current) fitSunShadow(sun, three.current.bounds, ground.position.z, view);
       // Instances of shared geometry go to the GPU as instances, culled and simplified by size.
       const t2 = performance.now();
       batch.update(instanceMeshes(), view, renderer.domElement.clientHeight || 800, three.current?.wireframe ?? false);
@@ -2610,7 +2614,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     renderer.domElement.addEventListener("pointerdown", onCanvasDown);
     renderer.domElement.addEventListener("pointerup", onCanvasUp);
 
-    three.current = { renderer, scene, camera, controls, tumble: tumbler, sun, parts: new Map(), gizmo, push, overlayRoot, overlayLabels: [], ground, grid, gridCell: 20, groundGrid: groundGridUniforms, wireframe: false, invalidate, flight: null, extent: new THREE.Sphere(new THREE.Vector3(), 100) };
+    three.current = { renderer, scene, camera, controls, tumble: tumbler, sun, parts: new Map(), gizmo, push, overlayRoot, overlayLabels: [], ground, grid, gridCell: 20, groundGrid: groundGridUniforms, wireframe: false, invalidate, flight: null, extent: new THREE.Sphere(new THREE.Vector3(), 100), bounds: new THREE.Box3() };
     scene.add(sketchLayer.root, draftLayer.root, edgeLayer.root, faceLayer.root, pickedLayer.root, connectorLayer.root, canvasLayer.root);
     canvasLayer.onLoaded = invalidate;
     if (sketchLabels.current) sketchLayer.setHost(sketchLabels.current);
@@ -2780,17 +2784,13 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         framed.current = true;
         fitView(t);
       }
+      // The sun stands off the model's centre; its shadow is fitted to the model and the view each frame.
       const c = bounds.getCenter(new THREE.Vector3());
       const radius = Math.max(bounds.getBoundingSphere(new THREE.Sphere()).radius, 50) * 1.6;
       t.sun.position.copy(c).add(new THREE.Vector3(-0.45, -0.65, 1).multiplyScalar(radius * 2));
       t.sun.target.position.copy(c);
-      const cam = t.sun.shadow.camera;
-      cam.left = cam.bottom = -radius;
-      cam.right = cam.top = radius;
-      cam.near = 1;
-      cam.far = radius * 5;
-      cam.updateProjectionMatrix();
     }
+    t.bounds.copy(bounds);
     t.invalidate();
   }, [entities, selected, live, props.also, props.pivotMode, props.pivotLive, props.selectedPart, props.hidden, props.isolated, props.colorBy, props.teammates, props.tints, hovers, props.hoverXray]);
 
