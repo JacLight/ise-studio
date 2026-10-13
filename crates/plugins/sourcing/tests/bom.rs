@@ -172,7 +172,13 @@ fn identical_items_merge_and_stock_merges_by_part_number() {
     assert_eq!(screws.len(), 1);
     assert_eq!(screws[0].qty, 13);
     assert!(make(&all, "Plate").used_in.len() >= 2, "used in both places: {:?}", make(&all, "Plate").used_in);
-    let _ = other;
+    // A merged line says every definition its parts come from, so a view can find them all.
+    let plate_uses = &make(&all, "Plate").uses;
+    assert!(plate_uses.iter().any(|u| u.shape == k.bracket && u.part.as_deref() == Some("Plate")), "{plate_uses:?}");
+    assert!(plate_uses.iter().any(|u| u.shape == other && u.part.as_deref() == Some("Plate")), "{plate_uses:?}");
+    assert!(plate_uses.iter().any(|u| u.config.as_deref() == Some("Basic")) && plate_uses.iter().any(|u| u.config.as_deref() == Some("Pro")), "both configurations: {plate_uses:?}");
+    assert_eq!(screws[0].uses.len(), 2, "the kit's screw and the loose one: {:?}", screws[0].uses);
+    assert!(screws[0].uses.iter().any(|u| u.shape == k.screw && u.part.is_none()));
 
     // Parts a loop numbered one by one are one line under their common name.
     run(&mut p, "shape.create", json!({ "name": "Stand", "source": r#"const out = [];
