@@ -28,7 +28,7 @@ import { LinkNote } from "./Panels";
 import { ConfigSection, InstanceConfig } from "./Configurations";
 import { statusColor } from "./Viewport";
 import { AssemblyJoints, type JointView, jointName, jointOf } from "./Joints";
-import { IDENTITY, worldOf } from "./model";
+import { IDENTITY, formulaText, worldOf } from "./model";
 import { FitCheck } from "./FitCheck";
 import { AssemblyStudio, PatternSection, isMate } from "./AssemblyTools";
 import { LinkBadge, type LinkStatus } from "./InsertFromProject";
@@ -558,11 +558,50 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
           </header>
           {prog.description && <p className="shape-description">{prog.description}</p>}
           <div className="param-list">
-            {prog.params.map((param) => (
+            {prog.params.map((param) => {
+              const own = inst.params?.[param.key];
+              const unit = param.unit === "count" ? "×" : param.unit === "deg" ? "°" : param.unit;
+              const setOwn = (v: number | string | null) => run("assembly.instance.update", { target: entity.id, params: { [param.key]: v } });
+              // This instance's own value (a number, or a formula it follows: a servo's output following its joint).
+              if (own)
+                return (
+                  <div key={param.key} className={`param-row own ${own.expr ? "linked" : ""}`}>
+                    <span className="param-label">
+                      {param.label}
+                      {own.expr && <LinkNote formula={formulaText(own.expr, entities)} onUnlink={() => setOwn(own.value)} />}
+                      <button type="button" className="own-chip" onClick={() => setOwn(null)} title={`This instance's own value; click to show ${definitionName(inst.of, entities)}'s again`}>
+                        This instance ×
+                      </button>
+                    </span>
+                    {own.expr ? (
+                      <span className="config-fixed" title={`Follows ${formulaText(own.expr, entities)} — this instance only`}>
+                        <code>{formulaText(own.expr, entities).replace(/^=/, "")}</code>
+                      </span>
+                    ) : (
+                      <ScrubField
+                        label={param.label}
+                        chip={param.label.slice(0, 2).toUpperCase()}
+                        value={own.value}
+                        onFormula={(f) => setOwn(f)}
+                        unit={unit}
+                        min={param.min ?? undefined}
+                        step={param.step ?? (param.unit === "count" ? 1 : 10)}
+                        onLive={() => {}}
+                        onCommit={(v) => setOwn(v)}
+                      />
+                    )}
+                  </div>
+                );
+              return (
               <div key={param.key} className={`param-row ${def.formulas?.[param.key] ? "linked" : ""}`}>
                 <span className="param-label">
                   {param.label}
                   {def.formulas?.[param.key] && <LinkNote formula={def.formulas[param.key]} onUnlink={() => run("shape.link_param", { target: def.id, key: param.key, expr: null })} />}
+                  {uses > 1 && (
+                    <button type="button" className="own-chip quiet" onClick={() => setOwn(def.params?.[param.key] ?? param.value)} title="Give this instance its own value (a number, or a formula with =), keeping everything else shared with the others">
+                      Own value
+                    </button>
+                  )}
                 </span>
                 {row && param.key in row.values ? (
                   <span className="config-fixed" title={`Set by ${row.name}: edit it in ${prog.name}'s configuration table`}>
@@ -585,7 +624,8 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
                 />
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}

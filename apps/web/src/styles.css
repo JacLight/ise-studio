@@ -8834,6 +8834,42 @@ button.download.drawing-open small {
   color: var(--purple);
 }
 
+.config-fixed code {
+  font-size: 11.5px;
+  color: var(--purple);
+}
+
+/* A value this instance gives its shape of its own (the others keep the definition's). */
+.own-chip {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 999px;
+  background: #efe9fb;
+  color: var(--purple);
+  font: inherit;
+  font-size: 9.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.own-chip.quiet {
+  background: transparent;
+  color: #a39db0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.param-row:hover .own-chip.quiet,
+.own-chip.quiet:focus-visible {
+  opacity: 1;
+}
+
+.own-chip:hover {
+  background: #e3d9f8;
+  color: #4b2c8f;
+}
+
 /* Marks on replies and on posted comments. */
 .comment-marks {
   display: inline-flex;
@@ -10200,6 +10236,30 @@ button.download.drawing-open small {
   bottom: 0;
   background: #e5544c;
   border-radius: 2px;
+}
+
+/* Values an interlock leaves out of a joint's range here. */
+.aj-interlocked-span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(135deg, #cfc8dc 0 3px, #ece8f3 3px 6px);
+}
+
+.aj-limits-note.aj-interlocked {
+  color: var(--purple);
+}
+
+/* Interlocks: each rule on its own line; a zone's rule as joint, at most/least, value. */
+.at-interlocks .at-row-main small {
+  display: block;
+  white-space: normal;
+}
+
+.aj-fields .il-rule {
+  grid-column: 1 / -1;
+  grid-template-columns: 44px minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 0.8fr);
+  align-items: center;
 }
 
 .aj-head-mark {
