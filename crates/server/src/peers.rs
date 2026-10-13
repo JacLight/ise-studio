@@ -136,6 +136,13 @@ pub fn want_assets(app: &App) {
                     }
                 }
             }
+            // A canvas's picture, too.
+            if let Some(c) = project.get::<de_shape::canvas::Canvas>(id)
+                && de_shape::assets::path(&c.image).is_err()
+                && !shas.contains(&c.image)
+            {
+                shas.push(c.image.clone());
+            }
         }
         shas
     };
