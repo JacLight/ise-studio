@@ -1,7 +1,8 @@
 // Items from other projects: the Insert from project dialog (pick a project,
 // tick items in its tree, linked or copied, where they go), this project's
 // links and their state, the badge linked items carry in the tree, and the
-// link's section in Properties (update, update automatically, break link).
+// link's section in Properties (update, update automatically, edit locally,
+// break link). Linked items are read-only unless edited locally.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type Engine, type EntityView, type ProjectEntry, projectName, projectUrl } from "./engine";
@@ -24,6 +25,8 @@ export type LinkStatus = {
   message?: string;
   changes?: LinkChanges;
   auto_update: boolean;
+  /** Its items may be edited here ("Edit locally"); else they are read-only. */
+  local_edits: boolean;
   updates_here: boolean;
   inserted: number;
   synced: number;
@@ -65,8 +68,22 @@ export function insertedNote(r: InsertResult, req: InsertRequest) {
   return `${req.whole ? "All of" : "Inserted from"} “${r.title}”: ${o.created} items, ${o.link ? "linked" : "copied"}${o.reused.length ? `, ${o.reused.length} already here used` : ""}${renamed}`;
 }
 
-const linkRecord = (e: EntityView | undefined) => e?.components["core.link"] as { project: string; title: string; whole: boolean; ids: Record<string, string>; placed?: string[]; revision: number; auto_update: boolean; synced: number } | undefined;
-const linkMark = (e: EntityView | undefined) => e?.components["core.linked"] as { link: string; source: string } | undefined;
+const linkRecord = (e: EntityView | undefined) =>
+  e?.components["core.link"] as { project: string; title: string; whole: boolean; ids: Record<string, string>; placed?: string[]; revision: number; auto_update: boolean; local_edits?: boolean; synced: number } | undefined;
+const linkMark = (e: EntityView | undefined) => e?.components["core.linked"] as { link: string; source: string; keep?: Record<string, string[]> } | undefined;
+
+/**
+ * Why an item cannot be changed here: it is linked from another project and
+ * its link is read-only (the engine refuses edits to it, beyond where it is
+ * placed). Null when it is the project's own, or edited locally.
+ */
+export function linkLock(e: EntityView | undefined, entities: ReadonlyMap<string, EntityView>): string | null {
+  const mark = linkMark(e);
+  const rec = mark && linkRecord(entities.get(mark.link));
+  if (!mark || !rec || rec.local_edits) return null;
+  const from = rec.title && rec.title !== rec.project ? `“${rec.title}”` : rec.project;
+  return `Linked from ${from}: read-only here, as the source makes it.${mark.keep && Object.keys(mark.keep).length ? " Where it is placed stays yours." : ""} To change it, turn on Edit locally or break the link (Linked, above), or change it in ${rec.project}.`;
+}
 
 /**
  * This project's links: their state from the engine (fetched when a link
@@ -76,7 +93,7 @@ const linkMark = (e: EntityView | undefined) => e?.components["core.linked"] as 
 export function useLinks(engine: Engine, entities: ReadonlyMap<string, EntityView>) {
   const [links, setLinks] = useState<LinkStatus[]>([]);
   const records = useMemo(() => [...entities.values()].filter((e) => linkRecord(e)), [entities]);
-  const key = records.map((e) => `${e.id}:${linkRecord(e)!.revision}:${linkRecord(e)!.synced}:${linkRecord(e)!.auto_update}`).join("|");
+  const key = records.map((e) => `${e.id}:${linkRecord(e)!.revision}:${linkRecord(e)!.synced}:${linkRecord(e)!.auto_update}:${!!linkRecord(e)!.local_edits}`).join("|");
   const refresh = useCallback(() => {
     fetch(projectUrl("/links"))
       .then((r) => (r.ok ? (r.json() as Promise<LinkStatus[]>) : []))
@@ -91,7 +108,7 @@ export function useLinks(engine: Engine, entities: ReadonlyMap<string, EntityVie
       const live = known.get(id);
       if (live) return live;
       const r = linkRecord(entities.get(id));
-      return r ? { id, project: r.project, title: r.title, whole: r.whole, names: [], items: Object.keys(r.ids).length, revision: r.revision, state: "checking", auto_update: r.auto_update, updates_here: true, inserted: 0, synced: r.synced, placed: r.placed ?? [] } : undefined;
+      return r ? { id, project: r.project, title: r.title, whole: r.whole, names: [], items: Object.keys(r.ids).length, revision: r.revision, state: "checking", auto_update: r.auto_update, local_edits: !!r.local_edits, updates_here: true, inserted: 0, synced: r.synced, placed: r.placed ?? [] } : undefined;
     };
     const m = new Map<string, LinkStatus>();
     for (const e of entities.values()) {
@@ -208,7 +225,31 @@ export function LinkSection(props: { link: LinkStatus; user: string; notify: (te
         Update automatically
         {l.auto_update && !l.updates_here && <small> (by the teammate's engine that inserted it)</small>}
       </label>
-      <p className="props-hint">Where it is placed here stays yours. Edits here to what the source changes are replaced on update: break the link to make it your own.</p>
+      <label
+        className="link-auto"
+        title={
+          l.local_edits
+            ? "Make these items read-only again, as the source makes them (your edits so far stay until the source changes them)"
+            : "Allow changing these items here; updates then merge the source's changes with yours (where both changed the same thing, the source's wins)"
+        }
+      >
+        <input
+          type="checkbox"
+          checked={l.local_edits}
+          disabled={!!busy}
+          onChange={(e) =>
+            act("local", "/links/settings", { link: l.id, local_edits: e.target.checked }, () =>
+              e.target.checked ? `Items from ${l.title} can be edited here; updates merge with your edits` : `Items from ${l.title} are read-only again`,
+            )
+          }
+        />
+        Edit locally
+      </label>
+      <p className="props-hint">
+        {l.local_edits
+          ? "Edits here stay through updates unless the source changes the same thing (the source's wins; undo brings yours back). Where it is placed stays yours."
+          : "Read-only here, as the source makes it: only where it is placed is yours. Edit locally to change it here, or break the link to make it your own."}
+      </p>
     </section>
   );
 }
