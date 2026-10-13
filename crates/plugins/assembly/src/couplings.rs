@@ -113,7 +113,7 @@ pub fn cam_at(profile: &[[f64; 2]], angle: f64) -> f64 {
     profile[0][1]
 }
 
-fn key_index(world: &World, joint: StableId, key: Option<&str>) -> Result<(usize, &'static str), String> {
+pub(crate) fn key_index(world: &World, joint: StableId, key: Option<&str>) -> Result<(usize, &'static str), String> {
     let j = entity(world, joint).and_then(|e| world.get::<Joint>(e)).ok_or_else(|| format!("{joint} is not a joint"))?;
     let keys = j.kind.values();
     if keys.is_empty() {
