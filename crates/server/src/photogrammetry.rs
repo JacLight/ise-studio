@@ -613,7 +613,26 @@ fn run(server: &Server, id: &str, set: &PhotoSet, flag: &AtomicBool) -> Result<V
     })();
     // Photos and engine workspaces are big: only the scans are kept.
     let _ = std::fs::remove_dir_all(&work);
-    result
+    result.map_err(|e| explain(&e, set.photos.len()))
+}
+
+/// Turns an engine's alignment failure (its raw log) into what went wrong and
+/// what to shoot instead; other errors pass through.
+fn explain(error: &str, photos: usize) -> String {
+    let unaligned = ["No images with matches", "Failed to create any sparse model", "PhotogrammetrySession.Error error 6", "imageAlignment"]
+        .iter()
+        .any(|k| error.contains(k));
+    if !unaligned {
+        return error.to_string();
+    }
+    let few = if photos < 20 { format!("only {photos} photos; ") } else { String::new() };
+    format!(
+        "the photos could not be placed relative to each other ({few}each photo must share about two thirds of what it sees with the next). \
+         Product shots from separate sides (front, top, side), cut-out or retouched backgrounds, and compressed copies (chat apps) do not align. \
+         Shoot 30–80 original photos in two or three rings round the object, moving 10–15° between shots, on the marker sheet (`scan markers`), in soft light. \
+         From a few separate views, model the part from them as reference pictures instead. (Engine: {})",
+        error.lines().last().unwrap_or(error).chars().take(160).collect::<String>()
+    )
 }
 
 fn run_object_capture(server: &Server, id: &str, job: &Job, images: &FsPath, work: &FsPath, flag: &AtomicBool) -> Result<Raw, String> {
@@ -1062,6 +1081,15 @@ fn clean(raw: &Raw, levelled: bool, field: Option<[f64; 4]>, metric: bool, size:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alignment_failures_say_what_to_shoot() {
+        let e = explain("colmap failed: W incremental_pipeline.cc:390] No images with matches / E sfm.cc:310] Failed to create any sparse model", 8);
+        assert!(e.contains("only 8 photos") && e.contains("two or three rings") && e.contains("reference pictures"), "{e}");
+        let e = explain("Object Capture could not build the model: The operation couldn’t be completed. (CoreOC.PhotogrammetrySession.Error error 6.)", 40);
+        assert!(e.contains("could not be placed") && !e.contains("only 40"), "{e}");
+        assert_eq!(explain("no photos in x.zip", 0), "no photos in x.zip");
+    }
 
     #[test]
     fn a_job_moves_forward_and_ends() {
