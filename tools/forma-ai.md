@@ -61,7 +61,7 @@ Write programs as files in `programs/` (in your folder) and pass them with `{"$f
 
 ## Shape programs
 
-A program is a JavaScript function body. It reads parameters from `p` (mm, degrees) and returns a `Solid`, or a list of `part(name, solid, { material, process })` for something made of several pieces. Use `metric(name, value, unit)` to report facts schedules show and assemblies sum (e.g. `metric("Net area", m2, "m²")`, `metric("Keys", 4)`). Derive curve resolution from `tolerance` (`segmentsFor(r)`); never hard-code it. Deterministic only: `rng(seed)`, no clock.
+A program is a JavaScript function body. It reads parameters from `p` (mm, degrees) and returns a `Solid`, or a list of `part(name, solid, { material, process })` for something made of several pieces. Name pieces the way the product is built, grouping with "/" (`"Upper housing/Left shell"`, `"Upper housing/Right shell"`, `"Grip/Butt plate"`): the Components tree nests them so, and the person shows, hides and finds each piece or group there. Use `metric(name, value, unit)` to report facts schedules show and assemblies sum (e.g. `metric("Net area", m2, "m²")`, `metric("Keys", 4)`). Derive curve resolution from `tolerance` (`segmentsFor(r)`); never hard-code it. Deterministic only: `rng(seed)`, no clock.
 
 Processes: 3d_print, cnc_mill, lathe, cnc_router, laser, sheet_metal, weld, cast, extrusion, glazing, buy. Sheet processes export a layered DXF (sheet-metal parts built with `sheet()`: their flat pattern); all parts export STL.
 

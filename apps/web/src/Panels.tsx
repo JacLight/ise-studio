@@ -39,7 +39,6 @@ import {
 } from "./model";
 import { ScrubField } from "./ScrubField";
 import type { PanelKind } from "./ui";
-import { IMPORT_ACCEPT } from "./fileFormats";
 
 const FINISH_LABEL: Record<EdgeFinish["kind"], string> = { fillet: "Fillet", chamfer: "Chamfer", push: "Push", shell: "Shell", draft: "Draft" };
 
@@ -63,7 +62,8 @@ export type Run = (operation: string, parameters: Record<string, unknown>) => Pr
 
 const TITLES: Record<PanelKind, string> = {
   project: "Your workspace",
-  objects: "Components",
+  components: "Components",
+  objects: "Project: materials, sketches, layers",
   properties: "Properties",
   requirements: "Requirements",
   history: "History and versions",
@@ -188,18 +188,13 @@ export function ObjectsBody(props: {
   materials: EntityView[];
   selected: string | null;
   onSelect: (id: string) => void;
-  onAdd: () => void;
   run: Run;
-  /** The component tree (and stacking plan), shown in place of the flat parts list. */
-  tree?: ReactNode;
   /** Project parameter sets, shown above the parts. */
   parameters?: ReactNode;
   /** Sketches in the project (click to edit). */
   sketches?: ReactNode;
   /** Saved groups of items (click to pick the whole group). */
   groups?: ReactNode;
-  /** Bring in a STEP file as a part. */
-  onImport?: (file: File) => void;
 }) {
   const { run } = props;
   const used = (id: string) => props.parts.filter((p) => materialRef(p) === id).length;
@@ -226,31 +221,11 @@ export function ObjectsBody(props: {
           {props.groups}
         </>
       )}
-      <h3 className="panel-section">Parts</h3>
-      {props.parts.length === 0 && <p className="muted">No parts yet.</p>}
-      {props.tree}
       {props.parts.length > 0 && (
-        <a className="download" href={projectUrl("/export/project.zip")} download>
+        <a className="download" href={projectUrl("/export/project.zip")} download title="Every part's files for making it: STEP, STL, DXF flat patterns, drawings and the BOM, in one zip">
           <Icon name="download" /> Everything, for fabrication
         </a>
       )}
-      {props.onImport && (
-        <label className="secondary add-part import-step" title="A supplier's part or another tool's model (STEP, IGES, STL, OBJ, PLY, glTF, 3MF), or a DXF/SVG drawing as a sketch">
-          <Icon name="download" /> Import file
-          <input
-            type="file"
-            accept={IMPORT_ACCEPT}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) props.onImport!(f);
-              e.target.value = "";
-            }}
-          />
-        </label>
-      )}
-      <button type="button" className="secondary add-part" onClick={props.onAdd}>
-        <Icon name="plus" /> Add box part
-      </button>
 
       <h3 className="panel-section">Materials</h3>
       <p className="small muted">Changing a density updates every part that uses it.</p>

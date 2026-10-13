@@ -25,7 +25,7 @@ import { SyncBanner, TeamDialog, TeamPill, useTeam } from "./Team";
 import { PlaneMenu, useSketchEditor } from "./SketchEditor";
 import { Icon } from "./icons";
 import { sketchOf } from "./sketchModel";
-import { ComponentTree, InstanceBody, ParameterSets, StackingPlan, parameterSet, stackingSubject } from "./Components";
+import { ComponentTree, ComponentsBody, InstanceBody, ParameterSets, StackingPlan, parameterSet, stackingSubject } from "./Components";
 import { type AiMode, type Group, type PanelKind, type UiPrefs, loadPrefs, savePrefs } from "./ui";
 import { IMPORT_ACCEPT, IMPORT_FORMATS, type ImportReply, importSummary, importable } from "./fileFormats";
 import { ProjectsHome } from "./ProjectsHome";
@@ -96,6 +96,7 @@ export function App({ engine }: { engine: Engine }) {
   const [isolated, setIsolated] = useState<string | null>(null);
   const [colorBy, setColorBy] = useState<"material" | "status">("material");
   const [objectsTab, setObjectsTab] = useState<"tree" | "stacking">("tree");
+  const [componentQuery, setComponentQuery] = useState("");
   // A new selection starts with no piece picked, unless the tree picked one with it.
   const pendingPiece = useRef<string | null>(null);
   useEffect(() => {
@@ -1204,7 +1205,7 @@ export function App({ engine }: { engine: Engine }) {
       const g = id && !add && !single ? groupFor(id) : null;
       setAlso(g ? g.members.filter((m) => m !== id) : []);
       setSelected(id);
-      if (id) setPanel((p) => (p === "objects" ? p : "properties"));
+      if (id) setPanel((p) => (p === "objects" || p === "components" ? p : "properties"));
     },
     [selected, groupFor],
   );
@@ -1219,7 +1220,7 @@ export function App({ engine }: { engine: Engine }) {
       const all = [...new Set([...now, ...ids])];
       setSelected(all[0] ?? null);
       setAlso(all.slice(1));
-      if (all.length) setPanel((p) => (p === "objects" || p === "views" ? p : "properties"));
+      if (all.length) setPanel((p) => (p === "objects" || p === "components" || p === "views" ? p : "properties"));
     },
     [selected],
   );
@@ -1802,54 +1803,20 @@ export function App({ engine }: { engine: Engine }) {
               onNew={() => !commenting && toggleCommenting()}
             />
           )}
-          {panel === "objects" && (
-            <ObjectsBody
-              parts={parts}
-              materials={materials}
-              selected={selected}
-              onSelect={(id) => setSelected(id)}
+          {panel === "components" && (
+            <ComponentsBody
+              query={componentQuery}
+              onQuery={setComponentQuery}
+              empty={parts.length === 0}
               onAdd={addPart}
-              run={run}
               onImport={importFile}
-              parameters={[...state.entities.values()].some((e) => parameterSet(e)) ? <ParameterSets entities={state.entities} run={run} /> : undefined}
-              sketches={
-                [...state.entities.values()].some((e) => sketchOf(e)) ? (
-                  <div className="sketch-list">
-                    {[...state.entities.values()]
-                      .filter((e) => sketchOf(e))
-                      .map((e) => (
-                        <button key={e.id} type="button" className={`list-row ${sketcher.editing === e.id ? "active" : ""}`} onClick={() => sketcher.edit(e.id)}>
-                          <Icon name="pencil" />
-                          <span>
-                            {sketchOf(e)!.name}
-                            <small className="row-count">{sketchOf(e)!.params.length} dimensions</small>
-                          </span>
-                          <Icon name="chevron" />
-                        </button>
-                      ))}
-                  </div>
-                ) : undefined
-              }
-              groups={
-                groups.length ? (
-                  <GroupList
-                    groups={groups.map((e) => ({ id: e.id, name: groupOf(e)!.name, members: groupOf(e)!.members.filter((m) => state.entities.has(m)) }))}
-                    active={(g) => !!selected && g.members.includes(selected) && g.members.every((m) => m === selected || also.includes(m))}
-                    onPick={(id) => {
-                      const g = groupOf(state.entities.get(id));
-                      const first = g?.members.find((m) => state.entities.has(m));
-                      if (first) select(first);
-                    }}
-                    onRename={(id, name) => void run("assembly.group.update", { target: id, name })}
-                    onUngroup={(id) => void run("core.entity.delete", { target: id })}
-                  />
-                ) : undefined
-              }
-              tree={(() => {
+            >
+              {(() => {
                 const building = stackingSubject(state.entities);
                 const tree = (
                   <ComponentTree
                     entities={state.entities}
+                    query={componentQuery}
                     selected={selected}
                     hidden={hiddenItems}
                     isolated={isolated}
@@ -1890,6 +1857,50 @@ export function App({ engine }: { engine: Engine }) {
                   </>
                 );
               })()}
+            </ComponentsBody>
+          )}
+          {panel === "objects" && (
+            <ObjectsBody
+              parts={parts}
+              materials={materials}
+              selected={selected}
+              onSelect={(id) => setSelected(id)}
+              run={run}
+              parameters={[...state.entities.values()].some((e) => parameterSet(e)) ? <ParameterSets entities={state.entities} run={run} /> : undefined}
+              sketches={
+                [...state.entities.values()].some((e) => sketchOf(e)) ? (
+                  <div className="sketch-list">
+                    {[...state.entities.values()]
+                      .filter((e) => sketchOf(e))
+                      .map((e) => (
+                        <button key={e.id} type="button" className={`list-row ${sketcher.editing === e.id ? "active" : ""}`} onClick={() => sketcher.edit(e.id)}>
+                          <Icon name="pencil" />
+                          <span>
+                            {sketchOf(e)!.name}
+                            <small className="row-count">{sketchOf(e)!.params.length} dimensions</small>
+                          </span>
+                          <Icon name="chevron" />
+                        </button>
+                      ))}
+                  </div>
+                ) : undefined
+              }
+              groups={
+                groups.length ? (
+                  <GroupList
+                    groups={groups.map((e) => ({ id: e.id, name: groupOf(e)!.name, members: groupOf(e)!.members.filter((m) => state.entities.has(m)) }))}
+                    active={(g) => !!selected && g.members.includes(selected) && g.members.every((m) => m === selected || also.includes(m))}
+                    onPick={(id) => {
+                      const g = groupOf(state.entities.get(id));
+                      const first = g?.members.find((m) => state.entities.has(m));
+                      if (first) select(first);
+                    }}
+                    onRename={(id, name) => void run("assembly.group.update", { target: id, name })}
+                    onUngroup={(id) => void run("core.entity.delete", { target: id })}
+                  />
+                ) : undefined
+              }
+
             />
           )}
           {panel === "objects" && (

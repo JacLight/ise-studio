@@ -4,7 +4,7 @@
 export type AiMode = "mini" | "floating" | "docked" | "expanded" | "hidden";
 export type FullMode = "floating" | "docked" | "expanded";
 export type Group = "project" | "share" | "tools" | "view";
-export type PanelKind = "project" | "objects" | "properties" | "requirements" | "history" | "views" | "comments";
+export type PanelKind = "project" | "components" | "objects" | "properties" | "requirements" | "history" | "views" | "comments";
 export type Message = { role: "user" | "assistant" | "tool" | "error"; text: string; user?: string; attachments?: import("./engine").Attachment[] };
 export type Point = { x: number; y: number };
 

@@ -15708,3 +15708,78 @@ a.button .icon {
   flex: 1 0 auto;
   padding: 0 7px;
 }
+
+/* ---- Tooltips (tooltips.ts) ---- */
+
+.app-tip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 10000;
+  max-width: 280px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: #23202e;
+  color: #f4f2fa;
+  font-size: 11.5px;
+  line-height: 1.35;
+  pointer-events: none;
+  box-shadow: 0 4px 14px #0003;
+  white-space: normal;
+}
+
+.app-tip[hidden] {
+  display: none;
+}
+
+/* ---- Components panel ---- */
+
+.components-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.component-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid #e3e4ec;
+  border-radius: 8px;
+  background: #fff;
+  color: #8a90a0;
+}
+
+.component-search:focus-within {
+  border-color: #cfc2f1;
+  box-shadow: 0 0 0 3px #7352d61a;
+}
+
+.component-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  color: #2d2f38;
+}
+
+.components-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.tree-row.is-match .tree-name span {
+  color: var(--purple);
+  font-weight: 600;
+}
+
+.tree-actions button.on {
+  color: var(--purple);
+}

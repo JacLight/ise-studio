@@ -5,6 +5,9 @@ import { Engine, projectUrl } from "./engine";
 import { JoinScreen } from "./Team";
 import { Viewer } from "./Viewer";
 import "./styles.css";
+import { installTooltips } from "./tooltips";
+
+installTooltips();
 
 const root = createRoot(document.getElementById("root")!);
 const params = new URLSearchParams(location.search);
