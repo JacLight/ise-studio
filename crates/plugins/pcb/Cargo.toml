@@ -14,3 +14,5 @@ manifold-csg = "0.4"
 miniz_oxide = "0.8"
 serde.workspace = true
 serde_json.workspace = true
+miniz_oxide = "0.8"
+base64 = "0.22"

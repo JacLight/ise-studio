@@ -302,6 +302,8 @@ pub fn symbol_svg(name: &str, draw: &[crate::schematic_view::Draw], bbox: [f64; 
             Draw::Text { at, s: t, size, angle, anchor, ink: k } => {
                 let _ = write!(s, r##"<text x="{}" y="{}" font-size="{}" font-family="Helvetica,Arial,sans-serif" text-anchor="{}" dominant-baseline="central" fill="{}" transform="rotate({} {} {})">{}</text>"##, n(at[0]), n(at[1]), n(*size), anchor, ink(k), n(-angle), n(at[0]), n(at[1]), xml(t));
             }
+            // Sheet graphics (shapes, rich text, pictures) never appear in a symbol drawing.
+            Draw::Styled { .. } | Draw::Rich { .. } | Draw::Image { .. } => {}
         }
     }
     s.push_str("</svg>");

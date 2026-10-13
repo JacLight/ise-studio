@@ -5,7 +5,8 @@
 // rotation needs it, and dimensions on what moved take their new values
 // (a linked dimension keeps its formula, and the solve pulls it back).
 
-import { type Constraint, type Curve, type Dim, type Geometry, type Solved, curvePoints, positions, radiusOf } from "./sketchModel";
+import { curveTrace } from "./sketchCurves";
+import { type Constraint, type Curve, type Dim, type Geometry, type Solved, curvePoints, keyOf, positions, radiusOf, refsOf, remapConstraint, remapCurve, setKey, sizeOf } from "./sketchModel";
 
 type P = [number, number];
 
@@ -61,28 +62,7 @@ export function inBox(g: Geometry, s: Solved | undefined, a: P, b: P, crossing: 
 
 /** Points along a curve (ends of a line; samples of anything curved). */
 function traceOf(c: Curve, pos: Map<number, P>, s: Solved | undefined): P[] {
-  const at = (id: number): P => pos.get(id) ?? [0, 0];
-  const n = 48;
-  if (c.kind === "line") return [at(c.a), at(c.b)];
-  if (c.kind === "circle") {
-    const [ce, r] = [at(c.center), radiusOf(c, s)];
-    return Array.from({ length: n + 1 }, (_, i) => [ce[0] + r * Math.cos((2 * Math.PI * i) / n), ce[1] + r * Math.sin((2 * Math.PI * i) / n)] as P);
-  }
-  if (c.kind === "arc") {
-    const [ce, st, en] = [at(c.center), at(c.start), at(c.end)];
-    const r = Math.hypot(st[0] - ce[0], st[1] - ce[1]);
-    const a0 = Math.atan2(st[1] - ce[1], st[0] - ce[0]);
-    let a1 = Math.atan2(en[1] - ce[1], en[0] - ce[0]);
-    while (a1 <= a0) a1 += 2 * Math.PI;
-    return Array.from({ length: n + 1 }, (_, i) => [ce[0] + r * Math.cos(a0 + ((a1 - a0) * i) / n), ce[1] + r * Math.sin(a0 + ((a1 - a0) * i) / n)] as P);
-  }
-  const [a, b, h1, h2] = [at(c.a), at(c.b), at(c.c1), at(c.c2)];
-  return Array.from({ length: n + 1 }, (_, i) => {
-    const t = i / n;
-    const u = 1 - t;
-    const [w0, w1, w2, w3] = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
-    return [w0 * a[0] + w1 * h1[0] + w2 * h2[0] + w3 * b[0], w0 * a[1] + w1 * h1[1] + w2 * h2[1] + w3 * b[1]] as P;
-  });
+  return curveTrace(c, (id) => pos.get(id) ?? [0, 0], s, 48);
 }
 
 /** The box around curves (a circle's or arc's full round counts) and points. */
@@ -99,8 +79,8 @@ export function extent(g: Geometry, s: Solved | undefined, curves: Curve[], poin
   };
   for (const c of curves) {
     if (c.kind === "circle") take(pos.get(c.center), radiusOf(c, s));
-    else if (c.kind === "arc" || c.kind === "bezier") for (const p of traceOf(c, pos, s)) take(p);
-    else for (const id of curvePoints(c)) take(pos.get(id));
+    else if (c.kind === "line") for (const id of curvePoints(c)) take(pos.get(id));
+    else for (const p of traceOf(c, pos, s)) take(p);
   }
   for (const id of points) take(pos.get(id));
   return { min, max, center: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2] as P };
@@ -154,6 +134,13 @@ export function rewrite(
       const r = radiusOf(c, s) * (o.circles?.has(c.id) ? (o.scale ?? 1) : 1);
       radius.set(c.id, r);
       return { ...c, radius: r };
+    }
+    if (c.kind === "ellipse" || c.kind === "ellipse_arc" || c.kind === "hyperbola_arc") {
+      // The other semi-axis scales with the selection, like a circle's radius.
+      const all = curvePoints(c).every((id) => to.has(id));
+      const m = (sizeOf(c, s) ?? c.minor) * (all ? (o.scale ?? 1) : 1);
+      const flip = all && o.mirror && c.kind === "ellipse_arc";
+      return flip ? { ...c, minor: m, start: c.end, end: c.start } : { ...c, minor: m };
     }
     if (c.kind === "arc" && o.mirror && [c.center, c.start, c.end].every((id) => to.has(id))) return { ...c, start: c.end, end: c.start };
     return c;
@@ -298,25 +285,22 @@ export function duplicate(g: Geometry, params: Dim[], s: Solved | undefined, sel
   const newCurves = curves.map((c): Curve => {
     const id = next++;
     map.set(c.id, id);
-    if (c.kind === "line") return { ...c, id, a: m(c.a), b: m(c.b) };
-    if (c.kind === "arc") return { ...c, id, center: m(c.center), start: m(c.start), end: m(c.end) };
-    if (c.kind === "bezier") return { ...c, id, a: m(c.a), b: m(c.b), c1: m(c.c1), c2: m(c.c2) };
-    return { ...c, id, center: m(c.center), radius: radiusOf(c, s) };
+    return remapCurve(c, id, m, s);
   });
   // Shape constraints among the copied things come along; dimensions get their own copies.
-  const refs = (c: Constraint) => Object.entries(c).filter(([k, v]) => k !== "key" && k !== "kind" && k !== "x" && k !== "y" && typeof v === "number").map(([, v]) => v as number);
   const newParams = [...params];
   const newConstraints: Constraint[] = [];
   for (const c of g.constraints) {
-    if (c.kind === "fixed" || !refs(c).every((r) => map.has(r))) continue;
-    const copy = Object.fromEntries(Object.entries(c).map(([k, v]) => [k, k !== "kind" && k !== "key" && typeof v === "number" ? m(v) : v])) as Constraint;
-    if ("key" in c) {
-      const d = params.find((p) => p.key === c.key);
+    if (c.kind === "fixed" || c.kind === "block" || !refsOf(c).every((r) => map.has(r))) continue;
+    const copy = remapConstraint(c, m);
+    const key = keyOf(c);
+    if (key) {
+      const d = params.find((p) => p.key === key);
       let n = 1;
       while (newParams.some((p) => p.key === `d${n}`)) n++;
-      const key = `d${n}`;
-      if (d) newParams.push({ ...d, key, label: `${d.label} (copy)`, expr: undefined });
-      (copy as { key: string }).key = key;
+      const nk = `d${n}`;
+      if (d) newParams.push({ ...d, key: nk, label: `${d.label} (copy)`, expr: undefined });
+      setKey(copy, nk);
     }
     newConstraints.push(copy);
   }
