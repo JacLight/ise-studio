@@ -19,6 +19,9 @@
 #include <Geom_TrimmedCurve.hxx>
 #include <Geom_BezierCurve.hxx>
 #include <TColgp_Array1OfPnt.hxx>
+#include <TColStd_Array1OfReal.hxx>
+#include <BRepBuilderAPI_NurbsConvert.hxx>
+#include <TColStd_Array1OfInteger.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
@@ -91,6 +94,7 @@
 #include <TopoDS_Solid.hxx>
 #include <TopoDS_Wire.hxx>
 #include <XCAFApp_Application.hxx>
+#include <XCAFDoc_ColorTool.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <gp_Ax1.hxx>
@@ -106,6 +110,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <tuple>
 #include <string>
 #include <vector>
 
@@ -120,6 +125,8 @@ struct Arena {
   std::vector<double> edge_data;
   std::vector<double> loop_data;
   std::vector<double> view_data;
+  // Faces or whole shapes given a colour (r g b, 0–1; r < 0 for none) and a name, for STEP (solids.cpp).
+  std::vector<std::tuple<TopoDS_Shape, std::array<double, 3>, std::string>> painted;
 };
 
 int push(Arena* a, const TopoDS_Shape& s) {
@@ -215,6 +222,9 @@ TopoDS_Wire section(const TopoDS_Wire& w, double z, double twist_deg, double sx,
   t.SetTranslation(gp_Vec(0, 0, z));
   return TopoDS::Wire(transformed(transformed(s, r), t));
 }
+
+/// Paint (colours, face names) onto a part's STEP label (solids.cpp).
+void apply_paint(Arena* a, const Handle(XCAFDoc_ShapeTool) & tool, const Handle(XCAFDoc_ColorTool) & colours, const TDF_Label& label, const TopoDS_Shape& part);
 
 }  // namespace
 
@@ -409,6 +419,30 @@ int occ_sketch_profile(void* p, int nloops, const double* d, int len) {
           Handle(Geom_BezierCurve) bz = new Geom_BezierCurve(poles);
           for (int i = 1; i <= 16; i++) {
             gp_Pnt q = bz->Value(i / 16.0);
+            signed2 += prev.X() * q.Y() - q.X() * prev.Y();
+            prev = q;
+          }
+        } else if (kind == 4) {
+          // An exact rational B-spline (a conic, a spline): degree, poles
+          // (x, y, weight), then its distinct knots and their multiplicities.
+          int degree = (int)next(), np = (int)next();
+          TColgp_Array1OfPnt poles(1, np);
+          TColStd_Array1OfReal weights(1, np);
+          for (int i = 1; i <= np; i++) {
+            double x = next(), y = next();
+            poles.SetValue(i, gp_Pnt(x, y, 0));
+            weights.SetValue(i, next());
+          }
+          int nk = (int)next();
+          TColStd_Array1OfReal knots(1, nk);
+          TColStd_Array1OfInteger mults(1, nk);
+          for (int i = 1; i <= nk; i++) knots.SetValue(i, next());
+          for (int i = 1; i <= nk; i++) mults.SetValue(i, (int)next());
+          Handle(Geom_BSplineCurve) bs = new Geom_BSplineCurve(poles, weights, knots, mults, degree);
+          wire.Add(BRepBuilderAPI_MakeEdge(bs).Edge());
+          gp_Pnt prev = bs->Value(bs->FirstParameter());
+          for (int i = 1; i <= 64; i++) {
+            gp_Pnt q = bs->Value(bs->FirstParameter() + (bs->LastParameter() - bs->FirstParameter()) * i / 64.0);
             signed2 += prev.X() * q.Y() - q.X() * prev.Y();
             prev = q;
           }
@@ -736,12 +770,37 @@ int occ_from_mesh(void* p, const double* pos, int npos, const int* tri, int ntri
 
 // ---- Queries -------------------------------------------------------------------
 
+/// Whether any face (or edge) is free-form: not a plane, cylinder, cone,
+/// sphere or torus bounded by lines and circles.
+static bool free_form(const TopoDS_Shape& s) {
+  for (TopExp_Explorer f(s, TopAbs_FACE); f.More(); f.Next()) {
+    BRepAdaptor_Surface surf(TopoDS::Face(f.Current()));
+    switch (surf.GetType()) {
+      case GeomAbs_Plane: case GeomAbs_Cylinder: case GeomAbs_Cone: case GeomAbs_Sphere: case GeomAbs_Torus: break;
+      default: return true;
+    }
+  }
+  for (TopExp_Explorer e(s, TopAbs_EDGE); e.More(); e.Next()) {
+    const TopoDS_Edge& ed = TopoDS::Edge(e.Current());
+    if (BRep_Tool::Degenerated(ed)) continue;
+    BRepAdaptor_Curve c(ed);
+    if (c.GetType() != GeomAbs_Line && c.GetType() != GeomAbs_Circle) return true;
+  }
+  return false;
+}
+
 double occ_volume(void* p, int h) {
   Arena* a = static_cast<Arena*>(p);
   const TopoDS_Shape* s = get(a, h);
   if (!s) return NAN;
   GProp_GProps g;
-  BRepGProp::VolumeProperties(*s, g);
+  if (free_form(*s)) {
+    // Faces swept from rational B-splines (conics, splines in sketches)
+    // integrate badly as they are: as NURBS, adaptively, they come out exact.
+    BRepGProp::VolumeProperties(BRepBuilderAPI_NurbsConvert(*s).Shape(), g, 1e-9);
+  } else {
+    BRepGProp::VolumeProperties(*s, g);
+  }
   return g.Mass();
 }
 
@@ -750,7 +809,11 @@ double occ_area(void* p, int h) {
   const TopoDS_Shape* s = get(a, h);
   if (!s) return NAN;
   GProp_GProps g;
-  BRepGProp::SurfaceProperties(*s, g);
+  if (free_form(*s)) {
+    BRepGProp::SurfaceProperties(*s, g, 1e-9);
+  } else {
+    BRepGProp::SurfaceProperties(*s, g);
+  }
   return g.Mass();
 }
 
@@ -851,6 +914,7 @@ int occ_write_step(void* p, const int* hs, const char* const* names, int n, cons
       if (solids == 1) part = only;
       TDF_Label l = tool->AddShape(part, false, false);
       TDataStd_Name::Set(l, TCollection_ExtendedString(names[i], true));
+      apply_paint(a, tool, XCAFDoc_DocumentTool::ColorTool(doc->Main()), l, part);
     }
     Interface_Static::SetCVal("write.step.unit", "MM");
     Interface_Static::SetCVal("write.step.schema", "AP214IS");
@@ -1480,3 +1544,6 @@ int occ_draft(void* p, int h, const int* idx, int n, double degrees, double dx, 
 }
 
 }  // extern "C"
+
+// Sweeps, lofts, offsets, defeaturing, paint, checks and BREP files.
+#include "solids.cpp"

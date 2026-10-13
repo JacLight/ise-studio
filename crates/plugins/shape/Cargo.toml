@@ -15,6 +15,7 @@ serde_json.workspace = true
 rayon.workspace = true
 manifold-csg = "0.4"
 rquickjs = "0.14"
+miniz_oxide = "0.8"
 png = "0.17"
 jpeg-decoder = { version = "0.3", default-features = false }
 ttf-parser = "0.25"

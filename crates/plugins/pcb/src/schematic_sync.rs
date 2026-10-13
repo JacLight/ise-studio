@@ -86,6 +86,9 @@ pub struct SyncReport {
     pub erc_errors: usize,
     /// Nothing to do: the board matches the schematic.
     pub in_sync: bool,
+    /// Net classes the schematic gives the board (class: nets).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub classes: Vec<String>,
 }
 
 /// One board component as the schematic wants it.
@@ -135,9 +138,12 @@ pub fn expected(v: &SchematicView, it: &schematic::SchItems) -> (Vec<Expected>, 
             symbols: vec![],
             link: None,
         });
-        e.symbols.push(sv.id);
-        if e.link.is_none() {
-            e.link = sv.component;
+        // Another instance of a shared sheet is matched by its reference alone.
+        if sv.instance.is_none() {
+            e.symbols.push(sv.id);
+            if e.link.is_none() {
+                e.link = sv.component;
+            }
         }
         for p in &sv.pins {
             for pad in &p.pads {
@@ -180,6 +186,7 @@ enum Action {
     Update(StableId, PcbComponent, Vec<StableId>),
     Delete(StableId),
     Link(Vec<StableId>, StableId),
+    Classes(Vec<crate::NetClass>),
 }
 
 fn mechanical(board: &crate::Board, c: &PcbComponent) -> Option<String> {
@@ -217,7 +224,41 @@ fn plan(world: &World, id: StableId) -> Result<(SyncReport, Vec<Action>), Comman
         unchanged: 0,
         erc_errors: v.errors(),
         in_sync: false,
+        classes: vec![],
     };
+    // Net classes: the schematic's classes, with their nets, onto the board's.
+    if !s.netclasses.is_empty() {
+        let mut want = board.net_classes.clone();
+        let default = board.net_classes.iter().find(|c| c.name.eq_ignore_ascii_case("default")).cloned().unwrap_or_else(crate::NetClass::default_class);
+        for c in &s.netclasses {
+            let mut nets: Vec<String> = v.nets.iter().filter(|n| n.class.as_deref().is_some_and(|x| x.eq_ignore_ascii_case(&c.name))).map(|n| n.name.clone()).collect();
+            nets.sort_by(|a, b| crate::natural(a, b));
+            for other in want.iter_mut().filter(|x| !x.name.eq_ignore_ascii_case(&c.name)) {
+                other.nets.retain(|n| !nets.contains(n));
+            }
+            let slot = match want.iter().position(|x| x.name.eq_ignore_ascii_case(&c.name)) {
+                Some(i) => i,
+                None => {
+                    want.push(crate::NetClass { name: c.name.clone(), nets: vec![], neck_width: None, ..default.clone() });
+                    want.len() - 1
+                }
+            };
+            let b = &mut want[slot];
+            b.nets = nets;
+            b.track_width = c.track_width.unwrap_or(b.track_width);
+            b.clearance = c.clearance.unwrap_or(b.clearance);
+            b.via_diameter = c.via_diameter.unwrap_or(b.via_diameter);
+            b.via_drill = c.via_drill.unwrap_or(b.via_drill);
+        }
+        if want != board.net_classes {
+            for c in &want {
+                if board.net_classes.iter().find(|b| b.name == c.name) != Some(c) {
+                    report.classes.push(format!("{}: {}", c.name, if c.nets.is_empty() { "no nets".to_string() } else { c.nets.join(", ") }));
+                }
+            }
+            actions.push(Action::Classes(want));
+        }
+    }
     let mut matched: BTreeSet<StableId> = BTreeSet::new();
     // Where new parts wait to be placed: rows below the board.
     let (bx0, by0, bx1) = {
@@ -288,7 +329,7 @@ fn plan(world: &World, id: StableId) -> Result<(SyncReport, Vec<Action>), Comman
                     }
                     actions.push(Action::Update(*cid, n, w.symbols.clone()));
                 }
-                if w.link != Some(*cid) {
+                if w.link != Some(*cid) && !w.symbols.is_empty() {
                     actions.push(Action::Link(w.symbols.clone(), *cid));
                 }
             }
@@ -343,7 +384,7 @@ fn plan(world: &World, id: StableId) -> Result<(SyncReport, Vec<Action>), Comman
     report.new_nets = after.difference(&before).cloned().collect();
     report.gone_nets = before.difference(&after).cloned().collect();
     report.skipped = skipped;
-    report.in_sync = report.added.is_empty() && report.changed.is_empty() && report.nets.is_empty() && report.removed.is_empty() && !actions.iter().any(|a| matches!(a, Action::Update(..)));
+    report.in_sync = report.added.is_empty() && report.changed.is_empty() && report.nets.is_empty() && report.removed.is_empty() && !actions.iter().any(|a| matches!(a, Action::Update(..) | Action::Classes(..)));
     Ok((report, actions))
 }
 
@@ -386,6 +427,10 @@ impl Command for UpdateBoardFromSchematic {
     const NAME: &'static str = "pcb.schematic.update_board";
 
     fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        if !self.dry_run {
+            // Footprints from the project libraries go on the board first.
+            crate::library::ensure_schematic_footprints(tx, self.schematic)?;
+        }
         let (mut report, actions) = plan(tx.world(), self.schematic)?;
         if self.dry_run {
             return Ok(serde_json::to_value(&report).unwrap());
@@ -429,6 +474,9 @@ impl Command for UpdateBoardFromSchematic {
                     link(tx, &w.symbols, cid)?;
                 }
                 Action::Link(symbols, cid) => link(tx, symbols, *cid)?,
+                Action::Classes(c) => {
+                    tx.run("pcb.board.update", json!({ "target": board, "net_classes": c }))?;
+                }
                 Action::Delete(_) => {}
             }
         }

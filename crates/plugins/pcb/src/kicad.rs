@@ -129,7 +129,7 @@ fn norm_angle(a: f64) -> f64 {
 }
 
 /// The points of an arc through `a`, `m`, `b` (within `tol` mm), ends included.
-fn arc3(a: P, m: P, b: P, tol: f64) -> Vec<P> {
+pub(crate) fn arc3(a: P, m: P, b: P, tol: f64) -> Vec<P> {
     let d = 2.0 * (a[0] * (m[1] - b[1]) + m[0] * (b[1] - a[1]) + b[0] * (a[1] - m[1]));
     if d.abs() < 1e-12 {
         return vec![a, b];
@@ -149,7 +149,7 @@ fn arc3(a: P, m: P, b: P, tol: f64) -> Vec<P> {
     arc_center(c, r, a0, span, tol, a, b)
 }
 
-fn arc_center(c: P, r: f64, a0: f64, span: f64, tol: f64, a: P, b: P) -> Vec<P> {
+pub(crate) fn arc_center(c: P, r: f64, a0: f64, span: f64, tol: f64, a: P, b: P) -> Vec<P> {
     let n = ((geom::segments_for(r, tol) as f64) * span.abs() / std::f64::consts::TAU).ceil().max(1.0) as usize;
     let mut out = vec![a];
     for k in 1..n {
@@ -160,7 +160,7 @@ fn arc_center(c: P, r: f64, a0: f64, span: f64, tol: f64, a: P, b: P) -> Vec<P> 
     out
 }
 
-fn circle_pts(c: P, r: f64, tol: f64) -> Vec<P> {
+pub(crate) fn circle_pts(c: P, r: f64, tol: f64) -> Vec<P> {
     let n = geom::segments_for(r, tol);
     (0..n).map(|i| {
         let t = std::f64::consts::TAU * i as f64 / n as f64;
@@ -276,7 +276,7 @@ fn kicad_layer(f: &str) -> &'static str {
 }
 
 /// Polylines joined end to end into closed loops (ends within `tol`).
-fn chain_loops(mut open: Vec<Vec<P>>, tol: f64) -> (Vec<Vec<P>>, usize) {
+pub(crate) fn chain_loops(mut open: Vec<Vec<P>>, tol: f64) -> (Vec<Vec<P>>, usize) {
     let mut loops = Vec::new();
     let mut dangling = 0;
     while let Some(mut cur) = open.pop() {
@@ -345,7 +345,7 @@ impl Place {
     }
 }
 
-fn kind_for(reference: &str, value: &str) -> &'static str {
+pub(crate) fn kind_for(reference: &str, value: &str) -> &'static str {
     let prefix: String = reference.chars().take_while(|c| c.is_ascii_alphabetic()).collect::<String>().to_ascii_uppercase();
     let v = value.to_ascii_lowercase();
     match prefix.as_str() {
@@ -364,7 +364,7 @@ fn kind_for(reference: &str, value: &str) -> &'static str {
 }
 
 /// (height, material) of an estimated body by kind.
-fn body_guess(kind: &str) -> (f64, &'static str) {
+pub(crate) fn body_guess(kind: &str) -> (f64, &'static str) {
     match kind {
         "resistor" => (0.5, "Epoxy"),
         "capacitor" => (0.9, "Ceramic"),
@@ -502,14 +502,19 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
             }
         }
         let mut drill = None;
+        let mut drill_offset: Option<[f64; 2]> = None;
+        let mut center_shift = [0.0, 0.0];
         if let Some(d) = pe.find("drill") {
             let oval = d.has_atom("oval");
             let v: Vec<f64> = d.args().iter().filter_map(|a| a.num()).collect();
             if let Some(&w) = v.first() {
                 drill = Some(if oval { [w, *v.get(1).unwrap_or(&w)] } else { [w, w] });
             }
-            if d.find("offset").is_some_and(|o| o.args().iter().filter_map(|a| a.num()).any(|x| x.abs() > 1e-9)) {
-                notes.push(format!("{reference}.{number}: the drill's offset from the pad centre was dropped (Forma centres holes on pads)"));
+            if let Some(o) = d.find("offset").map(|o| o.args().iter().filter_map(|a| a.num()).collect::<Vec<f64>>()).filter(|o| o.iter().any(|x| x.abs() > 1e-9)) {
+                // KiCad moves the copper by the offset; Forma keeps the copper and moves the hole the other way.
+                let (ox, oy) = (o.first().copied().unwrap_or(0.0), o.get(1).copied().unwrap_or(0.0));
+                drill_offset = Some(if bottom { [r6(ox), r6(oy)] } else { [r6(-ox), r6(oy)] });
+                center_shift = [ox, oy];
             }
         }
         let mut size = size;
@@ -538,15 +543,54 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
             "custom" => (PadShape::Custom, None),
             _ => (PadShape::Rect, None),
         };
+        let mut extra = crate::footprints::PadExtra { drill_offset, ..Default::default() };
+        // Trapezoids and chamfered rectangles become their exact outline (KiCad pad frame, y down).
+        let (hx, hy) = (size[0] / 2.0, size[1] / 2.0);
+        let mut outline_kicad: Option<Vec<P>> = None;
         if pshape == "trapezoid" {
-            notes.push(format!("{reference}.{number}: a trapezoid pad came in as its rectangle"));
+            let d = pe.find("rect_delta").map(|d| d.args().iter().filter_map(|a| a.num()).collect::<Vec<f64>>()).unwrap_or_default();
+            let (ex, ey) = (d.first().copied().unwrap_or(0.0) / 2.0, d.get(1).copied().unwrap_or(0.0) / 2.0);
+            outline_kicad = Some(vec![[-hx - ey, hy + ex], [-hx + ey, -hy - ex], [hx - ey, -hy + ex], [hx + ey, hy - ex]]);
+            extra.trapezoid = Some([r6(2.0 * ex), r6(2.0 * ey)]);
         }
-        if pe.find("chamfer").is_some() || pe.find("chamfer_ratio").is_some_and(|c| c.arg_num(0).unwrap_or(0.0) > 0.0) {
-            notes.push(format!("{reference}.{number}: chamfered corners came in square"));
+        let ratio = pe.value_num("chamfer_ratio").unwrap_or(0.0);
+        if let Some(ch) = pe.find("chamfer").filter(|_| ratio > 0.0 && matches!(pshape, "rect" | "roundrect")) {
+            let corners: Vec<String> = ch.args().iter().filter_map(|a| a.text()).map(str::to_string).collect();
+            let k = ratio.clamp(0.0, 0.5) * size[0].min(size[1]);
+            let has = |n: &str| corners.iter().any(|c| c == n);
+            let mut q: Vec<P> = Vec::new();
+            // KiCad frame (y down): top is −y.
+            for (name, c, a, b) in [
+                ("top_left", [-hx, -hy], [-hx, -hy + k], [-hx + k, -hy]),
+                ("top_right", [hx, -hy], [hx - k, -hy], [hx, -hy + k]),
+                ("bottom_right", [hx, hy], [hx, hy - k], [hx - k, hy]),
+                ("bottom_left", [-hx, hy], [-hx + k, hy], [-hx, hy - k]),
+            ] {
+                if has(name) {
+                    q.push(a);
+                    q.push(b);
+                } else {
+                    q.push(c);
+                }
+            }
+            outline_kicad = Some(q);
+            let flip = |c: &String| if bottom { match c.as_str() { "top_left" => "top_right".into(), "top_right" => "top_left".into(), "bottom_left" => "bottom_right".into(), "bottom_right" => "bottom_left".into(), x => x.into() } } else { c.clone() };
+            extra.chamfer = Some(crate::footprints::Chamfer { ratio, corners: corners.iter().map(flip).collect() });
+            if pshape == "roundrect" {
+                notes.push(format!("{reference}.{number}: a rounded rectangle with chamfers came in with sharp corners where not chamfered"));
+            }
         }
         let mut polygon = Vec::new();
         let mut psize = size;
-        if shape == PadShape::Custom {
+        let shape = if outline_kicad.is_some() { PadShape::Custom } else { shape };
+        let corner = if outline_kicad.is_some() { None } else { corner };
+        if let Some(outline) = outline_kicad {
+            let mut q: Vec<P> = outline.into_iter().map(|p| r6p(if bottom { [-p[0], -p[1]] } else { [p[0], -p[1]] })).collect();
+            if geom::polygon_area(&q) < 0.0 {
+                q.reverse();
+            }
+            polygon = q;
+        } else if shape == PadShape::Custom {
             let outline = custom_pad_outline(pe, size);
             // Pad coordinates (y down) → Forma pad coordinates: y up, mirrored on the bottom.
             let mut q: Vec<P> = outline.into_iter().map(|p| r6p(if bottom { [-p[0], -p[1]] } else { [p[0], -p[1]] })).collect();
@@ -565,7 +609,15 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
                 pins.insert(number.clone(), net.clone());
             }
         }
-        pads.push(Pad { number, kind, shape, size: [r6(psize[0]), r6(psize[1])], at: place.forma_local(center), rotation, drill: drill.map(|d| [r6(d[0]), r6(d[1])]), corner, paste: vec![], polygon });
+        // The copper sits at the hole plus the offset turned with the pad (KiCad frame, y down).
+        let copper = if center_shift == [0.0, 0.0] {
+            center
+        } else {
+            let (s, c) = (abs_rot - place.rot).to_radians().sin_cos();
+            let (ox, oy) = (center_shift[0], center_shift[1]);
+            place.board([local[0] + ox * c + oy * s, local[1] - ox * s + oy * c])
+        };
+        pads.push(Pad { number, kind, shape, size: [r6(psize[0]), r6(psize[1])], at: place.forma_local(copper), rotation, drill: drill.map(|d| [r6(d[0]), r6(d[1])]), corner, paste: vec![], polygon, extra });
     }
     if pads.is_empty() {
         // Logos and graphics: nothing to place.
@@ -655,7 +707,7 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
 }
 
 /// Track segments of one net, layer and width joined into polylines.
-fn chain_tracks(segs: Vec<(Option<String>, String, f64, P, P)>) -> Vec<KTrack> {
+pub(crate) fn chain_tracks(segs: Vec<(Option<String>, String, f64, P, P)>) -> Vec<KTrack> {
     let mut groups: BTreeMap<(String, String, i64), Vec<(P, P)>> = BTreeMap::new();
     let mut net_of: BTreeMap<String, Option<String>> = BTreeMap::new();
     for (net, layer, width, a, b) in segs {
@@ -1076,111 +1128,117 @@ impl Command for ImportKicad {
 
     fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
         let k = parse_board(&self.text).map_err(|e| CommandError::new(ErrorCode::InvalidParameters, e))?;
-        let name = self.name.filter(|n| !n.trim().is_empty()).or(k.title.clone()).unwrap_or_else(|| "Imported board".into()).trim().to_string();
-        for (n, f) in &k.footprints {
-            for p in &f.pads {
-                if !(p.size[0] > 0.0 && p.size[1] > 0.0 && p.size[0] < 100.0 && p.size[1] < 100.0) {
-                    return Err(CommandError::new(ErrorCode::InvalidParameters, format!("footprint {n}: pad {} has no size", p.number)));
-                }
+        create_board(tx, &k, self.name, self.at)
+    }
+}
+
+/// A board read from any file (KiCad or another tool's, in Forma's terms) written into the
+/// project in one change: the board, its footprints, components, tracks, vias, pours and 3D part.
+pub fn create_board(tx: &mut Tx, k: &KicadBoard, name: Option<String>, at: Option<[f64; 3]>) -> Result<Value, CommandError> {
+    let name = name.filter(|n| !n.trim().is_empty()).or(k.title.clone()).unwrap_or_else(|| "Imported board".into()).trim().to_string();
+    for (n, f) in &k.footprints {
+        for p in &f.pads {
+            if !(p.size[0] > 0.0 && p.size[1] > 0.0 && p.size[0] < 100.0 && p.size[1] < 100.0) {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, format!("footprint {n}: pad {} has no size", p.number)));
             }
         }
-        let board = Board {
-            name: name.clone(),
-            outline: k.outline.clone(),
-            corner_radius: 0.0,
-            cutouts: k.cutouts.clone(),
-            sketch: None,
-            layers: k.layers,
-            thickness: k.thickness.clamp(0.2, 3.2),
-            finish: "HASL lead-free".into(),
-            copper_oz: 1.0,
-            inner_copper_oz: 0.5,
-            mask: "green".into(),
-            silk: "white".into(),
-            rules: k.rules.clone(),
-            net_classes: vec![k.default_class.clone()],
-            footprints: k.footprints.clone(),
-            model: None,
-            revision: k.revision.clone().unwrap_or_else(|| "A".into()),
-            quantity: 5,
-            fab: None,
-            sourcing: BTreeMap::new(),
-        };
-        let id = tx.create();
-        tx.set(id, board)?;
-        for c in &k.components {
-            let cid = tx.create();
-            tx.set(
-                cid,
-                PcbComponent {
-                    board: id,
-                    reference: c.reference.clone(),
-                    value: c.value.clone(),
-                    footprint: c.footprint.clone(),
-                    at: c.at,
-                    rotation: c.rotation,
-                    side: c.side,
-                    mpn: c.mpn.clone(),
-                    manufacturer: c.manufacturer.clone(),
-                    lcsc: c.lcsc.clone(),
-                    description: c.description.clone(),
-                    pins: c.pins.clone(),
-                    pin_names: BTreeMap::new(),
-                    dnp: c.dnp,
-                },
-            )?;
-            tx.add_dependency(id, cid)?;
-        }
-        for t in &k.tracks {
-            let tid = tx.create();
-            tx.set(tid, Track { board: id, net: t.net.clone(), layer: t.layer.clone(), width: t.width, points: t.points.clone(), auto: false, reroute: false })?;
-            tx.add_dependency(id, tid)?;
-        }
-        for v in &k.vias {
-            let vid = tx.create();
-            tx.set(vid, Via { board: id, net: v.net.clone(), at: v.at, drill: v.drill, diameter: v.diameter, auto: false })?;
-            tx.add_dependency(id, vid)?;
-        }
-        for z in &k.zones {
-            let zid = tx.create();
-            tx.set(
-                zid,
-                Zone {
-                    board: id,
-                    net: z.net.clone(),
-                    layer: z.layer.clone(),
-                    outline: z.outline.clone(),
-                    clearance: z.clearance,
-                    min_width: z.min_width,
-                    priority: z.priority,
-                    remove_islands: true,
-                    connection: z.connection,
-                    thermal_gap: z.thermal_gap,
-                    thermal_spoke: z.thermal_spoke,
-                },
-            )?;
-            tx.add_dependency(id, zid)?;
-        }
-        let model = crate::model3d::create(tx, id, self.at.unwrap_or([0.0; 3]))?;
-        Ok(json!({
-            "id": id,
-            "model": model,
-            "name": name,
-            "layers": k.layers,
-            "components": k.components.len(),
-            "footprints": k.footprints.len(),
-            "tracks": k.tracks.len(),
-            "vias": k.vias.len(),
-            "zones": k.zones.len(),
-            "notes": k.notes,
-        }))
     }
+    let board = Board {
+        name: name.clone(),
+        outline: k.outline.clone(),
+        corner_radius: 0.0,
+        cutouts: k.cutouts.clone(),
+        sketch: None,
+        layers: k.layers,
+        thickness: k.thickness.clamp(0.2, 3.2),
+        finish: "HASL lead-free".into(),
+        copper_oz: 1.0,
+        inner_copper_oz: 0.5,
+        mask: "green".into(),
+        silk: "white".into(),
+        rules: k.rules.clone(),
+        net_classes: vec![k.default_class.clone()],
+        footprints: k.footprints.clone(),
+        model: None,
+        revision: k.revision.clone().unwrap_or_else(|| "A".into()),
+        quantity: 5,
+        fab: None,
+        sourcing: BTreeMap::new(),
+    };
+    let id = tx.create();
+    tx.set(id, board)?;
+    for c in &k.components {
+        let cid = tx.create();
+        tx.set(
+            cid,
+            PcbComponent {
+                board: id,
+                reference: c.reference.clone(),
+                value: c.value.clone(),
+                footprint: c.footprint.clone(),
+                at: c.at,
+                rotation: c.rotation,
+                side: c.side,
+                mpn: c.mpn.clone(),
+                manufacturer: c.manufacturer.clone(),
+                lcsc: c.lcsc.clone(),
+                description: c.description.clone(),
+                pins: c.pins.clone(),
+                pin_names: BTreeMap::new(),
+                dnp: c.dnp,
+            },
+        )?;
+        tx.add_dependency(id, cid)?;
+    }
+    for t in &k.tracks {
+        let tid = tx.create();
+        tx.set(tid, Track { board: id, net: t.net.clone(), layer: t.layer.clone(), width: t.width, points: t.points.clone(), auto: false, reroute: false })?;
+        tx.add_dependency(id, tid)?;
+    }
+    for v in &k.vias {
+        let vid = tx.create();
+        tx.set(vid, Via { board: id, net: v.net.clone(), at: v.at, drill: v.drill, diameter: v.diameter, auto: false })?;
+        tx.add_dependency(id, vid)?;
+    }
+    for z in &k.zones {
+        let zid = tx.create();
+        tx.set(
+            zid,
+            Zone {
+                board: id,
+                net: z.net.clone(),
+                layer: z.layer.clone(),
+                outline: z.outline.clone(),
+                clearance: z.clearance,
+                min_width: z.min_width,
+                priority: z.priority,
+                remove_islands: true,
+                connection: z.connection,
+                thermal_gap: z.thermal_gap,
+                thermal_spoke: z.thermal_spoke,
+            },
+        )?;
+        tx.add_dependency(id, zid)?;
+    }
+    let model = crate::model3d::create(tx, id, at.unwrap_or([0.0; 3]))?;
+    Ok(json!({
+        "id": id,
+        "model": model,
+        "name": name,
+        "layers": k.layers,
+        "components": k.components.len(),
+        "footprints": k.footprints.len(),
+        "tracks": k.tracks.len(),
+        "vias": k.vias.len(),
+        "zones": k.zones.len(),
+        "notes": k.notes,
+    }))
 }
 
 // ---- Writing ------------------------------------------------------------------------
 
 /// A stable RFC 4122-shaped id from a seed (same board, same ids).
-fn uuid(seed: &str) -> String {
+pub(crate) fn uuid(seed: &str) -> String {
     let h = |salt: u64| {
         let mut x = std::collections::hash_map::DefaultHasher::new();
         salt.hash(&mut x);

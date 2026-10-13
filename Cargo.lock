@@ -512,6 +512,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "de-draft"
+version = "0.1.0"
+dependencies = [
+ "de-assembly",
+ "de-core",
+ "de-shape",
+ "de-solid",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "de-intent"
 version = "0.1.0"
 dependencies = [
@@ -530,17 +542,20 @@ name = "de-occt"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "serde_json",
 ]
 
 [[package]]
 name = "de-pcb"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "de-core",
  "de-shape",
  "de-solid",
  "de-sourcing",
  "manifold-csg",
+ "miniz_oxide 0.8.9",
  "serde",
  "serde_json",
 ]
@@ -554,12 +569,14 @@ dependencies = [
  "de-assembly",
  "de-bim",
  "de-core",
+ "de-draft",
  "de-intent",
  "de-occt",
  "de-pcb",
  "de-shape",
  "de-solid",
  "de-sourcing",
+ "flate2",
  "futures-util",
  "getrandom 0.3.4",
  "manifold-csg",
@@ -581,6 +598,7 @@ dependencies = [
  "de-solid",
  "jpeg-decoder",
  "manifold-csg",
+ "miniz_oxide 0.8.9",
  "png",
  "rayon",
  "rquickjs",

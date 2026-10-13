@@ -5,6 +5,7 @@
 
 use crate::schematic::{self, LabelKind, SchItems, Schematic, is_ground, same};
 use crate::symbols::{self, Dir, Fill, Gfx, PinType, text_width};
+use crate::{schematic_bus, schematic_graphics};
 use crate::{entity, natural};
 use de_core::{StableId, bevy_ecs::world::World};
 use serde::Serialize;
@@ -24,6 +25,12 @@ pub enum Draw {
     Circle { c: P, r: f64, w: f64, ink: &'static str, fill: &'static str },
     /// `at` is on the text's middle line; `angle` 0 reads left to right, 90 bottom to top; `anchor` start, middle or end.
     Text { at: P, s: String, size: f64, angle: f64, anchor: &'static str, ink: &'static str },
+    /// A drawn graphic in any colour (#rrggbb): `dash` "", dash, dot or dash_dot; `fill` a colour for closed outlines.
+    Styled { p: Vec<P>, w: f64, color: String, fill: Option<String>, dash: &'static str, closed: bool },
+    /// Text in any colour, bold or italic.
+    Rich { at: P, s: String, size: f64, angle: f64, anchor: &'static str, color: String, bold: bool, italic: bool },
+    /// A picture: top-left `at`, `size` in mm, the file as base64.
+    Image { at: P, size: P, mime: String, data: String },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -67,6 +74,8 @@ pub struct SymbolView {
     pub draw: Vec<Draw>,
     pub pins: Vec<PinView>,
     pub fields: BTreeMap<String, String>,
+    /// On another instance of a shared sheet: the sheet it is drawn from (its reference is this instance's).
+    pub instance: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -75,6 +84,63 @@ pub struct WireView {
     pub sheet: String,
     pub points: Vec<P>,
     pub net: Option<String>,
+    /// From the net's colour or net class.
+    pub color: Option<String>,
+    pub width: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct BusMember {
+    pub member: String,
+    /// The net it is (None when nothing on it reaches a pin).
+    pub net: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct BusView {
+    pub id: StableId,
+    pub sheet: String,
+    pub points: Vec<P>,
+    /// Its bus name (D[0..7]), from a bus label or sheet pin on it.
+    pub name: Option<String>,
+    pub members: Vec<BusMember>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct BusEntryView {
+    pub id: StableId,
+    pub sheet: String,
+    /// On the bus.
+    pub at: P,
+    /// Where the wire joins.
+    pub end: P,
+}
+
+/// A shape, text box, table or picture drawn.
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphicView {
+    pub id: StableId,
+    pub sheet: String,
+    pub kind: &'static str,
+    pub draw: Vec<Draw>,
+    pub bbox: [f64; 4],
+    /// The item's own fields (a picture's data left out), for editing.
+    pub props: serde_json::Value,
+}
+
+/// Schematic setup, as stored, plus the effective pin-conflict matrix.
+#[derive(Clone, Debug, Serialize)]
+pub struct SetupView {
+    pub bus_aliases: BTreeMap<String, Vec<String>>,
+    pub netclasses: Vec<schematic::SchNetClass>,
+    pub net_colors: BTreeMap<String, String>,
+    pub erc: schematic::ErcSettings,
+    pub field_templates: Vec<schematic::FieldTemplate>,
+    pub text_vars: BTreeMap<String, String>,
+    pub drawing_sheet: schematic::DrawingSheet,
+    pub pin_types: Vec<&'static str>,
+    /// "a/b" → ok, warning or error.
+    pub pin_matrix: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -109,8 +175,16 @@ pub struct TextView {
     pub id: StableId,
     pub sheet: String,
     pub at: P,
+    /// With text variables expanded.
     pub text: String,
+    /// As written.
+    pub source: String,
     pub size: f64,
+    pub justify: String,
+    pub angle: f64,
+    pub bold: bool,
+    pub italic: bool,
+    pub color: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -129,6 +203,9 @@ pub struct SheetView {
     pub paper: String,
     pub size: P,
     pub parent: Option<String>,
+    pub instance_of: Option<String>,
+    pub page: String,
+    pub portrait: bool,
     pub frame: Vec<Draw>,
     pub boxes: Vec<SheetBoxView>,
     pub boxes_draw: Vec<Draw>,
@@ -145,6 +222,10 @@ pub struct SchNet {
     pub sheets: Vec<String>,
     /// Named by a label or power port (not `Net-(…)`).
     pub named: bool,
+    /// Its net class (from a directive label or a class's name patterns).
+    pub class: Option<String>,
+    /// Wire colour (the net's own, else its class's).
+    pub color: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -156,6 +237,10 @@ pub struct ErcViolation {
     pub at: P,
     pub objects: Vec<StableId>,
     pub refs: Vec<String>,
+    /// Stable key for excluding it (code, sheet, what).
+    pub key: String,
+    /// Reviewed and excluded: shown, not counted.
+    pub excluded: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -184,14 +269,18 @@ pub struct SchematicView {
     pub junctions: Vec<JunctionView>,
     pub no_connects: Vec<MarkView>,
     pub texts: Vec<TextView>,
+    pub buses: Vec<BusView>,
+    pub bus_entries: Vec<BusEntryView>,
+    pub graphics: Vec<GraphicView>,
     pub nets: Vec<SchNet>,
     pub violations: Vec<ErcViolation>,
     pub stats: SchStats,
+    pub setup: SetupView,
 }
 
 impl SchematicView {
     pub fn errors(&self) -> usize {
-        self.violations.iter().filter(|v| v.severity == "error").count()
+        self.violations.iter().filter(|v| v.severity == "error" && !v.excluded).count()
     }
 }
 
@@ -241,10 +330,18 @@ pub fn draw_box(d: &Draw) -> [f64; 4] {
             bbox_add(&mut b, [c[0] - r, c[1] - r]);
             bbox_add(&mut b, [c[0] + r, c[1] + r]);
         }
-        Draw::Text { at, s, size, angle, anchor, .. } => {
+        Draw::Text { at, s, size, angle, anchor, .. } | Draw::Rich { at, s, size, angle, anchor, .. } => {
             let t = text_box(*at, s, *size, *angle, anchor);
             bbox_add(&mut b, [t[0], t[1]]);
             bbox_add(&mut b, [t[2], t[3]]);
+        }
+        Draw::Styled { p, w, .. } => p.iter().for_each(|q| {
+            bbox_add(&mut b, [q[0] - w / 2.0, q[1] - w / 2.0]);
+            bbox_add(&mut b, [q[0] + w / 2.0, q[1] + w / 2.0]);
+        }),
+        Draw::Image { at, size, .. } => {
+            bbox_add(&mut b, *at);
+            bbox_add(&mut b, [at[0] + size[0], at[1] + size[1]]);
         }
     }
     b
@@ -320,7 +417,10 @@ pub(crate) fn symbol_view(id: StableId, s: &schematic::SchSymbol) -> SymbolView 
             let v = dir.v();
             let inner = [at[0] - v[0] * p.length, at[1] - v[1] * p.length];
             if p.length > 1e-6 {
-                draw.push(Draw::Line { p: vec![at, inner], w: W_PIN, ink: "pin" });
+                // A pin style (bubble, clock, …) takes the body end of the line.
+                let cut = crate::libedit::pin_cut(p.shape).min(p.length);
+                draw.push(Draw::Line { p: vec![at, [inner[0] + v[0] * cut, inner[1] + v[1] * cut]], w: W_PIN, ink: "pin" });
+                draw.extend(crate::libedit::pin_decoration(p.shape, at, inner, v));
             }
             // Numbers sit nearer the body, clear of a no-connect flag on the end.
             let mid = [at[0] + (inner[0] - at[0]) * 0.62, at[1] + (inner[1] - at[1]) * 0.62];
@@ -417,6 +517,7 @@ pub(crate) fn symbol_view(id: StableId, s: &schematic::SchSymbol) -> SymbolView 
         draw,
         pins,
         fields: s.fields.clone(),
+        instance: None,
     }
 }
 
@@ -506,6 +607,17 @@ pub(crate) fn label_view(id: StableId, l: &schematic::SchLabel) -> LabelView {
             let mid = at(tip + w / 2.0, 0.0);
             draw.push(Draw::Text { at: mid, s: l.text.clone(), size: LABEL, angle: if vertical { 90.0 } else { 0.0 }, anchor: "middle", ink });
         }
+        LabelKind::Directive => {
+            // A flag on a stick: the class name in braces.
+            let stem = 2.54;
+            draw.push(Draw::Line { p: vec![a, at(stem, 0.0)], w: W_PIN, ink: "directive" });
+            let w = text_width(&l.text, LABEL) + 2.4;
+            let h = 2.2;
+            let tip = at(stem, 0.0);
+            let corner = |d: f64, s: f64| [tip[0] + u[0] * d + n[0] * s, tip[1] + u[1] * d + n[1] * s];
+            draw.push(Draw::Poly { p: vec![corner(0.0, h / 2.0), corner(w, h / 2.0), corner(w, -h / 2.0), corner(0.0, -h / 2.0)], w: W_PIN, ink: "directive", fill: "none" });
+            draw.push(Draw::Text { at: corner(w / 2.0, 0.0), s: format!("{{{}}}", l.text), size: LABEL * 0.9, angle: if vertical { 90.0 } else { 0.0 }, anchor: "middle", ink: "directive" });
+        }
         LabelKind::Power => {
             let style = l.style.clone().unwrap_or_else(|| if is_ground(&l.text) { "ground".into() } else { "bar".into() });
             let stem = 1.27;
@@ -548,14 +660,17 @@ pub(crate) fn label_view(id: StableId, l: &schematic::SchLabel) -> LabelView {
 /// The paper's frame, zone references and title block.
 pub fn frame(s: &Schematic, sheet: &schematic::Sheet, index: usize) -> Vec<Draw> {
     let [w, h] = sheet.paper_size();
-    let m = 8.0;
-    let strip = 4.0;
+    let ds = &s.drawing_sheet;
+    let m = ds.margin.unwrap_or(8.0).clamp(0.0, 40.0);
+    let strip = if ds.no_zones { 0.0 } else { 4.0 };
     let mut d = Vec::new();
     let rect = |x0: f64, y0: f64, x1: f64, y1: f64, wd: f64| Draw::Poly { p: vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]], w: wd, ink: "frame", fill: "none" };
     d.push(rect(m, m, w - m, h - m, 0.25));
-    d.push(rect(m + strip, m + strip, w - m - strip, h - m - strip, 0.18));
-    let cols = ((w - 2.0 * m) / 50.0).round().max(1.0) as usize;
-    let rows = ((h - 2.0 * m) / 50.0).round().max(1.0) as usize;
+    if strip > 0.0 {
+        d.push(rect(m + strip, m + strip, w - m - strip, h - m - strip, 0.18));
+    }
+    let cols = if strip > 0.0 { ((w - 2.0 * m) / 50.0).round().max(1.0) as usize } else { 0 };
+    let rows = if strip > 0.0 { ((h - 2.0 * m) / 50.0).round().max(1.0) as usize } else { 0 };
     let cw = (w - 2.0 * m) / cols as f64;
     let rh = (h - 2.0 * m) / rows as f64;
     for i in 0..cols {
@@ -581,9 +696,37 @@ pub fn frame(s: &Schematic, sheet: &schematic::Sheet, index: usize) -> Vec<Draw>
             d.push(Draw::Line { p: vec![[w - m - strip, y], [w - m, y]], w: 0.18, ink: "frame" });
         }
     }
-    // Title block, bottom right of the inner frame.
     let x1 = w - m - strip;
     let y1 = h - m - strip;
+    // Extra drawing-sheet items, placed from a corner of the inner frame.
+    for it in &ds.items {
+        let (x0i, y0i) = (m + strip, m + strip);
+        let place = |p: [f64; 2]| -> P {
+            match it.corner.as_str() {
+                "lb" => [x0i + p[0], y1 - p[1]],
+                "rt" => [x1 - p[0], y0i + p[1]],
+                "lt" => [x0i + p[0], y0i + p[1]],
+                _ => [x1 - p[0], y1 - p[1]],
+            }
+        };
+        let lw = it.width.unwrap_or(0.18);
+        match it.kind.as_str() {
+            "line" => d.push(Draw::Line { p: vec![place(it.at), place(it.end.unwrap_or(it.at))], w: lw, ink: "frame" }),
+            "rect" => {
+                let (a, b) = (place(it.at), place(it.end.unwrap_or(it.at)));
+                d.push(Draw::Poly { p: vec![a, [b[0], a[1]], b, [a[0], b[1]]], w: lw, ink: "frame", fill: "none" });
+            }
+            _ => {
+                let text = s.expand_vars(&it.text, Some(&sheet.id));
+                let anchor = if it.corner.starts_with('r') || it.corner.is_empty() { "end" } else { "start" };
+                d.push(Draw::Text { at: place(it.at), s: text, size: it.size.unwrap_or(1.6), angle: 0.0, anchor, ink: if it.bold { "frame_text" } else { "frame_label" } });
+            }
+        }
+    }
+    if ds.no_title_block {
+        return d;
+    }
+    // Title block, bottom right of the inner frame.
     let x0 = x1 - 110.0;
     let y0 = y1 - 32.0;
     d.push(rect(x0, y0, x1, y1, 0.25));
@@ -594,7 +737,20 @@ pub fn frame(s: &Schematic, sheet: &schematic::Sheet, index: usize) -> Vec<Draw>
     d.push(line([x0 + 36.0, y0 + 17.0], [x0 + 36.0, y1]));
     d.push(line([x0 + 82.0, y0 + 17.0], [x0 + 82.0, y1]));
     let t = |at: P, s: String, size: f64, anchor: &'static str| Draw::Text { at, s, size, angle: 0.0, anchor, ink: "frame_text" };
-    let path = if sheet.parent.is_some() { format!("Sheet: /{}/", sheet.name) } else { format!("Sheet: {}", sheet.name) };
+    let path = if sheet.parent.is_some() {
+        let mut names = vec![sheet.name.clone()];
+        let mut cur = sheet.parent.clone();
+        while let Some(p) = cur.and_then(|p| s.sheet(&p)) {
+            if p.parent.is_none() || names.len() > 16 {
+                break;
+            }
+            names.insert(0, p.name.clone());
+            cur = p.parent.clone();
+        }
+        format!("Sheet: /{}/", names.join("/"))
+    } else {
+        format!("Sheet: {}", sheet.name)
+    };
     d.push(t([x0 + 2.0, y0 + 3.0], path, 1.6, "start"));
     d.push(t([x1 - 2.0, y0 + 3.0], format!("{} sheet{}", s.sheets.len(), if s.sheets.len() == 1 { "" } else { "s" }), 1.4, "end"));
     d.push(Draw::Text { at: [x0 + 2.0, y0 + 9.0], s: "Title".into(), size: 1.3, angle: 0.0, anchor: "start", ink: "frame_label" });
@@ -608,7 +764,8 @@ pub fn frame(s: &Schematic, sheet: &schematic::Sheet, index: usize) -> Vec<Draw>
     d.push(Draw::Text { at: [x0 + 84.0, y0 + 19.0], s: "Rev".into(), size: 1.3, angle: 0.0, anchor: "start", ink: "frame_label" });
     d.push(t([x0 + 84.0, y0 + 21.8], s.title.revision.clone(), 1.8, "start"));
     d.push(Draw::Text { at: [x0 + 2.0, y0 + 26.0], s: "Sheet".into(), size: 1.3, angle: 0.0, anchor: "start", ink: "frame_label" });
-    d.push(t([x0 + 2.0, y0 + 29.2], format!("{} / {}", index + 1, s.sheets.len()), 1.8, "start"));
+    let _ = index;
+    d.push(t([x0 + 2.0, y0 + 29.2], format!("{} / {}", s.page(&sheet.id), s.sheets.len()), 1.8, "start"));
     d.push(Draw::Text { at: [x0 + 38.0, y0 + 26.0], s: "Drawn with".into(), size: 1.3, angle: 0.0, anchor: "start", ink: "frame_label" });
     d.push(t([x0 + 38.0, y0 + 29.2], "Forma".into(), 1.8, "start"));
     for (i, c) in s.title.comments.iter().take(3).enumerate() {
@@ -622,6 +779,10 @@ pub fn frame(s: &Schematic, sheet: &schematic::Sheet, index: usize) -> Vec<Draw>
 struct Dsu(Vec<usize>);
 
 impl Dsu {
+    fn add(&mut self) -> usize {
+        self.0.push(self.0.len());
+        self.0.len() - 1
+    }
     fn find(&mut self, x: usize) -> usize {
         let mut r = x;
         while self.0[r] != r {
@@ -650,6 +811,10 @@ enum Node {
     Label(usize),
     Junction,
     SheetPin(usize, usize),
+    /// A net a bus carries (joins same-named labels in its scope).
+    Member,
+    /// The wire end of a bus entry.
+    Entry,
 }
 
 fn key(sheet: &str, p: P) -> (String, i64, i64) {
@@ -682,13 +847,152 @@ pub fn resolve(world: &World, id: StableId) -> Result<SchematicView, String> {
     Ok(resolve_items(id, &s, &it, world))
 }
 
-pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) -> SchematicView {
-    let mut symbols: Vec<SymbolView> = it.symbols.iter().map(|(sid, x)| symbol_view(*sid, x)).collect();
-    let mut wires: Vec<WireView> = it.wires.iter().map(|(wid, w)| WireView { id: *wid, sheet: w.sheet.clone(), points: w.points.clone(), net: None }).collect();
+/// `*` and `?` wildcards, case-insensitive.
+pub fn glob(pat: &str, name: &str) -> bool {
+    let p: Vec<char> = pat.to_ascii_uppercase().chars().collect();
+    let n: Vec<char> = name.to_ascii_uppercase().chars().collect();
+    let (mut i, mut j, mut star, mut mark) = (0usize, 0usize, None::<usize>, 0usize);
+    while j < n.len() {
+        if i < p.len() && (p[i] == '?' || p[i] == n[j]) {
+            i += 1;
+            j += 1;
+        } else if i < p.len() && p[i] == '*' {
+            star = Some(i);
+            mark = j;
+            i += 1;
+        } else if let Some(st) = star {
+            i = st + 1;
+            mark += 1;
+            j = mark;
+        } else {
+            return false;
+        }
+    }
+    while i < p.len() && p[i] == '*' {
+        i += 1;
+    }
+    i == p.len()
+}
+
+/// The ERC pin types in matrix order (no-connect pins have their own rules).
+pub const PIN_TYPES: [PinType; 10] = [PinType::Input, PinType::Output, PinType::Bidirectional, PinType::TriState, PinType::Passive, PinType::Unspecified, PinType::PowerIn, PinType::PowerOut, PinType::OpenCollector, PinType::OpenEmitter];
+
+pub fn pin_type_name(t: PinType) -> &'static str {
+    match t {
+        PinType::Input => "input",
+        PinType::Output => "output",
+        PinType::Bidirectional => "bidirectional",
+        PinType::TriState => "tri_state",
+        PinType::Passive => "passive",
+        PinType::PowerIn => "power_in",
+        PinType::PowerOut => "power_out",
+        PinType::OpenCollector => "open_collector",
+        PinType::OpenEmitter => "open_emitter",
+        PinType::NoConnect => "no_connect",
+        PinType::Unspecified => "unspecified",
+    }
+}
+
+/// What two pin types on one net amount to, by default: ok, warning or error
+/// (the conventional ERC matrix: outputs fight outputs and power outputs,
+/// open collectors and emitters fight push-pull outputs, unspecified pins are suspect).
+pub fn default_pin_level(a: PinType, b: PinType) -> &'static str {
+    use PinType::*;
+    let idx = |t: PinType| PIN_TYPES.iter().position(|x| *x == t).unwrap_or(4);
+    const O: u8 = 0;
+    const W: u8 = 1;
+    const E: u8 = 2;
+    //            In Out Bi 3S Pas Uns PwI PwO OC OE
+    const M: [[u8; 10]; 10] = [
+        [O, O, O, O, O, W, O, O, O, O], // input
+        [O, E, O, W, O, W, O, E, E, E], // output
+        [O, O, O, O, O, W, O, W, O, W], // bidirectional
+        [O, W, O, O, O, W, W, E, W, W], // tri-state
+        [O, O, O, O, O, W, O, O, O, O], // passive
+        [W, W, W, W, W, W, W, W, W, W], // unspecified
+        [O, O, O, W, O, W, O, O, O, O], // power in
+        [O, E, W, E, O, W, O, E, E, E], // power out
+        [O, E, O, W, O, W, O, E, O, O], // open collector
+        [O, E, W, W, O, W, O, E, O, O], // open emitter
+    ];
+    let _ = (NoConnect, Input);
+    match M[idx(a)][idx(b)] {
+        0 => "ok",
+        1 => "warning",
+        _ => "error",
+    }
+}
+
+/// The pin-matrix key of two types ("output/open_collector", in matrix order).
+pub fn pin_pair_key(a: PinType, b: PinType) -> String {
+    let idx = |t: PinType| PIN_TYPES.iter().position(|x| *x == t).unwrap_or(4);
+    let (a, b) = if idx(a) <= idx(b) { (a, b) } else { (b, a) };
+    format!("{}/{}", pin_type_name(a), pin_type_name(b))
+}
+
+/// The level of a pin pair with the schematic's overrides.
+pub fn pin_level(s: &Schematic, a: PinType, b: PinType) -> &'static str {
+    match s.erc.pin_matrix.get(&pin_pair_key(a, b)).map(|x| x.as_str()) {
+        Some("error") => "error",
+        Some("warning") => "warning",
+        Some("ok") => "ok",
+        _ => default_pin_level(a, b),
+    }
+}
+
+fn add_visible_fields(v: &mut SymbolView, x: &schematic::SchSymbol, s: &Schematic) {
+    let shown: Vec<(&String, &String)> = s.field_templates.iter().filter(|t| t.visible).filter_map(|t| x.fields.get_key_value(&t.name)).filter(|(_, val)| !val.is_empty()).collect();
+    if shown.is_empty() {
+        return;
+    }
+    let anchor_at = v.draw.iter().rev().find_map(|d| match d {
+        Draw::Text { at, anchor, ink, .. } if *ink == "value" || *ink == "reference" => Some((*at, *anchor)),
+        _ => None,
+    });
+    let (mut at, anchor) = anchor_at.unwrap_or(([v.body[0], v.body[3] + 1.4], "start"));
+    for (_, val) in shown {
+        at = [at[0], at[1] + 2.0];
+        let d = Draw::Text { at, s: val.clone(), size: FIELD * 0.85, angle: 0.0, anchor, ink: "field" };
+        let b = draw_box(&d);
+        bbox_add(&mut v.bbox, [b[0], b[1]]);
+        bbox_add(&mut v.bbox, [b[2], b[3]]);
+        v.draw.push(d);
+    }
+}
+
+#[derive(Default)]
+struct BusGroup {
+    buses: Vec<usize>,
+    labels: Vec<usize>,
+    pins: Vec<usize>,
+    primary: Option<String>,
+    list: Vec<String>,
+    global: bool,
+    sheet: String,
+    nodes: Vec<usize>,
+}
+
+pub fn resolve_items(id: StableId, s: &Schematic, raw: &SchItems, world: &World) -> SchematicView {
+    let expanded = schematic::expanded(s, raw);
+    let it = &expanded;
+    let aliases = &s.bus_aliases;
+    let instance_of = |sid: &str| s.sheet(sid).and_then(|x| x.instance_of.clone());
+    let mut symbols: Vec<SymbolView> = it
+        .symbols
+        .iter()
+        .map(|(sid, x)| {
+            let mut v = symbol_view(*sid, x);
+            v.instance = instance_of(&x.sheet);
+            add_visible_fields(&mut v, x, s);
+            v
+        })
+        .collect();
+    let mut wires: Vec<WireView> = it.wires.iter().map(|(wid, w)| WireView { id: *wid, sheet: w.sheet.clone(), points: w.points.clone(), net: None, color: None, width: None }).collect();
     let mut labels: Vec<LabelView> = it.labels.iter().map(|(lid, l)| label_view(*lid, l)).collect();
     let sheet_name = |sid: &str| s.sheet(sid).map(|x| x.name.clone()).unwrap_or_else(|| sid.to_string());
     // Local names are bare on the first sheet, `sheet/NAME` elsewhere.
     let is_child = |sid: &str| s.sheets.first().is_some_and(|f| f.id != sid);
+    let bus_label: Vec<bool> = labels.iter().map(|l| matches!(l.kind, LabelKind::Local | LabelKind::Global | LabelKind::Hierarchical) && schematic_bus::is_bus_name(&l.text, aliases)).collect();
 
     // Nodes.
     let mut nodes: Vec<Node> = Vec::new();
@@ -718,19 +1022,34 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
     }
     let mut label_node = Vec::new();
     for (li, l) in labels.iter().enumerate() {
-        label_node.push(add_point(&mut nodes, &mut points, Node::Label(li), &l.sheet, l.at));
+        if bus_label[li] {
+            // A bus label names a bus, not the wire it may touch.
+            nodes.push(Node::Label(li));
+            label_node.push(nodes.len() - 1);
+        } else {
+            label_node.push(add_point(&mut nodes, &mut points, Node::Label(li), &l.sheet, l.at));
+        }
     }
     for j in it.junctions.iter() {
         add_point(&mut nodes, &mut points, Node::Junction, &j.1.sheet, j.1.at);
     }
     let mut sheet_pin_nodes: Vec<(String, String, usize)> = Vec::new(); // (child sheet, name, node)
+    let mut bus_pins: Vec<(usize, usize, String, P, String)> = Vec::new(); // (sheet index, pin index, parent, at, name)
     for (shi, sh) in s.sheets.iter().enumerate() {
         if let Some(parent) = &sh.parent {
             for (pi, p) in sh.pins.iter().enumerate() {
+                if schematic_bus::is_bus_name(&p.name, aliases) {
+                    bus_pins.push((shi, pi, parent.clone(), p.at, p.name.clone()));
+                    continue;
+                }
                 let n = add_point(&mut nodes, &mut points, Node::SheetPin(shi, pi), parent, p.at);
                 sheet_pin_nodes.push((sh.id.clone(), p.name.clone(), n));
             }
         }
+    }
+    let mut entry_node = Vec::new();
+    for (_, e) in it.bus_entries.iter() {
+        entry_node.push(add_point(&mut nodes, &mut points, Node::Entry, &e.sheet, e.wire_end()));
     }
     let mut dsu = Dsu((0..nodes.len()).collect());
     // Coincident points.
@@ -759,10 +1078,13 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
     // Names: local labels per sheet, global labels and power ports everywhere, hierarchical ↔ sheet pins.
     let mut scope: HashMap<(u8, String, String), usize> = HashMap::new();
     for (li, l) in labels.iter().enumerate() {
+        if bus_label[li] || l.kind == LabelKind::Directive {
+            continue;
+        }
         let k = match l.kind {
             LabelKind::Local => (0, l.sheet.clone(), l.text.clone()),
             LabelKind::Global | LabelKind::Power => (1, String::new(), l.text.clone()),
-            LabelKind::Hierarchical => (2, l.sheet.clone(), l.text.clone()),
+            _ => (2, l.sheet.clone(), l.text.clone()),
         };
         let n = label_node[li];
         match scope.get(&k) {
@@ -775,6 +1097,137 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
     for (child, name, n) in &sheet_pin_nodes {
         if let Some(first) = scope.get(&(2, child.clone(), name.clone())) {
             dsu.union(*first, *n);
+        }
+    }
+
+    // ---- Buses: groups of joined buses, their names and members ----------------------
+    let buses: Vec<&schematic_bus::SchBus> = it.buses.iter().map(|(_, b)| b).collect();
+    let nb = buses.len();
+    let nl = labels.len();
+    let mut bdsu = Dsu((0..nb + nl + bus_pins.len()).collect());
+    for i in 0..nb {
+        for j in 0..nb {
+            if i != j && buses[i].sheet == buses[j].sheet {
+                let (a, b) = (&buses[i].points, &buses[j].points);
+                if on_wire(a[0], b) || on_wire(*a.last().unwrap(), b) {
+                    bdsu.union(i, j);
+                }
+            }
+        }
+    }
+    let bus_at = |sheet: &str, p: P| (0..nb).find(|i| buses[*i].sheet == sheet && on_wire(p, &buses[*i].points));
+    let mut bscope: HashMap<(u8, String, String), usize> = HashMap::new();
+    for (li, l) in labels.iter().enumerate().filter(|(li, _)| bus_label[*li]) {
+        if let Some(b) = bus_at(&l.sheet, l.at) {
+            bdsu.union(b, nb + li);
+        }
+        let k = match l.kind {
+            LabelKind::Global => Some((1, String::new(), l.text.clone())),
+            LabelKind::Local => Some((0, l.sheet.clone(), l.text.clone())),
+            _ => None,
+        };
+        if let Some(k) = k {
+            match bscope.get(&k) {
+                Some(f) => bdsu.union(*f, nb + li),
+                None => {
+                    bscope.insert(k, nb + li);
+                }
+            }
+        }
+    }
+    for (k, (_, _, parent, at, _)) in bus_pins.iter().enumerate() {
+        if let Some(b) = bus_at(parent, *at) {
+            bdsu.union(b, nb + nl + k);
+        }
+    }
+    let mut groups_b: BTreeMap<usize, BusGroup> = BTreeMap::new();
+    for i in 0..nb + nl + bus_pins.len() {
+        if i >= nb && i < nb + nl && !bus_label[i - nb] {
+            continue;
+        }
+        let g = groups_b.entry(bdsu.find(i)).or_default();
+        if i < nb {
+            g.buses.push(i);
+        } else if i < nb + nl {
+            g.labels.push(i - nb);
+        } else {
+            g.pins.push(i - nb - nl);
+        }
+    }
+    // Member nodes: the nets a bus carries, as if each were a label on its sheet (or global).
+    let mut member = |dsu: &mut Dsu, nodes: &mut Vec<Node>, global: bool, sheet: &str, name: &str| -> usize {
+        let k = if global { (1, String::new(), name.to_string()) } else { (0, sheet.to_string(), name.to_string()) };
+        if let Some(n) = scope.get(&k) {
+            return *n;
+        }
+        nodes.push(Node::Member);
+        let n = dsu.add();
+        scope.insert(k, n);
+        n
+    };
+    let mut bus_violations: Vec<(&'static str, &'static str, String, String, P, Vec<StableId>)> = Vec::new();
+    for g in groups_b.values_mut() {
+        let mut names: Vec<(u8, String, String)> = Vec::new(); // (priority, text, sheet)
+        for li in &g.labels {
+            let l = &labels[*li];
+            let prio = match l.kind {
+                LabelKind::Global => 0,
+                LabelKind::Local => 1,
+                _ => 2,
+            };
+            names.push((prio, l.text.clone(), l.sheet.clone()));
+        }
+        for k in &g.pins {
+            names.push((3, bus_pins[*k].4.clone(), bus_pins[*k].2.clone()));
+        }
+        names.sort();
+        g.sheet = g.buses.first().map(|b| buses[*b].sheet.clone()).or_else(|| names.first().map(|n| n.2.clone())).unwrap_or_default();
+        let Some((prio, text, sheet)) = names.first().cloned() else { continue };
+        g.global = prio == 0;
+        g.sheet = sheet;
+        g.list = schematic_bus::members(&text, aliases).unwrap_or_default();
+        g.primary = Some(text.clone());
+        let (global, gsheet) = (g.global, g.sheet.clone());
+        g.nodes = g.list.iter().map(|m| member(&mut dsu, &mut nodes, global, &gsheet, m)).collect();
+        // Other names on the same bus join member by member.
+        let mut other: BTreeSet<String> = BTreeSet::new();
+        for (p, t, _) in names.iter().skip(1) {
+            if *t == text || *p == 3 || !other.insert(t.clone()) {
+                continue;
+            }
+            let list = schematic_bus::members(t, aliases).unwrap_or_default();
+            if list.len() == g.list.len() {
+                for (k, m) in list.iter().enumerate() {
+                    let n = member(&mut dsu, &mut nodes, global, &gsheet, m);
+                    dsu.union(g.nodes[k], n);
+                }
+            }
+            let at = g.labels.iter().map(|li| &labels[*li]).find(|l| &l.text == t).map(|l| (l.at, l.id));
+            if let Some((at, lid)) = at {
+                bus_violations.push(("multiple_bus_names", "warning", format!("one bus carries two names: {text} and {t}"), gsheet.clone(), at, vec![lid]));
+            }
+        }
+    }
+    let group_of_label = |bdsu: &mut Dsu, li: usize| bdsu.find(nb + li);
+    // Sheet pins ↔ the hierarchical bus labels inside, member by member.
+    for (k, (shi, _, parent, at, name)) in bus_pins.iter().enumerate() {
+        let child = &s.sheets[*shi].id;
+        let gp = bdsu.find(nb + nl + k);
+        let inner = labels.iter().position(|l| &l.sheet == child && l.kind == LabelKind::Hierarchical && &l.text == name);
+        let list = schematic_bus::members(name, aliases).unwrap_or_default();
+        let Some(li) = inner else { continue };
+        let gc = group_of_label(&mut bdsu, li);
+        let (pg, cg) = (groups_b.get(&gp), groups_b.get(&gc));
+        let (Some(pg), Some(cg)) = (pg, cg) else { continue };
+        if !pg.list.is_empty() && pg.list.len() != list.len() {
+            bus_violations.push(("bus_width_mismatch", "warning", format!("sheet pin {name} carries {} members but the bus it is on carries {} ({})", list.len(), pg.list.len(), pg.primary.clone().unwrap_or_default()), parent.clone(), *at, vec![]));
+        }
+        let node_in = |g: &BusGroup, k: usize| if g.list.len() == list.len() { g.nodes.get(k).copied() } else { None };
+        let pairs: Vec<(Option<usize>, Option<usize>)> = (0..list.len()).map(|k| (node_in(pg, k), node_in(cg, k))).collect();
+        for (a, b) in pairs {
+            if let (Some(a), Some(b)) = (a, b) {
+                dsu.union(a, b);
+            }
         }
     }
 
@@ -792,23 +1245,33 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
     // Stable order: by first pin reference.
     roots.sort_by_key(|(r, _)| **r);
     for (root, members) in roots {
-        let mut cands: Vec<(u8, String)> = Vec::new();
+        let mut cands: Vec<(u8, usize, String)> = Vec::new();
+        let mut same_sheet: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut pins: Vec<(usize, usize)> = Vec::new();
+        let mut class: Option<String> = None;
         for m in members {
             match nodes[*m] {
                 Node::Label(li) => {
                     let l = &labels[li];
+                    if l.kind == LabelKind::Directive {
+                        class.get_or_insert(l.text.clone());
+                        continue;
+                    }
+                    let depth = s.depth(&l.sheet);
                     let (prio, name) = match l.kind {
                         LabelKind::Power => (0, l.text.clone()),
                         LabelKind::Global => (1, l.text.clone()),
                         LabelKind::Local => (2, if is_child(&l.sheet) { format!("{}/{}", sheet_name(&l.sheet), l.text) } else { l.text.clone() }),
-                        LabelKind::Hierarchical => (3, format!("{}/{}", sheet_name(&l.sheet), l.text)),
+                        _ => (3, format!("{}/{}", sheet_name(&l.sheet), l.text)),
                     };
-                    cands.push((prio, name));
+                    if prio <= 2 {
+                        same_sheet.entry(l.sheet.clone()).or_default().insert(name.clone());
+                    }
+                    cands.push((prio, depth, name));
                 }
                 Node::SheetPin(shi, pi) => {
                     let sh = &s.sheets[shi];
-                    cands.push((4, format!("{}/{}", sheet_name(&sh.id), sh.pins[pi].name)));
+                    cands.push((4, s.depth(&sh.id), format!("{}/{}", sheet_name(&sh.id), sh.pins[pi].name)));
                 }
                 Node::Pin(si, pi) => pins.push((si, pi)),
                 _ => {}
@@ -820,13 +1283,13 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
         }
         pins.sort_by(|a, b| natural(&symbols[a.0].reference, &symbols[b.0].reference).then(natural(&symbols[a.0].pins[a.1].number, &symbols[b.0].pins[b.1].number)));
         cands.sort();
-        cands.dedup();
-        let distinct: BTreeSet<&String> = cands.iter().map(|c| &c.1).collect();
-        if distinct.len() > 1 {
-            multi_names.push((*root, distinct.iter().map(|s| s.to_string()).collect()));
+        let mut seen = BTreeSet::new();
+        cands.retain(|c| seen.insert(c.2.clone()));
+        if let Some(names) = same_sheet.values().find(|n| n.len() > 1) {
+            multi_names.push((*root, names.iter().cloned().collect()));
         }
         let (mut name, named) = match cands.first() {
-            Some((_, n)) => (n.clone(), true),
+            Some((_, _, n)) => (n.clone(), true),
             None => {
                 let (si, pi) = pins[0];
                 let sv = &symbols[si];
@@ -855,7 +1318,9 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
         }
         pads.sort_by(|a, b| natural(a, b));
         pads.dedup();
-        nets.push(SchNet { name, pins: pin_names, pads, labels: cands.into_iter().map(|c| c.1).collect(), sheets: sheets.into_iter().collect(), named });
+        let class = class.or_else(|| s.netclasses.iter().find(|c| c.patterns.iter().any(|p| glob(p, &name))).map(|c| c.name.clone()));
+        let color = s.net_colors.get(&name).cloned().or_else(|| class.as_ref().and_then(|c| s.netclasses.iter().find(|x| x.name.eq_ignore_ascii_case(c))).and_then(|c| c.color.clone()));
+        nets.push(SchNet { name, pins: pin_names, pads, labels: cands.into_iter().map(|c| c.2).collect(), sheets: sheets.into_iter().collect(), named, class, color });
     }
     nets.sort_by(|a, b| natural(&a.name, &b.name));
     // Back onto the items.
@@ -865,8 +1330,15 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
         match n {
             Node::Pin(si, pi) => symbols[*si].pins[*pi].net = Some(name.clone()),
             Node::Wire(wi) => wires[*wi].net = Some(name.clone()),
-            Node::Label(li) => labels[*li].net = Some(name.clone()),
+            Node::Label(li) if !bus_label[*li] => labels[*li].net = Some(name.clone()),
             _ => {}
+        }
+    }
+    let net_by_name: HashMap<&str, &SchNet> = nets.iter().map(|n| (n.name.as_str(), n)).collect();
+    for w in &mut wires {
+        if let Some(n) = w.net.as_deref().and_then(|n| net_by_name.get(n)) {
+            w.color = n.color.clone();
+            w.width = n.class.as_ref().and_then(|c| s.netclasses.iter().find(|x| x.name.eq_ignore_ascii_case(c))).and_then(|c| c.wire_width);
         }
     }
 
@@ -897,14 +1369,29 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
             junctions.push(JunctionView { id: None, sheet: k.0.clone(), at: p });
         }
     }
+    // Bus junctions: a bus end landing mid-bus.
+    for (i, b) in buses.iter().enumerate() {
+        for end in [b.points[0], *b.points.last().unwrap()] {
+            let mid = (0..nb).any(|j| j != i && buses[j].sheet == b.sheet && on_wire(end, &buses[j].points) && !same(end, buses[j].points[0]) && !same(end, *buses[j].points.last().unwrap()));
+            if mid && !junctions.iter().any(|x| x.sheet == b.sheet && same(x.at, end)) {
+                junctions.push(JunctionView { id: None, sheet: b.sheet.clone(), at: end });
+            }
+        }
+    }
 
     // ---- Electrical rules -------------------------------------------------------
     let mut v: Vec<ErcViolation> = Vec::new();
-    let mut viol = |code: &'static str, severity: &'static str, message: String, sheet: &str, at: P, objects: Vec<StableId>, refs: Vec<String>| v.push(ErcViolation { code, severity, message, sheet: sheet.to_string(), at, objects, refs });
+    let mut viol = |code: &'static str, severity: &'static str, message: String, sheet: &str, at: P, objects: Vec<StableId>, refs: Vec<String>| v.push(ErcViolation { code, severity, message, sheet: sheet.to_string(), at, objects, refs, key: String::new(), excluded: false });
+    for (code, sev, msg, sheet, at, objs) in bus_violations {
+        viol(code, sev, msg, &sheet, at, objs, vec![]);
+    }
     let ncs: Vec<(StableId, String, P)> = it.no_connects.iter().map(|(nid, n)| (*nid, n.sheet.clone(), n.at)).collect();
     let group_of = |dsu: &mut Dsu, n: usize| dsu.find(n);
     let mut group_size: HashMap<usize, usize> = HashMap::new();
     for i in 0..nodes.len() {
+        if matches!(nodes[i], Node::Member) {
+            continue;
+        }
         *group_size.entry(dsu.find(i)).or_default() += 1;
     }
     // Pins: unconnected, no-connect flags.
@@ -916,7 +1403,7 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
             }
             let n = pin_node[&(si, pi)];
             let g = group_of(&mut dsu, n);
-            let alone = group_size[&g] == 1;
+            let alone = group_size.get(&g).copied().unwrap_or(1) == 1;
             let nc = ncs.iter().position(|(_, sh, at)| sh == &sv.sheet && same(*at, p.at));
             if let Some(k) = nc {
                 flagged.insert(k);
@@ -942,7 +1429,7 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
             viol("no_connect_dangling", "warning", "no-connect flag not on a pin".into(), sh, *at, vec![*nid], vec![]);
         }
     }
-    // Pin types on each net.
+    // Pin types on each net, through the pin-conflict matrix.
     let mut net_pins: BTreeMap<String, Vec<(usize, usize)>> = BTreeMap::new();
     for (si, sv) in symbols.iter().enumerate() {
         for (pi, p) in sv.pins.iter().enumerate() {
@@ -953,8 +1440,6 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
     }
     for (net, list) in &net_pins {
         let of = |t: PinType| list.iter().filter(|(si, pi)| symbols[*si].pins[*pi].etype == t).cloned().collect::<Vec<_>>();
-        let outs = of(PinType::Output);
-        let pouts = of(PinType::PowerOut);
         let pins_txt = |l: &[(usize, usize)]| l.iter().map(|(si, pi)| format!("{}.{}", symbols[*si].reference, symbols[*si].pins[*pi].number)).collect::<Vec<_>>();
         let objs = |l: &[(usize, usize)]| {
             let mut o: Vec<StableId> = l.iter().map(|(si, _)| symbols[*si].id).collect();
@@ -962,30 +1447,41 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
             o
         };
         let first_at = |l: &[(usize, usize)]| (symbols[l[0].0].sheet.clone(), symbols[l[0].0].pins[l[0].1].at);
-        let conflict = |a: &[(usize, usize)], b: &[(usize, usize)]| -> Vec<(usize, usize)> { a.iter().chain(b.iter()).cloned().collect() };
-        if outs.len() >= 2 {
-            let (sh, at) = first_at(&outs);
-            viol("pin_conflict", "error", format!("{net}: outputs {} drive each other", pins_txt(&outs).join(", ")), &sh, at, objs(&outs), pins_txt(&outs));
+        let present: Vec<PinType> = PIN_TYPES.iter().copied().filter(|t| !of(*t).is_empty()).collect();
+        for (ia, a) in present.iter().enumerate() {
+            for b in present.iter().skip(ia) {
+                let (la, lb) = (of(*a), of(*b));
+                if a == b && la.len() < 2 {
+                    continue;
+                }
+                let level = pin_level(s, *a, *b);
+                if level == "ok" {
+                    continue;
+                }
+                let c: Vec<(usize, usize)> = if a == b { la.clone() } else { la.iter().chain(lb.iter()).cloned().collect() };
+                let (sh, at) = first_at(&c);
+                let msg = match (*a, *b) {
+                    (PinType::Output, PinType::Output) => format!("{net}: outputs {} drive each other", pins_txt(&la).join(", ")),
+                    (PinType::PowerOut, PinType::PowerOut) => format!("{net}: power outputs {} are shorted together", pins_txt(&la).join(", ")),
+                    (PinType::Output, PinType::PowerOut) => format!("{net}: output {} is shorted to power output {}", pins_txt(&la).join(", "), pins_txt(&lb).join(", ")),
+                    (PinType::Output, PinType::TriState) => format!("{net}: tri-state {} shares the net with output {}", pins_txt(&lb).join(", "), pins_txt(&la).join(", ")),
+                    _ if a == b => format!("{net}: {} pins {} share the net", pin_type_name(*a).replace('_', " "), pins_txt(&la).join(", ")),
+                    _ => format!("{net}: {} {} meets {} {}", pin_type_name(*a).replace('_', " "), pins_txt(&la).join(", "), pin_type_name(*b).replace('_', " "), pins_txt(&lb).join(", ")),
+                };
+                viol("pin_conflict", level, msg, &sh, at, objs(&c), pins_txt(&c));
+            }
         }
-        if pouts.len() >= 2 {
-            let (sh, at) = first_at(&pouts);
-            viol("pin_conflict", "error", format!("{net}: power outputs {} are shorted together", pins_txt(&pouts).join(", ")), &sh, at, objs(&pouts), pins_txt(&pouts));
-        }
-        if !outs.is_empty() && !pouts.is_empty() {
-            let c = conflict(&outs, &pouts);
-            let (sh, at) = first_at(&c);
-            viol("pin_conflict", "error", format!("{net}: output {} is shorted to power output {}", pins_txt(&outs).join(", "), pins_txt(&pouts).join(", ")), &sh, at, objs(&c), pins_txt(&c));
-        }
-        let tri = of(PinType::TriState);
-        if !tri.is_empty() && !outs.is_empty() {
-            let c = conflict(&tri, &outs);
-            let (sh, at) = first_at(&c);
-            viol("pin_conflict", "warning", format!("{net}: tri-state {} shares the net with output {}", pins_txt(&tri).join(", "), pins_txt(&outs).join(", ")), &sh, at, objs(&c), pins_txt(&c));
-        }
+        let pouts = of(PinType::PowerOut);
         let pins_in = of(PinType::PowerIn);
         if !pins_in.is_empty() && pouts.is_empty() {
             let (sh, at) = first_at(&pins_in);
             viol("power_not_driven", "error", format!("{net} feeds power inputs ({}) but nothing drives it: put a PWR_FLAG where the supply comes in (a connector), or check the regulator's output", pins_txt(&pins_in).join(", ")), &sh, at, objs(&pins_in), pins_txt(&pins_in));
+        }
+        let inputs = of(PinType::Input);
+        let drivers = list.iter().filter(|(si, pi)| !matches!(symbols[*si].pins[*pi].etype, PinType::Input | PinType::PowerIn | PinType::NoConnect)).count();
+        if !inputs.is_empty() && drivers == 0 && pins_in.is_empty() {
+            let (sh, at) = first_at(&inputs);
+            viol("pin_not_driven", "error", format!("{net}: inputs {} have nothing driving them", pins_txt(&inputs).join(", ")), &sh, at, objs(&inputs), pins_txt(&inputs));
         }
     }
     // Single-pin nets (a wire or label leading nowhere).
@@ -1006,19 +1502,27 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
     // Labels used once whose net goes nowhere: a typo?
     let mut label_names: BTreeMap<(u8, String), Vec<usize>> = BTreeMap::new();
     for (li, l) in labels.iter().enumerate() {
+        if bus_label[li] || l.kind == LabelKind::Directive {
+            continue;
+        }
         let k = match l.kind {
             LabelKind::Local | LabelKind::Hierarchical => (0, format!("{}\u{1}{}", l.sheet, l.text)),
             _ => (1, l.text.clone()),
         };
         label_names.entry(k).or_default().push(li);
     }
-    let all_names: Vec<String> = labels.iter().map(|l| l.text.clone()).collect::<BTreeSet<_>>().into_iter().collect();
+    let bus_members: BTreeSet<(String, String)> = groups_b.values().flat_map(|g| g.list.iter().map(|m| (if g.global { String::new() } else { g.sheet.clone() }, m.clone())).collect::<Vec<_>>()).collect();
+    let all_names: Vec<String> = labels.iter().filter(|l| l.kind != LabelKind::Directive).map(|l| l.text.clone()).collect::<BTreeSet<_>>().into_iter().collect();
     for list in label_names.values() {
         if list.len() != 1 {
             continue;
         }
         let l = &labels[list[0]];
         if l.kind == LabelKind::Hierarchical {
+            continue;
+        }
+        // A bus member label joins the bus's other side.
+        if bus_members.contains(&(l.sheet.clone(), l.text.clone())) || bus_members.contains(&(String::new(), l.text.clone())) {
             continue;
         }
         let pins_on = l.net.as_ref().and_then(|n| net_pins.get(n)).map(|x| x.len()).unwrap_or(0);
@@ -1028,13 +1532,68 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
             viol("label_unmatched", "warning", format!("label “{}” appears once and joins nothing else{hint}", l.text), &l.sheet, l.at, vec![l.id], vec![]);
         }
     }
+    // Hierarchy: sheet pins with their labels inside.
+    for sh in s.sheets.iter().filter(|x| x.parent.is_some()) {
+        let parent = sh.parent.clone().unwrap_or_default();
+        for p in &sh.pins {
+            if !labels.iter().any(|l| l.sheet == sh.id && l.kind == LabelKind::Hierarchical && l.text == p.name) {
+                viol("hier_pin_unmatched", "error", format!("sheet {} has a pin {} but no hierarchical label of that name inside", sh.name, p.name), &parent, p.at, vec![], vec![]);
+            }
+        }
+        for l in labels.iter().filter(|l| l.sheet == sh.id && l.kind == LabelKind::Hierarchical) {
+            if !sh.pins.iter().any(|p| p.name == l.text) {
+                viol("hier_label_unmatched", "warning", format!("hierarchical label {} has no pin on the sheet's box (sync the pins)", l.text), &l.sheet, l.at, vec![l.id], vec![]);
+            }
+        }
+    }
+    // Buses.
+    let bus_ids: Vec<StableId> = it.buses.iter().map(|(bid, _)| *bid).collect();
+    for g in groups_b.values() {
+        if g.primary.is_none() {
+            if let Some(b) = g.buses.first() {
+                viol("bus_unnamed", "warning", "bus has no name: put a bus label on it (D[0..7], {SDA SCL})".into(), &buses[*b].sheet, buses[*b].points[0], vec![bus_ids[*b]], vec![]);
+            }
+        }
+    }
+    for (li, l) in labels.iter().enumerate() {
+        if bus_label[li] && by_sheet.get(&l.sheet).is_some_and(|ws| ws.iter().any(|wi| on_wire(l.at, &wires[*wi].points))) && bus_at(&l.sheet, l.at).is_none() {
+            viol("bus_label_on_wire", "error", format!("bus label {} sits on a wire: put it on a bus", l.text), &l.sheet, l.at, vec![l.id], vec![]);
+        }
+    }
+    for w in &wires {
+        for end in [w.points[0], *w.points.last().unwrap()] {
+            if bus_at(&w.sheet, end).is_some() {
+                viol("bus_wire_conflict", "error", "a wire meets a bus directly: join it through a bus entry".into(), &w.sheet, end, vec![w.id], vec![]);
+            }
+        }
+    }
+    for (ei, (eid, e)) in it.bus_entries.iter().enumerate() {
+        let Some(b) = bus_at(&e.sheet, e.at) else {
+            viol("bus_entry_dangling", "warning", "bus entry not on a bus".into(), &e.sheet, e.at, vec![*eid], vec![]);
+            continue;
+        };
+        let g = bdsu.find(b);
+        let list = groups_b.get(&g).map(|g| g.list.clone()).unwrap_or_default();
+        let r = dsu.find(entry_node[ei]);
+        let wired = group_size.get(&r).copied().unwrap_or(1) > 1;
+        if !wired {
+            viol("bus_entry_dangling", "warning", "bus entry leads to no wire".into(), &e.sheet, e.wire_end(), vec![*eid], vec![]);
+            continue;
+        }
+        let names: Vec<String> = groups[&r].iter().filter_map(|m| if let Node::Label(li) = nodes[*m] { Some(labels[li].text.clone()) } else { None }).collect();
+        if names.is_empty() {
+            viol("bus_entry_unlabeled", "warning", format!("the wire leaving bus {} here has no label naming its member", groups_b.get(&g).and_then(|g| g.primary.clone()).unwrap_or_default()), &e.sheet, e.wire_end(), vec![*eid], vec![]);
+        } else if !list.is_empty() && !names.iter().any(|n| list.contains(n)) {
+            viol("bus_member_unknown", "warning", format!("{} is not a member of bus {}", names.join(", "), groups_b.get(&g).and_then(|g| g.primary.clone()).unwrap_or_default()), &e.sheet, e.wire_end(), vec![*eid], vec![]);
+        }
+    }
     // Dangling wire ends.
     for w in &wires {
         for end in [w.points[0], *w.points.last().unwrap()] {
             let others = points.get(&key(&w.sheet, end)).map(|l| l.iter().filter(|n| !matches!(nodes[**n], Node::Wire(x) if wires[x].id == w.id)).count()).unwrap_or(0);
             let mid = by_sheet.get(w.sheet.as_str()).map(|ws| ws.iter().any(|wi| wires[*wi].id != w.id && on_wire(end, &wires[*wi].points))).unwrap_or(false);
             let both_ends_same_wire = same(w.points[0], *w.points.last().unwrap());
-            if others == 0 && !mid && !both_ends_same_wire {
+            if others == 0 && !mid && !both_ends_same_wire && bus_at(&w.sheet, end).is_none() {
                 viol("dangling_wire", "warning", "wire end connects to nothing".into(), &w.sheet, end, vec![w.id], vec![]);
             }
         }
@@ -1110,9 +1669,71 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
             }
         }
     }
+    // Directive labels naming a class the schematic lacks.
+    for l in labels.iter().filter(|l| l.kind == LabelKind::Directive) {
+        if !s.netclasses.iter().any(|c| c.name.eq_ignore_ascii_case(&l.text)) {
+            viol("unknown_netclass", "warning", format!("net class directive {}: no such class", l.text), &l.sheet, l.at, vec![l.id], vec![]);
+        }
+    }
+    // Severities and exclusions from the schematic's ERC settings.
+    let mut v: Vec<ErcViolation> = v
+        .into_iter()
+        .filter_map(|mut x| {
+            x.severity = match s.erc.severities.get(x.code).map(|s| s.as_str()) {
+                Some("ignore") => return None,
+                Some("error") => "error",
+                Some("warning") => "warning",
+                _ => x.severity,
+            };
+            let what = if !x.refs.is_empty() { x.refs.join(",") } else { x.objects.iter().map(|o| o.to_string()).collect::<Vec<_>>().join(",") };
+            x.key = format!("{}|{}|{}", x.code, x.sheet, what);
+            x.excluded = s.erc.exclusions.iter().any(|e| e.key == x.key);
+            Some(x)
+        })
+        .collect();
+    let mut seen_keys = BTreeSet::new();
+    v.retain(|x| seen_keys.insert(format!("{}|{}", x.key, x.message)));
 
-    let texts: Vec<TextView> = it.texts.iter().map(|(tid, t)| TextView { id: *tid, sheet: t.sheet.clone(), at: t.at, text: t.text.clone(), size: t.size }).collect();
+    let texts: Vec<TextView> = it
+        .texts
+        .iter()
+        .map(|(tid, t)| TextView { id: *tid, sheet: t.sheet.clone(), at: t.at, text: s.expand_vars(&t.text, Some(&t.sheet)), source: t.text.clone(), size: t.size, justify: t.justify.clone(), angle: t.angle, bold: t.bold, italic: t.italic, color: t.color.clone() })
+        .collect();
     let no_connects: Vec<MarkView> = it.no_connects.iter().map(|(nid, n)| MarkView { id: *nid, sheet: n.sheet.clone(), at: n.at }).collect();
+    let mut graphics: Vec<GraphicView> = Vec::new();
+    let mut graphic = |id: StableId, sheet: &str, kind: &'static str, draw: Vec<Draw>, mut props: serde_json::Value| {
+        if let Some(o) = props.as_object_mut() {
+            o.remove("data");
+            o.remove("schematic");
+        }
+        let mut b = EMPTY;
+        for d in &draw {
+            let x = draw_box(d);
+            bbox_add(&mut b, [x[0], x[1]]);
+            bbox_add(&mut b, [x[2], x[3]]);
+        }
+        graphics.push(GraphicView { id, sheet: sheet.to_string(), kind, draw, bbox: b, props });
+    };
+    for (gid, g) in &it.images {
+        graphic(*gid, &g.sheet, "image", schematic_graphics::image_draw(g), serde_json::to_value(g).unwrap_or_default());
+    }
+    for (gid, g) in &it.shapes {
+        graphic(*gid, &g.sheet, "shape", schematic_graphics::shape_draw(g), serde_json::to_value(g).unwrap_or_default());
+    }
+    for (gid, g) in &it.text_boxes {
+        graphic(*gid, &g.sheet, "text_box", schematic_graphics::text_box_draw(g, s), serde_json::to_value(g).unwrap_or_default());
+    }
+    for (gid, g) in &it.tables {
+        graphic(*gid, &g.sheet, "table", schematic_graphics::table_draw(g, s), serde_json::to_value(g).unwrap_or_default());
+    }
+    let mut bus_views = Vec::new();
+    for g in groups_b.values() {
+        let members: Vec<BusMember> = g.list.iter().zip(g.nodes.iter()).map(|(m, n)| BusMember { member: m.clone(), net: net_of_root.get(&dsu.find(*n)).cloned() }).collect();
+        for b in &g.buses {
+            bus_views.push(BusView { id: bus_ids[*b], sheet: buses[*b].sheet.clone(), points: buses[*b].points.clone(), name: g.primary.clone(), members: members.clone() });
+        }
+    }
+    let bus_entries: Vec<BusEntryView> = it.bus_entries.iter().map(|(eid, e)| BusEntryView { id: *eid, sheet: e.sheet.clone(), at: e.at, end: e.wire_end() }).collect();
     let sheets: Vec<SheetView> = s
         .sheets
         .iter()
@@ -1125,17 +1746,36 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
                 let size = child.size.unwrap_or([30.48, 20.32]);
                 boxes_draw.push(Draw::Poly { p: vec![at, [at[0] + size[0], at[1]], [at[0] + size[0], at[1] + size[1]], [at[0], at[1] + size[1]]], w: W_BODY, ink: "sheet", fill: "body" });
                 boxes_draw.push(Draw::Text { at: [at[0], at[1] - 1.0], s: child.name.clone(), size: FIELD, angle: 0.0, anchor: "start", ink: "sheet" });
+                let file = match &child.instance_of {
+                    Some(src) => format!("{} · page {}", s.sheet(src).map(|x| x.name.clone()).unwrap_or_default(), s.page(&child.id)),
+                    None => format!("page {}", s.page(&child.id)),
+                };
+                boxes_draw.push(Draw::Text { at: [at[0], at[1] + size[1] + 1.4], s: file, size: FIELD * 0.8, angle: 0.0, anchor: "start", ink: "sheet" });
                 for p in &child.pins {
                     let anchor = if p.side == Dir::Right { "end" } else { "start" };
                     let off = if p.side == Dir::Right { -1.0 } else { 1.0 };
-                    boxes_draw.push(Draw::Text { at: [p.at[0] + off, p.at[1]], s: p.name.clone(), size: LABEL, angle: 0.0, anchor, ink: "hierarchical" });
+                    let bus = schematic_bus::is_bus_name(&p.name, aliases);
+                    boxes_draw.push(Draw::Text { at: [p.at[0] + off, p.at[1]], s: p.name.clone(), size: LABEL, angle: 0.0, anchor, ink: if bus { "bus" } else { "hierarchical" } });
                 }
                 boxes.push(SheetBoxView { sheet: child.id.clone(), name: child.name.clone(), at, size, pins: child.pins.iter().map(|p| (p.name.clone(), p.at)).collect() });
             }
-            SheetView { id: sh.id.clone(), name: sh.name.clone(), paper: sh.paper.clone(), size: sh.paper_size(), parent: sh.parent.clone(), frame: frame(s, sh, i), boxes, boxes_draw }
+            SheetView {
+                id: sh.id.clone(),
+                name: sh.name.clone(),
+                paper: sh.paper.clone(),
+                size: sh.paper_size(),
+                parent: sh.parent.clone(),
+                instance_of: sh.instance_of.clone(),
+                page: s.page(&sh.id),
+                portrait: sh.portrait,
+                frame: frame(s, sh, i),
+                boxes,
+                boxes_draw,
+            }
         })
         .collect();
-    let errors = v.iter().filter(|x| x.severity == "error").count();
+    let errors = v.iter().filter(|x| x.severity == "error" && !x.excluded).count();
+    let warnings = v.iter().filter(|x| x.severity == "warning" && !x.excluded).count();
     let stats = SchStats {
         sheets: s.sheets.len(),
         symbols: symbols.len(),
@@ -1144,7 +1784,24 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
         labels: labels.len(),
         nets: nets.len(),
         errors,
-        warnings: v.len() - errors,
+        warnings,
+    };
+    let mut pin_matrix = BTreeMap::new();
+    for (i, a) in PIN_TYPES.iter().enumerate() {
+        for b in PIN_TYPES.iter().skip(i) {
+            pin_matrix.insert(pin_pair_key(*a, *b), pin_level(s, *a, *b).to_string());
+        }
+    }
+    let setup = SetupView {
+        bus_aliases: s.bus_aliases.clone(),
+        netclasses: s.netclasses.clone(),
+        net_colors: s.net_colors.clone(),
+        erc: s.erc.clone(),
+        field_templates: s.field_templates.clone(),
+        text_vars: s.text_vars.clone(),
+        drawing_sheet: s.drawing_sheet.clone(),
+        pin_types: PIN_TYPES.iter().map(|t| pin_type_name(*t)).collect(),
+        pin_matrix,
     };
     SchematicView {
         id,
@@ -1159,9 +1816,13 @@ pub fn resolve_items(id: StableId, s: &Schematic, it: &SchItems, world: &World) 
         junctions,
         no_connects,
         texts,
+        buses: bus_views,
+        bus_entries,
+        graphics,
         nets,
         violations: v,
         stats,
+        setup,
     }
 }
 
@@ -1203,8 +1864,13 @@ fn similar(a: &str, b: &str) -> bool {
 /// connect it), preferring few bends and short length.
 pub fn route(v: &SchematicView, sheet: &str, a: P, da: Option<Dir>, b: P, db: Option<Dir>) -> Vec<P> {
     let g = 2.54;
-    let bodies: Vec<[f64; 4]> = v.symbols.iter().filter(|s| s.sheet == sheet).map(|s| [s.body[0] + 0.05, s.body[1] + 0.05, s.body[2] - 0.05, s.body[3] - 0.05]).collect();
+    let mut bodies: Vec<[f64; 4]> = v.symbols.iter().filter(|s| s.sheet == sheet).map(|s| [s.body[0] + 0.05, s.body[1] + 0.05, s.body[2] - 0.05, s.body[3] - 0.05]).collect();
     let mut forbidden: Vec<P> = Vec::new();
+    // Sheet boxes: keep out, and never touch another box pin.
+    for b in v.sheets.iter().filter(|s| s.id == sheet).flat_map(|s| s.boxes.iter()) {
+        bodies.push([b.at[0] + 0.05, b.at[1] + 0.05, b.at[0] + b.size[0] - 0.05, b.at[1] + b.size[1] - 0.05]);
+        forbidden.extend(b.pins.iter().map(|p| p.1));
+    }
     for s in v.symbols.iter().filter(|s| s.sheet == sheet) {
         for p in s.pins.iter().filter(|p| !p.hidden) {
             forbidden.push(p.at);

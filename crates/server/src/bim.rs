@@ -421,6 +421,42 @@ pub async fn plan(State(server): State<Arc<Server>>, Path(file): Path<String>, Q
     }
 }
 
+/// `POST /import/<name>.ifc`: stores the file by content (an IFC file is a
+/// STEP physical file), reads it, makes its materials and adds the shape.
+pub async fn import_ifc(server: &Server, query: &HashMap<String, String>, file: &str, body: &[u8]) -> Response {
+    let app = match server.project(query.get("project")) {
+        Ok(app) => app,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let checked = {
+        let (file, body) = (file.to_string(), body.to_vec());
+        tokio::task::spawn_blocking(move || ifc_source(&file, &body)).await.unwrap_or_else(|e| Err(e.to_string()))
+    };
+    let (name, source, shown, count, mats) = match checked {
+        Ok(x) => x,
+        Err(e) => return fail(StatusCode::UNPROCESSABLE_ENTITY, format!("{file} could not be read: {e}")),
+    };
+    let sha = match de_shape::assets::store(body) {
+        Ok(s) => s,
+        Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
+    let source = source.replace("{SHA}", &sha);
+    let user = query.get("user").filter(|u| !u.is_empty()).cloned().unwrap_or_else(|| "local".into());
+    let actor = de_core::Actor { user_id: user, session_id: StableId::new().to_string() };
+    let materials = materials(&app, &actor, &mats);
+    let revision = app.project.lock().unwrap().revision();
+    let message = json!({
+        "type": "commit", "request_id": 1, "operation": "shape.create", "expected_revision": revision,
+        "parameters": { "name": name, "description": format!("Imported from {file}."), "source": source, "params": [], "display_tolerance": shown, "materials": materials }
+    });
+    let reply: serde_json::Value = serde_json::from_str(&app.handle(&actor, &message.to_string())).unwrap_or_default();
+    if reply["ok"] == true {
+        (StatusCode::OK, axum::Json(json!({ "id": reply["value"]["output"]["id"], "bodies": count, "ifc": true, "sha": sha }))).into_response()
+    } else {
+        fail(StatusCode::UNPROCESSABLE_ENTITY, reply["error"]["message"].as_str().unwrap_or("the import failed").to_string())
+    }
+}
+
 /// An IFC file dropped on the view (or `./forma ifc import`): checked to
 /// read, stored by content like a STEP file (it is one: ISO 10303-21), and
 /// added as a shape whose program is `return importIfc("<sha>")`.
