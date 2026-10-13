@@ -23,11 +23,11 @@ use crate::photo::Camera;
 use crate::points::Cloud;
 use rayon::prelude::*;
 
-/// A photo as matched: grey levels (0…1) and colours, row by row.
+/// A photo as matched: grey levels and colours (8 bits each), row by row.
 pub struct Photo {
     pub width: usize,
     pub height: usize,
-    pub gray: Vec<f32>,
+    pub gray: Vec<u8>,
     pub rgb: Vec<[u8; 3]>,
 }
 
@@ -56,7 +56,7 @@ impl Photo {
             }
             out
         };
-        let gray = rgb.iter().map(|p| (0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32) / 255.0).collect();
+        let gray = rgb.iter().map(|p| (0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32).round() as u8).collect();
         Photo { width: w, height: h, gray, rgb }
     }
 
@@ -67,10 +67,15 @@ impl Photo {
         let (x0, y0) = (x as usize, y as usize);
         let (fx, fy) = (x - x0 as f32, y - y0 as f32);
         let i = y0 * self.width + x0;
-        let g = &self.gray;
-        let top = g[i] + (g[i + 1] - g[i]) * fx;
-        let bottom = g[i + self.width] + (g[i + self.width + 1] - g[i + self.width]) * fx;
+        let g = |k: usize| self.gray[k] as f32 * (1.0 / 255.0);
+        let top = g(i) + (g(i + 1) - g(i)) * fx;
+        let bottom = g(i + self.width) + (g(i + self.width + 1) - g(i + self.width)) * fx;
         Some(top + (bottom - top) * fy)
+    }
+
+    /// Grey level 0…1 of a pixel.
+    fn grey(&self, i: usize) -> f32 {
+        self.gray[i] as f32 * (1.0 / 255.0)
     }
 }
 
@@ -300,13 +305,12 @@ impl Matcher<'_> {
         if !self.inv_std[y * self.photo.width + x].is_finite() {
             return None;
         }
-        let g = &self.photo.gray;
-        let centre = g[y * self.photo.width + x];
+        let centre = self.photo.grey(y * self.photo.width + x);
         let mut win = Window { a: [0.0; MAX_SAMPLES], w: [0.0; MAX_SAMPLES], sum_w: 0.0, mean: 0.0, inv_std: 0.0 };
         let (sigma_g, sigma_d) = (0.1f32, self.radius.max(1) as f32);
         let (mut s, mut ss) = (0.0f32, 0.0f32);
         for (k, &(dx, dy)) in self.offsets.iter().enumerate() {
-            let a = g[((y as i32 + dy) as usize) * self.photo.width + (x as i32 + dx) as usize];
+            let a = self.photo.grey(((y as i32 + dy) as usize) * self.photo.width + (x as i32 + dx) as usize);
             let w = (-(a - centre).powi(2) / (2.0 * sigma_g * sigma_g) - (dx * dx + dy * dy) as f32 / (2.0 * sigma_d * sigma_d)).exp();
             win.a[k] = a;
             win.w[k] = w;
@@ -525,7 +529,7 @@ fn window_stats(p: &Photo, offsets: &[(i32, i32)], radius: i32) -> (Vec<f32>, Ve
             }
             let (mut s, mut ss) = (0.0f32, 0.0f32);
             for &(dx, dy) in offsets {
-                let v = p.gray[((y + dy) as usize) * w + (x + dx) as usize];
+                let v = p.grey(((y + dy) as usize) * w + (x + dx) as usize);
                 s += v;
                 ss += v * v;
             }
