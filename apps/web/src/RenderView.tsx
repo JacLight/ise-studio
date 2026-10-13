@@ -2,7 +2,7 @@
 // usual; each move starts the image over), and Save PNG at a chosen size.
 
 import { useEffect, useRef, useState } from "react";
-import { type Backdrop, LiveRender, renderImage, type RenderSource } from "./render";
+import { LiveRender, renderImage, type RenderSource } from "./render";
 
 const SIZES: { label: string; width: number; height: number }[] = [
   { label: "1920 × 1080", width: 1920, height: 1080 },
@@ -11,7 +11,7 @@ const SIZES: { label: string; width: number; height: number }[] = [
   { label: "3840 × 2160 (4K)", width: 3840, height: 2160 },
 ];
 
-export function RenderView(props: { source: () => RenderSource | null; name: string; backdrop: Backdrop; onBackdrop: (b: Backdrop) => void; onClose: () => void }) {
+export function RenderView(props: { source: () => RenderSource | null; name: string; onClose: () => void }) {
   const host = useRef<HTMLDivElement>(null);
   const [samples, setSamples] = useState(-1);
   const [size, setSize] = useState(0);
@@ -24,7 +24,7 @@ export function RenderView(props: { source: () => RenderSource | null; name: str
     if (!source || !host.current) return;
     let live: LiveRender | null = null;
     try {
-      live = new LiveRender(source, setSamples, props.backdrop);
+      live = new LiveRender(source, setSamples);
       live.canvas.className = "render-canvas";
       host.current.prepend(live.canvas);
     } catch (e) {
@@ -34,7 +34,7 @@ export function RenderView(props: { source: () => RenderSource | null; name: str
       live?.canvas.remove();
       live?.dispose();
     };
-  }, [props.source, props.backdrop]);
+  }, [props.source]);
 
   const save = async () => {
     const source = props.source();
@@ -43,7 +43,7 @@ export function RenderView(props: { source: () => RenderSource | null; name: str
     setError(null);
     try {
       const { width, height } = SIZES[size];
-      const blob = await renderImage(source, { width, height, samples: quality, backdrop: props.backdrop }, setSaving);
+      const blob = await renderImage(source, { width, height, samples: quality }, setSaving);
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       a.download = `${props.name || "Forma"} render ${width}x${height}.png`;
@@ -61,10 +61,6 @@ export function RenderView(props: { source: () => RenderSource | null; name: str
       <div className="render-bar" role="toolbar" aria-label="Render">
         <strong>Render</strong>
         <span className="render-samples">{samples < 0 ? "Preparing the scene…" : `${samples} samples`}</span>
-        <select value={props.backdrop} onChange={(e) => props.onBackdrop(e.target.value as Backdrop)} aria-label="Backdrop" title="What the model stands in: a grey studio, or a seamless white sweep as product photographs are shot">
-          <option value="studio">Studio</option>
-          <option value="white">White sweep</option>
-        </select>
         <select value={size} onChange={(e) => setSize(Number(e.target.value))} aria-label="Image size" title="Size of the saved PNG">
           {SIZES.map((s, i) => (
             <option key={s.label} value={i}>

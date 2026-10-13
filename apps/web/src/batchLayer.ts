@@ -15,11 +15,6 @@
 
 import * as THREE from "three";
 
-/** Materials switched off because this layer draws them (not because they are hidden). */
-const batchDrawn = new WeakSet<THREE.Material>();
-/** Whether a material is shown: visible itself, or drawn here for its mesh (a render, a copy of the scene, wants these). */
-export const shown = (m: THREE.Material) => m.visible || batchDrawn.has(m);
-
 /** Below this many pixels across, an instance is not drawn. */
 const CULL_PX = 0.75;
 /** Below these sizes (pixels across) the coarser meshes are drawn. */
@@ -191,10 +186,7 @@ export class BatchLayer {
 
   /** Takes a mesh out of drawing (it stays pickable); returns whether it was drawn by itself before. */
   static adopt(mesh: THREE.Mesh) {
-    for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-      m.visible = false;
-      batchDrawn.add(m);
-    }
+    for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) m.visible = false;
     // Culled here per instance; the renderer need not test it again.
     mesh.frustumCulled = false;
   }
