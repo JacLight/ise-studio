@@ -15726,6 +15726,12 @@ a.button .icon {
   pointer-events: none;
   box-shadow: 0 4px 14px #0003;
   white-space: normal;
+  /* Shown as a popover (over modal dialogs): undo the browser's popover box. */
+  right: auto;
+  bottom: auto;
+  margin: 0;
+  border: 0;
+  overflow: visible;
 }
 
 .app-tip[hidden] {
