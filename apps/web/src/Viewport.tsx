@@ -20,6 +20,7 @@ import { pcbLooks } from "./pcb3d";
 import { type RenderSource, studioEnvironment } from "./render";
 import { fitSunShadow } from "./sunShadow";
 import { type DisplayMode, type SectionPlane, type ViewName, ViewTools } from "./viewTools";
+import { upFor } from "./projection";
 import { ViewToolbar } from "./ViewToolbar";
 import type { EntityView, MeshData } from "./engine";
 import { BatchLayer } from "./batchLayer";
@@ -338,6 +339,14 @@ export type ViewportHandle = {
   /** Shows a stress study on a part: its supports and loads, and (when solved) the stress map. Null clears it. */
   stress: (id: string, view: StressView | null) => void;
   view: (name: ViewName) => void;
+  /**
+   * Looks from azimuth `az` (0 from the front, −Y; 90 from the right, +X) and
+   * elevation `el` (degrees), everything shown framed, with the lens's
+   * vertical angle `fov` if given (a narrow one, 15–25°, for product shots
+   * with little perspective), framed so what is shown spans `fill` (0–1) of
+   * the frame if given (a product shot: 0.85), else loosely as other views.
+   */
+  lookFrom: (az: number, el: number, fov?: number, fill?: number) => void;
   /** The view's tools (projection, display mode, section, measure), for commands from elsewhere. */
   tools: () => ViewTools | null;
   zoom: (factor: number) => void;
@@ -997,7 +1006,7 @@ function fitGround(t: Scene, bounds: THREE.Box3) {
  * Frames every part (or only `only`'s meshes), keeping the viewing direction
  * (or the one a glide is heading for, or `direction`); gliding there if asked.
  */
-function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vector3, up?: THREE.Vector3, box?: THREE.Box3) {
+function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vector3, up?: THREE.Vector3, box?: THREE.Box3, fill?: number) {
   if (t.parts.size === 0 && !box) return;
   // Only what is shown: an isolated floor frames itself, not the whole tower.
   const bounds = box?.clone() ?? new THREE.Box3();
@@ -1012,10 +1021,25 @@ function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vecto
   if (bounds.isEmpty()) return;
   const c = bounds.getCenter(new THREE.Vector3());
   const radius = bounds.getBoundingSphere(new THREE.Sphere()).radius;
-  const distance = (radius / Math.sin(THREE.MathUtils.degToRad(t.camera.fov / 2))) * 1.2;
+  let distance = (radius / Math.sin(THREE.MathUtils.degToRad(t.camera.fov / 2))) * 1.2;
   const heading = t.flight ? t.flight.to : null;
   const dir = (direction ?? (heading ? heading.position.clone().sub(heading.target) : t.camera.position.clone().sub(t.controls.target))).normalize();
-  const view = { position: c.clone().addScaledVector(dir, distance), target: c, up: (up ?? heading?.up ?? t.camera.up).clone() };
+  const view = { position: new THREE.Vector3(), target: c, up: (up ?? heading?.up ?? t.camera.up).clone() };
+  if (fill) {
+    // Tight: the box's corners, seen from `dir`, span `fill` of the frame's height or width (whichever is reached first).
+    const right = new THREE.Vector3().crossVectors(view.up, dir).normalize();
+    const screenUp = new THREE.Vector3().crossVectors(dir, right);
+    const tanV = Math.tan(THREE.MathUtils.degToRad(t.camera.fov / 2)) * fill;
+    const tanH = tanV * t.camera.aspect;
+    distance = 0;
+    const d = new THREE.Vector3();
+    for (let i = 0; i < 8; i++) {
+      d.set(i & 1 ? bounds.max.x : bounds.min.x, i & 2 ? bounds.max.y : bounds.min.y, i & 4 ? bounds.max.z : bounds.min.z).sub(c);
+      const z = d.dot(dir);
+      distance = Math.max(distance, z + Math.abs(d.dot(right)) / tanH, z + Math.abs(d.dot(screenUp)) / tanV);
+    }
+  }
+  view.position.copy(c).addScaledVector(dir, distance);
   if (glide) return glideTo(t, view);
   t.flight = null;
   t.camera.position.copy(view.position);
@@ -3458,6 +3482,18 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       t.controls.autoRotate = false;
       // Glides round to the view, everything framed (a standard view in an orthographic camera is a true elevation).
       toolsRef.current?.view(name);
+    },
+    lookFrom(az, el, fov, fill) {
+      const t = three.current;
+      if (!t) return;
+      t.controls.autoRotate = false;
+      if (fov !== undefined) {
+        t.camera.fov = THREE.MathUtils.clamp(fov, 5, 90);
+        t.camera.updateProjectionMatrix();
+      }
+      const [a, e] = [THREE.MathUtils.degToRad(az), THREE.MathUtils.degToRad(el)];
+      const dir = new THREE.Vector3(Math.sin(a) * Math.cos(e), -Math.cos(a) * Math.cos(e), Math.sin(e));
+      fitView(t, undefined, true, dir, upFor(dir), undefined, fill !== undefined ? THREE.MathUtils.clamp(fill, 0.1, 1) : undefined);
     },
     tools() {
       return toolsRef.current;

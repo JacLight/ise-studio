@@ -23,6 +23,7 @@ pub mod inspect;
 pub mod linalg;
 pub mod markers;
 pub mod mesh;
+pub mod mvs;
 pub mod photo;
 pub mod points;
 pub mod reconstruct;

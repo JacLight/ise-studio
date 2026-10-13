@@ -60,6 +60,8 @@ if let i = args.firstIndex(of: "--detail"), i + 1 < args.count {
     }
 }
 let wantPoses = !args.contains("--no-poses")
+// Two steps: the cameras first, then (after a line on stdin naming the box the object stands in) the model of that box only.
+let askBounds = args.contains("--ask-bounds")
 
 // Photos carrying depth (iPhone portrait / LiDAR captures) make the model metric.
 var depthCount = 0
@@ -85,8 +87,23 @@ do {
 }
 
 let usdz = out.appendingPathComponent("model.usdz")
-var requests: [PhotogrammetrySession.Request] = [.modelFile(url: usdz, detail: detail), .pointCloud]
-if wantPoses { requests.append(.poses) }
+var requests: [PhotogrammetrySession.Request] = askBounds ? [.pointCloud, .poses] : [.modelFile(url: usdz, detail: detail), .pointCloud]
+if wantPoses && !askBounds { requests.append(.poses) }
+
+/// The box to model, from a JSON line: {"min": [x, y, z], "max": [x, y, z]} in metres, axis-aligned in the
+/// session's frame, and "oriented": {"rotation": [w, x, y, z], "min": …, "max": …}, the box in a frame turned
+/// by that rotation (used from macOS 13); {} or nothing for the whole scene.
+func geometry(_ line: String?) -> PhotogrammetrySession.Request.Geometry? {
+    guard let data = line?.data(using: .utf8), let v = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+    func box(_ v: [String: Any]) -> BoundingBox? {
+        guard let lo = v["min"] as? [Double], let hi = v["max"] as? [Double], lo.count == 3, hi.count == 3 else { return nil }
+        return BoundingBox(min: SIMD3<Float>(lo.map { Float($0) }), max: SIMD3<Float>(hi.map { Float($0) }))
+    }
+    if #available(macOS 13.0, *), let o = v["oriented"] as? [String: Any], let q = o["rotation"] as? [Double], q.count == 4, let b = box(o) {
+        return PhotogrammetrySession.Request.Geometry(orientedBounds: OrientedBoundingBox(orientation: simd_quatf(ix: Float(q[1]), iy: Float(q[2]), iz: Float(q[3]), r: Float(q[0])), boundingBox: b))
+    }
+    return box(v).map { PhotogrammetrySession.Request.Geometry(bounds: $0) }
+}
 
 func stageName(_ s: PhotogrammetrySession.Output.ProcessingStage?) -> String {
     guard let s else { return "processing" }
@@ -167,8 +184,9 @@ Task {
                 default: break
                 }
             case .processingComplete:
+                // Each process(requests:) ends so; the session stays for the next.
                 finished.signal()
-                return
+                if !askBounds { return }
             case .processingCancelled:
                 failed = "cancelled"
                 finished.signal()
@@ -195,4 +213,16 @@ do {
 }
 finished.wait()
 if let failed { fail(failed) }
+if askBounds {
+    say(["awaiting": "bounds"])
+    let g = geometry(readLine())
+    say(["stage": g == nil ? "modelling the whole scene" : "modelling the box the object stands in"])
+    do {
+        try session.process(requests: [.modelFile(url: usdz, detail: detail, geometry: g)])
+    } catch {
+        fail("could not start the model: \(error.localizedDescription)")
+    }
+    finished.wait()
+    if let failed { fail(failed) }
+}
 say(["done": true])
