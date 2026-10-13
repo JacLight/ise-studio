@@ -680,8 +680,10 @@ function lookFor(e: EntityView, entities: ReadonlyMap<string, EntityView>) {
 }
 
 /** One look per assembly part (or one for a single solid). */
-function looksFor(e: EntityView, entities: ReadonlyMap<string, EntityView>): Look[] {
-  const parts = assemblyParts(e);
+function looksFor(e: EntityView, entities: ReadonlyMap<string, EntityView>, pieces?: readonly { material: string | null }[]): Look[] {
+  // A configuration's own parts (`pieces`) can carry other materials than the shape shows (a blue
+  // insert in one, a yellow one in another): their materials, through the shape's material table.
+  const parts = pieces ?? assemblyParts(e);
   if (!parts.length) return [lookFor(e, entities)];
   return parts.map((p) => {
     const mat = partMaterial(e, p.material, entities);
@@ -689,7 +691,7 @@ function looksFor(e: EntityView, entities: ReadonlyMap<string, EntityView>): Loo
   });
 }
 
-const lookKey = (e: EntityView, entities: ReadonlyMap<string, EntityView>) => JSON.stringify(looksFor(e, entities));
+const lookKey = (e: EntityView, entities: ReadonlyMap<string, EntityView>, pieces?: readonly { material: string | null }[]) => JSON.stringify(looksFor(e, entities, pieces));
 
 function surface(look: Look, wireframe: boolean) {
   const glass = look.opacity !== undefined && look.opacity < 1;
@@ -852,7 +854,7 @@ function instanceKey(e: EntityView, entities: ReadonlyMap<string, EntityView>) {
     .map((o) => {
       const def = entities.get(o.shape);
       const mesh = o.configured?.mesh ?? def?.mesh;
-      return `${o.shape}@${mesh ? meshId(mesh) : 0}:${def ? lookKey(def, entities) : ""}:${o.transform.at.join(",")},${o.transform.q.join(",")}:${o.path.join("/")}`;
+      return `${o.shape}@${mesh ? meshId(mesh) : 0}:${def ? lookKey(def, entities, o.configured?.stats.parts) : ""}:${o.transform.at.join(",")},${o.transform.q.join(",")}:${o.path.join("/")}`;
     })
     .join("|");
 }
@@ -868,7 +870,7 @@ function buildInstance(e: EntityView, entities: ReadonlyMap<string, EntityView>,
     if (!def || !meshData) continue;
     const parts = o.configured ? o.configured.stats.parts ?? [] : assemblyParts(def);
     const geometry = acquireGeometry(meshData, parts);
-    const materials = looksFor(def, entities).map((l) => surface(l, wireframe));
+    const materials = looksFor(def, entities, o.configured ? parts : undefined).map((l) => surface(l, wireframe));
     const mesh = new THREE.Mesh(geometry, parts.length ? materials : materials[0]);
     mesh.position.set(...o.transform.at);
     mesh.quaternion.set(...o.transform.q);

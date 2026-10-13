@@ -472,6 +472,7 @@ const LOOKS: Record<string, Look> = {
   steel: { color: "#a2a9ae", metalness: 0.62, roughness: 0.36 },
   aluminium: { color: "#c8d2da", metalness: 0.75, roughness: 0.28 },
   "abs plastic": { color: "#e7e2d8", metalness: 0, roughness: 0.6 },
+  plastic: { color: "#d8d6d0", metalness: 0, roughness: 0.55 },
   oak: { color: "#c69c6d", metalness: 0, roughness: 0.75 },
   brass: { color: "#c9a85c", metalness: 0.8, roughness: 0.3 },
   copper: { color: "#c27c56", metalness: 0.8, roughness: 0.3 },
@@ -526,8 +527,9 @@ export function materialLook(name: string | undefined): Look {
   if (!name) return UNASSIGNED_LOOK;
   const key = name.toLowerCase();
   if (LOOKS[key]) return LOOKS[key];
-  // "Tempered glass", "Stainless steel", "6061 aluminium": match the family.
-  const family = Object.keys(LOOKS).find((k) => key.includes(k));
+  // "Tempered glass", "Stainless steel", "6061 aluminium": match the family, as whole words
+  // ("zinc plated" is not PLA, "plastic" neither).
+  const family = Object.keys(LOOKS).find((k) => new RegExp(`(^|[^a-z0-9])${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z0-9])`).test(key));
   const look = family ? LOOKS[family] : { color: "#c4c9d4", metalness: 0.2, roughness: 0.5 };
   const hex = key.match(/#[0-9a-f]{6}\b/)?.[0];
   const word = Object.keys(COLOUR_WORDS)
