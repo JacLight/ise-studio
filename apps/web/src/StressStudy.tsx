@@ -678,10 +678,10 @@ export function StressStudy(props: {
         )}
       </div>
       <div className="stress-add">
-        <button type="button" className="secondary" onClick={() => pickFace(spec.parts.length ? "Click the face it is held by, flat or round (on this part or one studied with it)" : "Click the face the part is held by, flat or round", (f) => save({ ...spec, supports: [...spec.supports, pickOf(f)] }))}>
+        <button type="button" className="secondary" title="Hold the part fixed by a face: click the face next" onClick={() => pickFace(spec.parts.length ? "Click the face it is held by, flat or round (on this part or one studied with it)" : "Click the face the part is held by, flat or round", (f) => save({ ...spec, supports: [...spec.supports, pickOf(f)] }))}>
           <Icon name="plus" /> Support
         </button>
-        <button type="button" className="secondary" onClick={() => pickFace(spec.parts.length ? "Click the face the force pushes on, flat or round (on this part or one studied with it)" : "Click the face the force pushes on, flat or round", (f) => save({ ...spec, loads: [...spec.loads, { face: pickOf(f), magnitude: 100, direction: "into" }] }))}>
+        <button type="button" className="secondary" title="Push on a face with a force (100 N to start): click the face next" onClick={() => pickFace(spec.parts.length ? "Click the face the force pushes on, flat or round (on this part or one studied with it)" : "Click the face the force pushes on, flat or round", (f) => save({ ...spec, loads: [...spec.loads, { face: pickOf(f), magnitude: 100, direction: "into" }] }))}>
           <Icon name="plus" /> Load
         </button>
         <button type="button" className="secondary" aria-expanded={more} onClick={() => setMore(!more)} title="Sliding faces, springs, set movements, bearings, moments, gravity, spinning, yielding">
@@ -694,7 +694,7 @@ export function StressStudy(props: {
         )}
         <div className="segmented" role="group" aria-label="Resolution">
           {RESOLUTIONS.map((x) => (
-            <button key={x.value} type="button" className={x.value === resolution ? "active" : ""} aria-pressed={x.value === resolution} onClick={() => save({ ...spec, resolution: x.value })}>
+            <button key={x.value} type="button" className={x.value === resolution ? "active" : ""} aria-pressed={x.value === resolution} title={`${x.label} study: ${x.value} cubes along the part's longest side (finer is slower and closer)`} onClick={() => save({ ...spec, resolution: x.value })}>
               {x.label}
             </button>
           ))}
@@ -833,7 +833,7 @@ export function StressStudy(props: {
       {vib?.kind === "done" && (
         <div className="mode-list">
           {vib.modes.modes.map((m, i) => (
-            <button key={i} type="button" className={`mode-row ${mode === i && showing === "modes" ? "active" : ""}`} onClick={() => {
+            <button key={i} type="button" className={`mode-row ${mode === i && showing === "modes" ? "active" : ""}`} title={`Show how the part shakes at mode ${i + 1} (${n(m.frequency, m.frequency < 100 ? 1 : 0)} Hz)`} onClick={() => {
               setMode(mode === i ? null : i);
               setShowing("modes");
             }} aria-pressed={mode === i}>
@@ -851,7 +851,7 @@ export function StressStudy(props: {
       {buckle?.kind === "done" && (
         <div className="mode-list">
           {buckle.b.modes.map((m, i) => (
-            <button key={i} type="button" className={`mode-row ${shape === i && showing === "buckle" ? "active" : ""}`} onClick={() => {
+            <button key={i} type="button" className={`mode-row ${shape === i && showing === "buckle" ? "active" : ""}`} title={`Show buckle shape ${i + 1}: it buckles at ×${n(m.factor, 2)} the loads`} onClick={() => {
               setShape(shape === i ? null : i);
               setMode(null);
               setShowing("buckle");
@@ -1033,7 +1033,7 @@ export function StressStudy(props: {
             )
               .filter(([, , on]) => on)
               .map(([value, label]) => (
-                <button key={value} type="button" className={layer === value ? "active" : ""} aria-pressed={layer === value} onClick={() => {
+                <button key={value} type="button" className={layer === value ? "active" : ""} aria-pressed={layer === value} title={`Colour the part by ${label.toLowerCase()}`} onClick={() => {
                   setLayer(value);
                   setShowing("stress");
                 }}>
@@ -1052,7 +1052,7 @@ export function StressStudy(props: {
           <p className="motion-note marker-key">
             <span className="marker-dot red" /> largest stress <span className="marker-dot blue" /> largest movement
           </p>
-          <label className="xray-toggle">
+          <label className="xray-toggle" title="Draw the part bent the way the loads bend it, scaled up so it shows">
             <input type="checkbox" checked={deform} onChange={(e) => setDeform(e.target.checked)} /> Show the bending (exaggerated)
           </label>
           <div className="section-cut">
@@ -1063,7 +1063,7 @@ export function StressStudy(props: {
               <>
                 <div className="segmented" role="group" aria-label="Cut across">
                   {(["X", "Y", "Z"] as const).map((a, k) => (
-                    <button key={a} type="button" className={section.axis === k ? "active" : ""} aria-pressed={section.axis === k} onClick={() => setSection({ axis: k as 0 | 1 | 2, at: (bounds.min[k] + bounds.max[k]) / 2 })}>
+                    <button key={a} type="button" className={section.axis === k ? "active" : ""} aria-pressed={section.axis === k} title={`Cut across the ${a} axis, at the middle to start`} onClick={() => setSection({ axis: k as 0 | 1 | 2, at: (bounds.min[k] + bounds.max[k]) / 2 })}>
                       {a}
                     </button>
                   ))}
@@ -1092,7 +1092,7 @@ export function StressStudy(props: {
                   onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
                 />
               ))}
-              <button type="button" className="secondary" onClick={runProbe}>
+              <button type="button" className="secondary" title="Read the stress, movement and safety at this point (mm)" onClick={runProbe}>
                 Probe
               </button>
             </div>
@@ -1106,7 +1106,7 @@ export function StressStudy(props: {
           )}
           {state.key && (
             <div className="export-row">
-              <a className="secondary button-link" href={projectUrl(`/results/${state.key}/csv`)} download>
+              <a className="secondary button-link" href={projectUrl(`/results/${state.key}/csv`)} download title="Download the result as a table: stress, safety and movement at every cube">
                 <Icon name="download" /> Table (CSV)
               </a>
               <button type="button" className="secondary" onClick={exportDeck} title="The same cubes, holds and forces as a CalculiX input deck, to cross-check in another solver">
@@ -1136,7 +1136,7 @@ export function StressStudy(props: {
                 onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
               />
               °C
-              <button type="button" aria-label="Remove" onClick={() => save({ ...spec, holds: spec.holds.filter((_, j) => j !== i) })}>
+              <button type="button" aria-label="Remove this held temperature" title="Remove this held temperature" onClick={() => save({ ...spec, holds: spec.holds.filter((_, j) => j !== i) })}>
                 <Icon name="close" />
               </button>
             </div>
@@ -1156,17 +1156,17 @@ export function StressStudy(props: {
                 onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
               />
               W coming in
-              <button type="button" aria-label="Remove" onClick={() => save({ ...spec, heats: spec.heats.filter((_, j) => j !== i) })}>
+              <button type="button" aria-label="Remove this heat input" title="Remove this heat input" onClick={() => save({ ...spec, heats: spec.heats.filter((_, j) => j !== i) })}>
                 <Icon name="close" />
               </button>
             </div>
           ))}
         </div>
         <div className="stress-add">
-          <button type="button" className="secondary" onClick={() => props.onPickFace("Click the face held at a temperature (a heatsink, a wall)", (f) => save({ ...spec, holds: [...spec.holds, { face: pickOf(f), temperature: 20 }] }))}>
+          <button type="button" className="secondary" title="Hold a face at a set temperature (20 °C to start), like a heatsink or a wall: click the face next" onClick={() => props.onPickFace("Click the face held at a temperature (a heatsink, a wall)", (f) => save({ ...spec, holds: [...spec.holds, { face: pickOf(f), temperature: 20 }] }))}>
             <Icon name="plus" /> Held at °C
           </button>
-          <button type="button" className="secondary" onClick={() => props.onPickFace("Click the face the heat comes in through (a motor, a chip)", (f) => save({ ...spec, heats: [...spec.heats, { face: pickOf(f), watts: 5 }] }))}>
+          <button type="button" className="secondary" title="Bring heat in through a face (5 W to start), like a motor or a chip: click the face next" onClick={() => props.onPickFace("Click the face the heat comes in through (a motor, a chip)", (f) => save({ ...spec, heats: [...spec.heats, { face: pickOf(f), watts: 5 }] }))}>
             <Icon name="plus" /> Heat in
           </button>
           <div className="segmented" role="group" aria-label="Air cooling">
@@ -1229,7 +1229,7 @@ export function StressStudy(props: {
               <span>{n(heat.temps.max, 0)} °C</span>
             </div>
             {showing !== "heat" && (
-              <button type="button" className="link-button" onClick={() => setShowing("heat")}>
+              <button type="button" className="link-button" title="Colour the part by temperature" onClick={() => setShowing("heat")}>
                 Show the temperatures
               </button>
             )}

@@ -157,13 +157,13 @@ export function ProjectsHome(props: { onClose: () => void }) {
           </span>
         </div>
         <div className="projects-actions">
-          <button type="button" className="secondary" onClick={load}>
+          <button title="Reload the project list from this computer and your teams" type="button" className="secondary" onClick={load}>
             <Icon name="refresh" /> Refresh
           </button>
-          <button type="button" className="primary" onClick={() => setNaming("")}>
+          <button title="Start a new, empty project" type="button" className="primary" onClick={() => setNaming("")}>
             <Icon name="plus" /> New project
           </button>
-          <button type="button" className="projects-close" onClick={props.onClose} aria-label="Close">
+          <button type="button" className="projects-close" onClick={props.onClose} aria-label="Close projects" title="Close projects and go back to the open one">
             <Icon name="close" />
           </button>
         </div>
@@ -182,14 +182,14 @@ export function ProjectsHome(props: { onClose: () => void }) {
               ["team", "Team"],
             ] as [Filter, string][]
           ).map(([v, label]) => (
-            <button key={v} type="button" className={filter === v ? "active" : ""} aria-pressed={filter === v} onClick={() => setFilter(v)}>
+            <button title={{ all: "Show every project", mine: "Show only projects you started", shared: "Show only projects teammates shared with you", team: "Show only projects shared with a team" }[v]} key={v} type="button" className={filter === v ? "active" : ""} aria-pressed={filter === v} onClick={() => setFilter(v)}>
               {label}
             </button>
           ))}
         </div>
         <label className="projects-sort">
           Sort
-          <select value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+          <select title="Order projects by last edit, title or date created" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
             <option value="edited">Last edited</option>
             <option value="name">Title</option>
             <option value="created">Created</option>
@@ -199,7 +199,7 @@ export function ProjectsHome(props: { onClose: () => void }) {
       {tags.length > 0 && (
         <div className="projects-tags" role="group" aria-label="Tags">
           {tags.map((t) => (
-            <button key={t} type="button" className={`tag-chip ${tag === t ? "active" : ""}`} aria-pressed={tag === t} onClick={() => setTag(tag === t ? null : t)}>
+            <button title={tag === t ? "Show all projects again" : `Show only projects tagged #${t}`} key={t} type="button" className={`tag-chip ${tag === t ? "active" : ""}`} aria-pressed={tag === t} onClick={() => setTag(tag === t ? null : t)}>
               #{t}
             </button>
           ))}
@@ -221,7 +221,7 @@ export function ProjectsHome(props: { onClose: () => void }) {
               )}
               <div className="projects-grid">
                 {g.withNew && !searching && (
-                  <button type="button" className="project-card new" onClick={() => setNaming("")}>
+                  <button title="Start a new, empty project" type="button" className="project-card new" onClick={() => setNaming("")}>
                     <span className="project-new-icon">
                       <Icon name="plus" />
                     </span>
@@ -274,14 +274,14 @@ export function ProjectsHome(props: { onClose: () => void }) {
                     </button>
                     {menu === p.name && (
                       <div className="project-menu" role="menu" onClick={(e) => e.stopPropagation()}>
-                        <button type="button" role="menuitem" onClick={() => (setMenu(null), setEditing(p))}>
+                        <button title={`Change the title, description and tags of ${titleOf(p)}`} type="button" role="menuitem" onClick={() => (setMenu(null), setEditing(p))}>
                           <Icon name="pencil" /> Edit details
                         </button>
-                        <button type="button" role="menuitem" onClick={() => (setMenu(null), void act(() => post(`/projects/${p.name}/duplicate`)))}>
+                        <button title={`Make a copy of ${titleOf(p)} with its full history`} type="button" role="menuitem" onClick={() => (setMenu(null), void act(() => post(`/projects/${p.name}/duplicate`)))}>
                           <Icon name="copy" /> Duplicate
                         </button>
                         {!p.default && (
-                          <button type="button" role="menuitem" className="danger" onClick={() => (setMenu(null), setDeleting(p))}>
+                          <button title={`Move ${titleOf(p)} to Recently deleted`} type="button" role="menuitem" className="danger" onClick={() => (setMenu(null), setDeleting(p))}>
                             <Icon name="trash" /> Delete
                           </button>
                         )}
@@ -297,7 +297,7 @@ export function ProjectsHome(props: { onClose: () => void }) {
         {list && !shown.length && searching && <p className="projects-empty">No project matches{query ? ` “${query}”` : ""}{tag ? ` tagged #${tag}` : ""}.</p>}
         {trash.length > 0 && (
           <section className="projects-trash">
-            <button type="button" className="trash-toggle" aria-expanded={showTrash} onClick={() => setShowTrash((v) => !v)}>
+            <button title={showTrash ? "Hide deleted projects" : "Show deleted projects you can still restore"} type="button" className="trash-toggle" aria-expanded={showTrash} onClick={() => setShowTrash((v) => !v)}>
               <Icon name="trash" /> Recently deleted <small>{trash.length}</small>
               <Icon name="down" />
             </button>
@@ -338,10 +338,10 @@ export function ProjectsHome(props: { onClose: () => void }) {
           <strong>New project</strong>
           <input autoFocus value={naming} onChange={(e) => setNaming(e.target.value)} placeholder="Title" aria-label="Title" onKeyDown={(e) => e.key === "Escape" && (e.stopPropagation(), setNaming(null))} />
           <div>
-            <button type="button" className="secondary" onClick={() => setNaming(null)}>
+            <button title="Close without making a project (Esc)" type="button" className="secondary" onClick={() => setNaming(null)}>
               Cancel
             </button>
-            <button type="submit" className="primary" disabled={!slug}>
+            <button title="Create the project and open it (Enter)" type="submit" className="primary" disabled={!slug}>
               Create
             </button>
           </div>
@@ -367,10 +367,10 @@ export function ProjectsHome(props: { onClose: () => void }) {
             {deleting.team ? " Your teammates keep their own copies; this computer stops syncing it." : ""}
           </p>
           <div>
-            <button type="button" className="secondary" autoFocus onClick={() => setDeleting(null)}>
+            <button title="Keep the project" type="button" className="secondary" autoFocus onClick={() => setDeleting(null)}>
               Cancel
             </button>
-            <button
+            <button title={`Move ${titleOf(deleting)} to Recently deleted`}
               type="button"
               className="danger"
               onClick={() => {
@@ -449,7 +449,7 @@ function DetailsEditor(props: { project: Project; suggestions: string[]; onCance
       {offered.length > 0 && (
         <div className="tag-offers">
           {offered.map((s) => (
-            <button key={s} type="button" className="tag-chip" onClick={() => addTag(s)}>
+            <button title={`Add the tag #${s}`} key={s} type="button" className="tag-chip" onClick={() => addTag(s)}>
               #{s}
             </button>
           ))}
@@ -459,10 +459,10 @@ function DetailsEditor(props: { project: Project; suggestions: string[]; onCance
         Name <code>{p.default ? "default" : p.name}</code> stays the same: links and teammates' computers know the project by it.
       </small>
       <div>
-        <button type="button" className="secondary" onClick={props.onCancel}>
+        <button title="Close without saving the details (Esc)" type="button" className="secondary" onClick={props.onCancel}>
           Cancel
         </button>
-        <button type="submit" className="primary" disabled={!title.trim()}>
+        <button title="Save the title, description and tags (Enter)" type="submit" className="primary" disabled={!title.trim()}>
           Save
         </button>
       </div>

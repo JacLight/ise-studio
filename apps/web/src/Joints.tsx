@@ -365,7 +365,7 @@ function JointRow(props: {
   const limits = (p: Param) => (p.min != null && p.max != null ? `${n(p.min, 1)}…${n(p.max, 1)}${unitOf(p)}` : null);
   return (
     <li className={`aj-joint ${props.open ? "open" : ""} ${failed || heldProblem ? "bad" : ""}`}>
-      <button type="button" className="aj-head" onClick={props.onToggle} aria-expanded={props.open} onPointerEnter={() => primary && !j.free && sweepFor(primary)}>
+      <button title={props.open ? `Close ${name}` : `Open ${name}: its value, limits and motion check`} type="button" className="aj-head" onClick={props.onToggle} aria-expanded={props.open} onPointerEnter={() => primary && !j.free && sweepFor(primary)}>
         <span className={`aj-kind k-${j.kind}`}>
           <JointGlyph kind={j.kind} />
         </span>
@@ -565,7 +565,7 @@ function SweepResult(props: {
         {s.clashes.length > 0 ? (
           <>
             {s.clashes.map((c) => (
-              <button key={`${c.a_id}${c.b_id}`} type="button" className="clash-jump" onClick={() => jump(c.range?.[0] ?? c.at)}>
+              <button title={`Jump to where ${c.a} first hits ${c.b}`} key={`${c.a_id}${c.b_id}`} type="button" className="clash-jump" onClick={() => jump(c.range?.[0] ?? c.at)}>
                 {c.a} hits {c.b} from {n(c.range?.[0] ?? c.at)}{u} to {n(c.range?.[1] ?? c.at)}
                 {u}
               </button>
@@ -604,7 +604,7 @@ function SweepResult(props: {
         <ul className="aj-pairs">
           {s.pairs.slice(0, 6).map((p) => (
             <li key={`${p.a_id}${p.b_id}`}>
-              <button type="button" onClick={() => jump(p.range?.[0] ?? p.at)}>
+              <button title={`Jump to where ${p.a} and ${p.b} come closest`} type="button" onClick={() => jump(p.range?.[0] ?? p.at)}>
                 <span className={`aj-dot ${p.gap < 1e-4 ? (p.joined ? "joined" : "hit") : "near"}`} />
                 <span>
                   {p.a} – {p.b}
@@ -634,7 +634,7 @@ function SweepResult(props: {
             <Icon name="shield" /> Keep as a requirement
           </button>
         )}
-        <button type="button" className="secondary" onClick={props.onClose}>
+        <button title="Close the motion check and put the parts back" type="button" className="secondary" onClick={props.onClose}>
           Done
         </button>
       </div>
@@ -750,7 +750,7 @@ function JointBuilder(props: {
           <p className="aj-prompt">
             <span className="aj-chip">{builder.moving.label}</span> moves. <strong>Now pick where it goes</strong>, or hold it to the assembly's origin.
           </p>
-          <button type="button" className="secondary aj-ground" onClick={() => setBuilder({ step: "form", moving: builder.moving, onto: "ground", kind: "fixed", name: "", value: "0" })}>
+          <button title="Fix the moving part to the assembly's origin instead of another part" type="button" className="secondary aj-ground" onClick={() => setBuilder({ step: "form", moving: builder.moving, onto: "ground", kind: "fixed", name: "", value: "0" })}>
             Hold it to the ground
           </button>
         </>
@@ -784,7 +784,7 @@ function JointBuilder(props: {
             )}
           </div>
           <div className="row-buttons">
-            <button
+            <button title="Make the joint between the two connectors"
               type="button"
               className="primary"
               onClick={() => {
@@ -801,7 +801,7 @@ function JointBuilder(props: {
             >
               <Icon name="link" /> Join
             </button>
-            <button type="button" className="secondary" onClick={() => setBuilder({ step: "onto", moving: builder.moving })}>
+            <button title="Pick where it goes again (Esc)" type="button" className="secondary" onClick={() => setBuilder({ step: "onto", moving: builder.moving })}>
               Back
             </button>
           </div>
@@ -811,7 +811,7 @@ function JointBuilder(props: {
         <p className="aj-quiet">No connectors on {without.map((m) => instance(m)!.name).join(", ")}.</p>
       )}
       {builder.step !== "form" && (
-        <button type="button" className="aj-cancel" onClick={() => setBuilder(null)}>
+        <button title="Stop adding the joint (Esc steps back a pick first)" type="button" className="aj-cancel" onClick={() => setBuilder(null)}>
           Cancel · Esc
         </button>
       )}

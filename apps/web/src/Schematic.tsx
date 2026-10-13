@@ -524,6 +524,7 @@ export function SchematicPane(props: {
                 type="button"
                 className="primary"
                 disabled={!props.canEdit || !!busy}
+                title="Draw a schematic from this board: a symbol per part, nets as labels and power ports"
                 onClick={async () => {
                   setBusy("Drawing…");
                   const out = (await commit("pcb.schematic.from_board", { board: props.boardId }, "Schematic drawn from the board")) as { output?: { id: string } } | null;
@@ -537,6 +538,7 @@ export function SchematicPane(props: {
                 type="button"
                 className="secondary"
                 disabled={!props.canEdit}
+                title="Start a blank schematic sheet for this board and draw it yourself"
                 onClick={async () => {
                   const out = (await commit("pcb.schematic.create", { board: props.boardId }, "Empty schematic")) as { output?: { id: string } } | null;
                   if (out?.output?.id) setSchId(out.output.id);
@@ -577,7 +579,7 @@ export function SchematicPane(props: {
                 ["setup", "Setup", null],
               ] as [Tab, string, number | null][]
             ).map(([k, label, n]) => (
-              <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>
+              <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "active" : ""} title={{ parts: "Parts on the schematic: find, select and edit them", add: "Add a part from the symbol library", nets: "Nets: highlight, colour and class them", erc: "Electrical rules check: problems to fix", sync: "Changes waiting to go to the board", sheets: "Sheets and the hierarchy", fields: "Every part's fields in one table", setup: "Title block, net classes, rules, variables and annotation" }[k]} onClick={() => setTab(k)}>
                 {label}
                 {n !== null && <span className={`pcb-count ${k === "erc" || k === "sync" ? "bad" : ""}`}>{n}</span>}
               </button>
@@ -695,7 +697,7 @@ function PartsList(props: { v: SchematicV; sel: Sel; count: number; onSelect: (s
       {props.count > 1 && <p className="small schx-selcount">{props.count} items selected: drag to move them together, R turn, X/Y mirror, Ctrl+D duplicate, Del delete, or align them from the bar on the sheet.</p>}
       <div className="pcb-list sch-list">
         {list.map((s) => (
-          <button key={`${s.id}:${s.sheet}`} type="button" className={`pcb-row ${props.sel?.id === s.id ? "active" : ""} ${s.dnp ? "dnp" : ""}`} onClick={() => props.onSelect(s)}>
+          <button key={`${s.id}:${s.sheet}`} type="button" className={`pcb-row ${props.sel?.id === s.id ? "active" : ""} ${s.dnp ? "dnp" : ""}`} title={`Select ${s.reference} and show it on the sheet`} onClick={() => props.onSelect(s)}>
             <span className="ref">
               {s.reference}
               {s.units > 1 ? String.fromCharCode(64 + s.unit) : ""}
@@ -745,7 +747,7 @@ function SymbolProps(props: { s: SymbolV; lib: LibSymbol[] | null; commit: Commi
   const pins = s.pins.filter((p) => !p.hidden);
   return (
     <div className="pcb-tab sch-props">
-      <button type="button" className="sch-back" onClick={props.onBack}>
+      <button type="button" className="sch-back" title="Back to the list of all parts" onClick={props.onBack}>
         ← All parts
       </button>
       <div className="sch-props-head">
@@ -764,7 +766,7 @@ function SymbolProps(props: { s: SymbolV; lib: LibSymbol[] | null; commit: Commi
       {field("LCSC", "lcsc", s.lcsc ?? "")}
       <div className="sch-props-row">
         <label className="sch-check">
-          <input type="checkbox" checked={s.dnp} disabled={!props.canEdit} onChange={(e) => void props.commit("pcb.schematic.symbol.update", { target: s.id, dnp: e.target.checked })} /> Do not populate
+          <input type="checkbox" checked={s.dnp} disabled={!props.canEdit} title="Leave this part off the assembled board and out of the BOM" onChange={(e) => void props.commit("pcb.schematic.symbol.update", { target: s.id, dnp: e.target.checked })} /> Do not populate
         </label>
         <button type="button" className="secondary" disabled={!props.canEdit} onClick={() => void props.commit("pcb.schematic.symbol.update", { target: s.id, rotation: (s.rotation + 90) % 360 })} title="Turn (R)">
           <Icon name="rotate" />
@@ -956,7 +958,7 @@ function NetList(props: { v: SchematicV; net: string | null; onNet: (n: string) 
       )}
       <div className="pcb-list sch-list">
         {list.map((n) => (
-          <button key={n.name} type="button" className={`pcb-row ${props.net === n.name ? "active" : ""}`} onClick={() => props.onNet(n.name)}>
+          <button key={n.name} type="button" className={`pcb-row ${props.net === n.name ? "active" : ""}`} title={`Highlight net ${n.name} on the sheet`} onClick={() => props.onNet(n.name)}>
             <span className={`sch-net-dot ${n.named ? "named" : ""}`} style={n.color ? { background: n.color } : undefined} />
             <span className="val">
               {n.name}
@@ -1079,6 +1081,7 @@ function SyncPanel(props: { sync: SyncReport; schematic: string; commit: Commit;
           type="button"
           className="primary"
           disabled={!props.canEdit || s.in_sync || busy}
+          title="Send these schematic changes to the board: add, change and remove parts and nets"
           onClick={async () => {
             setBusy(true);
             const out = (await props.commit("pcb.schematic.update_board", { schematic: props.schematic })) as { output?: SyncReport } | null;
@@ -1854,11 +1857,11 @@ function SchematicCanvas(props: {
             ))}
           </div>
         )}
-        <button type="button" className={`sch-pill ${props.errors ? "bad" : "good"}`} onClick={() => props.onOpenTab("erc")}>
+        <button type="button" className={`sch-pill ${props.errors ? "bad" : "good"}`} title="Open the electrical rules check" onClick={() => props.onOpenTab("erc")}>
           <Icon name={props.errors ? "alert" : "check"} />
           {props.errors ? `${props.errors} ERC` : "ERC passes"}
         </button>
-        <button type="button" className={`sch-pill ${props.inSync ? "good" : "pending"}`} onClick={() => props.onOpenTab("sync")}>
+        <button type="button" className={`sch-pill ${props.inSync ? "good" : "pending"}`} title="Open the changes waiting to go to the board" onClick={() => props.onOpenTab("sync")}>
           <Icon name={props.inSync ? "check" : "refresh"} />
           {props.inSync ? "Board in step" : `Update board (${props.pending})`}
         </button>

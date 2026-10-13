@@ -255,7 +255,7 @@ export function LinkageMotion({
       <div className="gear-turn-row gear-turn-sub">
         <div className="segmented" role="group" aria-label="Playback speed">
           {PACES.map((p, i) => (
-            <button key={p.label} type="button" className={i === pace ? "active" : ""} aria-pressed={i === pace} onClick={() => setPace(i)}>
+            <button title={`Play one full range in ${p.seconds} seconds`} key={p.label} type="button" className={i === pace ? "active" : ""} aria-pressed={i === pace} onClick={() => setPace(i)}>
               {p.label}
             </button>
           ))}
@@ -264,7 +264,7 @@ export function LinkageMotion({
           <input type="checkbox" checked={xray} onChange={(e) => setXray(e.target.checked)} /> See inside
         </label>
         {active && (
-          <button
+          <button title="Stop and put the parts back as drawn"
             type="button"
             className="gear-turn-reset"
             onClick={() => {
@@ -366,7 +366,7 @@ export function LinkageMotion({
                   </option>
                 ))}
               </select>
-              <button type="button" className="secondary" disabled={!pick || s?.kind === "busy"} onClick={() => checkStrength(pick)}>
+              <button title="Check the part's stress at the moment the loads on it are highest" type="button" className="secondary" disabled={!pick || s?.kind === "busy"} onClick={() => checkStrength(pick)}>
                 <Icon name="weight" /> {s?.kind === "busy" ? "Checking…" : "Check"}
               </button>
             </div>
@@ -380,7 +380,7 @@ export function LinkageMotion({
                 <small className="joint-facts">
                   Held at {s.check.held_by}; {s.check.loads.map(([j, f]) => `${j} ${n(f, 0)} N`).join(", ")}. {s.check.result.notes.slice(-1)[0]}
                 </small>
-                <label className="xray-toggle">
+                <label title="Colour the part by stress at its hardest moment" className="xray-toggle">
                   <input
                     type="checkbox"
                     checked={s.shown}

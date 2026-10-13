@@ -276,7 +276,7 @@ export function useFaceTool(props: {
         <div className="edge-row">
           <div className="segmented" role="radiogroup" aria-label="Tool">
             {(["shell", "draft"] as FaceToolKind[]).map((k) => (
-              <button
+              <button title={k === "shell" ? "Shell: hollow the part to a wall, leaving picked faces open (H)" : "Draft: taper faces along a pull so the part leaves its mould (D)"}
                 key={k}
                 type="button"
                 role="radio"
@@ -297,7 +297,7 @@ export function useFaceTool(props: {
               {sizeField("Wall", wall, setWall, "mm", 0.5, "Wall thickness in mm")}
               <div className="segmented" role="radiogroup" aria-label="Walls grow">
                 {[false, true].map((o) => (
-                  <button key={String(o)} type="button" role="radio" aria-checked={outward === o} className={outward === o ? "active" : ""} onClick={() => setOutward(o)}>
+                  <button title={o ? "The wall grows outward: the part gets bigger, the inside keeps its size" : "The wall grows inward: the outside keeps its size"} key={String(o)} type="button" role="radio" aria-checked={outward === o} className={outward === o ? "active" : ""} onClick={() => setOutward(o)}>
                     {o ? "Outward" : "Inward"}
                   </button>
                 ))}
@@ -308,7 +308,7 @@ export function useFaceTool(props: {
               {sizeField("Angle", angle, setAngle, "°", 0.5, "Draft angle in degrees")}
               <div className="segmented" role="radiogroup" aria-label="Pull direction">
                 {([0, 1, 2] as Axis[]).map((a) => (
-                  <button key={a} type="button" role="radio" aria-checked={axis === a} className={axis === a ? "active" : ""} onClick={() => setAxis(a)}>
+                  <button title={`The part pulls out of its mould along ${AXES[a]}`} key={a} type="button" role="radio" aria-checked={axis === a} className={axis === a ? "active" : ""} onClick={() => setAxis(a)}>
                     {axis === a ? (flip ? "−" : "+") : ""}
                     {AXES[a]}
                   </button>
@@ -320,7 +320,7 @@ export function useFaceTool(props: {
             </>
           )}
           {count > 0 && (
-            <button type="button" className="link-button" onClick={() => setFaces([])}>
+            <button title="Unpick every picked face" type="button" className="link-button" onClick={() => setFaces([])}>
               Clear
             </button>
           )}
@@ -330,7 +330,7 @@ export function useFaceTool(props: {
             <span className="face-tool-label">Neutral plane</span>
             <div className="segmented" role="radiogroup" aria-label="Neutral plane">
               {NEUTRAL.map((n) => (
-                <button key={n.at} type="button" role="radio" aria-checked={neutral === n.at} className={neutral === n.at ? "active" : ""} onClick={() => setNeutral(n.at)}>
+                <button title={`Faces keep their size at the ${n.label.toLowerCase()} of the part along the pull, and lean in from there`} key={n.at} type="button" role="radio" aria-checked={neutral === n.at} className={neutral === n.at ? "active" : ""} onClick={() => setNeutral(n.at)}>
                   {n.label}
                 </button>
               ))}
@@ -344,10 +344,10 @@ export function useFaceTool(props: {
           {" · Enter applies, Esc cancels"}
         </p>
         <div className="sketch-actions">
-          <button type="button" className="primary" onClick={apply} disabled={!finish || !sizeOk || !!problem || busy}>
+          <button title="Apply to the part (Enter)" type="button" className="primary" onClick={apply} disabled={!finish || !sizeOk || !!problem || busy}>
             <Icon name="check" /> {kind === "shell" ? `Shell ${count ? `· open ${what(count)}` : "· sealed"}` : `Draft ${count ? what(count) : "all walls"}`}
           </button>
-          <button type="button" className="secondary" onClick={stop}>
+          <button title="Leave without changing the part (Esc)" type="button" className="secondary" onClick={stop}>
             Cancel
           </button>
         </div>

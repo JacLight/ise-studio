@@ -68,7 +68,7 @@ export function TeamPill(props: { team: TeamStatus | null; onOpen: () => void; o
         <span className="local-dot" />
         {status}
       </span>
-      <button type="button" className="share-button" onClick={props.onOpen}>
+      <button title={t?.has_team ? "Team members, invites and connection settings" : "Invite someone to work on this project with you"} type="button" className="share-button" onClick={props.onOpen}>
         <Icon name="share" /> {t?.has_team ? "Team" : "Invite"}
       </button>
       <button type="button" className="ib" title="Hide team controls" aria-label="Hide team controls" onClick={props.onHide}>
@@ -164,10 +164,10 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
               {removing === m.id ? (
                 <span className="member-remove-ask">
                   Remove {m.name.split(" ")[0]}?
-                  <button type="button" className="danger" onClick={() => void remove(m.id)}>
+                  <button title={`Remove ${m.name} from the team: their computer stops syncing`} type="button" className="danger" onClick={() => void remove(m.id)}>
                     Remove
                   </button>
-                  <button type="button" className="link-button" onClick={() => setRemoving(null)}>
+                  <button title={`Keep ${m.name} on the team`} type="button" className="link-button" onClick={() => setRemoving(null)}>
                     Cancel
                   </button>
                 </span>
@@ -206,12 +206,12 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
           </div>
           <div className="segmented" role="radiogroup" aria-label="Access">
             {(["editor", "viewer"] as const).map((r) => (
-              <button key={r} type="button" role="radio" aria-checked={role === r} className={role === r ? "active" : ""} onClick={() => setRole(r)}>
+              <button title={r === "editor" ? "They can change the design" : "They can look and comment, not change the design"} key={r} type="button" role="radio" aria-checked={role === r} className={role === r ? "active" : ""} onClick={() => setRole(r)}>
                 {r === "editor" ? "Can edit" : "Can view"}
               </button>
             ))}
           </div>
-          <button type="submit" className="primary" disabled={!name.trim()}>
+          <button title="Make a one-time invite link for this person" type="submit" className="primary" disabled={!name.trim()}>
             <Icon name="plus" /> Create invite
           </button>
         </form>
@@ -223,15 +223,15 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
             <div className="invite-actions">
               <p>Scan with their phone to pass the link on, or send it. It opens Forma on their computer and works once, for them alone.</p>
               {created.email ? (
-                <a className="primary invite-mail" href={mail}>
+                <a title={`Open your mail app with the invite to ${created.email}`} className="primary invite-mail" href={mail}>
                   <Icon name="mail" /> Email {created.name}
                 </a>
               ) : (
-                <a className="secondary invite-mail" href={mail}>
+                <a title="Open your mail app with the invite link" className="secondary invite-mail" href={mail}>
                   <Icon name="mail" /> Email the invite
                 </a>
               )}
-              <button
+              <button title="Copy the invite link to the clipboard"
                 type="button"
                 className="secondary"
                 onClick={() =>
@@ -243,7 +243,7 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
               >
                 <Icon name={copied ? "check" : "link"} /> {copied ? "Link copied" : "Copy link"}
               </button>
-              <a className="secondary invite-mail" href={sms}>
+              <a title="Send the invite link in a text message" className="secondary invite-mail" href={sms}>
                 <Icon name="comment" /> Text message
               </a>
             </div>
@@ -252,7 +252,7 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
           <p className="demo-note">
             Their computer reaches yours through {where(created.addresses).join(" or ")}. {created.addresses.some((a) => a.startsWith("wss://") || !/\/\/\d/.test(a)) ? "" : "Teammates outside this network need an internet address: set one below."}
           </p>
-          <button type="button" className="link-button" onClick={() => setCreated(null)}>
+          <button title="Make another invite for someone else" type="button" className="link-button" onClick={() => setCreated(null)}>
             Invite someone else
           </button>
         </div>
@@ -275,7 +275,7 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
 
       <div className="team-settings">
         {!settings ? (
-          <button type="button" className="link-button" onClick={() => setSettings(true)}>
+          <button title="Set the name teammates see and an internet address for teammates outside this network" type="button" className="link-button" onClick={() => setSettings(true)}>
             <Icon name="sliders" /> Your name and internet address
           </button>
         ) : (
@@ -292,7 +292,7 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
               For teammates and view-only links outside this network: an address that reaches this computer's Forma (port 7420), through your proxy or an opened port. Connections use HTTPS
               WebSockets, so they pass through proxies. Only teammates' engines and view-only links are answered from outside; the rest stays on this computer.
             </p>
-            <button type="button" className="secondary" onClick={saveSettings}>
+            <button title="Save your name and internet address" type="button" className="secondary" onClick={saveSettings}>
               Save
             </button>
           </>
@@ -329,11 +329,11 @@ export function Clash(props: { clash: TeamStatus["conflicts"][number]; entities:
       </p>
       <div className="clash-actions">
         {param && typeof other === "number" && (
-          <button type="button" className="secondary" onClick={pick}>
+          <button title={`Set ${what} to ${show(other)} instead`} type="button" className="secondary" onClick={pick}>
             Use {show(other)}
           </button>
         )}
-        <button type="button" className="link-button" onClick={props.onDone}>
+        <button title={`Leave ${what} at ${show(kept)} and dismiss`} type="button" className="link-button" onClick={props.onDone}>
           Keep {show(kept)}
         </button>
       </div>
@@ -376,7 +376,7 @@ export function JoinScreen() {
               You'll join as <b>{invite.to}</b>. This computer gets its own copy of the project, first from {invite.by}'s computer{host ? ` (${host})` : ""}, then
               in sync with the whole team directly. No server in between, and it keeps working offline.
             </p>
-            <button type="button" className="primary" onClick={join} disabled={state.kind === "busy"}>
+            <button title="Copy the project to this computer and join the team" type="button" className="primary" onClick={join} disabled={state.kind === "busy"}>
               {state.kind === "busy" ? "Joining…" : "Join project"}
             </button>
             {state.kind === "error" && <p className="print-note bad">{state.text}</p>}

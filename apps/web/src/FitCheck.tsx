@@ -53,7 +53,7 @@ export function FitCheck(props: { instance: string; onSelect: (id: string) => vo
         <span className="section-note">{r ? `${r.items.length} checked` : "screws, inserts, bearings, overlaps"}</span>
       </header>
       <div className="fit-actions">
-        <button type="button" className="fit-run" disabled={state.busy} onClick={() => run(false)}>
+        <button title="Check screws, inserts, bearings and overlaps against the printer's fit profile" type="button" className="fit-run" disabled={state.busy} onClick={() => run(false)}>
           {state.busy && !state.motion ? "Checking…" : r ? "Check again" : "Check fit"}
         </button>
         <button type="button" className="fit-run quiet" disabled={state.busy} onClick={() => run(true)} title="Also sweep every moving joint through its limits (slower)">
@@ -72,10 +72,10 @@ export function FitCheck(props: { instance: string; onSelect: (id: string) => vo
             {r.profile.printer} · {r.profile.material} · {r.profile.layer} mm layers · slide {r.profile.slide[0]}–{r.profile.slide[1]} mm · press {r.profile.press} mm · insert wall {r.profile.insert_wall} mm
           </p>
           <div className="fit-filter">
-            <button type="button" className={show === "problems" ? "on" : ""} onClick={() => setShow("problems")}>
+            <button title="List only the warnings and failures" type="button" className={show === "problems" ? "on" : ""} onClick={() => setShow("problems")}>
               Problems
             </button>
-            <button type="button" className={show === "all" ? "on" : ""} onClick={() => setShow("all")}>
+            <button title="List every check, passes too" type="button" className={show === "all" ? "on" : ""} onClick={() => setShow("all")}>
               All {r.items.length}
             </button>
           </div>
@@ -86,7 +86,7 @@ export function FitCheck(props: { instance: string; onSelect: (id: string) => vo
               const expanded = open === key;
               return (
                 <li key={key} className={`fit-item ${it.status} ${expanded ? "open" : ""}`}>
-                  <button
+                  <button title={expanded ? "Hide the details" : "Show why, and select the part it is on"}
                     type="button"
                     className="fit-row"
                     onClick={() => {

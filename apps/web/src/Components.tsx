@@ -234,7 +234,7 @@ export function ComponentTree(props: {
   return (
     <div className="component-tree" onPointerLeave={() => props.onHover?.(null)}>
       {props.isolated && (
-        <button type="button" className="isolate-banner" onClick={() => props.onIsolate(null)}>
+        <button type="button" className="isolate-banner" title="Leave show-only and show every part again" onClick={() => props.onIsolate(null)}>
           Showing only {props.isolated.includes("#") ? props.isolated.slice(props.isolated.indexOf("#") + 1) : partName(props.entities.get(props.isolated) ?? ({ components: {} } as EntityView))} · Show everything
         </button>
       )}
@@ -338,7 +338,7 @@ export function StackingPlan(props: {
           const group = assemblyDef(props.entities.get(fi.of));
           const p = fi.properties ?? {};
           return (
-            <button type="button" key={f.id} className={`stack-row ${props.selected === f.id ? "active" : ""} ${group ? "group" : ""}`} onClick={() => props.onSelect(f.id)}>
+            <button type="button" key={f.id} className={`stack-row ${props.selected === f.id ? "active" : ""} ${group ? "group" : ""}`} title={`Select the floor ${fi.name}`} onClick={() => props.onSelect(f.id)}>
               <span className="stack-bar" style={{ background: statusColor(p.status) ?? "#d8d5e0" }} />
               <span className="stack-main">
                 <strong>{fi.name}</strong>
@@ -412,7 +412,7 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
       </div>
 
       {owner && (
-        <button type="button" className="crumb" onClick={() => props.onSelect(owner.id)}>
+        <button type="button" className="crumb" title={`Select ${partName(owner)}, the assembly this sits in`} onClick={() => props.onSelect(owner.id)}>
           <Icon name="chevron" /> In {partName(owner)}
         </button>
       )}
@@ -423,7 +423,7 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
         </header>
         <div className="status-picker" role="radiogroup" aria-label="Status">
           {STATUSES.map((s) => (
-            <button type="button" key={s} role="radio" aria-checked={props_.status === s} className={props_.status === s ? "active" : ""} style={{ "--chip": statusColor(s) } as React.CSSProperties} onClick={() => setProp("status", props_.status === s ? "" : s)}>
+            <button type="button" key={s} role="radio" aria-checked={props_.status === s} title={props_.status === s ? `Clear the status ${s}` : `Mark this as ${s.toLowerCase()}`} className={props_.status === s ? "active" : ""} style={{ "--chip": statusColor(s) } as React.CSSProperties} onClick={() => setProp("status", props_.status === s ? "" : s)}>
               {s}
             </button>
           ))}
@@ -525,7 +525,7 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
             <span className="section-note">{kids.length} placed</span>
           </header>
           {kids.map((k) => (
-            <button type="button" key={k.id} className="list-row" onClick={() => props.onSelect(k.id)}>
+            <button type="button" key={k.id} className="list-row" title={`Select ${instance(k)!.name}`} onClick={() => props.onSelect(k.id)}>
               <Icon name="cube" />
               <span>
                 {instance(k)!.name}
@@ -599,7 +599,7 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
         <a className="download" href={projectUrl(`/export/${entity.id}.step?tolerance=1`)} download title="Exact B-rep of everything inside, every part named and placed">
           <Icon name="download" /> STEP · exact
         </a>
-        <a className="download" href={projectUrl(`/export/${entity.id}.zip?tolerance=1`)} download>
+        <a className="download" href={projectUrl(`/export/${entity.id}.zip?tolerance=1`)} download title="A zip with every distinct part inside as STL and STEP (DXF for sheet parts), plus a cut list">
           <Icon name="download" /> Fabrication package
         </a>
       </div>

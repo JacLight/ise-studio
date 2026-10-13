@@ -206,7 +206,7 @@ export function useEdgeEditor(props: {
         <div className="edge-row">
           <div className="segmented" role="radiogroup" aria-label="Kind">
             {(["fillet", "chamfer"] as Kind[]).map((k) => (
-              <button key={k} type="button" role="radio" aria-checked={kind === k} className={kind === k ? "active" : ""} onClick={() => setKind(k)}>
+              <button title={k === "fillet" ? "Round the picked edges to a radius" : "Bevel the picked edges flat, a distance back from the edge"} key={k} type="button" role="radio" aria-checked={kind === k} className={kind === k ? "active" : ""} onClick={() => setKind(k)}>
                 {k === "fillet" ? <RoundGlyph /> : <BevelGlyph />}
                 {LABEL[k]}
               </button>
@@ -231,7 +231,7 @@ export function useEdgeEditor(props: {
             <small>mm</small>
           </label>
           {count > 0 && (
-            <button type="button" className="link-button" onClick={() => setPicked(new Set())}>
+            <button title="Unpick every picked edge" type="button" className="link-button" onClick={() => setPicked(new Set())}>
               Clear
             </button>
           )}
@@ -241,10 +241,10 @@ export function useEdgeEditor(props: {
           cancels
         </p>
         <div className="sketch-actions">
-          <button type="button" className="primary" onClick={apply} disabled={!count || !sizeOk || !!problem || busy}>
+          <button title="Apply to the picked edges (Enter)" type="button" className="primary" onClick={apply} disabled={!count || !sizeOk || !!problem || busy}>
             <Icon name="check" /> {LABEL[kind]} {count ? `${count} ${count === 1 ? "edge" : "edges"}` : ""}
           </button>
-          <button type="button" className="secondary" onClick={stop}>
+          <button title="Leave without changing the part (Esc)" type="button" className="secondary" onClick={stop}>
             Cancel
           </button>
         </div>

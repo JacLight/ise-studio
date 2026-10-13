@@ -44,6 +44,13 @@ function show(el: HTMLElement) {
   if (!tip.isConnected) document.body.append(tip);
   tip.textContent = text;
   tip.hidden = false;
+  // In the top layer, so it shows over a modal dialog too (stock parts, forms):
+  // a popover shown now goes on top of whatever is there.
+  if ("showPopover" in tip) {
+    tip.popover = "manual";
+    if (tip.matches(":popover-open")) tip.hidePopover();
+    tip.showPopover();
+  }
   const r = el.getBoundingClientRect();
   const t = tip.getBoundingClientRect();
   const gap = 6;
@@ -62,6 +69,7 @@ function hide() {
   }
   if (tip && !tip.hidden) {
     tip.hidden = true;
+    if ("hidePopover" in tip && tip.matches(":popover-open")) tip.hidePopover();
     lastHidden = performance.now();
   }
   current = null;

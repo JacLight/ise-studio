@@ -205,7 +205,7 @@ function Composer(props: {
         {props.extra}
         <span className="composer-gap" />
         {props.onCancel && (
-          <button type="button" className="composer-cancel" onClick={props.onCancel}>
+          <button title="Discard this comment (Esc)" type="button" className="composer-cancel" onClick={props.onCancel}>
             Cancel
           </button>
         )}
@@ -274,7 +274,7 @@ function Message(props: {
                   <Icon name="arrow" />
                 </button>
               )}
-              <button type="button" className="ib" title="Edit" aria-label="Edit comment" onClick={() => setEditing(true)}>
+              <button type="button" className="ib" title="Edit this comment" aria-label="Edit comment" onClick={() => setEditing(true)}>
                 <Icon name="pencil" />
               </button>
               <button type="button" className="ib" title={props.root ? "Delete thread" : "Delete reply"} aria-label={props.root ? "Delete thread" : "Delete reply"} onClick={() => setConfirm(true)}>
@@ -307,10 +307,10 @@ function Message(props: {
         {confirm && (
           <div className="comment-confirm" role="alert">
             {props.root ? "Delete this thread and its replies?" : "Delete this reply?"}
-            <button type="button" className="danger" onClick={() => void props.run("comment.delete", { target: props.id, author: props.me }).then((r) => r !== null && props.onDeleted?.())}>
+            <button title={props.root ? "Delete this thread and all its replies" : "Delete this reply"} type="button" className="danger" onClick={() => void props.run("comment.delete", { target: props.id, author: props.me }).then((r) => r !== null && props.onDeleted?.())}>
               Delete
             </button>
-            <button type="button" onClick={() => setConfirm(false)}>
+            <button title="Keep it, don't delete" type="button" onClick={() => setConfirm(false)}>
               Keep
             </button>
           </div>
@@ -438,7 +438,7 @@ export function ThreadCard(props: {
             <MarkupTools tool={props.tool ?? null} strokes={addingTo.strokes.length} onTool={(x) => props.onTool?.(x)} onUndo={undo} />
             <span className="comment-adding-what">{addingTo.strokes.length ? marksText(addingTo.strokes.length) : addingTo.target === t.id ? "Draw on your comment" : "Draw on your reply"}</span>
             <span className="composer-gap" />
-            <button
+            <button title="Stop drawing and drop the marks"
               type="button"
               className="composer-cancel"
               onClick={() => {
@@ -448,7 +448,7 @@ export function ThreadCard(props: {
             >
               Cancel
             </button>
-            <button type="button" className="primary" disabled={!addingTo.strokes.length || saving} onClick={() => void saveMarks()}>
+            <button title="Add the drawn marks to the comment" type="button" className="primary" disabled={!addingTo.strokes.length || saving} onClick={() => void saveMarks()}>
               Add
             </button>
           </div>
@@ -537,14 +537,14 @@ export function CommentsPanel(props: {
             ["all", "All"],
           ] as const
         ).map(([k, label]) => (
-          <button key={k} type="button" role="tab" aria-selected={props.filter === k} className={props.filter === k ? "active" : ""} onClick={() => props.onFilter(k)}>
+          <button title={k === "open" ? "Show threads still open" : k === "resolved" ? "Show resolved threads" : "Show every thread"} key={k} type="button" role="tab" aria-selected={props.filter === k} className={props.filter === k ? "active" : ""} onClick={() => props.onFilter(k)}>
             {label.trim()}
           </button>
         ))}
       </div>
       <div className="comments-tools">
         {!props.readOnly && (
-          <button type="button" className="secondary" onClick={props.onNew}>
+          <button title="Pin a new comment on the model (C)" type="button" className="secondary" onClick={props.onNew}>
             <Icon name="comment" /> New comment <kbd>C</kbd>
           </button>
         )}
@@ -575,7 +575,7 @@ export function CommentsPanel(props: {
         <ul className="comment-list">
           {shown.map((t) => (
             <li key={t.id}>
-              <button type="button" className={`comment-row ${props.active === t.id ? "active" : ""} ${t.resolved ? "is-resolved" : ""}`} onClick={() => props.onOpen(t.id)}>
+              <button title={`Open comment ${t.number} by ${t.author}`} type="button" className={`comment-row ${props.active === t.id ? "active" : ""} ${t.resolved ? "is-resolved" : ""}`} onClick={() => props.onOpen(t.id)}>
                 <span className="comment-num" style={{ "--who": colorFor(t.author) } as React.CSSProperties}>
                   {t.resolved ? <Icon name="check" /> : t.number}
                 </span>

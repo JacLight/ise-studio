@@ -121,13 +121,13 @@ function Turn({ id, version, motion, parts, onTurn }: { id: string; version: unk
       <div className="gear-turn-row gear-turn-sub">
         <div className="segmented" role="group" aria-label="Driving speed">
           {RPMS.map((r) => (
-            <button key={r} type="button" className={r === rpm ? "active" : ""} aria-pressed={r === rpm} onClick={() => setRpm(r)}>
+            <button title={`Turn the driving gear at ${r} revolutions a minute`} key={r} type="button" className={r === rpm ? "active" : ""} aria-pressed={r === rpm} onClick={() => setRpm(r)}>
               {r} rpm
             </button>
           ))}
         </div>
         {active && (
-          <button type="button" className="gear-turn-reset" onClick={back}>
+          <button title="Stop and put the gears back as drawn" type="button" className="gear-turn-reset" onClick={back}>
             As drawn
           </button>
         )}
@@ -223,7 +223,7 @@ export function GearCheck({
             <small>rpm</small>
           </span>
         </label>
-        <button type="button" className="secondary" onClick={run} disabled={state.kind === "busy"}>
+        <button title="Turn the train with this torque and speed: every mesh, speed, tooth strength and clash" type="button" className="secondary" onClick={run} disabled={state.kind === "busy"}>
           <Icon name="rotate" /> {state.kind === "busy" ? "Turning…" : "Check"}
         </button>
       </div>

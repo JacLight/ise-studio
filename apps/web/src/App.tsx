@@ -1576,7 +1576,7 @@ export function App({ engine }: { engine: Engine }) {
           <div className="empty-hint">
             <p>Start with a part, ask Forma AI, or drop a file here: STEP, IGES, STL, OBJ, PLY, glTF, 3MF, or a DXF/SVG drawing.</p>
             <div className="empty-actions">
-              <button type="button" className="primary" onClick={addPart}>
+              <button title="Add a box part to start shaping" type="button" className="primary" onClick={addPart}>
                 Add box part
               </button>
               <label className="secondary import-step">
@@ -1613,11 +1613,11 @@ export function App({ engine }: { engine: Engine }) {
                   <b>{isGroup ? g!.name : `${all.length} items`}</b>
                   {isGroup ? ` · ${all.length} items · Alt-click picks one` : " selected"} · drag the arrows to move them together · Delete removes them · Shift-click adds or takes away · Esc
                   {isGroup ? (
-                    <button type="button" className="hint-action" onClick={() => void run("core.entity.delete", { target: g!.id }).then((ok) => ok && notify(`Ungrouped ${g!.name}`))}>
+                    <button title={`Ungroup ${g!.name}: the items stay, the group goes`} type="button" className="hint-action" onClick={() => void run("core.entity.delete", { target: g!.id }).then((ok) => ok && notify(`Ungrouped ${g!.name}`))}>
                       Ungroup
                     </button>
                   ) : (
-                    <button
+                    <button title={`Group the ${all.length} selected items so they select and move together`}
                       type="button"
                       className="hint-action"
                       onClick={() => {
@@ -1845,10 +1845,10 @@ export function App({ engine }: { engine: Engine }) {
                 return (
                   <>
                     <div className="seg" role="tablist">
-                      <button type="button" role="tab" aria-selected={objectsTab === "tree"} className={objectsTab === "tree" ? "active" : ""} onClick={() => setObjectsTab("tree")}>
+                      <button title="The building's parts as a tree" type="button" role="tab" aria-selected={objectsTab === "tree"} className={objectsTab === "tree" ? "active" : ""} onClick={() => setObjectsTab("tree")}>
                         Components
                       </button>
-                      <button type="button" role="tab" aria-selected={objectsTab === "stacking"} className={objectsTab === "stacking" ? "active" : ""} onClick={() => setObjectsTab("stacking")}>
+                      <button title="The building floor by floor" type="button" role="tab" aria-selected={objectsTab === "stacking"} className={objectsTab === "stacking" ? "active" : ""} onClick={() => setObjectsTab("stacking")}>
                         Stacking plan
                       </button>
                     </div>
@@ -1876,7 +1876,7 @@ export function App({ engine }: { engine: Engine }) {
                     {[...state.entities.values()]
                       .filter((e) => sketchOf(e))
                       .map((e) => (
-                        <button key={e.id} type="button" className={`list-row ${sketcher.editing === e.id ? "active" : ""}`} onClick={() => sketcher.edit(e.id)}>
+                        <button title={`Edit the sketch ${sketchOf(e)!.name}`} key={e.id} type="button" className={`list-row ${sketcher.editing === e.id ? "active" : ""}`} onClick={() => sketcher.edit(e.id)}>
                           <Icon name="pencil" />
                           <span>
                             {sketchOf(e)!.name}

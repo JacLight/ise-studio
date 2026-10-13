@@ -108,7 +108,7 @@ export function SheetWorkspace(props: { entities: ReadonlyMap<string, EntityView
         <aside className="data-side">
           <h3 className="panel-section">Sheets</h3>
           {sheets.map((e) => (
-            <button key={e.id} type="button" className={`list-row ${current === e.id ? "active" : ""}`} onClick={() => setCurrent(e.id)}>
+            <button key={e.id} type="button" className={`list-row ${current === e.id ? "active" : ""}`} title={`Open the sheet ${sheetOf(e)!.name}`} onClick={() => setCurrent(e.id)}>
               <Icon name="table" />
               <span>
                 {sheetOf(e)!.name}
@@ -119,7 +119,7 @@ export function SheetWorkspace(props: { entities: ReadonlyMap<string, EntityView
             </button>
           ))}
           <div className="data-actions">
-            <button type="button" className="secondary" onClick={newSheet}>
+            <button type="button" className="secondary" title="Make an empty sheet for numbers, text and formulas" onClick={newSheet}>
               <Icon name="plus" /> New sheet
             </button>
             <FilePick label="Import CSV / Excel" onFile={(f) => void importSheet(f)} />
@@ -132,10 +132,10 @@ export function SheetWorkspace(props: { entities: ReadonlyMap<string, EntityView
                 {setOf(e)!.name}
                 <small className="row-count">{setOf(e)!.params.length} values</small>
               </span>
-              <a className="link-button" href={projectUrl(`/table/${e.id}.csv`)} download>
+              <a className="link-button" href={projectUrl(`/table/${e.id}.csv`)} download title={`Download the parameter set ${setOf(e)!.name} as a CSV table`}>
                 CSV
               </a>
-              <a className="link-button" href={projectUrl(`/table/${e.id}.xlsx`)} download>
+              <a className="link-button" href={projectUrl(`/table/${e.id}.xlsx`)} download title={`Download the parameter set ${setOf(e)!.name} as an Excel workbook`}>
                 XLSX
               </a>
               <FilePick
@@ -163,10 +163,10 @@ export function SheetWorkspace(props: { entities: ReadonlyMap<string, EntityView
                 {(e.components["shape.program"] as { name: string }).name}
                 <small className="row-count">{configsOf(e)!.rows.length} configurations</small>
               </span>
-              <a className="link-button" href={projectUrl(`/table/${e.id}.csv`)} download>
+              <a className="link-button" href={projectUrl(`/table/${e.id}.csv`)} download title={`Download the configurations of ${(e.components["shape.program"] as { name: string }).name} as a CSV table`}>
                 CSV
               </a>
-              <a className="link-button" href={projectUrl(`/table/${e.id}.xlsx`)} download>
+              <a className="link-button" href={projectUrl(`/table/${e.id}.xlsx`)} download title={`Download the configurations of ${(e.components["shape.program"] as { name: string }).name} as an Excel workbook`}>
                 XLSX
               </a>
               <FilePick
@@ -188,7 +188,7 @@ export function SheetWorkspace(props: { entities: ReadonlyMap<string, EntityView
               <Icon name="table" />
               <p>A sheet holds the numbers a design runs on: sizes, a load table, a clearance budget, a cut list.</p>
               <p className="muted">Type numbers with units (200 mm, 2 in, 45°), text, or formulas (=B2*2, =sum(B2:B9), =Desk.width/2). Name a cell and link any parameter to it.</p>
-              <button type="button" className="primary" onClick={newSheet}>
+              <button type="button" className="primary" title="Make an empty sheet for numbers, text and formulas" onClick={newSheet}>
                 <Icon name="plus" /> New sheet
               </button>
             </div>
@@ -250,10 +250,10 @@ function SheetGrid(props: { entity: EntityView; run: Run; notify: (t: string) =>
           onBlur={() => title.trim() && title.trim() !== sheet.name && void run("sheet.set", { target: entity.id, name: title.trim() })}
           onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
         />
-        <a className="link-button" href={projectUrl(`/table/${entity.id}.csv`)} download>
+        <a className="link-button" href={projectUrl(`/table/${entity.id}.csv`)} download title={`Download ${sheet.name} as a CSV table`}>
           <Icon name="download" /> CSV
         </a>
-        <a className="link-button" href={projectUrl(`/table/${entity.id}.xlsx`)} download>
+        <a className="link-button" href={projectUrl(`/table/${entity.id}.xlsx`)} download title={`Download ${sheet.name} as an Excel workbook`}>
           <Icon name="download" /> Excel
         </a>
         <FilePick label="Replace from file" onFile={props.onImport} className="compact" />
@@ -371,7 +371,7 @@ function SheetGrid(props: { entity: EntityView; run: Run; notify: (t: string) =>
       </div>
       <p className="sheet-foot muted small">
         Link a parameter to {at}: <code>{useText}</code>
-        <button type="button" className="link-button" onClick={() => void navigator.clipboard?.writeText(useText).then(() => props.notify(`Copied ${useText}`))}>
+        <button type="button" className="link-button" title={`Copy ${useText}, to type into a parameter and link it to this cell`} onClick={() => void navigator.clipboard?.writeText(useText).then(() => props.notify(`Copied ${useText}`))}>
           <Icon name="copy" /> Copy
         </button>
         · Formulas: + − × ÷ ^, sum average count min max round sqrt sin cos… ranges B2:B9, other parameters Name.key; units 5mm 2in 45°.

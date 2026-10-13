@@ -126,7 +126,7 @@ export function useVersionActions() {
         </>
       )}
       <div className="row-buttons">
-        <button type="button" className="primary" disabled={busy} onClick={() => void go()}>
+        <button title={ask.kind === "restore" ? `Bring the design back to ${ask.label} as one new change` : `Start a new project from ${ask.label}`} type="button" className="primary" disabled={busy} onClick={() => void go()}>
           {ask.kind === "restore" ? (
             <>
               <Icon name="undo" /> Restore
@@ -137,7 +137,7 @@ export function useVersionActions() {
             </>
           )}
         </button>
-        <button type="button" className="secondary" onClick={() => setAsk(null)}>
+        <button title="Close without changing anything" type="button" className="secondary" onClick={() => setAsk(null)}>
           Cancel
         </button>
       </div>
@@ -209,7 +209,7 @@ export function Compare(props: { project: string; which: Which; onPick?: (id: st
             const isOpen = open.has(c.id);
             return (
               <li key={c.id} className={`chg-row ${c.change}`}>
-                <button
+                <button title={c.change === "removed" ? `${c.name ?? kindName(c)}: show what changed` : `Select ${c.name ?? kindName(c)} and show what changed`}
                   type="button"
                   className="chg-head"
                   onClick={() => {
@@ -316,7 +316,7 @@ function BranchCard(props: { branch: BranchInfo; entities: ReadonlyMap<string, E
           <small>{history}</small>
         </span>
         {b.from_exists && (
-          <button type="button" className="link-button" onClick={() => openProject(b.from)}>
+          <button title={`Open ${b.from_title}, the project this branched from`} type="button" className="link-button" onClick={() => openProject(b.from)}>
             Open original
           </button>
         )}
@@ -337,7 +337,7 @@ function BranchCard(props: { branch: BranchInfo; entities: ReadonlyMap<string, E
               )}
               <small>{!b.behind ? "Nothing new there" : b.pulled_at ? "Since your last pull" : "Since you branched"}</small>
             </span>
-            <button type="button" className={b.behind ? "primary" : "secondary"} disabled={!b.behind || busy !== null} onClick={() => void pull()}>
+            <button title={b.behind ? `Bring the newer changes from ${b.from_title} into this branch` : `Nothing new in ${b.from_title} to pull`} type="button" className={b.behind ? "primary" : "secondary"} disabled={!b.behind || busy !== null} onClick={() => void pull()}>
               {busy === "pull" ? "Pulling…" : "Pull"}
             </button>
           </div>
@@ -355,7 +355,7 @@ function BranchCard(props: { branch: BranchInfo; entities: ReadonlyMap<string, E
               )}
               <small>{b.ahead ? "Made on this branch" : b.merged_at ? "Since your last merge" : "Nothing made here yet"}</small>
             </span>
-            <button type="button" className={b.ahead ? "primary" : "secondary"} disabled={!b.ahead || busy !== null} onClick={() => void mergeBack()}>
+            <button title={b.ahead ? `Send the changes made here into ${b.from_title}` : `Nothing here that ${b.from_title} lacks`} type="button" className={b.ahead ? "primary" : "secondary"} disabled={!b.ahead || busy !== null} onClick={() => void mergeBack()}>
               {busy === "merge" ? "Merging…" : "Merge back"}
             </button>
           </div>
@@ -446,7 +446,7 @@ export function VersionsSection(props: { revision: number; me: string; run: Run;
       <div className="versions-head">
         <h3 className="panel-section">Versions</h3>
         {!marking && (
-          <button type="button" className="link-button" onClick={() => setMarking(true)}>
+          <button title="Name the project as it is now, to come back to, compare or branch from" type="button" className="link-button" onClick={() => setMarking(true)}>
             <Icon name="plus" /> Mark this version
           </button>
         )}
@@ -463,10 +463,10 @@ export function VersionsSection(props: { revision: number; me: string; run: Run;
           </label>
           <p className="small muted">{props.markAt !== null && props.markAt !== props.revision ? `Marks the project as it was at revision ${props.markAt}.` : "Marks the project as it is now."} Teammates see it too.</p>
           <div className="row-buttons">
-            <button type="submit" className="primary" disabled={!name.trim()}>
+            <button title="Save this name for the version" type="submit" className="primary" disabled={!name.trim()}>
               <Icon name="check" /> Mark version
             </button>
-            <button
+            <button title="Close without naming a version"
               type="button"
               className="secondary"
               onClick={() => {
@@ -505,7 +505,7 @@ export function VersionsSection(props: { revision: number; me: string; run: Run;
                   <button type="button" className="secondary" onClick={() => openVersion({ version: v.id })} title="Look at it, read-only">
                     <Icon name="eye" /> View
                   </button>
-                  <button type="button" className={`secondary ${comparing === v.id ? "active" : ""}`} aria-pressed={comparing === v.id} onClick={() => setComparing((c) => (c === v.id ? null : v.id))}>
+                  <button title={comparing === v.id ? "Stop comparing" : `List what changed between ${v.name} and now`} type="button" className={`secondary ${comparing === v.id ? "active" : ""}`} aria-pressed={comparing === v.id} onClick={() => setComparing((c) => (c === v.id ? null : v.id))}>
                     Compare
                   </button>
                   <button type="button" className="ib" aria-label={`More for ${v.name}`} aria-expanded={menu === v.id} onClick={() => setMenu((m) => (m === v.id ? null : v.id))}>
@@ -513,13 +513,13 @@ export function VersionsSection(props: { revision: number; me: string; run: Run;
                   </button>
                   {menu === v.id && (
                     <div className="version-menu" role="menu">
-                      <button type="button" role="menuitem" onClick={() => (setMenu(null), void actions.restore({ version: v.id }, v.name))}>
+                      <button title={`Bring the design back to ${v.name} as one new change`} type="button" role="menuitem" onClick={() => (setMenu(null), void actions.restore({ version: v.id }, v.name))}>
                         <Icon name="undo" /> Restore this version
                       </button>
-                      <button type="button" role="menuitem" onClick={() => (setMenu(null), void actions.branch({ version: v.id }, v.name))}>
+                      <button title={`Start a new project from ${v.name}`} type="button" role="menuitem" onClick={() => (setMenu(null), void actions.branch({ version: v.id }, v.name))}>
                         <Icon name="copy" /> Branch from it
                       </button>
-                      <button
+                      <button title={`Rename the version ${v.name}`}
                         type="button"
                         role="menuitem"
                         onClick={() => {
@@ -530,7 +530,7 @@ export function VersionsSection(props: { revision: number; me: string; run: Run;
                       >
                         <Icon name="pencil" /> Rename
                       </button>
-                      <button type="button" role="menuitem" className="danger" onClick={() => (setMenu(null), void props.run("version.delete", { target: v.id }))}>
+                      <button title={`Remove the version name ${v.name} (the design and history stay)`} type="button" role="menuitem" className="danger" onClick={() => (setMenu(null), void props.run("version.delete", { target: v.id }))}>
                         <Icon name="trash" /> Remove the name
                       </button>
                     </div>

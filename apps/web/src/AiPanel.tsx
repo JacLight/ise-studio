@@ -199,7 +199,7 @@ export function AiPanel(props: {
         <>
           <div className="ai-context">
             <span>{props.context}</span>
-            <button type="button" className={`voice-toggle ${props.voice ? "active" : ""}`} onClick={props.onVoice}>
+            <button title={props.voice ? "Back to typing with Forma AI" : "Talk to Forma AI (preview)"} type="button" className={`voice-toggle ${props.voice ? "active" : ""}`} onClick={props.onVoice}>
               <Icon name={props.voice ? "comment" : "mic"} />
               {props.voice ? "Chat" : "Voice"}
             </button>
@@ -211,7 +211,7 @@ export function AiPanel(props: {
                 <h2>Room to think out loud.</h2>
                 <p>Voice mode preview</p>
                 <span>Microphone off · No audio is recorded</span>
-                <button type="button" className="secondary" onClick={props.onVoice}>
+                <button title="Back to typing with Forma AI" type="button" className="secondary" onClick={props.onVoice}>
                   <Icon name="comment" /> Back to chat
                 </button>
               </div>
@@ -263,7 +263,7 @@ export function AiPanel(props: {
                 <p>Start with an idea. Shape it here, together.</p>
                 <div className="suggestions">
                   {SUGGESTIONS.map((s) => (
-                    <button type="button" key={s} onClick={() => props.onSubmit(s)}>
+                    <button title={`Ask Forma AI: ${s}`} type="button" key={s} onClick={() => props.onSubmit(s)}>
                       {s} <Icon name="chevron" />
                     </button>
                   ))}
@@ -275,10 +275,10 @@ export function AiPanel(props: {
                 <span>PROPOSED CHANGE</span>
                 <p>{props.proposal.label}</p>
                 <div>
-                  <button type="button" className="primary" onClick={props.onApply} disabled={props.busy}>
+                  <button title="Make the proposed change to the model (undoable)" type="button" className="primary" onClick={props.onApply} disabled={props.busy}>
                     <Icon name="check" /> Apply change
                   </button>
-                  <button type="button" className="secondary" onClick={props.onDiscard} disabled={props.busy}>
+                  <button title="Drop the proposed change" type="button" className="secondary" onClick={props.onDiscard} disabled={props.busy}>
                     Discard
                   </button>
                 </div>

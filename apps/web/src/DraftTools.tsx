@@ -326,6 +326,7 @@ export function useDraftTool(props: { entities: ReadonlyMap<string, EntityView>;
         <label>
           Plane
           <select
+            title="The working plane you draw on: a main plane or a saved one"
             value={choice.kind === "saved" ? choice.id : choice.kind}
             onChange={(e) => {
               const v = e.target.value;
@@ -379,6 +380,7 @@ export function useDraftTool(props: { entities: ReadonlyMap<string, EntityView>;
           <label>
             Measure
             <select
+              title="What the dimension measures, and what to click for it"
               value={measure}
               onChange={(e) => {
                 setMeasure(e.target.value);
@@ -397,12 +399,12 @@ export function useDraftTool(props: { entities: ReadonlyMap<string, EntityView>;
         )}
         {(tool === "rectangle" || tool === "polygon" || tool === "circle" || tool === "wire" || tool === "bspline") && (
           <label className="check">
-            <input type="checkbox" checked={hatch} onChange={(e) => setHatch(e.target.checked)} /> Hatch
+            <input type="checkbox" checked={hatch} title="Fill closed shapes you draw with hatch lines" onChange={(e) => setHatch(e.target.checked)} /> Hatch
           </label>
         )}
         <label>
           Layer
-          <select value={layer} onChange={(e) => setLayer(e.target.value)}>
+          <select value={layer} title="The layer new draft objects go on" onChange={(e) => setLayer(e.target.value)}>
             <option value="">None</option>
             {layers.map((e) => (
               <option key={e.id} value={e.id}>
@@ -468,7 +470,7 @@ export function DraftSection(props: { entities: ReadonlyMap<string, EntityView>;
         const d = e.draft;
         const fact = d?.value != null ? d.label?.[1] : d?.area != null ? `${showLength(d.length, prefs)} · ${Number(d.area.toFixed(1))} mm²` : d && d.length > 0 ? showLength(d.length, prefs) : o.text;
         return (
-          <button key={e.id} type="button" className={`list-row ${props.selected === e.id ? "active" : ""}`} onClick={() => props.onSelect(e.id)}>
+          <button key={e.id} type="button" className={`list-row ${props.selected === e.id ? "active" : ""}`} title={`Select the draft ${o.kind} ${o.name}`} onClick={() => props.onSelect(e.id)}>
             <Icon name={toolIcon(o.kind)} />
             <span>
               {o.name}
@@ -477,7 +479,7 @@ export function DraftSection(props: { entities: ReadonlyMap<string, EntityView>;
           </button>
         );
       })}
-      <button type="button" className="secondary add-part" onClick={props.onDraft}>
+      <button type="button" className="secondary add-part" title="Draw lines, shapes, text and dimensions on a working plane (G)" onClick={props.onDraft}>
         <Icon name="dDim" /> Draft on a plane
       </button>
       <h3 className="panel-section">Layers</h3>
@@ -517,6 +519,7 @@ export function DraftSection(props: { entities: ReadonlyMap<string, EntityView>;
       <button
         type="button"
         className="secondary add-part"
+        title={picked.length ? "Make a layer holding the selected items" : "Make an empty layer to show, hide, colour and lock things together"}
         onClick={() => {
           const used = new Set(layers.map((e) => layerOf(e)!.name));
           let n = 1;
@@ -584,11 +587,11 @@ export function DraftProperties(props: { entity: EntityView; entities: ReadonlyM
       {closed && (
         <div className="draft-hatch">
           <label className="check">
-            <input type="checkbox" checked={!!o.hatch} onChange={(e) => void set({ hatch: e.target.checked ? { pattern: "lines", angle: 45, spacing: 3 } : null })} /> Hatch
+            <input type="checkbox" checked={!!o.hatch} title="Fill this closed shape with hatch lines" onChange={(e) => void set({ hatch: e.target.checked ? { pattern: "lines", angle: 45, spacing: 3 } : null })} /> Hatch
           </label>
           {o.hatch && (
             <>
-              <select value={o.hatch.pattern} onChange={(e) => void set({ hatch: { ...o.hatch, pattern: e.target.value } })}>
+              <select value={o.hatch.pattern} title="Hatch pattern: single lines or crossed" onChange={(e) => void set({ hatch: { ...o.hatch, pattern: e.target.value } })}>
                 <option value="lines">Lines</option>
                 <option value="cross">Cross</option>
               </select>
@@ -601,11 +604,12 @@ export function DraftProperties(props: { entity: EntityView; entities: ReadonlyM
       <div className="draft-row">
         <label>
           Colour
-          <input type="color" value={/^#[0-9a-f]{6}$/i.test(o.color ?? "") ? o.color! : "#2563c9"} onChange={(e) => void set({ color: e.target.value })} />
+          <input type="color" value={/^#[0-9a-f]{6}$/i.test(o.color ?? "") ? o.color! : "#2563c9"} title={`Colour of ${o.name} (overrides its layer's colour)`} onChange={(e) => void set({ color: e.target.value })} />
         </label>
         <label>
           Layer
           <select
+            title={`The layer ${o.name} is on`}
             value={inLayer?.id ?? ""}
             onChange={(e) => {
               const v = e.target.value;
@@ -639,6 +643,7 @@ export function DraftProperties(props: { entity: EntityView; entities: ReadonlyM
         <button
           type="button"
           className="secondary danger"
+          title={`Delete the draft object ${o.name} (Delete)`}
           onClick={() => {
             props.onSelect(null);
             void run("core.entity.delete", { target: entity.id });
@@ -711,7 +716,7 @@ export function ArraySection(props: { entity: EntityView; entities: ReadonlyMap<
           <button type="button" className="secondary" onClick={() => void run("draft.array.delete", { target: led.id, keep: true })} title="The copies stay where they are, as ordinary instances">
             End array, keep copies
           </button>
-          <button type="button" className="secondary danger" onClick={() => void run("draft.array.delete", { target: led.id, keep: false })}>
+          <button type="button" className="secondary danger" title="Delete the array and all its copies, leaving only the original" onClick={() => void run("draft.array.delete", { target: led.id, keep: false })}>
             <Icon name="trash" /> Remove copies
           </button>
         </div>
@@ -723,7 +728,7 @@ export function ArraySection(props: { entity: EntityView; entities: ReadonlyMap<
       <h3 className="panel-section">Array</h3>
       <div className="seg" role="tablist">
         {(["linear", "polar", "path"] as const).map((k) => (
-          <button key={k} type="button" role="tab" aria-selected={kind === k} className={kind === k ? "active" : ""} onClick={() => setKind(k)}>
+          <button key={k} type="button" role="tab" aria-selected={kind === k} className={kind === k ? "active" : ""} title={k === "linear" ? "Copies in a straight row, or a grid with more rows" : k === "polar" ? "Copies spaced evenly round an axis" : "Copies spaced along a draft line or curve"} onClick={() => setKind(k)}>
             {k === "linear" ? "Row / grid" : k === "polar" ? "Round" : "Along a path"}
           </button>
         ))}
@@ -737,7 +742,7 @@ export function ArraySection(props: { entity: EntityView; entities: ReadonlyMap<
           <>
             <label className="field">
               Along
-              <select value={dir} onChange={(e) => setDir(e.target.value as "x" | "y" | "z")}>
+              <select value={dir} title="The axis the row of copies runs along" onChange={(e) => setDir(e.target.value as "x" | "y" | "z")}>
                 <option value="x">X</option>
                 <option value="y">Y</option>
                 <option value="z">Z</option>
@@ -752,7 +757,7 @@ export function ArraySection(props: { entity: EntityView; entities: ReadonlyMap<
         {kind === "path" && (
           <label className="field">
             Path
-            <select value={path} onChange={(e) => setPath(e.target.value)}>
+            <select value={path} title="The draft line or curve the copies follow" onChange={(e) => setPath(e.target.value)}>
               <option value="">Pick a draft line…</option>
               {paths.map((e) => (
                 <option key={e.id} value={e.id}>
@@ -768,6 +773,7 @@ export function ArraySection(props: { entity: EntityView; entities: ReadonlyMap<
       <button
         type="button"
         className="primary"
+        title={`Make ${count} copies of this part, each a real instance placed by the array`}
         disabled={kind === "path" && !path}
         onClick={async () => {
           const params: Record<string, unknown> = { source: entity.id, kind, count };

@@ -131,7 +131,7 @@ export function ViewToolbar({ tools, selected, onFitAll }: { tools: ViewTools; s
         <div className="vt-card measure-card" aria-live="polite">
           <div className="vt-card-head">
             <strong>Measure</strong>
-            <button type="button" className="vt-link" onClick={() => tools.measure.clear()} disabled={!s.card.length}>
+            <button type="button" className="vt-link" title="Clear the measurements and start a new one" onClick={() => tools.measure.clear()} disabled={!s.card.length}>
               Clear
             </button>
             <button type="button" className="vt-close" onClick={() => tools.setMeasuring(false)} aria-label="Stop measuring">
@@ -167,10 +167,10 @@ function SectionCard(props: { tools: ViewTools; planes: SectionPlane[]; capped: 
     <div className="vt-card section-card">
       <div className="vt-card-head">
         <strong>Section</strong>
-        <button type="button" className="vt-link" onClick={() => tools.setSection([])} disabled={!planes.length}>
+        <button type="button" className="vt-link" title="Remove every section cut and show the whole model" onClick={() => tools.setSection([])} disabled={!planes.length}>
           Clear
         </button>
-        <button type="button" className="vt-close" onClick={props.onClose} aria-label="Close">
+        <button type="button" className="vt-close" onClick={props.onClose} aria-label="Close the section card (the cuts stay)">
           ×
         </button>
       </div>
@@ -184,7 +184,7 @@ function SectionCard(props: { tools: ViewTools; planes: SectionPlane[]; capped: 
         return (
           <div key={axis} className={`section-row ${p ? "is-on" : ""}`}>
             <label className="section-axis">
-              <input type="checkbox" checked={!!p} onChange={(e) => (e.target.checked ? tools.sectionAxis(axis, mid) : tools.setSection(planes.filter((q) => q.id !== axis)))} />
+              <input type="checkbox" checked={!!p} title={p ? `Stop cutting across ${axis.toUpperCase()}` : `Cut the model across ${axis.toUpperCase()}, at its middle to start`} onChange={(e) => (e.target.checked ? tools.sectionAxis(axis, mid) : tools.setSection(planes.filter((q) => q.id !== axis)))} />
               {axis.toUpperCase()}
             </label>
             <input
@@ -194,30 +194,31 @@ function SectionCard(props: { tools: ViewTools; planes: SectionPlane[]; capped: 
               step={step}
               value={value}
               disabled={!p}
+              title={`Slide the ${axis.toUpperCase()} cut through the model`}
               aria-label={`${axis.toUpperCase()} section offset`}
               onChange={(e) => tools.sectionAxis(axis, Number(e.target.value))}
             />
             <input type="number" className="section-num" value={Number(value.toFixed(2))} step={1} disabled={!p} aria-label={`${axis.toUpperCase()} offset (mm)`} onChange={(e) => tools.sectionAxis(axis, Number(e.target.value))} />
-            <button type="button" className={`vt-btn vt-small ${p?.flip ? "is-on" : ""}`} disabled={!p} onClick={() => p && tools.sectionAxis(axis, p.at[k], !p.flip)} title="Keep the other side">
+            <button type="button" className={`vt-btn vt-small ${p?.flip ? "is-on" : ""}`} disabled={!p} onClick={() => p && tools.sectionAxis(axis, p.at[k], !p.flip)} title={`Flip which side of the ${axis.toUpperCase()} plane is cut away`}>
               Flip
             </button>
           </div>
         );
       })}
       <div className="section-actions">
-        <button type="button" className={`vt-btn vt-small ${boxOn ? "is-on" : ""}`} onClick={() => (boxOn ? tools.setSection(planes.filter((p) => p.id.length !== 2)) : tools.sectionBox())} title="Six planes round the model; set each face with ./forma view section box">
+        <button type="button" className={`vt-btn vt-small ${boxOn ? "is-on" : ""}`} onClick={() => (boxOn ? tools.setSection(planes.filter((p) => p.id.length !== 2)) : tools.sectionBox())} title={boxOn ? "Remove the section box" : "Section box: six planes a fifth in from the model's sides (set each face with ./forma view section box)"}>
           Box
         </button>
-        <button type="button" className={`vt-btn vt-small ${props.picking ? "is-on" : ""}`} onClick={() => tools.pickSectionFace(!props.picking)} title="Click a face to cut along it">
+        <button type="button" className={`vt-btn vt-small ${props.picking ? "is-on" : ""}`} onClick={() => tools.pickSectionFace(!props.picking)} title={props.picking ? "Stop picking a face to cut along" : "Cut along a face: click the face next"}>
           {props.picking ? "Click a face…" : "On a face"}
         </button>
         {planes.some((p) => p.id === "face") && (
-          <button type="button" className="vt-btn vt-small" onClick={() => tools.setSection(planes.map((p) => (p.id === "face" ? { ...p, flip: !p.flip } : p)))}>
+          <button type="button" className="vt-btn vt-small" title="Flip which side of the face cut is cut away" onClick={() => tools.setSection(planes.map((p) => (p.id === "face" ? { ...p, flip: !p.flip } : p)))}>
             Flip face cut
           </button>
         )}
         <label className="section-cap">
-          <input type="checkbox" checked={props.capped} onChange={(e) => tools.setSection(planes, e.target.checked)} />
+          <input type="checkbox" checked={props.capped} title="Fill the cut faces solid, so you see the material and not the hollow inside" onChange={(e) => tools.setSection(planes, e.target.checked)} />
           Fill cuts
         </label>
       </div>

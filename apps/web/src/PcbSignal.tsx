@@ -83,7 +83,7 @@ function ClassCard(props: { boardId: string; c: NetClassV; t?: ClassTargets; com
       </div>
       {dirty && (
         <div className="pcb-row-actions">
-          <button type="button" className="small primary" disabled={!props.canEdit} onClick={apply}>
+          <button type="button" className="small primary" disabled={!props.canEdit} title={`Save these settings for net class ${c.name}`} onClick={apply}>
             Apply
           </button>
         </div>
@@ -144,6 +144,7 @@ export function SignalPanel(props: { boardId: string; classes: NetClassV[]; nets
             type="button"
             className="small"
             disabled={!newClass.trim()}
+            title="Add a net class with the name typed"
             onClick={() => {
               void commit("pcb.netclass.set", { board: boardId, name: newClass.trim() }, `Net class ${newClass.trim()} added`);
               setNewClass("");
@@ -201,6 +202,7 @@ export function SignalPanel(props: { boardId: string; classes: NetClassV[]; nets
             type="button"
             className="small"
             disabled={!pair.name || !pair.p || !pair.n}
+            title="Make the + and − nets a differential pair under this name"
             onClick={() => {
               void commit("pcb.pair.set", { board: boardId, ...pair }, `Pair ${pair.name} set`);
               setPair({ name: "", p: "", n: "" });
@@ -277,6 +279,7 @@ export function SignalPanel(props: { boardId: string; classes: NetClassV[]; nets
             type="button"
             className="small"
             disabled={!group.name || !group.nets}
+            title="Group these nets to be length-matched to the target"
             onClick={() => {
               const n = (s: string) => (s.trim() ? +s : undefined);
               void commit("pcb.length.group", { board: boardId, name: group.name, nets: group.nets.split(/[\s,]+/).filter(Boolean), target: n(group.target), tolerance: n(group.tolerance), max_skew: n(group.max_skew) }, `Group ${group.name} set`);
@@ -375,7 +378,7 @@ export function TunePanel(props: {
       {props.pair && (
         <div className="ps-seg">
           {(["pair", "skew", "net"] as const).map((m) => (
-            <button key={m} type="button" className={mode === m ? "on" : ""} onClick={() => setMode(m)}>
+            <button key={m} type="button" className={mode === m ? "on" : ""} title={m === "pair" ? "Meander both nets of the pair to the target length" : m === "skew" ? "Meander the shorter net only, to match the longer" : "Meander only this net to the target"} onClick={() => setMode(m)}>
               {m === "pair" ? "Pair length" : m === "skew" ? "Skew only" : "This track"}
             </button>
           ))}
@@ -401,14 +404,14 @@ export function TunePanel(props: {
         </label>
         <label>
           <span>Style</span>
-          <select value={style} onChange={(e) => setStyle(e.target.value as typeof style)} disabled={mode !== "net"}>
+          <select value={style} title="Meander shape (single tracks only)" onChange={(e) => setStyle(e.target.value as typeof style)} disabled={mode !== "net"}>
             <option value="trombone">Trombone</option>
             <option value="sawtooth">Sawtooth</option>
           </select>
         </label>
         <label>
           <span>Corners</span>
-          <select value={corner} onChange={(e) => setCorner(e.target.value as typeof corner)}>
+          <select value={corner} title="Corner shape of the meanders" onChange={(e) => setCorner(e.target.value as typeof corner)}>
             <option value="round">Round</option>
             <option value="chamfer">45°</option>
             <option value="square">Square</option>
@@ -416,7 +419,7 @@ export function TunePanel(props: {
         </label>
         {mode === "net" && (
           <label className="ps-check">
-            <input type="checkbox" checked={onlyHere} onChange={(e) => setOnlyHere(e.target.checked)} /> Only this track
+            <input type="checkbox" checked={onlyHere} title="Meander only the picked track segment, not the whole net" onChange={(e) => setOnlyHere(e.target.checked)} /> Only this track
           </label>
         )}
       </div>
@@ -444,7 +447,7 @@ export function TunePanel(props: {
         )}
       </div>
       <div className="pcb-row-actions">
-        <button type="button" className="small primary" disabled={!p || !p.edits.length} onClick={() => props.onApply(spec())}>
+        <button type="button" className="small primary" disabled={!p || !p.edits.length} title="Add the previewed meanders to the board" onClick={() => props.onApply(spec())}>
           Apply
         </button>
         <span className="pcb-note">{p ? `${p.edits.length} track${p.edits.length === 1 ? "" : "s"} meandered` : ""}</span>

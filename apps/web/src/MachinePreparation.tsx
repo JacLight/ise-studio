@@ -61,12 +61,12 @@ export function MachinePreparation() {
     <h3 className="panel-section">Prepare a machine job</h3>
     <p className="small muted">Create downloadable job files on this computer. Preparation sends no machine commands and does not establish machine readiness.</p>
     <label className="small">Controller family<br />
-      <select value={family} disabled={busy || exampleBusy} onChange={event => {
+      <select value={family} disabled={busy || exampleBusy} title="The controller the job is prepared for (choosing another clears the file)" onChange={event => {
         setFamily(event.target.value as Family); setFile(null); setPrepared(null); setError(null);
         if (upload.current) upload.current.value = "";
       }}>{families.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
     </label>
-    <p className="small"><button type="button" className="secondary" onClick={example} disabled={busy || exampleBusy}>
+    <p className="small"><button type="button" className="secondary" title="Download a sample job JSON for this controller, to edit and choose below" onClick={example} disabled={busy || exampleBusy}>
       {exampleBusy ? "Loading example…" : "Download job example"}</button></p>
     <p className="small muted">Edit the example’s profile and geometry, then choose that JSON file. Delta NC5 uses its milling format; OPEN CNC live control needs a separate SDK.</p>
     <label className="small">Job JSON file (up to 1 MiB)<br />
@@ -77,14 +77,14 @@ export function MachinePreparation() {
         else setFile(selected);
       }} />
     </label>
-    <p><button type="button" className="secondary" disabled={!file || busy || exampleBusy} onClick={prepare}>
+    <p><button type="button" className="secondary" title="Turn the chosen job JSON into job files for this controller, on this computer; no machine commands are sent" disabled={!file || busy || exampleBusy} onClick={prepare}>
       {busy ? "Preparing job…" : "Prepare offline"}</button></p>
     <div aria-live="polite">
       {error && <p className="small" role="alert">{error}</p>}
       {prepared && <>
         <p className="small"><strong>Job files prepared.</strong> No machine commands sent. Machine compatibility and setup still require verification.</p>
         <ul>{prepared.artifacts.map(artifact => <li key={artifact.name}>
-          <button type="button" className="secondary" onClick={() => downloadArtifact(artifact)}>Download {artifact.name}</button>
+          <button type="button" className="secondary" title={`Save the prepared job file ${artifact.name} (${artifact.bytes.toLocaleString()} bytes)`} onClick={() => downloadArtifact(artifact)}>Download {artifact.name}</button>
           <span className="small muted"> {artifact.bytes.toLocaleString()} bytes</span>
         </li>)}</ul>
         {prepared.warnings.map((warning, index) => <p className="small" key={index}>{warning}</p>)}

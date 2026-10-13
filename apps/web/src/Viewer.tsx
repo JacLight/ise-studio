@@ -88,6 +88,7 @@ export function Viewer({ engine }: { engine: Engine }) {
           <button
             type="button"
             className="primary"
+            title="Open the project as it is now"
             onClick={() => {
               const url = new URL(location.href);
               url.searchParams.delete("version");
@@ -178,16 +179,16 @@ export function Viewer({ engine }: { engine: Engine }) {
         </span>
         {version && (
           <span className="viewer-actions">
-            <button type="button" className="secondary" onClick={() => setComparing((c) => !c)} aria-pressed={comparing}>
+            <button type="button" className="secondary" title="List what changed between this version and the project now" onClick={() => setComparing((c) => !c)} aria-pressed={comparing}>
               Compare with now
             </button>
-            <button type="button" className="secondary" onClick={() => void actions.restore({ version: ro?.version ?? undefined, revision: revisionParam() }, ro?.label ?? "")}>
+            <button type="button" className="secondary" title={`Bring the design back to ${ro?.label ?? "this version"} as one new change`} onClick={() => void actions.restore({ version: ro?.version ?? undefined, revision: revisionParam() }, ro?.label ?? "")}>
               <Icon name="undo" /> Restore
             </button>
-            <button type="button" className="secondary" onClick={() => void actions.branch({ version: ro?.version ?? undefined, revision: revisionParam() }, ro?.label ?? "")}>
+            <button type="button" className="secondary" title={`Start a new project from ${ro?.label ?? "this version"}`} onClick={() => void actions.branch({ version: ro?.version ?? undefined, revision: revisionParam() }, ro?.label ?? "")}>
               <Icon name="copy" /> Branch
             </button>
-            <button type="button" className="primary" onClick={back}>
+            <button type="button" className="primary" title="Leave this past version and show the project as it is now" onClick={back}>
               Back to now
             </button>
           </span>
@@ -214,10 +215,10 @@ export function Viewer({ engine }: { engine: Engine }) {
         <aside className="tool-panel floating viewer-panel" aria-label="Parts and comments">
           <header className="panel-handle">
             <div className="seg" role="tablist" aria-label="Show">
-              <button type="button" role="tab" aria-selected={tab === "parts"} className={tab === "parts" ? "active" : ""} onClick={() => setTab("parts")}>
+              <button type="button" role="tab" aria-selected={tab === "parts"} className={tab === "parts" ? "active" : ""} title="The parts in this model; click one to find it" onClick={() => setTab("parts")}>
                 Parts {parts.length || ""}
               </button>
-              <button type="button" role="tab" aria-selected={tab === "comments"} className={tab === "comments" ? "active" : ""} onClick={() => setTab("comments")}>
+              <button type="button" role="tab" aria-selected={tab === "comments"} className={tab === "comments" ? "active" : ""} title="Comments on this model (the count is the open ones)" onClick={() => setTab("comments")}>
                 Comments {threads.filter((t) => !t.resolved).length || ""}
               </button>
             </div>
@@ -268,7 +269,7 @@ export function Viewer({ engine }: { engine: Engine }) {
           </div>
         </aside>
       ) : (
-        <button type="button" className="viewer-panel-open floating" onClick={() => setPanelOpen(true)}>
+        <button type="button" className="viewer-panel-open floating" title="Show the parts list and comments" onClick={() => setPanelOpen(true)}>
           <Icon name="layers" /> Parts · Comments
         </button>
       )}
@@ -289,6 +290,7 @@ export function Viewer({ engine }: { engine: Engine }) {
             key={v}
             type="button"
             className={view === v ? "active" : ""}
+            title={v === "perspective" ? "Look at the model in perspective, from an angle" : `Look straight at the model's ${v}`}
             onClick={() => {
               setView(v);
               viewport.current?.view(v);

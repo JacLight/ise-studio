@@ -47,10 +47,10 @@ export function ToolsTab(props: { boardId: string; revision: number; fab: string
   return (
     <div className="pt-calc">
       <div className="pt-switch" role="tablist">
-        <button type="button" role="tab" className={which.tool === "panel" ? "on" : ""} onClick={() => setWhich({ tool: "panel" })}>
+        <button type="button" role="tab" className={which.tool === "panel" ? "on" : ""} title="Panelize: lay out copies of this board on one panel with tabs, rails and fiducials" onClick={() => setWhich({ tool: "panel" })}>
           Panel
         </button>
-        <button type="button" role="tab" className={which.tool === "calc" ? "on" : ""} onClick={() => setWhich({ tool: "calc" })}>
+        <button type="button" role="tab" className={which.tool === "calc" ? "on" : ""} title="PCB calculators: track width, impedance, vias and more" onClick={() => setWhich({ tool: "calc" })}>
           Calculators
         </button>
       </div>
@@ -119,7 +119,7 @@ export function CalcTab() {
             <label key={i.key} className="pt-field">
               <span>{i.label}</span>
               {i.options ? (
-                <select value={mine[i.key]} onChange={(e) => set(i.key, e.target.value)}>
+                <select value={mine[i.key]} title={i.label} onChange={(e) => set(i.key, e.target.value)}>
                   {i.options.map((o) => (
                     <option key={o}>{o}</option>
                   ))}
@@ -262,7 +262,7 @@ export function PanelTab(props: { boardId: string; revision: number; fab: string
         {n("cols", "Columns", "", 1)}
         <label className="pt-field">
           <span>Separation</span>
-          <select value={spec.separation} onChange={(e) => setSpec({ ...spec, separation: e.target.value })}>
+          <select value={spec.separation} title="How the boards break apart: tabs drilled with mouse bites, V-score grooves, or solid tabs" onChange={(e) => setSpec({ ...spec, separation: e.target.value })}>
             <option value="mousebites">Tabs with mouse bites</option>
             <option value="vscore">V-score</option>
             <option value="tabs">Solid tabs</option>
@@ -270,7 +270,7 @@ export function PanelTab(props: { boardId: string; revision: number; fab: string
         </label>
         <label className="pt-field">
           <span>Frame</span>
-          <select value={spec.frame} onChange={(e) => setSpec({ ...spec, frame: e.target.value })}>
+          <select value={spec.frame} title="Waste rails around the panel for the assembly line to hold" onChange={(e) => setSpec({ ...spec, frame: e.target.value })}>
             <option value="rails-tb">Rails top and bottom</option>
             <option value="rails-lr">Rails left and right</option>
             <option value="frame">Full frame</option>
@@ -287,10 +287,10 @@ export function PanelTab(props: { boardId: string; revision: number; fab: string
         {spec.frame !== "none" && (
           <>
             <label className="pt-check">
-              <input type="checkbox" checked={spec.fiducials} onChange={(e) => setSpec({ ...spec, fiducials: e.target.checked })} /> Fiducials
+              <input type="checkbox" checked={spec.fiducials} title="Fiducial marks on the rails for the pick-and-place camera" onChange={(e) => setSpec({ ...spec, fiducials: e.target.checked })} /> Fiducials
             </label>
             <label className="pt-check">
-              <input type="checkbox" checked={spec.tooling} onChange={(e) => setSpec({ ...spec, tooling: e.target.checked })} /> Tooling holes
+              <input type="checkbox" checked={spec.tooling} title="Tooling holes in the rails to pin the panel in place" onChange={(e) => setSpec({ ...spec, tooling: e.target.checked })} /> Tooling holes
             </label>
           </>
         )}
@@ -355,7 +355,7 @@ export function PanelTab(props: { boardId: string; revision: number; fab: string
               <option value="jlcpcb">JLCPCB assembly files</option>
               <option value="pcbway">PCBWay assembly files</option>
             </select>
-            <a className="button primary small" href={projectUrl(`/pcb/${props.boardId}/panel.zip?${query}${fab ? `&fab=${fab}` : ""}`)} download>
+            <a className="button primary small" title="Download the panel as Gerbers, drill and assembly files in one zip" href={projectUrl(`/pcb/${props.boardId}/panel.zip?${query}${fab ? `&fab=${fab}` : ""}`)} download>
               <Icon name="download" /> Panel package
             </a>
           </div>
@@ -584,7 +584,7 @@ export function GerberViewer(props: { boardId: string | null; boardName?: string
             <input type="file" multiple className="gv-file" onChange={(e) => e.target.files && void toUploads([...e.target.files]).then(open)} />
           </label>
           {props.boardId && (
-            <button type="button" className="secondary small" onClick={() => void openBoard()}>
+            <button type="button" className="secondary small" title="Open this board's own fab package in the viewer" onClick={() => void openBoard()}>
               <Icon name="chip" /> This board
             </button>
           )}
@@ -609,9 +609,9 @@ export function GerberViewer(props: { boardId: string | null; boardName?: string
                 <Icon name="fit" />
               </button>
               <span className="gv-seg" role="group" aria-label="Export">
-                <button type="button" onClick={() => void exportPng()}>PNG</button>
-                <button type="button" onClick={() => { const s = exportSvg(); if (s) download(new Blob([s], { type: "image/svg+xml" }), "gerbers.svg"); }}>SVG</button>
-                <button type="button" onClick={() => void exportPdf()}>PDF</button>
+                <button type="button" title="Save the view as a PNG picture" onClick={() => void exportPng()}>PNG</button>
+                <button type="button" title="Save the view as an SVG drawing" onClick={() => { const s = exportSvg(); if (s) download(new Blob([s], { type: "image/svg+xml" }), "gerbers.svg"); }}>SVG</button>
+                <button type="button" title="Save the layers as a PDF" onClick={() => void exportPdf()}>PDF</button>
               </span>
             </>
           )}
@@ -622,7 +622,7 @@ export function GerberViewer(props: { boardId: string | null; boardName?: string
         <aside className="gv-side">
           <nav className="gv-tabs">
             {(["layers", "apertures", "nets", "parts", "attributes", ...(diff ? ["compare"] : [])] as (typeof info)[]).map((k) => (
-              <button key={k} type="button" className={info === k ? "active" : ""} onClick={() => setInfo(k)}>
+              <button key={k} type="button" className={info === k ? "active" : ""} title={{ layers: "Layers in the files: show, colour and dim them", apertures: "Apertures (D codes) used by the files", nets: "Nets in the files: click one to highlight it", parts: "Parts in the files: click one to highlight it", attributes: "File attributes (X2) the files carry", compare: "What changed from the earlier revision" }[k]} onClick={() => setInfo(k)}>
                 {k[0].toUpperCase() + k.slice(1)}
               </button>
             ))}
@@ -632,7 +632,7 @@ export function GerberViewer(props: { boardId: string | null; boardName?: string
             {set && info === "layers" && (
               <>
                 <label className="pt-check">
-                  <input type="checkbox" checked={dim} onChange={(e) => setDim(e.target.checked)} /> Dim all but the active layer
+                  <input type="checkbox" checked={dim} title="Fade every layer except the active one, so it stands out" onChange={(e) => setDim(e.target.checked)} /> Dim all but the active layer
                 </label>
                 <ul className="gv-layers">
                   {order.map((f, i) => {
@@ -740,7 +740,7 @@ export function GerberViewer(props: { boardId: string | null; boardName?: string
             {info === "compare" && diff && (
               <>
                 <label className="pt-check">
-                  <input type="checkbox" checked={showDiff} onChange={(e) => setShowDiff(e.target.checked)} /> Show differences (green added, red removed)
+                  <input type="checkbox" checked={showDiff} title="Colour what changed from the earlier revision: green added, red removed" onChange={(e) => setShowDiff(e.target.checked)} /> Show differences (green added, red removed)
                 </label>
                 <ul className="gv-diff">
                   {diff.map((d) => (
@@ -786,7 +786,7 @@ export function GerberViewer(props: { boardId: string | null; boardName?: string
                     <tr>
                       <th>Net</th>
                       <td>
-                        <button type="button" className="gv-link" onClick={() => setHl({ kind: "net", value: pickedObj.net! })}>
+                        <button type="button" className="gv-link" title="Highlight every object on this net" onClick={() => setHl({ kind: "net", value: pickedObj.net! })}>
                           {set!.nets[pickedObj.net]}
                         </button>
                       </td>
@@ -796,7 +796,7 @@ export function GerberViewer(props: { boardId: string | null; boardName?: string
                     <tr>
                       <th>Part</th>
                       <td>
-                        <button type="button" className="gv-link" onClick={() => setHl({ kind: "part", value: pickedObj.part! })}>
+                        <button type="button" className="gv-link" title="Highlight every pad of this part" onClick={() => setHl({ kind: "part", value: pickedObj.part! })}>
                           {set!.parts[pickedObj.part]}
                         </button>
                         {pickedObj.pin ? ` pin ${pickedObj.pin.split(",").slice(1).join(" ")}` : ""}
@@ -890,7 +890,7 @@ export function GerberViewer(props: { boardId: string | null; boardName?: string
             {hl && (
               <span>
                 Highlight: {hl.kind === "net" ? set?.nets[hl.value] : hl.kind === "part" ? set?.parts[hl.value] : `D${hl.value}`}{" "}
-                <button type="button" className="gv-link" onClick={() => setHl(null)}>
+                <button type="button" className="gv-link" title="Clear the highlight" onClick={() => setHl(null)}>
                   clear
                 </button>
               </span>
@@ -903,7 +903,7 @@ export function GerberViewer(props: { boardId: string | null; boardName?: string
         <div className="gv-source" role="dialog" aria-label={text.file}>
           <header>
             <b>{text.file}</b>
-            <IconButton icon="close" label="Close" onClick={() => setText(null)} />
+            <IconButton icon="close" label={`Close ${text.file}`} onClick={() => setText(null)} />
           </header>
           <pre>{text.text.length > 400_000 ? `${text.text.slice(0, 400_000)}\n…` : text.text}</pre>
         </div>

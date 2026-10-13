@@ -25,7 +25,7 @@ export function StorageDialog(props: { revision: number; onClose: () => void }) 
       <p>Your project, wherever you keep it.</p>
       <label>
         Destination
-        <select defaultValue="local">
+        <select title="Where the project is saved" defaultValue="local">
           <option value="local">This computer (project file)</option>
           <option disabled>S3-compatible storage · not connected yet</option>
           <option disabled>DigitalOcean Spaces · not connected yet</option>
@@ -34,7 +34,7 @@ export function StorageDialog(props: { revision: number; onClose: () => void }) 
       <p className="demo-note">
         Every change is written to the local project file before it is confirmed. This project is at revision {props.revision}.
       </p>
-      <button type="button" className="primary" onClick={props.onClose}>
+      <button title="Close storage settings" type="button" className="primary" onClick={props.onClose}>
         Done
       </button>
     </Dialog>
