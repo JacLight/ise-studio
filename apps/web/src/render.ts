@@ -391,6 +391,18 @@ export class LiveRender {
   }
 }
 
+/** Yields to the page once (a message round trip, which hidden tabs do not throttle as they do timers). */
+function breathe(): Promise<void> {
+  return new Promise((done) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      done();
+    };
+    channel.port2.postMessage(null);
+  });
+}
+
 /**
  * One image at a chosen size, rendered off screen until `samples` samples
  * have landed, as a PNG. `onProgress` hears the samples so far.
@@ -425,8 +437,10 @@ export async function renderImage(source: RenderSource, options: RenderOptions, 
       tracer.renderSample();
       const now = Math.floor(tracer.samples);
       if (now !== last) onProgress?.((last = now));
-      // Let the page (and the GPU) breathe between draws.
-      await new Promise((r) => setTimeout(r, 0));
+      // Let the page (and the GPU) breathe between draws. A message, not a
+      // timer: a render asked for by ./forma often runs in a tab nobody is
+      // looking at, where timers wait a second or more each (it never finished).
+      await breathe();
     }
     const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/png"));
     if (!blob) throw new Error("the image could not be encoded");
