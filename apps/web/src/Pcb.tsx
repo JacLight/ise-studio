@@ -9,6 +9,7 @@ import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo
 import { projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
 import { FabCheck, SimulateTab } from "./PcbSim";
+import { GerberViewer, ToolsTab } from "./PcbTools";
 import { LibraryPane } from "./PcbLibrary";
 import { SchematicPane } from "./Schematic";
 
@@ -129,7 +130,7 @@ type BomLine = {
 type Detail = { board: BoardView; size: P; errors: number; fabs: FabReport[]; bom: BomLine[]; totals: Record<string, number>; unpriced: number; files: string[] };
 type BoardEntry = { id: string; name: string; layers: number; model: string | null; errors: number | null; components: number | null };
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
-type Tab = "parts" | "nets" | "checks" | "fab" | "bom" | "sim";
+type Tab = "parts" | "nets" | "checks" | "fab" | "bom" | "sim" | "tools";
 type Selection = { kind: "component" | "track" | "via" | "zone"; id: string } | null;
 type LayerKey = "top" | "bottom" | "inner" | "silk" | "courtyard" | "ratsnest" | "zones" | "drc";
 // The interactive router (engine: POST /pcb/<id>/router, pcb.route.interactive / pcb.route.drag).
@@ -261,6 +262,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
   const [net, setNet] = useState<string | null>(null);
   const [focusViolation, setFocusViolation] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [gerbers, setGerbers] = useState(false);
   // Parts and nets hidden from the board drawing (view only, not saved).
   const [hiddenParts, setHiddenParts] = useState<string[]>([]);
   const [hiddenNets, setHiddenNets] = useState<string[]>([]);
@@ -463,6 +465,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
                   ["fab", "Fab", null],
                   ["bom", "BOM", null],
                   ["sim", "Simulate", null],
+                  ["tools", "Tools", null],
                 ] as [Tab, string, number | null][]
               ).map(([k, label, n]) => (
                 <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>
@@ -493,6 +496,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
               {tab === "fab" && <FabTab d={detail!} commit={commit} boardId={b.id} revision={props.revision} />}
               {tab === "bom" && <ShopTab d={detail!} commit={commit} />}
               {tab === "sim" && <SimulateTab boardId={b.id} revision={props.revision} />}
+              {tab === "tools" && <ToolsTab boardId={b.id} revision={props.revision} fab={b.fab ?? null} />}
             </div>
           </aside>
   ) : null;
@@ -554,6 +558,9 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
               {detail!.errors ? `${detail!.errors} DRC ${detail!.errors === 1 ? "error" : "errors"}` : "DRC passes"}
             </button>
           )}
+          <button type="button" className="secondary pcb-tools-open" onClick={() => setGerbers(true)} title="Gerber viewer: open any fab files, compare revisions">
+            <Icon name="layers" /> Gerbers
+          </button>
           {b && <KicadImport run={commit} canEdit={props.canEdit} onMade={(id) => setBoardId(id)} label="Import" />}
           {b?.model && (
             <button type="button" className="secondary pcb-3d" onClick={() => props.onShow3D(b.model!)}>
@@ -648,6 +655,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
           />
         </div>
       )}
+      {gerbers && <GerberViewer boardId={b?.id ?? null} boardName={b?.name} onClose={() => setGerbers(false)} />}
     </section>
   );
 }
