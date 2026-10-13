@@ -1406,7 +1406,9 @@ if (command === "run") {
   } else {
     // Meshes are for drawing, not reading: report their size instead.
     const { mesh, ...rest } = e;
-    console.log(JSON.stringify({ ...rest, mesh: mesh ? { triangles: mesh.indices.length / 3 } : null }, null, 2));
+    // Snapshots carry a reference and a triangle count (older ones the indices).
+    const triangles = mesh ? (mesh.triangles ?? (mesh.indices ? mesh.indices.length / 3 : null)) : null;
+    console.log(JSON.stringify({ ...rest, mesh: mesh ? { triangles } : null }, null, 2));
   }
 } else if (command === "commit") {
   const operation = file;
