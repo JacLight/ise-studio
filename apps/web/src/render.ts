@@ -516,7 +516,7 @@ function onWhite(model: Uint8ClampedArray, floor: Uint8ClampedArray, width: numb
   }
   const out = new Uint8ClampedArray(n * 4);
   for (let i = 0; i < n; i++) {
-    const bg = toSrgb(1 - 0.85 * (1 - shadow[i]));
+    const bg = toSrgb(1 - 0.65 * (1 - shadow[i]));
     const alpha = model[i * 4 + 3] / 255;
     for (let c = 0; c < 3; c++) out[i * 4 + c] = Math.round(alpha * model[i * 4 + c] + (1 - alpha) * bg);
     out[i * 4 + 3] = 255;
