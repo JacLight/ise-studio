@@ -53,6 +53,10 @@ Run it from your working folder. It acts on the open project. It is your only wa
 ./forma image add <file> …           store a picture (PNG, JPEG) or font (TTF, OTF) for programs; prints its id
 ./forma image list                   the project's pictures and fonts
 ./forma look [what] [--view iso|front|top|…|az,el] [--size 1000x750]   the engine draws the model (or one thing); Read the saved PNG to see it
+./forma canvas add <photo> --plane front|back|left|right|top|bottom [--object-width mm --align "left top" | --calibrate u1,v1,u2,v2,mm] [--rotate deg] …
+                                     a reference picture placed and calibrated on a plane of the model (see Model from reference photos)
+./forma canvas list | update <canvas> … | remove <canvas>
+./forma canvas match [<canvas>|all] [--of <thing>]   the model drawn square to each canvas over its photo: silhouette IoU, outline distance, extra/missing regions (also look --overlay <canvas>)
 ```
 
 The person has the same commands in the app's console (` key), plus JavaScript with a `forma` object (`forma.entities`, `forma.commit(op, params)`, `forma.run(steps)`, `forma.view(...)`) — tell them so when they want to script something themselves.
@@ -72,10 +76,48 @@ Material names in parts map to material entities through the shape's `materials`
 The person can paste, drop or attach pictures (and PDF drawings) in the panel; you see them, and the files sit in your folder (`attachments/…`, listed in the message). For a part to use one, `./forma image add attachments/<file>` and use the id it prints. Compare your work against a reference with `./forma look`.
 
 - `relief(img, { width, depth, base, mode })`: brightness becomes height; "emboss" (a plaque, light stands high), "engrave" (a cutter, dark cuts deep), "lithophane" (thin where light). `border`, `smooth`, `gamma`, `invert`. Watertight, fast, follows the picture within `tolerance`.
-- `trace(img, { width, threshold, invert })`: a logo or line drawing as a Profile (extrude, emboss, engrave, cut through); `profile.loops` gives the points (a silhouette's half to revolve). `image(id).grid(nx)` reads pixel values to measure a picture yourself.
+- `trace(img, { width, threshold, invert })`: a logo or line drawing as a Profile (extrude, emboss, engrave, cut through); `profile.loops` gives the points (a silhouette's half to revolve); `channel: "object"` traces what stands out from a photo's backdrop (an object on white) rather than what is dark. `image(id).grid(nx)` reads pixel values to measure a picture yourself. Photos of an object to model in 3D go on canvases instead: see the next section.
 - `text(str, { size, weight, align, valign, arc })`: real font outlines (Inter built in; a stored font by id). `graduations({ length | radius, step, every })` for scales and dials.
 - `part.emboss(decor, { at, normal, height })`, `part.engrave(decor, { at, normal, depth })`, or `{ cylinder: { radius, angle, z } }` to wrap onto a cylinder; `solid.wrap(radius)` and `placeOn(solid, { at, normal })` for your own.
 - `knurl({ radius, length, pitch, style })`; `thread({ diameter, length, internal, clearance })` for real ISO metric threads (printed nuts and bolts: clearance 0.1–0.2; keep mating threads a whole number of pitches apart, or set `phase`).
+
+## Model from reference photos
+
+When the person gives a few photos of one object from different sides (a side, the top, an end, a three-quarter view: product shots, phone photos, a drawing's views) and wants it in 3D, model a real solid from them, part by part, the way a designer does with Fusion's canvases or FreeCAD's image planes. Never answer with a relief (brightness made into height is a picture, not the object) or with one traced outline extruded flat: both look nothing like the object from any other side. Photogrammetry needs dozens of overlapping photos; a handful of separate views is this case.
+
+1. **Read the photos first.** Name each one: which view it is (side, top, end, three-quarter), which way the object faces in it, whether it is taken square on and from far away (usable as a canvas) or at an angle (a three-quarter view: use it only to understand depth and how surfaces turn, never as a canvas). Write down every feature you see before modelling: the separate pieces and their materials and colours (a housing in two halves on a split line, a rubber grip, a cap, buttons, a trigger), openings and pockets, ribs, rails, vents, holes, lettering, and where the outline turns. That list is what you build; the silhouettes only give the outline.
+2. **Ask for one real dimension** (overall length, height, a hole) unless the person gave one. If they cannot, estimate it from something of known size and make it a parameter, and say so. Every other size follows from the photos.
+3. **Choose the axes**: the object's length along X, up +Z, the side view on the front plane. Place each usable view as a canvas on its plane, named for what it shows:
+
+   ```
+   ./forma canvas add attachments/side.jpg --name Side --plane front --object-width 165 --align "left top"
+   ./forma canvas add attachments/end.jpg  --name End  --plane left  --object-height 133.9 --align "center top"
+   ./forma canvas add attachments/top.jpg  --name Top  --plane top   --rotate -90 --object-width 165 --align "left middle"
+   ```
+
+   Planes are named by where the camera stands: `front` (from −Y; picture right is +X, up is +Z), `back` (from +Y: the object's other side, its right is −X), `left` (from −X, the end facing −X; picture right is −Y), `right` (from +X), `top` (from +Z; right +X, up +Y), `bottom`. With the length along X and the side photo showing the object's left side on `front`, the opposite side's photo goes on `back`, the end at −X on `left`. Turn a photo with `--rotate deg` (counter-clockwise) so its view reads the way the plane does; `--flip` mirrors it (only for a photo that really is mirrored). `--level u1,v1,u2,v2` turns a slightly tilted photo so a line that should be level is.
+
+   Size and register them by the object itself: `--object-width` / `--object-height` / `--object WxH` set the scale from the object's outline (what stands out from the backdrop) and `--align` puts a corner or middle of its bounds at the plane's origin, so every view shares one origin (here the front end at x = 0, the top at z = 0, the centre line at y = 0). Chain them: size the side by the real length, read the height it reports (`object: 165 × 133.9 mm`), size the end view by that height, then check the widths agree between top and end (within 2–3 %). When they disagree, the photo is not square on: crop to the part that is (`--crop l,t,r,b` pixels), stretch a foreshortened one (`--object LxW`), or square it up from four corners of a rectangle on the object and its true size (`--perspective u1,v1,u2,v2,u3,v3,u4,v4,WxH`, corners top-left, top-right, bottom-right, bottom-left). `--calibrate u1,v1,u2,v2,mm` (two pixels a known distance apart), `--width` and `--scale` size it by other means; `--at x,y,z` moves the plane (the anchor pixel lands there; `--anchor u,v` picks it). A busy or coloured backdrop: `--background r,g,b` and `--threshold`. `./forma canvas list` shows them; `canvas update <name> …` changes one (the person sees them in the view, can hide them, and calibrates by picking two points).
+4. **Read sizes from the photos in millimetres**, in a program:
+
+   ```js
+   const side = canvas("Side");
+   side.silhouette()                               // the whole object's outline (Profile) on the plane, in mm
+   side.trace({ channel: "brightness", threshold: 0.35, largest: true })   // only what is dark: the black grip, a trigger
+   side.trace({ channel: "brightness", region: [u0, v0, u1, v1] })         // only inside a box of pixels
+   side.spans({ x: 120 })                          // where the outline is at x = 120: [[zBottom, zTop], …]
+   side.toPlane([u, v]); side.toWorld([u, v])      // a pixel you read on the photo, in mm (plane / world)
+   ```
+
+   Separate pieces by colour this way (a black grip on a yellow body); measure a feature's place and size from its pixels (open the photo, read where it is) or its own trace; `metric(…)` the numbers you measured, so they show.
+5. **Start from the views, then build the real object.** `fromViews([canvas("Side"), canvas("Top"), canvas("End")])` intersects the views' outlines pushed through the model (the visual hull): the right outline from every side, but square in section and solid inside. It is the starting block and a trimming tool, not the part. Then, part by part:
+   - Each separately made piece is its own `part(…)` with its material (yellow housing halves, black rubber grip, black trigger and switch, a yellow butt plate…); hull each from its own colour's trace, or cut the hull where the photos show the joint.
+   - Give the sections their real shape: round the long edges (`fillet`), or loft through cross-sections taken from the end view (`profileSpans` gives a section's width and height at a station), and trim the result with the side outline (`side.extrude(…)` through it, then `intersect`) so the profile stays exactly on the photo.
+   - Cut what is open: bays, pockets and hollows (`shell`, or subtract the opening's outline traced from the end view, as deep as the side view shows), the trigger guard's opening, holes.
+   - Add what stands proud or is cut in: rails and ridges (a pattern of blocks or cuts at the pitch you measure), sight towers and their holes, vents and slots, buttons and switches, grip grooves, lettering only if it is moulded.
+   - A housing made in two halves is two parts split on its centre plane (each half the body intersected with a half-space), with the split line showing.
+6. **Compare every view and iterate until it matches**: `./forma canvas match all` draws the model square to each canvas over its photo and reports the silhouette overlap (IoU, 1 is perfect), how far the outlines are apart (mean and worst mm) and each region of extra (red) or missing (blue) material, with where it is in mm. Read the overlay pictures (`look/match-*.png`), fix the largest differences first, and run it again. Aim for IoU ≥ 0.9 on the side view and ≥ 0.85 on the others (oblique or perspective-heavy photos score lower: say why). The outline is not the whole check: look at the model from iso and three-quarter views (`./forma look --view 35,25`) beside the three-quarter photos, since sections, depths and details only show there. Keep the main view's match as a requirement: `intent.requirement.create { rule: { kind: "silhouette_match", part, canvas, min_iou: 0.9 } }` (optionally `max_deviation: { value: 2, unit: "mm" }`), re-checked on every change.
+7. **Report** the views used, how the scale was set (the dimension given, or estimated), the IoU per view, the parts and their materials, and what had to be judged rather than seen (wall thickness, hidden insides, the far side). Leave the canvases in the project (hidden if they are in the way: `canvas update Side --hide`); they are reference, never exported, never in the BOM.
 
 ## Stock parts
 
@@ -335,7 +377,7 @@ When the person has an object and a camera (or photos already), make the model f
 4. Size: with the sheet in the photos the scan is in millimetres, the sheet is the floor (z = 0) and its centre the origin (method `markers`, typically ±0.05 %). Without it (method `none`), measure a distance on the object and give two points of it on the scan: `./forma scan scale <scan> --from x,y,z --to x,y,z --distance mm [--pick mm]` (uncertainty from how precisely the points are picked: use plane or cylinder fits — `scan fit` — to place them, not single points); `scan level <scan>` puts a floor plane at z = 0. Say which method and uncertainty you used.
 5. Into CAD: `mesh check` the clean scan, read the intent back with `scan fit`/`scan detect`/`fitSurface`, build a clean parametric part from the numbers (never ship the scan as the part), then `./forma inspect <clean scan> <part> --tolerance 0.3 --align best` and report RMS and the worst places. Deep pockets, tunnels and undersides the photos could not see come out filled or missing: the inspection shows them as large + or −; say so rather than chasing them.
 
-Look at the photos before running an engine. A handful of separate views (front, top, side, three-quarter product shots on white, often retouched or sent through a chat app) cannot be aligned by either engine; say so and model the part from them as reference pictures instead: `./forma image add` each view, read the silhouettes with `trace` (top and side outlines, extruded and intersected, give the body), take the details (rails, vents, buttons, grip) from the views, and ask for one real dimension (overall length) to set the scale. If an engine fails with "could not be placed relative to each other", that is this case.
+Look at the photos before running an engine. A handful of separate views (front, top, side, three-quarter product shots on white, often retouched or sent through a chat app) cannot be aligned by either engine; say so and model the object from them as reference pictures instead, following **Model from reference photos** above (each view a calibrated canvas, the body from the views, the real features from the photos, every view compared until it matches). If an engine fails with "could not be placed relative to each other", that is this case.
 
 To try the pipeline on a known shape, `./forma scan render-photos <folder> [--count 40] [--rings 25,50] [--distance mm] [--sheet]` draws the model from many angles (speckled like a part sprayed for scanning, on the marker sheet) and writes the true cameras to `cameras.json`.
 
