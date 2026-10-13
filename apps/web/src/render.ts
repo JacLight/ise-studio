@@ -72,7 +72,7 @@ export function studioEnvironment(width = 1024, softboxes = 1, product = false):
         // A dim room, brighter round the horizon (the white sweep's walls):
         // a face turned up mirrors the dark ceiling, a stamped letter's sloped
         // sides mirror the bright walls, so stamping reads as a light outline.
-        const k = elevation >= 0 ? 0.2 + 0.55 * Math.pow(1 - up, 3) : 0.3;
+        const k = elevation >= 0 ? 0.3 + 0.45 * Math.pow(1 - up, 3) : 0.3;
         [r, g, b] = [k, k, k];
       } else if (elevation >= 0) {
         const k = 0.5 + 0.55 * Math.pow(up, 0.6);
