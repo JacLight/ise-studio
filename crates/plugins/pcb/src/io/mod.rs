@@ -330,8 +330,20 @@ impl Command for Import {
 
 /// The board's custom rules as a `.kicad_dru` file.
 fn dru(board: &Board) -> String {
+    let r = &board.rules;
+    // The board minima first (later rules win in KiCad, as in Forma), then the custom rules.
+    let mut out = String::from("(version 1)\n# Board minima (Forma board rules)\n");
+    for (name, kind, v) in [("Minimum clearance", "clearance", r.min_space), ("Minimum track width", "track_width", r.min_track), ("Minimum hole", "hole_size", r.min_drill), ("Minimum annular ring", "annular_width", r.min_annular), ("Board edge clearance", "edge_clearance", r.edge_clearance), ("Hole to hole", "hole_to_hole", r.hole_to_hole)] {
+        out.push_str(&format!("(rule \"{name}\"\n  (constraint {kind} (min {v}mm)))\n"));
+    }
+    out.push_str(&format!("(rule \"Micro via hole\"\n  (condition \"A.Via_Type == 'Micro'\")\n  (constraint hole_size (min {}mm)))\n", r.min_microvia_drill));
     let t = board.drc_rules.trim();
-    if t.contains("(version") { format!("{t}\n") } else { format!("(version 1)\n{t}\n") }
+    if !t.is_empty() {
+        out.push_str("# Custom rules\n");
+        out.push_str(&t.lines().filter(|l| !(l.trim().starts_with("(version") && l.matches('(').count() == 1)).collect::<Vec<_>>().join("\n"));
+        out.push('\n');
+    }
+    out
 }
 
 /// Files written for other tools, by name, with what each is.
@@ -398,9 +410,7 @@ pub fn board_file(world: &World, id: StableId, name: &str) -> Option<Result<File
         ".kicad_dru" => txt(dru(&board)),
         "-kicad.zip" => {
             let mut files = vec![(format!("{s}.kicad_pro"), kicad_pro::write(&view, &board).into_bytes()), (format!("{s}.kicad_pcb"), crate::kicad::export_world(world, id)?.into_bytes())];
-            if !board.drc_rules.trim().is_empty() {
-                files.push((format!("{s}.kicad_dru"), dru(&board).into_bytes()));
-            }
+            files.push((format!("{s}.kicad_dru"), dru(&board).into_bytes()));
             if let Some((sid, _)) = &sch {
                 for (n, t) in kicad_sch::write_world(world, *sid, &s)? {
                     files.push((n, t.into_bytes()));

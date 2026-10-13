@@ -220,7 +220,11 @@ fn custom_rules_raise_their_own_violations() {
     assert!(v.violations.iter().any(|x| x.code == "track_width" && x.severity == "warning" && x.message.contains("thin")));
     assert!(run(&mut p, "pcb.rules.set", json!({ "board": b, "text": "(rule x (constraint nonsense (min 1mm)))" })).is_err());
     let files = de_pcb::io::board_exports(&v, false);
-    assert!(files.iter().any(|(n, _)| n.ends_with(".kicad_dru")));
+    let dru = files.iter().find(|(n, _)| n.ends_with(".kicad_dru")).expect("a rules file").0.clone();
+    let out = de_pcb::io::board_file(p.world(), b, &dru).unwrap().unwrap();
+    let text = String::from_utf8(out.bytes).unwrap();
+    let back = de_pcb::rules::parse(&text).unwrap();
+    assert!(back.rules.len() >= 10 && back.rules.iter().any(|r| r.name == "HV"), "{text}");
 }
 
 #[test]
