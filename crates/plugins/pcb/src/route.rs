@@ -864,7 +864,7 @@ fn emit_track(tx: &mut Tx, board: StableId, net: &str, layer: &str, w: f64, run:
 fn emit_via(tx: &mut Tx, board: StableId, net: &str, at: P, drill: f64, diameter: f64, nl: usize, out: &mut NetCopper) -> Result<(), CommandError> {
     out.obstacles.push(Obstacle { prim: Prim::circle(at, diameter / 2.0), layers: ((1u16 << nl) - 1) as u8, net: Some(net.to_string()) });
     let id = tx.create();
-    tx.set(id, Via { board, net: Some(net.to_string()), at, drill, diameter, auto: true })?;
+    tx.set(id, Via { board, net: Some(net.to_string()), at, drill, diameter, auto: true, spec: Default::default() })?;
     tx.add_dependency(board, id)?;
     out.created.push(id);
     out.vias += 1;

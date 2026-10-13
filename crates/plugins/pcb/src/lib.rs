@@ -69,6 +69,15 @@ pub mod symbols;
 pub mod variants;
 pub mod verify;
 pub mod wizards;
+// Board objects, zones, placement, stackup and the custom rules language.
+pub mod areas;
+pub mod graphics;
+pub mod multichannel;
+pub mod placement;
+pub mod rules;
+pub mod stackup;
+pub mod teardrops;
+pub mod vias;
 
 pub use board::BoardView;
 pub use footprints::Footprint;
@@ -110,6 +119,14 @@ impl Plugin for PcbPlugin {
         library::register(r);
         variants::register(r);
         blocks::register(r);
+        graphics::register(r);
+        areas::register(r);
+        vias::register(r);
+        placement::register(r);
+        multichannel::register(r);
+        stackup::register(r);
+        rules::register(r);
+        teardrops::register(r);
     }
 }
 
@@ -117,6 +134,11 @@ impl Plugin for PcbPlugin {
 
 /// Copper layers by name: "top", "bottom", and "in1", "in2" on a four-layer board.
 pub const LAYERS: [&str; 4] = ["top", "in1", "in2", "bottom"];
+
+/// Every copper layer name a board can have (2 to 32 layers): top, in1 … in30, bottom.
+pub const COPPER_NAMES: [&str; 32] = [
+    "top", "in1", "in2", "in3", "in4", "in5", "in6", "in7", "in8", "in9", "in10", "in11", "in12", "in13", "in14", "in15", "in16", "in17", "in18", "in19", "in20", "in21", "in22", "in23", "in24", "in25", "in26", "in27", "in28", "in29", "in30", "bottom",
+];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -147,11 +169,15 @@ pub struct Rules {
     pub mask_expansion: f64,
     /// Courtyards of components on the same side may not overlap.
     pub courtyards: bool,
+    /// Smallest laser-drilled micro via hole.
+    pub min_microvia_drill: f64,
+    /// Smallest micro via pad.
+    pub min_microvia_diameter: f64,
 }
 
 impl Default for Rules {
     fn default() -> Self {
-        Rules { min_track: 0.15, min_space: 0.15, min_drill: 0.3, min_annular: 0.13, edge_clearance: 0.3, hole_to_hole: 0.5, silk_width: 0.15, silk_height: 1.0, mask_expansion: 0.05, courtyards: true }
+        Rules { min_track: 0.15, min_space: 0.15, min_drill: 0.3, min_annular: 0.13, edge_clearance: 0.3, hole_to_hole: 0.5, silk_width: 0.15, silk_height: 1.0, mask_expansion: 0.05, courtyards: true, min_microvia_drill: 0.1, min_microvia_diameter: 0.2 }
     }
 }
 
@@ -219,7 +245,7 @@ pub struct Board {
     /// A sketch whose largest closed loop is the outline (others are cutouts); overrides `outline`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sketch: Option<StableId>,
-    /// 2 or 4 copper layers.
+    /// Copper layers: an even count from 2 to 32.
     pub layers: u8,
     /// Finished thickness (mm).
     pub thickness: f64,
@@ -254,6 +280,15 @@ pub struct Board {
     /// Supplier and price chosen per BOM line (key: the MPN, or "value|footprint").
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sourcing: BTreeMap<String, Choice>,
+    /// The physical stackup (dielectrics, copper weights); a standard one for the layer count and thickness when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stackup: Option<stackup::Stackup>,
+    /// Custom design rules in the KiCad `.kicad_dru` language (`(rule … (condition …) (constraint …))`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub drc_rules: String,
+    /// Teardrops where tracks meet pads and vias.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub teardrops: Option<teardrops::Teardrops>,
 }
 
 fn one() -> f64 {
@@ -272,7 +307,11 @@ impl Persist for Board {
 
 impl Board {
     pub fn copper_layers(&self) -> Vec<&'static str> {
-        if self.layers >= 4 { LAYERS.to_vec() } else { vec!["top", "bottom"] }
+        let n = (self.layers as usize).clamp(2, 32);
+        let mut v = vec!["top"];
+        v.extend_from_slice(&COPPER_NAMES[1..n - 1]);
+        v.push("bottom");
+        v
     }
 
     /// The net class a net belongs to (the default from the first class named "Default", else built in).
@@ -353,7 +392,7 @@ impl Persist for Track {
     const KIND: &'static str = "pcb.track";
 }
 
-/// A plated through via.
+/// A plated via: through the board, or blind, buried or micro between two layers.
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Via {
     pub board: StableId,
@@ -364,6 +403,9 @@ pub struct Via {
     pub diameter: f64,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub auto: bool,
+    /// Through (default), blind, buried or micro, its layer span and per-layer pads.
+    #[serde(flatten)]
+    pub spec: vias::ViaSpec,
 }
 
 impl Persist for Via {
@@ -401,6 +443,17 @@ pub struct Zone {
     /// Width of each relief spoke (mm); default 0.5 (at least the zone's `min_width`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thermal_spoke: Option<f64>,
+    /// Solid (default) or hatched copper.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hatch: Option<areas::Hatch>,
+    /// Holes cut out of the zone's outline.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cutouts: Vec<Vec<[f64; 2]>>,
+    /// With `remove_islands`, only islands smaller than this (mm²) are removed; absent: every island that joins nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_island_area: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// How pads join a pour of their net.
@@ -462,10 +515,12 @@ pub struct Items {
     pub tracks: Vec<(StableId, Track)>,
     pub vias: Vec<(StableId, Via)>,
     pub zones: Vec<(StableId, Zone)>,
+    pub graphics: Vec<(StableId, graphics::Graphic)>,
+    pub areas: Vec<(StableId, areas::RuleArea)>,
 }
 
 pub fn items(world: &World, board: StableId) -> Items {
-    let mut out = Items { components: vec![], tracks: vec![], vias: vec![], zones: vec![] };
+    let mut out = Items { components: vec![], tracks: vec![], vias: vec![], zones: vec![], graphics: vec![], areas: vec![] };
     let Some(e) = entity(world, board) else { return out };
     let deps = world.get::<de_core::DependsOn>(e).map(|d| d.0.clone()).unwrap_or_default();
     for id in deps {
@@ -478,6 +533,10 @@ pub fn items(world: &World, board: StableId) -> Items {
             out.vias.push((id, v.clone()));
         } else if let Some(z) = world.get::<Zone>(x).filter(|z| z.board == board) {
             out.zones.push((id, z.clone()));
+        } else if let Some(g) = world.get::<graphics::Graphic>(x).filter(|g| g.board == board) {
+            out.graphics.push((id, g.clone()));
+        } else if let Some(a) = world.get::<areas::RuleArea>(x).filter(|a| a.board == board) {
+            out.areas.push((id, a.clone()));
         }
     }
     out.components.sort_by(|a, b| natural(&a.1.reference, &b.1.reference));
@@ -529,11 +588,14 @@ fn check_board(b: &Board) -> Result<(), CommandError> {
     if b.name.trim().is_empty() {
         return Err(bad("a board needs a name"));
     }
-    if b.layers != 2 && b.layers != 4 {
-        return Err(bad("a board has 2 or 4 copper layers"));
+    if !(2..=32).contains(&b.layers) || b.layers % 2 != 0 {
+        return Err(bad("a board has an even number of copper layers, 2 to 32"));
     }
-    if !(0.2..=3.2).contains(&b.thickness) {
-        return Err(bad("thickness is 0.2 to 3.2 mm (1.6 is standard)"));
+    if !(0.2..=8.0).contains(&b.thickness) {
+        return Err(bad("thickness is 0.2 to 8 mm (1.6 is standard)"));
+    }
+    if let Some(s) = &b.stackup {
+        s.check(b.layers as usize).map_err(bad)?;
     }
     if b.sketch.is_none() && b.outline.len() < 3 {
         return Err(bad("an outline needs 3 or more points (or width and height, or a sketch)"));
@@ -552,7 +614,7 @@ fn check_board(b: &Board) -> Result<(), CommandError> {
         return Err(bad("copper weight is 0.25 to 6 oz"));
     }
     let r = &b.rules;
-    for (v, what) in [(r.min_track, "min_track"), (r.min_space, "min_space"), (r.min_drill, "min_drill"), (r.min_annular, "min_annular"), (r.edge_clearance, "edge_clearance"), (r.hole_to_hole, "hole_to_hole"), (r.silk_width, "silk_width"), (r.silk_height, "silk_height"), (r.mask_expansion, "mask_expansion")] {
+    for (v, what) in [(r.min_track, "min_track"), (r.min_space, "min_space"), (r.min_drill, "min_drill"), (r.min_annular, "min_annular"), (r.edge_clearance, "edge_clearance"), (r.hole_to_hole, "hole_to_hole"), (r.silk_width, "silk_width"), (r.silk_height, "silk_height"), (r.mask_expansion, "mask_expansion"), (r.min_microvia_drill, "min_microvia_drill"), (r.min_microvia_diameter, "min_microvia_diameter")] {
         if !v.is_finite() || !(0.0..=10.0).contains(&v) {
             return Err(bad(format!("rule {what} is 0 to 10 mm")));
         }
@@ -659,6 +721,9 @@ impl Command for CreateBoard {
             quantity: self.quantity.unwrap_or(5),
             fab: None,
             sourcing: BTreeMap::new(),
+            stackup: None,
+            drc_rules: String::new(),
+            teardrops: None,
         };
         check_board(&board)?;
         let id = tx.create();
@@ -778,13 +843,17 @@ impl Command for UpdateBoard {
             }
             b.fab = (!v.is_empty()).then_some(v);
         }
+        if self.layers.is_some() && b.stackup.as_ref().is_some_and(|s| s.check(b.layers as usize).is_err()) {
+            // A stackup made for another layer count gives way to the standard one.
+            b.stackup = None;
+        }
         check_board(&b)?;
-        // Tracks and zones on inner layers go with them.
-        if b.layers == 2 {
-            let it = items(tx.world(), self.target);
-            if it.tracks.iter().any(|(_, t)| t.layer.starts_with("in")) || it.zones.iter().any(|(_, z)| z.layer.starts_with("in")) {
-                return Err(bad("tracks or zones are on inner layers: delete them before going to 2 layers"));
-            }
+        // Copper on layers the board no longer has must go first.
+        let keep = b.copper_layers();
+        let it = items(tx.world(), self.target);
+        let gone = |l: &str| COPPER_NAMES.contains(&l) && !keep.contains(&l);
+        if it.tracks.iter().any(|(_, t)| gone(&t.layer)) || it.zones.iter().any(|(_, z)| gone(&z.layer)) || it.graphics.iter().any(|(_, g)| gone(&g.layer)) || it.vias.iter().any(|(_, v)| v.spec.from.as_deref().is_some_and(gone) || v.spec.to.as_deref().is_some_and(gone)) {
+            return Err(bad(format!("tracks, zones, graphics or vias are on layers a {}-layer board does not have: move or delete them first", b.layers)));
         }
         tx.set(self.target, b)?;
         model3d::sync(tx, self.target)?;
@@ -1143,7 +1212,7 @@ impl Command for UpdateTrack {
     }
 }
 
-/// `pcb.via.create`: a through via; drill and diameter default to the net class's.
+/// `pcb.via.create`: a via; drill and diameter default to the net class's (micro vias: 0.1 / 0.25 mm).
 #[derive(Deserialize, JsonSchema)]
 pub struct CreateVia {
     pub board: StableId,
@@ -1151,6 +1220,14 @@ pub struct CreateVia {
     pub at: [f64; 2],
     pub drill: Option<f64>,
     pub diameter: Option<f64>,
+    /// "through" (default), "blind", "buried" or "micro".
+    pub kind: Option<vias::ViaKind>,
+    /// First and last copper layer of a blind, buried or micro via ("top", "in1").
+    pub from: Option<String>,
+    pub to: Option<String>,
+    /// Pad diameter per copper layer (a via padstack); layers left out use `diameter`, 0 removes the pad there.
+    pub stack: Option<BTreeMap<String, f64>>,
+    pub group: Option<String>,
 }
 
 impl Command for CreateVia {
@@ -1161,13 +1238,17 @@ impl Command for CreateVia {
         check_points(&[self.at], "via")?;
         let net = clean(self.net).or_else(|| board.copper_layers().iter().find_map(|l| net_at(tx.world(), self.board, l, self.at)));
         let class = board.class_of(net.as_deref());
-        let drill = self.drill.unwrap_or(class.via_drill);
-        let diameter = self.diameter.unwrap_or(class.via_diameter);
+        let micro = self.kind == Some(vias::ViaKind::Micro);
+        let drill = self.drill.unwrap_or(if micro { 0.1 } else { class.via_drill });
+        let diameter = self.diameter.unwrap_or(if micro { 0.25 } else { class.via_diameter });
         if !(drill > 0.0 && diameter > drill && diameter < 10.0) {
             return Err(bad("a via's diameter is larger than its drill"));
         }
         let id = tx.create();
-        tx.set(id, Via { board: self.board, net: net.clone(), at: self.at, drill, diameter, auto: false })?;
+        let spec = vias::ViaSpec { kind: self.kind.unwrap_or_default(), from: clean(self.from), to: clean(self.to), stack: self.stack.unwrap_or_default(), group: clean(self.group) };
+        let via = Via { board: self.board, net: net.clone(), at: self.at, drill, diameter, auto: false, spec };
+        vias::check_via(&board, &via).map_err(bad)?;
+        tx.set(id, via)?;
         tx.add_dependency(self.board, id)?;
         Ok(json!({ "id": id, "net": net }))
     }
@@ -1190,6 +1271,14 @@ pub struct CreateZone {
     pub connection: Option<PadConnection>,
     pub thermal_gap: Option<f64>,
     pub thermal_spoke: Option<f64>,
+    /// Hatched fill instead of solid.
+    pub hatch: Option<areas::Hatch>,
+    /// Holes in the outline.
+    #[serde(default)]
+    pub cutouts: Vec<Vec<[f64; 2]>>,
+    /// Remove only islands below this area (mm²).
+    pub min_island_area: Option<f64>,
+    pub name: Option<String>,
 }
 
 fn check_thermal(gap: Option<f64>, spoke: Option<f64>) -> Result<(), CommandError> {
@@ -1227,8 +1316,13 @@ impl Command for CreateZone {
             connection: self.connection.unwrap_or_default(),
             thermal_gap: self.thermal_gap,
             thermal_spoke: self.thermal_spoke,
+            hatch: self.hatch,
+            cutouts: self.cutouts,
+            min_island_area: self.min_island_area,
+            name: clean(self.name),
         };
         check_thermal(z.thermal_gap, z.thermal_spoke)?;
+        areas::check_zone_extras(&z).map_err(bad)?;
         let id = tx.create();
         tx.set(id, z)?;
         tx.add_dependency(self.board, id)?;
@@ -1250,6 +1344,14 @@ pub struct UpdateZone {
     pub connection: Option<PadConnection>,
     pub thermal_gap: Option<f64>,
     pub thermal_spoke: Option<f64>,
+    /// A hatch, or `null` for solid.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schemars(with = "Option<areas::Hatch>")]
+    pub hatch: Option<Option<areas::Hatch>>,
+    pub cutouts: Option<Vec<Vec<[f64; 2]>>>,
+    /// 0 clears (every dead island is removed).
+    pub min_island_area: Option<f64>,
+    pub name: Option<String>,
 }
 
 impl Command for UpdateZone {
@@ -1290,13 +1392,26 @@ impl Command for UpdateZone {
         if self.thermal_spoke.is_some() {
             z.thermal_spoke = self.thermal_spoke;
         }
+        if let Some(h) = self.hatch {
+            z.hatch = h;
+        }
+        if let Some(c) = self.cutouts {
+            z.cutouts = c;
+        }
+        if let Some(a) = self.min_island_area {
+            z.min_island_area = (a > 0.0).then_some(a);
+        }
+        if self.name.is_some() {
+            z.name = clean(self.name);
+        }
         check_thermal(z.thermal_gap, z.thermal_spoke)?;
+        areas::check_zone_extras(&z).map_err(bad)?;
         tx.set(self.target, z)?;
         Ok(json!({ "id": self.target }))
     }
 }
 
-/// `pcb.delete`: remove components, tracks, vias or zones from their board.
+/// `pcb.delete`: remove components, tracks, vias, zones, graphics or rule areas from their board.
 #[derive(Deserialize, JsonSchema)]
 pub struct DeleteItems {
     pub targets: Vec<StableId>,
@@ -1305,7 +1420,14 @@ pub struct DeleteItems {
 /// The board an item is on.
 fn owner(world: &World, id: StableId) -> Option<StableId> {
     let e = entity(world, id)?;
-    world.get::<PcbComponent>(e).map(|c| c.board).or_else(|| world.get::<Track>(e).map(|t| t.board)).or_else(|| world.get::<Via>(e).map(|v| v.board)).or_else(|| world.get::<Zone>(e).map(|z| z.board))
+    world
+        .get::<PcbComponent>(e)
+        .map(|c| c.board)
+        .or_else(|| world.get::<Track>(e).map(|t| t.board))
+        .or_else(|| world.get::<Via>(e).map(|v| v.board))
+        .or_else(|| world.get::<Zone>(e).map(|z| z.board))
+        .or_else(|| world.get::<graphics::Graphic>(e).map(|g| g.board))
+        .or_else(|| world.get::<areas::RuleArea>(e).map(|a| a.board))
 }
 
 impl Command for DeleteItems {

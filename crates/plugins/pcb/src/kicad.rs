@@ -1164,6 +1164,9 @@ pub fn create_board(tx: &mut Tx, k: &KicadBoard, name: Option<String>, at: Optio
         quantity: 5,
         fab: None,
         sourcing: BTreeMap::new(),
+        stackup: None,
+        drc_rules: String::new(),
+        teardrops: None,
     };
     let id = tx.create();
     tx.set(id, board)?;
@@ -1197,7 +1200,7 @@ pub fn create_board(tx: &mut Tx, k: &KicadBoard, name: Option<String>, at: Optio
     }
     for v in &k.vias {
         let vid = tx.create();
-        tx.set(vid, Via { board: id, net: v.net.clone(), at: v.at, drill: v.drill, diameter: v.diameter, auto: false })?;
+        tx.set(vid, Via { board: id, net: v.net.clone(), at: v.at, drill: v.drill, diameter: v.diameter, auto: false, spec: Default::default() })?;
         tx.add_dependency(id, vid)?;
     }
     for z in &k.zones {
@@ -1216,6 +1219,10 @@ pub fn create_board(tx: &mut Tx, k: &KicadBoard, name: Option<String>, at: Optio
                 connection: z.connection,
                 thermal_gap: z.thermal_gap,
                 thermal_spoke: z.thermal_spoke,
+                hatch: None,
+                cutouts: vec![],
+                min_island_area: None,
+                name: None,
             },
         )?;
         tx.add_dependency(id, zid)?;
