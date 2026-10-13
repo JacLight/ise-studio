@@ -1243,6 +1243,18 @@ mod tests {
     }
 
     #[test]
+    fn spans_read_an_outline_with_a_hole() {
+        // A 40 × 20 rectangle with a 10 × 10 hole in its middle.
+        let outer = vec![[0.0, 0.0], [40.0, 0.0], [40.0, 20.0], [0.0, 20.0]];
+        let hole = vec![[15.0, 5.0], [15.0, 15.0], [25.0, 15.0], [25.0, 5.0]];
+        let loops = vec![outer, hole];
+        assert_eq!(spans(&loops, 20.0, true), vec![[0.0, 5.0], [15.0, 20.0]]);
+        assert_eq!(spans(&loops, 5.5, true), vec![[0.0, 20.0]]);
+        assert_eq!(spans(&loops, 10.0, false), vec![[0.0, 15.0], [25.0, 40.0]]);
+        assert!(spans(&loops, 50.0, true).is_empty());
+    }
+
+    #[test]
     fn a_program_names_its_canvases() {
         assert_eq!(named_in("const s = canvas(\"Side\"); const t = canvas('Top'); fromCanvas(\"x\"); canvas(\"Side\")"), vec!["Side".to_string(), "Top".to_string()]);
     }
