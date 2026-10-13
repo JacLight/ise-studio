@@ -2555,6 +2555,8 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
     failed = true;
   }
 } else if (command === "view") {
+  const everyView = args.includes("--all");
+  if (everyView) args.splice(args.indexOf("--all"), 1);
   const action = file;
   let arg = args.slice(2).join(" ").trim();
   let target = null;
@@ -2611,7 +2613,8 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
     } else target = pick[0].id;
   }
   if (!failed) {
-    const r = await engine.send("view", { action, target, value });
+    // --all: every open view of the project, not only the person last spoken to.
+    const r = await engine.send("view", { action, target, value, ...(everyView ? { to: "*" } : {}) });
     if (r.ok) console.log(`✓ ${action}${arg ? ` ${arg}` : ""} shown to ${r.value.shown_to === "*" ? "every open view of the project" : r.value.shown_to}`);
     else {
       console.error(`✗ ${r.error.message}`);

@@ -70,9 +70,15 @@ export function pictureTexture(ref: string): THREE.Texture {
 async function load(texture: THREE.Texture, id: string) {
   const img = new Image();
   img.crossOrigin = "anonymous";
+  // The load event, not decode(): Chrome may hold decode() back in a background tab,
+  // and a render or a web model asked for from there would wait for it forever.
+  const loaded = new Promise<void>((done, fail) => {
+    img.onload = () => done();
+    img.onerror = () => fail(new Error("not read"));
+  });
   img.src = projectUrl(`/images/${id}`);
   try {
-    await img.decode();
+    await loaded;
   } catch {
     return console.warn(`printed picture ${id}: could not be read`);
   }
