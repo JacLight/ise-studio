@@ -189,6 +189,8 @@ export class BatchLayer {
     for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) m.visible = false;
     // Culled here per instance; the renderer need not test it again.
     mesh.frustumCulled = false;
+    // Still a shaded part (a photoreal render takes it, though its own materials are off).
+    mesh.userData.batched = true;
   }
 
   /**

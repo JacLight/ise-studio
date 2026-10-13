@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExt
 import { usePersisted, usePersistedSet } from "./persist";
 import { AiPanel } from "./AiPanel";
 import { RenderView } from "./RenderView";
-import { renderImage } from "./render";
+import { type Studio, renderImage } from "./render";
 import { type Proposal, interpret } from "./assistant";
 import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
@@ -195,6 +195,12 @@ export function App({ engine }: { engine: Engine }) {
   const [turntable, setTurntable] = useState(false);
   // Render mode: the view path-traced over the model.
   const [rendering, setRendering] = useState(false);
+  // The room renders are made in: the grey studio, or the white sweep of a catalogue shot.
+  const [studio, setStudio] = usePersisted<Studio>("renderStudio", "studio");
+  // ?studio=white wins (a headless render started by ./forma render --studio white).
+  const studioAsked = new URLSearchParams(location.search).get("studio");
+  const studioNow = useRef(studio);
+  studioNow.current = studioAsked === "white" || studioAsked === "studio" ? studioAsked : studio;
   const renderSource = useCallback(() => viewport.current?.renderSource() ?? null, []);
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [busy, setBusy] = useState(false);
@@ -343,9 +349,12 @@ export function App({ engine }: { engine: Engine }) {
             break;
           case "render": {
             // A render asked for from ./forma render: made here, sent back to the engine.
-            const job = value ? (JSON.parse(value) as { job?: string; width?: number; height?: number; samples?: number; open?: boolean }) : {};
+            const job = value ? (JSON.parse(value) as { job?: string; width?: number; height?: number; samples?: number; open?: boolean; studio?: Studio }) : {};
+            if (job.studio === "white" || job.studio === "studio") studioNow.current = job.studio;
+            if (job.studio) setStudio(studioNow.current);
             if (!job.job) {
-              setRendering(true);
+              // Render mode opens (unless only the studio was set).
+              if (job.open !== false) setRendering(true);
               break;
             }
             const source = viewport.current?.renderSource();
@@ -355,7 +364,7 @@ export function App({ engine }: { engine: Engine }) {
               back("", "the view is not ready");
               break;
             }
-            renderImage(source, { width: job.width ?? 1920, height: job.height ?? 1080, samples: job.samples ?? 256 })
+            renderImage(source, { width: job.width ?? 1920, height: job.height ?? 1080, samples: job.samples ?? 256, studio: studioNow.current })
               .then((png) => back(png))
               .catch((e) => back("", String(e)));
             break;
@@ -364,6 +373,10 @@ export function App({ engine }: { engine: Engine }) {
             if (value && ["perspective", "iso", "front", "back", "left", "right", "top", "bottom"].includes(value)) {
               setView(value as ViewName);
               viewport.current?.view(value as ViewName);
+            } else if (value && /^\s*-?\d/.test(value)) {
+              // azimuth,elevation[,lens angle[,fill]] in degrees (fill 0–1), as ./forma look takes them.
+              const [az, el, fov, fill] = value.split(",").map(Number);
+              if (Number.isFinite(az) && Number.isFinite(el)) viewport.current?.lookFrom(az, el, Number.isFinite(fov) ? fov : undefined, Number.isFinite(fill) ? fill : undefined);
             }
             break;
           case "projection":
@@ -1836,7 +1849,7 @@ export function App({ engine }: { engine: Engine }) {
             onRestart={() => setCalibrating((c) => (c ? { ...c, points: [] } : c))}
           />
         )}
-        {rendering && <RenderView source={renderSource} name={projectTitle()} onClose={() => setRendering(false)} />}
+        {rendering && <RenderView source={renderSource} name={projectTitle()} studio={studio} onStudio={setStudio} onClose={() => setRendering(false)} />}
         <div className="view-caption">
           <span>{projectTitle().toUpperCase()}</span>
           <span>
