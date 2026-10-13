@@ -50,6 +50,10 @@ pub struct BoardView {
     pub stackup: crate::stackup::StackupView,
     /// The custom rules as read (empty when none, or when they do not parse: see the `rules_syntax` violation).
     pub custom_rules: Vec<crate::rules::Rule>,
+    /// The custom rules as written.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub drc_rules: String,
+    pub teardrop_settings: Option<crate::teardrops::Teardrops>,
     /// Every piece of copper (pads, tracks, vias, graphics, teardrops) with its layers, for tools.
     #[serde(skip)]
     pub cu: Vec<Cu>,
@@ -674,6 +678,8 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
         teardrops,
         stackup: crate::stackup::resolve(board),
         custom_rules,
+        drc_rules: board.drc_rules.clone(),
+        teardrop_settings: board.teardrops.clone(),
         cu: vec![],
     };
     view.stats = stats(&view, &items);
