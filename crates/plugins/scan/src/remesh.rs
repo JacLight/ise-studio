@@ -20,6 +20,12 @@ pub fn remesh(m: &Mesh, target: f64, iterations: usize) -> Mesh {
         flip_valence(&mut cur);
         relax(&mut cur, &reference);
     }
+    // Every vertex back onto the original (collapses leave some on chords).
+    for p in cur.positions.iter_mut() {
+        if let Some(c) = reference.closest(*p) {
+            *p = c.point;
+        }
+    }
     cur
 }
 

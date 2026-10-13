@@ -273,7 +273,21 @@ pub fn repair(mesh: &Mesh, o: &Options) -> (Mesh, Repaired) {
         n - m.positions.len()
     };
     note("unused vertices removed", unused);
-    let after = analyze::analyze(&m);
+    let mut after = analyze::analyze(&m);
+    // Patches can meet where a pinched vertex was split: copies at one point
+    // leave zero-area slivers. Welding them again closes those, when it
+    // leaves nothing worse behind.
+    if after.degenerate > 0 {
+        let mut w = m.clone();
+        w.weld(if o.weld > 0.0 { o.weld } else { w.weld_eps() });
+        let r = analyze::analyze(&w);
+        let bad = |r: &Report| r.degenerate + r.non_manifold_edges + r.non_manifold_vertices + r.holes + r.self_intersections;
+        if bad(&r) < bad(&after) {
+            note("slivers closed", after.degenerate);
+            m = w;
+            after = r;
+        }
+    }
     (m, Repaired { before, after, steps })
 }
 

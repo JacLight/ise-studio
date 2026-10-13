@@ -437,7 +437,7 @@ pub fn query(op: &str, sha: &str, o: &Value) -> Result<Value, String> {
             let c = region(&data()?.cloud, o);
             let min = num(o, "minPoints").map(|v| v as usize).unwrap_or((c.len() / 50).max(30));
             let found = fit::detect(&c, &fit_kinds(o), &fit::Ransac { threshold: threshold(&c, o), ..Default::default() }, min, num(o, "max").unwrap_or(20.0) as usize);
-            let left = c.len() - found.iter().map(|f| f.points).sum::<usize>();
+            let left = c.len().saturating_sub(found.iter().map(|f| f.points).sum::<usize>());
             Ok(json!({ "shapes": found.iter().map(fit_json).collect::<Vec<_>>(), "unassigned": left, "points": c.len() }))
         }
         "section" => {

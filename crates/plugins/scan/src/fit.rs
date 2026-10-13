@@ -192,10 +192,23 @@ fn extent(pts: &[V3], origin: V3, axis: V3) -> (f64, f64) {
     })
 }
 
+/// The circle the points make seen along an axis (stray points trimmed, three rounds).
 fn cylinder_from(axis: V3, pts: &[V3]) -> Option<(V3, f64)> {
     let (u, v) = frame(axis);
-    let flat: Vec<[f64; 2]> = pts.iter().map(|p| [dot(*p, u), dot(*p, v)]).collect();
-    let (c, r) = circle_2d(&flat)?;
+    let mut flat: Vec<[f64; 2]> = pts.iter().map(|p| [dot(*p, u), dot(*p, v)]).collect();
+    let (mut c, mut r) = circle_2d(&flat)?;
+    for _ in 0..3 {
+        let d: Vec<f64> = flat.iter().map(|q| ((q[0] - c[0]).hypot(q[1] - c[1]) - r).abs()).collect();
+        let mut s = d.clone();
+        s.sort_by(|a, b| a.total_cmp(b));
+        let limit = (3.0 * 1.4826 * s[s.len() / 2]).max(1e-12);
+        let keep: Vec<[f64; 2]> = flat.iter().zip(&d).filter(|(_, e)| **e <= limit).map(|(q, _)| *q).collect();
+        if keep.len() == flat.len() || keep.len() < 3 {
+            break;
+        }
+        flat = keep;
+        (c, r) = circle_2d(&flat)?;
+    }
     Some((add(scale(u, c[0]), scale(v, c[1])), r))
 }
 
@@ -211,6 +224,19 @@ pub fn fit_cylinder(pts: &[V3], normals: &[V3]) -> Option<Primitive> {
         let Some((c0, r0)) = cylinder_from(axis0, pts) else { continue };
         let (t0, p0) = angles(axis0);
         let (u, v) = frame(axis0);
+        // Only points near the starting cylinder steer the refinement.
+        let near: Vec<V3> = {
+            let d: Vec<f64> = pts.iter().map(|p| {
+                let w = sub(*p, c0);
+                (norm(sub(w, scale(axis0, dot(w, axis0)))) - r0).abs()
+            }).collect();
+            let mut s = d.clone();
+            s.sort_by(|a, b| a.total_cmp(b));
+            let limit = (3.0 * 1.4826 * s[s.len() / 2]).max(1e-9);
+            let k: Vec<V3> = pts.iter().zip(&d).filter(|(_, e)| **e <= limit).map(|(p, _)| *p).collect();
+            if k.len() >= 6 { k } else { pts.to_vec() }
+        };
+        let pts = &near;
         let start = vec![t0, p0, dot(c0, u), dot(c0, v), r0];
         let (p, rms) = levenberg_marquardt(start, 200, |q, out| {
             let a = dir(q[0], q[1]);
@@ -363,12 +389,45 @@ pub fn fit_torus(pts: &[V3], normals: &[V3]) -> Option<Primitive> {
 }
 
 /// Least-squares fit of one kind to all the points.
+///
+/// Robust to a few points from neighbouring surfaces: after each fit, points
+/// further than three robust standard deviations (1.4826 × the median
+/// residual) are set aside and the fit is made again, up to three times.
 pub fn fit(cloud: &Cloud, kind: Kind) -> Option<Fit> {
     let pts = &cloud.positions;
     if pts.len() < 6 {
         return None;
     }
     let normals = if kind == Kind::Plane || kind == Kind::Sphere { Vec::new() } else { normals_for(cloud) };
+    let all: Vec<u32> = (0..pts.len() as u32).collect();
+    let mut used = all.clone();
+    let mut best = fit_once(pts, &normals, kind, &used)?;
+    for _ in 0..3 {
+        let mut r: Vec<f64> = pts.iter().map(|p| best.primitive.distance(*p).abs()).collect();
+        let mut sorted = r.clone();
+        sorted.sort_by(|a, b| a.total_cmp(b));
+        let median = sorted[sorted.len() / 2];
+        let limit = (3.0 * 1.4826 * median).max(1e-9);
+        let keep: Vec<u32> = all.iter().copied().filter(|&i| r[i as usize] <= limit).collect();
+        r.clear();
+        if keep.len() == used.len() || keep.len() < 6 || keep.len() * 2 < pts.len() {
+            break;
+        }
+        used = keep;
+        match fit_once(pts, &normals, kind, &used) {
+            Some(f) => best = f,
+            None => break,
+        }
+    }
+    best.of = pts.len();
+    Some(best)
+}
+
+/// One least-squares fit to the points at `used`.
+fn fit_once(all_pts: &[V3], all_normals: &[V3], kind: Kind, used: &[u32]) -> Option<Fit> {
+    let pts: Vec<V3> = used.iter().map(|&i| all_pts[i as usize]).collect();
+    let normals: Vec<V3> = if all_normals.is_empty() { Vec::new() } else { used.iter().map(|&i| all_normals[i as usize]).collect() };
+    let pts = &pts;
     let prim = match kind {
         Kind::Plane => Some(fit_plane(pts)),
         Kind::Sphere => fit_sphere(pts),
@@ -377,7 +436,7 @@ pub fn fit(cloud: &Cloud, kind: Kind) -> Option<Fit> {
         Kind::Torus => fit_torus(pts, &normals),
     }?;
     let (rms, max) = residuals(&prim, pts);
-    Some(Fit { primitive: prim, rms, max, points: pts.len(), of: pts.len(), inliers: (0..pts.len() as u32).collect() })
+    Some(Fit { primitive: prim, rms, max, points: pts.len(), of: pts.len(), inliers: used.to_vec() })
 }
 
 /// Every kind fitted; the best first, preferring the simpler surface when
@@ -513,7 +572,7 @@ pub fn ransac(cloud: &Cloud, normals: &[V3], kind: Kind, o: &Ransac, active: &[u
             let sub_cloud = Cloud { positions: active.iter().map(|&i| pts[i as usize]).collect(), normals: active.iter().map(|&i| normals[i as usize]).collect(), colors: vec![] };
             let f = fit(&sub_cloud, Kind::Torus)?;
             let ins = inliers(&f.primitive, pts, normals, o, active);
-            return finish(f.primitive, pts, normals, o, ins, active.len());
+            return finish(f.primitive, pts, normals, o, ins, active);
         }
     };
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15 ^ (active.len() as u64) ^ ((kind as u64) << 32));
@@ -532,10 +591,11 @@ pub fn ransac(cloud: &Cloud, normals: &[V3], kind: Kind, o: &Ransac, active: &[u
     }
     let (_, prim) = best?;
     let ins = inliers(&prim, pts, normals, o, active);
-    finish(prim, pts, normals, o, ins, active.len())
+    finish(prim, pts, normals, o, ins, active)
 }
 
-fn finish(prim: Primitive, pts: &[V3], normals: &[V3], o: &Ransac, ins: Vec<u32>, of: usize) -> Option<Fit> {
+fn finish(prim: Primitive, pts: &[V3], normals: &[V3], o: &Ransac, ins: Vec<u32>, active: &[u32]) -> Option<Fit> {
+    let of = active.len();
     if ins.len() < 6 {
         return None;
     }
@@ -550,8 +610,7 @@ fn finish(prim: Primitive, pts: &[V3], normals: &[V3], o: &Ransac, ins: Vec<u32>
                 prim = f.primitive;
             }
         }
-        let all: Vec<u32> = (0..pts.len() as u32).collect();
-        let wider = inliers(&prim, pts, normals, o, &all);
+        let wider = inliers(&prim, pts, normals, o, active);
         if wider.len() >= ins.len() {
             ins = wider;
         }

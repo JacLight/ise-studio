@@ -45,6 +45,7 @@ import { FaceLayer, type FacePicture, type FlatFace, PickedFacesLayer, curvedFac
 import { SketchLayer, type SketchPicture } from "./sketchLayer";
 import { type Snap, snapSketch } from "./sketchSnap";
 import { DraftLayer, type DraftPicture } from "./draftLayer";
+import { type ScanLayer, buildScanLayer, disposeScanLayer } from "./scanLayer";
 import { type Plane, normalOf, toWorld } from "./sketchModel";
 import {
   type Frac,
@@ -412,6 +413,8 @@ type Props = {
   onTurnInstance?: (id: string, at: V3, rotation: V3) => Promise<boolean>;
   /** Lines and dots drawn over the model (project mm): exploded trails, a robot's reach and path, picked geometry. */
   overlay?: AssemblyOverlay | null;
+  /** A scan shown in place: its points or mesh, a deviation map, problem markers. */
+  scan?: ScanLayer | null;
   /** Picking geometry for a mate: a click on a part reports where and which face (project mm), instead of selecting. */
   onGeometryPick?: ((hit: GeometryHit) => void) | null;
   /** A selection box closed on these items (add: Shift held, adding to what is selected). */
@@ -2635,6 +2638,23 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
   }, [props.poses, entities]);
 
   // Lines and dots an assembly tool draws over the model (never picked: clicks reach the parts).
+  // A scan (points, mesh, deviation colours, problem markers), drawn in place.
+  const scanGroup = useRef<THREE.Group | null>(null);
+  useEffect(() => {
+    const t = three.current;
+    if (!t) return;
+    if (scanGroup.current) {
+      t.scene.remove(scanGroup.current);
+      disposeScanLayer(scanGroup.current);
+      scanGroup.current = null;
+    }
+    if (props.scan) {
+      scanGroup.current = buildScanLayer(props.scan);
+      t.scene.add(scanGroup.current);
+    }
+    t.invalidate();
+  }, [props.scan]);
+
   const assemblyOverlay = useRef<THREE.Group | null>(null);
   useEffect(() => {
     const t = three.current;

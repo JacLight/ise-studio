@@ -95,6 +95,7 @@ const PATHS = {
   patternCircular: "M12 2.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M19.5 15a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M4.5 15a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M12 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z",
   mirror: "M12 3v18 M9 6 3 18h6z M15 6v12h6z",
   project: "M4 8l8-4 8 4-8 4z M12 12v3 M4 20h16 M7 17.5 12 15l5 2.5",
+  scan: "M3 8V4h4 M17 4h4v4 M21 16v4h-4 M7 20H3v-4 M9 9h.01 M15 10h.01 M12 12h.01 M9 15h.01 M14.5 14.5h.01 M12 7.5h.01 M16.5 13h.01 M7.5 12h.01",
   chip: "M7 7h10v10H7z M10 10h4v4h-4z M9.5 7V3.5 M14.5 7V3.5 M9.5 17v3.5 M14.5 17v3.5 M7 9.5H3.5 M7 14.5H3.5 M17 9.5h3.5 M17 14.5h3.5",
   // Sketch constraints.
   cHorizontal: "M4 12h16 M4 9v6 M20 9v6",

@@ -11,13 +11,20 @@ export type Rule =
   | { kind: "max_mass"; parts: string[]; limit: Q }
   | { kind: "fits_within"; parts: string[]; width: Q; depth: Q; height: Q }
   | { kind: "clearance"; a: string; b: string; min: Q }
-  | { kind: "no_collisions"; parts: string[] };
+  | { kind: "no_collisions"; parts: string[] }
+  | { kind: "scan_deviation"; part: string; part_name?: string; scan: string; tolerance: Q; within?: number; align?: boolean };
 
 export type Requirement = { name: string; rule: Rule };
 
 export const requirement = (e: EntityView) => e.components["intent.requirement"] as Requirement | undefined;
 
-export const targetsOf = (rule: Rule) => (rule.kind === "clearance" ? [rule.a, rule.b] : rule.parts);
+export const targetsOf = (rule: Rule): string[] => {
+  if (rule.kind === "clearance") return [rule.a, rule.b];
+  // Rules the client does not model (studies, scans, motion) name their part one way or another.
+  const r = rule as unknown as Record<string, unknown>;
+  if (Array.isArray(r.parts)) return r.parts as string[];
+  return [r.part, r.shape, r.assembly, r.joint].filter((v): v is string => typeof v === "string");
+};
 
 const toMm = (q: Q) => q.value * 1000; // engine stores meters
 const toKg = (q: Q) => q.value; // engine stores kilograms
@@ -113,6 +120,8 @@ export function evaluateRule(rule: Rule, world: World): Pick<RequirementResult, 
   // Contact between AI-made shapes needs their exact solids: leave it to the engine.
   if ((rule.kind === "clearance" || rule.kind === "no_collisions") && targetsOf(rule).some((id) => world.exact.has(id))) return null;
   const boxes = (shapes as Shape[]).map(boxOf);
+  // Scan checks are the engine's alone.
+  if (rule.kind === "scan_deviation") return null;
   switch (rule.kind) {
     case "max_mass": {
       const masses = rule.parts.map((id) => world.massKg.get(id));
@@ -238,6 +247,8 @@ export function suggestRule(kind: Rule["kind"], parts: EntityView[], selected: s
     }
     case "no_collisions":
       return ids.length < 2 ? "Collision checks need two parts." : { kind, parts: ids };
+    default:
+      return "Add this check from its own tool.";
   }
 }
 
