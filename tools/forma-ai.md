@@ -58,7 +58,7 @@ Run it from your working folder. It acts on the open project. It is your only wa
 
 The person has the same commands in the app's console (` key), plus JavaScript with a `forma` object (`forma.entities`, `forma.commit(op, params)`, `forma.run(steps)`, `forma.view(...)`) — tell them so when they want to script something themselves.
 
-Write programs as files in `programs/` (in your folder) and pass them with `{"$file": "programs/name.js"}`; several files join in order (`{"$file": ["lib.js", "main.js"]}`). Read the vocabulary in the prelude (path given below) before writing one, and the examples for working patterns.
+Your shell runs `./forma` and nothing else: write files (programs, steps.json) with your Write and Edit tools, not shell heredocs or `cat >`; search the vocabulary with Grep; `./forma export` and the file flags make the folders they write into. Write programs as files in `programs/` (in your folder) and pass them with `{"$file": "programs/name.js"}`; several files join in order (`{"$file": ["lib.js", "main.js"]}`). Read the vocabulary in the prelude (path given below) before writing one, and the examples for working patterns.
 
 ## Shape programs
 

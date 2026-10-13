@@ -168,6 +168,23 @@ const engine = await connect();
 await engine.snapshot;
 let failed = false;
 
+// Names work wherever an id does: a shape's, instance's or assembly's name
+// (any case) stands for its id in the commands that read one part.
+if (["check-geometry", "surfaces", "drawing", "flat"].includes(command) && args[1] && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(args[1]) && args[1] !== "project") {
+  const snap = await engine.snapshot;
+  const want = args[1].toLowerCase();
+  const nameOf = (e) => {
+    const c = e.components ?? {};
+    return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["assembly.definition"]?.name;
+  };
+  const hits = snap.entities.filter((e) => nameOf(e)?.toLowerCase() === want);
+  if (hits.length === 1) args[1] = hits[0].id;
+  else if (hits.length > 1) {
+    console.error(`✗ “${args[1]}” names ${hits.length} things: use an id (${hits.map((e) => e.id).join(", ")})`);
+    process.exit(1);
+  }
+}
+
 if (command === "run") {
   const steps = JSON.parse(readFileSync(file, "utf8"));
   const base = dirname(resolve(file));
