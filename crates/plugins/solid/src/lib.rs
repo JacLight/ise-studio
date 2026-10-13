@@ -33,6 +33,7 @@ impl Plugin for SolidPlugin {
             .command::<CreateMaterial>()
             .command::<SetMaterialDensity>()
             .command::<SetMaterialCost>()
+            .command::<SetMaterialProperties>()
             .command::<AssignMaterial>()
             .derived(Derived {
                 name: "solid.display_mesh",
@@ -71,6 +72,49 @@ pub struct Material {
     /// materials. Absent (older projects, or not priced yet) means unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost: Option<MaterialCost>,
+    /// Engineering properties set on this material, overriding the typical
+    /// values the simulation library gives its name (absent: all typical).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub properties: Option<EngineeringProps>,
+}
+
+/// A material's engineering properties as the person set them; any left out
+/// come from the simulation library's typical values for its name. Units:
+/// MPa for moduli and strengths, kg/m³ density (the material's own density
+/// is used when this has none), W/m·K, J/kg·K, 1/K, °C.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EngineeringProps {
+    /// Young's modulus (MPa).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub e: Option<f64>,
+    /// Poisson's ratio.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nu: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yield_strength: Option<f64>,
+    /// Ultimate tensile strength (MPa).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uts: Option<f64>,
+    /// Slope of the stress–strain line past yield (MPa), for bilinear plasticity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tangent_modulus: Option<f64>,
+    /// Fully reversed fatigue strength (MPa) at `fatigue_cycles`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fatigue_strength: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fatigue_cycles: Option<f64>,
+    /// Thermal conductivity (W/m·K).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conductivity: Option<f64>,
+    /// Specific heat (J/kg·K).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub specific_heat: Option<f64>,
+    /// Linear thermal expansion (1/K).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expansion: Option<f64>,
+    /// Where these figures come from (a datasheet, a test).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// The price of a material, in the forms it is bought: by weight, by the
@@ -412,6 +456,9 @@ pub struct CreateMaterial {
     /// What it costs (per kg, per sheet, per bar), for BOM estimates.
     #[serde(default)]
     pub cost: Option<MaterialCost>,
+    /// Engineering properties (E, ν, strengths, thermal) beyond the typical ones for its name.
+    #[serde(default)]
+    pub properties: Option<EngineeringProps>,
 }
 
 impl Command for CreateMaterial {
@@ -425,7 +472,7 @@ impl Command for CreateMaterial {
             c.check()?;
         }
         let id = tx.create();
-        tx.set(id, Material { name: self.name, density: self.density, cost: self.cost })?;
+        tx.set(id, Material { name: self.name, density: self.density, cost: self.cost, properties: self.properties })?;
         Ok(json!({ "id": id }))
     }
 }
@@ -473,6 +520,40 @@ impl Command for SetMaterialCost {
             c.check()?;
         }
         material.cost = self.cost.filter(|c| c != &MaterialCost::default());
+        tx.set(self.target, material)?;
+        Ok(json!({ "id": self.target }))
+    }
+}
+
+/// `solid.material.set_properties`: sets or clears (`null`) a material's
+/// engineering properties; every study and check using it re-runs.
+#[derive(Deserialize, JsonSchema)]
+pub struct SetMaterialProperties {
+    pub target: StableId,
+    pub properties: Option<EngineeringProps>,
+}
+
+impl Command for SetMaterialProperties {
+    const NAME: &'static str = "solid.material.set_properties";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        let mut material = tx
+            .get::<Material>(self.target)
+            .cloned()
+            .ok_or_else(|| CommandError::new(ErrorCode::UnresolvedReference, format!("{} is not a material", self.target)))?;
+        if let Some(p) = &self.properties {
+            let positive = [("E", p.e), ("yield strength", p.yield_strength), ("tensile strength", p.uts), ("fatigue strength", p.fatigue_strength), ("fatigue cycles", p.fatigue_cycles), ("conductivity", p.conductivity), ("specific heat", p.specific_heat)];
+            if let Some((what, _)) = positive.iter().find(|(_, v)| v.is_some_and(|v| !(v > 0.0 && v.is_finite()))) {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, format!("{what} must be greater than zero")));
+            }
+            if p.nu.is_some_and(|v| !(-1.0 < v && v < 0.5)) {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, "Poisson's ratio must be between −1 and 0.5"));
+            }
+            if p.tangent_modulus.is_some_and(|v| v < 0.0) {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, "the tangent modulus cannot be negative"));
+            }
+        }
+        material.properties = self.properties.filter(|p| p != &EngineeringProps::default());
         tx.set(self.target, material)?;
         Ok(json!({ "id": self.target }))
     }

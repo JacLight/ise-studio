@@ -14,6 +14,8 @@
 //! - `GET /pcb/<id>/gerber-check?px=`        the package read back independently and compared with the board
 //! - `GET /pcb/<id>/layers`                  each fab file drawn (SVG) from what the reader made of it
 //! - `GET|POST /pcb/settings`                which API keys are set / set them
+//! - `POST /pcb/<id>/router?project=`        the interactive router's plan for a route, a drag
+//!   or a connection under the cursor (`{ op: "route" | "drag" | "connection", … }`); nothing changes
 //! - `GET /pcb/<id>/exports`                 files for other EDA tools (board or schematic), and what imports
 //! - `GET /pcb/schematic/<id>/file/<name>`   one of a schematic's files for other tools
 
@@ -108,6 +110,23 @@ pub async fn show(State(server): State<Arc<Server>>, Path(id): Path<String>, Que
         "sourcing": b.sourcing,
     }))
     .into_response()
+}
+
+/// `POST /pcb/<id>/router`: what a route or drag would do from the board as it stands.
+pub async fn router(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>, axum::Json(req): axum::Json<Value>) -> axum::response::Response {
+    let (b, v) = match board(&server, &query, &id) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let req: de_pcb::routing::Preview = match serde_json::from_value(req) {
+        Ok(r) => r,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e.to_string()),
+    };
+    match tokio::task::spawn_blocking(move || de_pcb::routing::preview(&b, &v, req)).await {
+        Ok(Ok(out)) => axum::Json(out).into_response(),
+        Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
 }
 
 /// `GET /pcb/<id>/3d`: what the 3D view draws (copper, mask openings, silk per side; holes; component solids).

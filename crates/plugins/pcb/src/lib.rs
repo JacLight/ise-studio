@@ -54,9 +54,11 @@ pub mod library;
 pub mod model3d;
 pub mod outputs;
 pub mod panel;
+pub mod pns;
 pub mod reader;
 pub mod render3d;
 pub mod route;
+pub mod routing;
 pub mod schematic;
 pub mod schematic_bus;
 pub mod schematic_edit;
@@ -105,6 +107,14 @@ impl Plugin for PcbPlugin {
             .command::<route::Autoroute>()
             .command::<kicad::ImportKicad>()
             .command::<drag::CreateRoute>()
+            .command::<routing::RouteInteractive>()
+            .command::<routing::RouteDrag>()
+            .command::<routing::Optimize>()
+            .command::<routing::Cleanup>()
+            .command::<routing::Unroute>()
+            .command::<routing::BreakTrack>()
+            .command::<routing::FilletTracks>()
+            .command::<routing::Fanout>()
             .command::<OutlineToSketch>()
             .command::<SetSourcing>()
             .derived(Derived { name: "pcb.board", inputs: &[Board::KIND], reads_dependencies: true, compute: board::compute });
@@ -351,6 +361,10 @@ pub struct Track {
     /// An end was dragged along with a part it joins: it may need re-routing.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reroute: bool,
+    /// Arc segments: bulge of segment i (points[i] → points[i+1]) = tan(sweep / 4),
+    /// positive counter-clockwise, 0 or missing straight.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bulges: Vec<f64>,
 }
 
 impl Persist for Track {
@@ -1080,6 +1094,9 @@ pub struct CreateTrack {
     pub layer: String,
     pub width: Option<f64>,
     pub points: Vec<[f64; 2]>,
+    /// Arc segments (see `pcb.track.update`).
+    #[serde(default)]
+    pub bulges: Vec<f64>,
 }
 
 impl Command for CreateTrack {
@@ -1092,13 +1109,14 @@ impl Command for CreateTrack {
         if self.points.len() < 2 {
             return Err(bad("a track needs 2 or more points"));
         }
+        crate::pns::check_bulges(&self.points, &self.bulges).map_err(bad)?;
         let net = clean(self.net).or_else(|| net_at(tx.world(), self.board, &self.layer, self.points[0])).or_else(|| net_at(tx.world(), self.board, &self.layer, *self.points.last().unwrap()));
         let width = self.width.unwrap_or_else(|| board.class_of(net.as_deref()).track_width);
         if !(width > 0.0 && width <= 20.0) {
             return Err(bad("a track width is above 0 and up to 20 mm"));
         }
         let id = tx.create();
-        tx.set(id, Track { board: self.board, net: net.clone(), layer: self.layer, width, points: self.points, auto: false, reroute: false })?;
+        tx.set(id, Track { board: self.board, net: net.clone(), layer: self.layer, width, points: self.points, auto: false, reroute: false, bulges: self.bulges })?;
         tx.add_dependency(self.board, id)?;
         Ok(json!({ "id": id, "net": net, "width": width }))
     }
@@ -1112,6 +1130,9 @@ pub struct UpdateTrack {
     pub width: Option<f64>,
     pub layer: Option<String>,
     pub net: Option<String>,
+    /// Arc segments: bulge per segment = tan(sweep / 4), positive counter-clockwise
+    /// (0 straight). New points without bulges make every segment straight.
+    pub bulges: Option<Vec<f64>>,
 }
 
 impl Command for UpdateTrack {
@@ -1126,7 +1147,12 @@ impl Command for UpdateTrack {
                 return Err(bad("a track needs 2 or more points"));
             }
             t.points = p;
+            t.bulges = vec![];
         }
+        if let Some(b) = self.bulges {
+            t.bulges = b;
+        }
+        crate::pns::check_bulges(&t.points, &t.bulges).map_err(bad)?;
         if let Some(w) = self.width {
             if !(w > 0.0 && w <= 20.0) {
                 return Err(bad("a track width is above 0 and up to 20 mm"));

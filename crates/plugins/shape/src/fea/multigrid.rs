@@ -248,12 +248,13 @@ impl Level {
             });
             let o = (i & 1) | (j & 1) << 1 | (k & 1) << 2;
             let free: [bool; 24] = std::array::from_fn(|r| m.free(3 * m.corners[e][r / 3] + r % 3));
-            if free.iter().all(|&f| f) {
+            let own = m.own.get(e).and_then(|o| o.as_deref());
+            if free.iter().all(|&f| f) && own.is_none() {
                 weights[c][o] += m.weight[e];
             } else {
                 // Held nodes take no part: drop their rows and columns first.
                 let w = m.weight[e];
-                let ke = &m.kes[p];
+                let ke = own.unwrap_or(&m.kes[p]);
                 let km: Vec<f64> = (0..576).map(|x| if free[x / 24] && free[x % 24] { w * ke[x] } else { 0.0 }).collect();
                 galerkin(&km, &interp[o], mats[c].get_or_insert_with(|| vec![0.0; 576].into_boxed_slice()));
             }
