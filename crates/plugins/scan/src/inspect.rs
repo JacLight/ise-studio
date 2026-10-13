@@ -149,6 +149,12 @@ pub fn align(points: &[V3], reference: &TriBvh, coarse: bool, max_iter: usize) -
             let t = sub(cr, mat_vec(&r, cs));
             starts.push([[r[0][0], r[0][1], r[0][2], t[0]], [r[1][0], r[1][1], r[1][2], t[1]], [r[2][0], r[2][1], r[2][2], t[2]]]);
         }
+        // Scans already standing upright (levelled on their floor): turns about z, centroids matched.
+        for k in 0..12 {
+            let r = axis_angle([0.0, 0.0, 1.0], k as f64 * std::f64::consts::PI / 6.0);
+            let t = sub(cr, mat_vec(&r, cs));
+            starts.push([[r[0][0], r[0][1], r[0][2], t[0]], [r[1][0], r[1][1], r[1][2], t[1]], [r[2][0], r[2][1], r[2][2], t[2]]]);
+        }
     }
     let mut best: Option<(f64, Rigid, usize)> = None;
     for start in starts {

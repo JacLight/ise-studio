@@ -42,6 +42,11 @@ pub struct Entry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     pub added: u64,
+    /// How it was made, when there is more to say than `source`: for
+    /// photogrammetry the engine, photos used and rejected, camera poses,
+    /// the scale method and its uncertainty, and the quality checks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<Value>,
 }
 
 fn now_ms() -> u64 {
@@ -66,6 +71,12 @@ fn write_index(server: &Server, project: &str, list: &[Entry]) -> Result<(), Str
 
 /// Stores scan bytes and lists them in the project; the entry.
 fn add(server: &Server, project: &str, bytes: &[u8], ext: &str, name: &str, source: &str, parent: Option<&str>) -> Result<Entry, String> {
+    add_with(server, project, bytes, ext, name, source, parent, None)
+}
+
+/// As [`add`], with the record of how it was made.
+#[allow(clippy::too_many_arguments)]
+pub fn add_with(server: &Server, project: &str, bytes: &[u8], ext: &str, name: &str, source: &str, parent: Option<&str>, provenance: Option<Value>) -> Result<Entry, String> {
     let data = scans::read(bytes, ext)?;
     let id = de_shape::assets::store_scan(bytes, ext)?;
     let (lo, hi) = data.cloud.bounds();
@@ -80,6 +91,7 @@ fn add(server: &Server, project: &str, bytes: &[u8], ext: &str, name: &str, sour
         source: source.into(),
         parent: parent.map(str::to_string),
         added: now_ms(),
+        provenance,
     };
     let mut list = read_index(server, project);
     list.retain(|e| e.id != id);
@@ -89,7 +101,7 @@ fn add(server: &Server, project: &str, bytes: &[u8], ext: &str, name: &str, sour
 }
 
 /// A mesh as a binary PLY (the format derived meshes are kept in).
-fn mesh_bytes(m: &Mesh, name: &str) -> Vec<u8> {
+pub fn mesh_bytes(m: &Mesh, name: &str) -> Vec<u8> {
     de_shape::formats::mesh::write_ply(&[de_shape::formats::MeshBody { name: name.into(), positions: m.flat_positions(), triangles: m.flat_triangles(), look: None, normals: vec![] }])
 }
 
@@ -169,7 +181,9 @@ pub async fn query_op(State(server): State<Arc<Server>>, Path((id, op)): Path<(S
 
 /// `POST /scans/<id>/mesh/<op>` (repair, decimate, smooth, remesh,
 /// fillHoles, harmonize, flip, largest, removeComponents, split) or
-/// `/points/<op>` (downsample, outliers, normals) or `/reconstruct`: the
+/// `/points/<op>` (downsample, outliers, normals) or `/reconstruct`, or
+/// `/transform/scale` ({ from, to, distance, pick? } or { factor }) and
+/// `/transform/level` (the floor plane to z = 0): the
 /// result kept as a new scan; the reply is its entry and the report.
 pub async fn derive(State(server): State<Arc<Server>>, Path((id, what, op)): Path<(String, String, String)>, Query(query): Query<HashMap<String, String>>, body: axum::body::Bytes) -> axum::response::Response {
     let project = project_name(&server, &query);
@@ -234,6 +248,51 @@ pub async fn derive(State(server): State<Arc<Server>>, Path((id, what, op)): Pat
                     let name = label("surface");
                     let entry = add(&s, &project, &mesh_bytes(&m, &name), "ply", &name, "reconstruct", Some(&e.id))?;
                     Ok(json!({ "scan": entry, "report": report }))
+                }
+                "transform" => {
+                    // Scale (a known distance between two points, or a factor) or level (floor to z = 0).
+                    let size = de_scan::linalg::dist(d.cloud.bounds().0, d.cloud.bounds().1);
+                    let v3 = |k: &str| o.get(k).and_then(|v| serde_json::from_value::<[f64; 3]>(v.clone()).ok());
+                    let scaling = match op.as_str() {
+                        "scale" => match (v3("from"), v3("to"), o.get("distance").and_then(Value::as_f64), o.get("factor").and_then(Value::as_f64)) {
+                            (Some(a), Some(b), Some(dist), _) => {
+                                // How precisely a point can be picked: the scan's point spacing, unless told.
+                                let pick = o.get("pick").and_then(Value::as_f64).unwrap_or_else(|| d.cloud.spacing());
+                                de_scan::photo::distance_scaling(a, b, dist, pick)?
+                            }
+                            (_, _, _, Some(f)) if f > 0.0 => de_scan::photo::Scaling { method: "factor".into(), transform: de_scan::photo::Similarity { scale: f, ..de_scan::photo::Similarity::identity() }, uncertainty: f64::NAN, detail: format!("scaled ×{f}") },
+                            _ => return Err("scale: give from [x, y, z], to [x, y, z] and distance (mm), or a factor".into()),
+                        },
+                        "level" => {
+                            let tol = o.get("tolerance").and_then(Value::as_f64).unwrap_or(size * 0.004);
+                            let f = de_scan::photo::floor(&d.cloud.positions, tol).ok_or("level: no floor plane found")?;
+                            let t = de_scan::photo::level(&d.cloud.positions, &f, tol);
+                            de_scan::photo::Scaling { method: "level".into(), transform: t, uncertainty: f64::NAN, detail: format!("floor plane through {} points ({:.3} RMS) put at z = 0, facing up", f.inliers, f.rms) }
+                        }
+                        other => return Err(format!("unknown transform {other} (scale, level)")),
+                    };
+                    let t = scaling.transform;
+                    let name = label(&op);
+                    let mut provenance = e.provenance.clone().unwrap_or(json!({}));
+                    provenance[if op == "scale" { "scale" } else { "level" }] = json!({ "method": scaling.method, "factor": t.scale, "uncertainty": if scaling.uncertainty.is_finite() { json!(scaling.uncertainty) } else { Value::Null }, "detail": scaling.detail, "transform": t.matrix() });
+                    let entry = match &d.mesh {
+                        Some(m) => {
+                            let mut m = m.clone();
+                            for p in m.positions.iter_mut() {
+                                *p = t.apply(*p);
+                            }
+                            add_with(&s, &project, &mesh_bytes(&m, &name), "ply", &name, &op, Some(&e.id), Some(provenance.clone()))?
+                        }
+                        None => {
+                            let mut c = d.cloud.clone();
+                            for p in c.positions.iter_mut() {
+                                *p = t.apply(*p);
+                            }
+                            c.normals.clear();
+                            add_with(&s, &project, &de_scan::points::write_ply(&c), "ply", &name, &op, Some(&e.id), Some(provenance.clone()))?
+                        }
+                    };
+                    Ok(json!({ "scan": entry, "report": provenance[if op == "scale" { "scale" } else { "level" }] }))
                 }
                 "surface" if op == "sample" => {
                     // Mesh to points (FreeCAD's Points_Convert).
