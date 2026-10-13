@@ -54,7 +54,8 @@ const top = W - i0 - 50 - run;
 // First floor slab, open over the stair, with a balustrade along the well.
 const well = inner(top, sy - stairW / 2 - 50, W - i0, sy + stairW / 2);
 parts.push(...slab("First floor slab", { outline: outer, thickness: fs, level: L1, holes: [well] }));
-parts.push(...railing("Stairwell balustrade", { path: [[W - i0, sy - stairW / 2 - 50], [top, sy - stairW / 2 - 50]], height: 1000, level: L1, material: "Steel" }));
+// Its end post (40 mm square, centred on the path) stands clear of the east gable's inner face.
+parts.push(...railing("Stairwell balustrade", { path: [[W - i0 - 20, sy - stairW / 2 - 50], [top, sy - stairW / 2 - 50]], height: 1000, level: L1, material: "Steel" }));
 
 // First floor: north and south walls run to the eaves past the corners; the
 // gable walls stand between them, pitched up under the roof.
