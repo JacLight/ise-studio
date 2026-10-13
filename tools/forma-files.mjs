@@ -59,9 +59,9 @@ export function place(root, given, { existing = true } = {}) {
 
 function kept(rel) {
   const [first, ...rest] = rel.split(sep);
-  if (rel === "") return "your folder itself";
-  if (!rest.length && KEPT.has(first)) return `${first} (it keeps the conversation or the tool)`;
-  if (rest.length && KEPT_INSIDE.has(first)) return `${rel} (the conversation shows it)`;
+  if (rel === "") return "that is your folder itself";
+  if (!rest.length && KEPT.has(first)) return first === "forma" ? "that is your tool" : "it keeps the conversation";
+  if (rest.length && KEPT_INSIDE.has(first)) return "the conversation shows it";
   return null;
 }
 
@@ -109,7 +109,7 @@ export function rm(root, paths, { recursive = false } = {}) {
   const found = paths.map((p) => {
     const at = place(root, p);
     const why = kept(at.rel);
-    if (why) throw new Error(`${p}: ${why} is not removed`);
+    if (why) throw new Error(`${p}: ${why}, so it is not removed`);
     if (at.stat.isDirectory() && !recursive) throw new Error(`${p} is a folder: add -r to remove it and everything in it`);
     return at;
   });
@@ -125,11 +125,11 @@ export function mv(root, from, to, { force = false } = {}) {
   if (!from || !to) throw new Error("say what to move and where: forma files mv <from> <to>");
   const src = place(root, from);
   const whySrc = kept(src.rel);
-  if (whySrc) throw new Error(`${from}: ${whySrc} is not moved`);
+  if (whySrc) throw new Error(`${from}: ${whySrc}, so it is not moved`);
   let dest = place(root, to, { existing: false });
   if (dest.stat?.isDirectory() && !dest.stat.isSymbolicLink()) dest = place(root, join(dest.rel, src.rel.split(sep).pop()), { existing: false });
   const whyDest = kept(dest.rel);
-  if (whyDest) throw new Error(`${to}: ${whyDest} is not replaced`);
+  if (whyDest) throw new Error(`${to}: ${whyDest}, so it is not replaced`);
   if (dest.abs === src.abs) throw new Error(`${from} is already there`);
   if (src.stat.isDirectory() && within(src.abs, dest.abs)) throw new Error(`${from} cannot move inside itself`);
   if (dest.stat) {
