@@ -100,10 +100,16 @@ pub struct Declared {
     /// property sets, quantities), levels, spaces, openings, zones, grids.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bim: Option<de_bim::Declared>,
+    /// Parts embedded in others by design, by part name: what each is
+    /// embedded in (rebar in its slab, an insert moulded into its boss).
+    /// Interference checks count that overlap as meant, as long as the part
+    /// stays inside what holds it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub embedded: BTreeMap<String, Vec<String>>,
 }
 
 impl Declared {
     pub fn is_empty(&self) -> bool {
-        self.stock.is_none() && self.parts.is_empty() && self.connectors.is_empty() && self.bim.as_ref().is_none_or(|b| b.is_empty())
+        self.stock.is_none() && self.parts.is_empty() && self.connectors.is_empty() && self.bim.as_ref().is_none_or(|b| b.is_empty()) && self.embedded.is_empty()
     }
 }

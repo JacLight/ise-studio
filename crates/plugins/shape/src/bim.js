@@ -829,8 +829,10 @@ function curtainWall(name, o = {}) {
  * Reinforcing bars: one bar shape (a polyline of [x, y, z] points along its centre line),
  * repeated `count` times `spacing` apart along `direction`:
  *   rebar("B1 bottom", { path: [[0, 0, 40], [6000, 0, 40]], diameter: 12, count: 20, spacing: 200,
- *         direction: [0, 1, 0], mark: "01", grade: "B500B", level })
+ *         direction: [0, 1, 0], mark: "01", grade: "B500B", level, embedded: "Ground slab" })
  * Quantities give a bending schedule: mark, diameter, length each, count, total length, mass.
+ * `embedded` names the part (or parts) the bars are cast in: interference checks then
+ * count the bars inside it as meant, and flag only bars that poke out of it (cover).
  */
 function rebar(name, o = {}) {
   const where = `rebar ${name}`;
@@ -857,6 +859,7 @@ function rebar(name, o = {}) {
     part(name, union(bars), {
       material: o.material ?? "Steel",
       process: o.process,
+      embedded: o.embedded,
       ifc: {
         class: "IfcReinforcingBar",
         predefined: o.predefined ?? "MAIN",

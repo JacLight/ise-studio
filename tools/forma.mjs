@@ -2622,9 +2622,9 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
       failed = r.groups.some((g) => !g.solved);
     } else if (command === "interference") {
       const r = await get(`interference/${encodeURIComponent(id)}${sub ? `?clearance=${sub}` : ""}`);
-      const bad = r.overlaps.filter((o) => !o.joined && !o.fastener);
+      const bad = r.overlaps.filter((o) => !o.joined && !o.fastener && !o.embedded);
       console.log(`${bad.length ? "✗" : "✓"} ${r.name}: ${r.parts} parts, ${r.checked} close pairs checked; ${r.overlaps.length} overlap, ${r.touching.length} touch${r.clearance ? `, ${r.near.length} within ${r.clearance} mm` : ""}`);
-      for (const o of [...bad, ...r.overlaps.filter((x) => !bad.includes(x))]) console.log(`  overlap ${o.a} ↔ ${o.b}: ${o.volume} mm³ (${o.size?.join(" × ")} mm at ${o.at?.join(", ")})${o.fastener ? " [fastener]" : o.joined ? " [joined]" : ""}`);
+      for (const o of [...bad, ...r.overlaps.filter((x) => !bad.includes(x))]) console.log(`  overlap ${o.a} ↔ ${o.b}: ${o.volume} mm³ (${o.size?.join(" × ")} mm at ${o.at?.join(", ")})${o.fastener ? " [fastener]" : o.embedded ? " [embedded]" : o.joined ? " [joined]" : ""}${o.outside ? ` — the embedded part pokes out of its host by ${o.outside} mm³ round ${o.outside_at?.join(", ")}` : ""}`);
       for (const o of r.near) console.log(`  near    ${o.a} ↔ ${o.b}: ${o.gap} mm`);
       if (sub === "all" || r.touching.length <= 12) for (const o of r.touching) console.log(`  touch   ${o.a} ↔ ${o.b}${o.joined ? " [joined]" : ""}`);
       failed = bad.length > 0;

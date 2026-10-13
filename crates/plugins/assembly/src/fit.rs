@@ -342,6 +342,13 @@ struct Inst {
     hi: V3,
     /// The assembly step it goes in at (instance property "step"), if given.
     step: Option<f64>,
+    /// A part outside the assembly checked, where the project places it
+    /// (a board the case's screws clamp): what fasteners engage, never an item.
+    context: bool,
+    /// What it is declared embedded in, by name (instance property "embedded").
+    hosts: Vec<String>,
+    /// Its definition's name.
+    of: String,
 }
 
 fn entity(world: &World, id: StableId) -> Option<de_core::bevy_ecs::entity::Entity> {
@@ -357,8 +364,13 @@ pub fn is_fastener(world: &World, id: StableId) -> bool {
 }
 
 fn kind_of(world: &World, id: StableId, inst: &Instance) -> Kind {
-    let Some(def) = entity(world, inst.of) else { return Kind::Stock };
     let configured = entity(world, id).and_then(|e| world.get::<crate::InstanceConfigured>(e)).and_then(|c| c.0.clone());
+    kind_of_def(world, inst.of, inst.config.as_deref(), configured)
+}
+
+/// What a definition shown in configuration `config` is.
+fn kind_of_def(world: &World, of: StableId, config: Option<&str>, configured: Option<std::sync::Arc<de_shape::configs::Configured>>) -> Kind {
+    let Some(def) = entity(world, of) else { return Kind::Stock };
     let stats = match &configured {
         Some(c) => Some(c.stats.clone()),
         None => world.get::<ShapeSolid>(def).map(|s| s.stats.clone()),
@@ -367,12 +379,12 @@ fn kind_of(world: &World, id: StableId, inst: &Instance) -> Kind {
     let family = world.get::<StockFamily>(def).map(|f| f.family.clone());
     // Size values: the configuration's row, else the definition's parameters.
     let mut values: BTreeMap<String, f64> = world.get::<de_shape::ShapeProgram>(def).map(|p| p.params.iter().map(|q| (q.key.clone(), q.value)).collect()).unwrap_or_default();
-    if let (Some(f), Some(c)) = (&family, &inst.config)
+    if let (Some(f), Some(c)) = (&family, config)
         && let Some(row) = library::catalogue().ok().and_then(|cat| cat.family(f)).and_then(|fam| fam.row(c))
     {
         values.extend(row.values.clone());
-    } else if let (Some(c), Some(t)) = (&inst.config, world.get::<de_shape::ShapeConfigurations>(def))
-        && let Some(row) = t.rows.iter().find(|r| &r.name == c)
+    } else if let (Some(c), Some(t)) = (config, world.get::<de_shape::ShapeConfigurations>(def))
+        && let Some(row) = t.rows.iter().find(|r| r.name == c)
     {
         values.extend(row.values.clone());
     }
@@ -468,9 +480,23 @@ impl Ring {
     fn circle(&self, within: f64) -> Option<([f64; 2], f64)> {
         // A tessellated circle's vertices lie on it: fit those when the wall is round.
         let near: Vec<[f64; 2]> = self.contour.iter().copied().filter(|p| (p[0] * p[0] + p[1] * p[1]).sqrt() < within).collect();
+        let spread = |pts: &[[f64; 2]], c: [f64; 2], r: f64| pts.iter().map(|p| (((p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2)).sqrt() - r).abs()).fold(0.0, f64::max);
         if let Some((c, r)) = circle_fit(&near) {
-            let spread = near.iter().map(|p| (((p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2)).sqrt() - r).abs()).fold(0.0, f64::max);
-            if spread < 0.02 * r.max(1.0) {
+            // A coarsely drawn cylinder's slice also crosses its side faces'
+            // diagonals, on the chords inside the circle: its corners, the
+            // points farthest out, are on it. Eight or more corners on one
+            // circle, nothing outside it: that circle.
+            let far = |p: &[f64; 2]| ((p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2)).sqrt();
+            let out = near.iter().map(far).fold(0.0, f64::max);
+            let corners: Vec<[f64; 2]> = near.iter().copied().filter(|p| far(p) >= out - 0.001 * out - 0.002).collect();
+            if corners.len() >= 8
+                && let Some((c2, r2)) = circle_fit(&corners)
+                && spread(&corners, c2, r2) < 0.005 * r2.max(1.0)
+                && near.iter().all(|p| ((p[0] - c2[0]).powi(2) + (p[1] - c2[1]).powi(2)).sqrt() <= r2 + 0.005 * r2.max(1.0))
+            {
+                return Some((c2, r2));
+            }
+            if spread(&near, c, r) < 0.02 * r.max(1.0) {
                 return Some((c, r));
             }
         }
@@ -480,6 +506,96 @@ impl Ring {
         }).collect();
         circle_fit(&pts)
     }
+    /// The first hits within `within`, as points.
+    fn points(&self, within: f64) -> Vec<[f64; 2]> {
+        (0..RAYS)
+            .filter(|i| self.first[*i] < within)
+            .map(|i| {
+                let u = Ring::dir(i);
+                [u[0] * self.first[i], u[1] * self.first[i]]
+            })
+            .collect()
+    }
+    /// Two straight walls either side of the axis, open along their length
+    /// (a slot, a groove, a keyway seen across): the walls' direction and the
+    /// distance from the axis to the wall on each side (+ and − of the
+    /// direction turned 90°), measured within `near` of the axis along it.
+    fn slot(&self, within: f64, near: f64) -> Option<([f64; 2], f64, f64)> {
+        if self.inside {
+            return None;
+        }
+        let pts = self.points(within);
+        if pts.len() < 8 {
+            return None;
+        }
+        // The walls' direction, roughly: where the rays get out (along an
+        // open slot), else the long axis of the points (a round bore has none).
+        let missed: Vec<usize> = (0..RAYS).filter(|i| self.first[*i] >= within).collect();
+        let e = if missed.is_empty() {
+            let (e, big, small) = principal(&pts)?;
+            if big < 3.0 * small.max(1e-12) {
+                return None;
+            }
+            e
+        } else {
+            let (c, s) = missed.iter().fold((0.0, 0.0), |(c, s), i| {
+                let u = Ring::dir(*i);
+                (c + u[0] * u[0] - u[1] * u[1], s + 2.0 * u[0] * u[1])
+            });
+            if c.hypot(s) < 1e-9 {
+                return None;
+            }
+            let a = 0.5 * s.atan2(c);
+            [a.cos(), a.sin()]
+        };
+        let beside = |e: [f64; 2], sign: f64| -> Vec<[f64; 2]> { pts.iter().copied().filter(|p| (p[0] * e[0] + p[1] * e[1]).abs() <= near && sign * (p[1] * e[0] - p[0] * e[1]) > 0.0).collect() };
+        // Exactly: the wall beside the axis is a straight line (its points' long axis).
+        let e = match principal(&beside(e, 1.0)) {
+            Some((d, big, small)) if small <= 1e-4 * big.max(1e-12) => if d[0] * e[0] + d[1] * e[1] < 0.0 { [-d[0], -d[1]] } else { d },
+            _ => e,
+        };
+        let nrm = [-e[1], e[0]];
+        // Both walls straight beside the axis: every point the same distance off.
+        let side = |sign: f64| -> Option<f64> {
+            let s: Vec<f64> = beside(e, sign).iter().map(|p| sign * (p[0] * nrm[0] + p[1] * nrm[1])).collect();
+            if s.len() < 3 {
+                return None;
+            }
+            let (lo, hi) = (s.iter().copied().fold(f64::INFINITY, f64::min), s.iter().copied().fold(0.0, f64::max));
+            (hi - lo <= 0.05 + 0.02 * lo).then_some(lo)
+        };
+        Some((e, side(1.0)?, side(-1.0)?))
+    }
+    /// A round wall on one side of the axis only (an open channel, a
+    /// half-bore): centre and radius, when its first hits lie on a circle.
+    fn channel(&self, within: f64) -> Option<([f64; 2], f64)> {
+        if self.inside {
+            return None;
+        }
+        let pts = self.points(within);
+        let (c, r) = circle_fit(&pts)?;
+        let spread = pts.iter().map(|p| (((p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2)).sqrt() - r).abs()).fold(0.0, f64::max);
+        (spread <= 0.05 + 0.02 * r).then_some((c, r))
+    }
+}
+
+/// The long axis of some points, with the spread (sum of squares) along it and across it.
+fn principal(pts: &[[f64; 2]]) -> Option<([f64; 2], f64, f64)> {
+    if pts.len() < 2 {
+        return None;
+    }
+    let n = pts.len() as f64;
+    let (mx, my) = (pts.iter().map(|p| p[0]).sum::<f64>() / n, pts.iter().map(|p| p[1]).sum::<f64>() / n);
+    let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+    for p in pts {
+        let (x, y) = (p[0] - mx, p[1] - my);
+        sxx += x * x;
+        sxy += x * y;
+        syy += y * y;
+    }
+    let half = ((sxx - syy) / 2.0).hypot(sxy);
+    let a = 0.5 * (2.0 * sxy).atan2(sxx - syy);
+    Some(([a.cos(), a.sin()], (sxx + syy) / 2.0 + half, (sxx + syy) / 2.0 - half))
 }
 
 /// Kåsa fit: x² + y² + a·x + b·y + c = 0.
@@ -1306,20 +1422,67 @@ fn round_fit(cx: &mut Ctx, i: usize) -> FitItem {
     let zs = depths(width - 0.25, 0.25, (width / 8.0).clamp(0.25, 1.0));
     let mut housed = false;
     let mut shafted = false;
+    let mut guided: Option<String> = None;
     let others: Vec<usize> = near(&cx.insts, &frame, lo, hi, i).into_iter().filter(|h| !matches!(cx.insts[*h].kind, Kind::Screw { .. } | Kind::Insert { .. } | Kind::Washer { .. })).collect();
-    for h in others {
-        let l = local(&cx.insts[h], &frame, lo, hi);
-        if l.is_empty() {
-            continue;
-        }
+    let around: Vec<(usize, Vec<Ring>)> = others
+        .into_iter()
+        .filter_map(|h| {
+            let l = local(&cx.insts[h], &frame, lo, hi);
+            (!l.is_empty()).then(|| (h, zs.iter().map(|z| l.ring(*z)).collect()))
+        })
+        .collect();
+    // How much of the way round something closes at each depth, all parts
+    // together: the two halves of a split housing close a bore between them.
+    let closed: Vec<f64> = (0..zs.len()).map(|k| (0..RAYS).filter(|n| around.iter().any(|(_, rs)| rs[k].first[*n] < reach)).count() as f64 / RAYS as f64).collect();
+    for (h, rings) in around {
         let host = cx.insts[h].name.clone();
         let printed = cx.insts[h].kind.printed();
         let machined = !printed && !cx.insts[h].kind.bought();
-        let rings: Vec<Ring> = zs.iter().map(|z| l.ring(*z)).collect();
-        // A housing: the axis outside it, its wall round the outer ring.
-        let housing: Vec<&Ring> = rings.iter().filter(|r| !r.inside && r.hits(reach) as f64 > 0.6 * RAYS as f64 && r.min() > outer / 2.0 - 0.6 && r.min() < outer / 2.0 + 1.0).collect();
         // A bearing's housing covers most of its width; a pin's may hold only part of its length.
         let enough = |n: usize| if kind == "pin" { n * 4 >= rings.len() } else { n * 2 >= rings.len() };
+        // A slot or groove it runs along (two straight walls, open along their
+        // length: a caliper's guide pin), or an open channel (a round wall on
+        // one side only): not a bore holding it but a sliding fit — clearance
+        // across, free along.
+        let close = |r: f64| r > outer / 2.0 - 0.6 && r < outer / 2.0 + 1.0;
+        let slots: Vec<([f64; 2], f64, f64)> = rings.iter().filter_map(|r| r.slot(reach, outer / 2.0 + 0.5)).filter(|(_, a, b)| close(a.min(*b))).collect();
+        let share = |r: &Ring| r.hits(reach) as f64 / RAYS as f64;
+        let channels: Vec<(f64, f64)> = rings
+            .iter()
+            .enumerate()
+            .filter(|(k, r)| (0.25..=0.6).contains(&share(r)) && closed[*k] < 0.9)
+            .filter_map(|(_, r)| r.channel(reach).map(|(_, rr)| (rr, r.min())))
+            .filter(|(rr, _)| close(*rr))
+            .collect();
+        let guide = if enough(slots.len()) && !slots.is_empty() {
+            let n = slots.len() as f64;
+            Some(("slot", slots.iter().map(|s| s.1 + s.2).sum::<f64>() / n, slots.iter().map(|s| s.1.min(s.2)).fold(f64::INFINITY, f64::min)))
+        } else if enough(channels.len()) && !channels.is_empty() {
+            let n = channels.len() as f64;
+            Some(("channel", 2.0 * channels.iter().map(|c| c.0).sum::<f64>() / n, channels.iter().map(|c| c.1).fold(f64::INFINITY, f64::min)))
+        } else {
+            None
+        };
+        if let Some((what, w, tight)) = guide {
+            let side = tight - outer / 2.0;
+            let (st, text) = guide_words(w, side, printed, machined, outer, &cx.profile, &host, &label, what);
+            let target = if printed { format!("{}–{} mm", mm(outer + 2.0 * cx.profile.slide[0]), mm(outer + 2.0 * cx.profile.slide[1] + 0.4)) } else { format!("{}–{} mm", mm(outer + 0.005), mm(outer + (0.02 * outer).max(0.1))) };
+            checks.push(check(if what == "slot" { "Slot" } else { "Channel" }, st, text).value(w, "mm").target(target).part(&host).at(at));
+            if side > -0.01 {
+                cx.explain(i, h);
+            }
+            guided = Some(format!("the {what} in {host}"));
+            refs.push(&cx.insts[h]);
+            continue;
+        }
+        // A housing: the axis outside it, its wall round the outer ring (or
+        // half of it, where another part closes the rest: a split housing).
+        let housing: Vec<&Ring> = rings
+            .iter()
+            .enumerate()
+            .filter(|(k, r)| !r.inside && (share(r) > 0.6 || (share(r) >= 0.25 && closed[*k] >= 0.9)) && close(r.min()))
+            .map(|(_, r)| r)
+            .collect();
         if enough(housing.len()) && !housing.is_empty() {
             let fits: Vec<([f64; 2], f64)> = housing.iter().filter_map(|r| r.circle(reach)).collect();
             if fits.is_empty() {
@@ -1366,8 +1529,10 @@ fn round_fit(cx: &mut Ctx, i: usize) -> FitItem {
             }
         }
     }
-    if !housed {
-        checks.push(check("Housing", FitStatus::Fail, format!("Nothing holds the {label}'s outside: no bore round it")));
+    match (housed, &guided) {
+        (true, _) => {}
+        (false, Some(g)) => checks.push(check("Housing", FitStatus::Warn, format!("Nothing holds the {label}: only {g} guides it (press it into a bore in the part that carries it)"))),
+        (false, None) => checks.push(check("Housing", FitStatus::Fail, format!("Nothing holds the {label}'s outside: no bore round it"))),
     }
     if bore > 0.0 && !shafted {
         checks.push(check("Shaft", FitStatus::Warn, format!("No shaft through the {label}'s Ø{} bore", mm(bore))));
@@ -1405,6 +1570,39 @@ fn fit_words(dev: f64, printed: bool, machined: bool, nominal: f64, housing: boo
         (FitStatus::Fail, format!("{} mm clearance: far too loose", mm(-interference)))
     };
     (st, format!("Ø{} printed {what} in {host}: {words}", mm(size)))
+}
+
+/// Words for a pin (or bearing) running in a slot or open channel `w` wide:
+/// a sliding fit across it, free along it. `side` is the room on its
+/// tighter side as placed (negative: it is in the wall).
+#[allow(clippy::too_many_arguments)]
+fn guide_words(w: f64, side: f64, printed: bool, machined: bool, nominal: f64, profile: &FitProfile, host: &str, label: &str, what: &str) -> (FitStatus, String) {
+    let c = w - nominal;
+    let head = format!("{} {what} in {host} for the {label}", mm(w));
+    if c < 0.0 {
+        return (FitStatus::Fail, format!("{head}: {} mm too narrow, it jams (a sliding fit wants clearance across, the length free)", mm(-c)));
+    }
+    if side < -0.01 {
+        return (FitStatus::Fail, format!("{head}: off-centre, it is {} mm into the {what}'s wall", mm(-side)));
+    }
+    let (st, words) = if printed {
+        let s = c / 2.0;
+        if s + 1e-6 < profile.slide[0] {
+            (FitStatus::Warn, format!("tight, {} mm a side: printed slides want {}–{} mm", mm(s), mm(profile.slide[0]), mm(profile.slide[1])))
+        } else if s <= profile.slide[1] + 0.2 {
+            (FitStatus::Pass, format!("sliding fit, {} mm a side", mm(s)))
+        } else {
+            (FitStatus::Warn, format!("loose, {} mm a side: it rattles across the {what}", mm(s)))
+        }
+    } else if c < 0.005 {
+        (FitStatus::Warn, format!("line to line ({} mm): it may bind", mm(c)))
+    } else if c <= (0.02 * nominal).max(0.1) {
+        let class = if machined { iso286(nominal, c, true).map(|k| format!(", ISO 286 {k} across")).unwrap_or_default() } else { String::new() };
+        (FitStatus::Pass, format!("sliding fit, {} mm clearance{class}", mm(c)))
+    } else {
+        (FitStatus::Warn, format!("loose, {} mm play across the {what}", mm(c)))
+    };
+    (st, format!("{head}: {words}; free along it"))
 }
 
 fn washer_item(cx: &mut Ctx, i: usize) -> FitItem {
@@ -1562,6 +1760,110 @@ fn motion_item(cx: &Ctx, joint: StableId, steps: usize) -> FitItem {
     }
 }
 
+/// An instance's solids placed in the assembly, with their bounds.
+fn placed(place: &Transform, body: &Body) -> (Vec<(Manifold, V3, V3)>, V3, V3) {
+    let mut w = vec![];
+    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for (s, inner) in &body.leaves {
+        let m = place.then(inner).solid(s);
+        if let Some(bb) = m.bounding_box() {
+            let (a, b) = (bb.min(), bb.max());
+            for k in 0..3 {
+                lo[k] = lo[k].min(a[k]);
+                hi[k] = hi[k].max(b[k]);
+            }
+            w.push((m, a, b));
+        }
+    }
+    (w, lo, hi)
+}
+
+/// Where an assembly definition is shown in the project: each instance that
+/// shows it, with the frame it is shown in (through every instance up to the top).
+fn shown_at(world: &World, asm: StableId, depth: usize) -> Vec<(StableId, Transform)> {
+    if depth > 32 {
+        return vec![];
+    }
+    let mut out = vec![];
+    let mut showing: Vec<(StableId, Instance)> = world.resource::<IdIndex>().iter().filter_map(|(id, e)| world.get::<Instance>(e).filter(|i| i.of == asm).map(|i| (id, i.clone()))).collect();
+    showing.sort_by_key(|(id, _)| *id);
+    for (id, inst) in showing {
+        let place = entity(world, id).and_then(|e| placement(world, e)).unwrap_or_else(|| inst.transform());
+        match inst.parent {
+            None => out.push((id, place)),
+            Some(p) => out.extend(shown_at(world, p, depth + 1).into_iter().map(|(_, t)| (id, place.within(&t)))),
+        }
+    }
+    out
+}
+
+/// The project's parts outside the assembly checked, in its coordinates
+/// (where it is first shown): for the top of the project, the shapes placed
+/// on their own.
+fn context(world: &World, scope: Option<StableId>, notes: &mut Vec<String>) -> Vec<Inst> {
+    let (showing, frame) = match scope {
+        None => (None, Transform::IDENTITY),
+        Some(a) => {
+            let at = shown_at(world, a, 0);
+            let Some((id, frame)) = at.first().copied() else { return vec![] };
+            if at.len() > 1 {
+                notes.push(format!("Shown {} times in the project: the parts around it are taken where the first is.", at.len()));
+            }
+            (Some(id), frame)
+        }
+    };
+    let to_here = frame.inverse();
+    let mut out = vec![];
+    for top in crate::interference::tops(world) {
+        // At the top of the project, its instances are what is checked.
+        if scope.is_none() && entity(world, top).is_some_and(|e| world.get::<Instance>(e).is_some()) {
+            continue;
+        }
+        for o in crate::interference::placed_occurrences(world, top) {
+            if showing.is_some_and(|s| o.path.contains(&s)) {
+                continue;
+            }
+            let Some(se) = entity(world, o.shape) else { continue };
+            let solid = match &o.config {
+                Some(c) => match de_shape::configs::configured_program(world, se, c).and_then(|p| de_shape::evaluated_at(&p, p.display_tolerance())) {
+                    Ok(ev) => std::sync::Arc::new(ev.solid.translate(0.0, 0.0, 0.0)),
+                    Err(_) => continue,
+                },
+                None => match world.get::<ShapeSolid>(se) {
+                    Some(s) => s.solid.clone(),
+                    None => continue,
+                },
+            };
+            let inner = to_here.then(&o.transform);
+            let Some(bb) = solid.bounding_box() else { continue };
+            let (a, b) = inner.bounds(bb.min(), bb.max());
+            let body = Body { leaves: vec![(solid, inner)], boxes: vec![(a, b)], lo: a, hi: b };
+            let (w, lo, hi) = placed(&Transform::IDENTITY, &body);
+            let last = o.path.last().copied();
+            let kind = match last.and_then(|i| entity(world, i).and_then(|e| world.get::<Instance>(e)).map(|inst| (i, inst))) {
+                Some((i, inst)) => kind_of(world, i, inst),
+                None => kind_of_def(world, o.shape, None, None),
+            };
+            let of = world.get::<de_shape::ShapeProgram>(se).map(|p| p.name.clone()).unwrap_or_default();
+            out.push(Inst {
+                id: last.unwrap_or(o.shape),
+                name: o.names.join(" › "),
+                kind,
+                place: Transform::IDENTITY,
+                body,
+                world: w,
+                lo,
+                hi,
+                step: None,
+                context: true,
+                hosts: crate::embedded::on_path(world, &o.path),
+                of,
+            });
+        }
+    }
+    out
+}
+
 /// The fit report for an assembly definition (`Some`) or the top of the project.
 pub fn report(world: &World, scope: Option<StableId>, options: &FitOptions) -> Result<FitReport, String> {
     let name = match scope {
@@ -1582,23 +1884,21 @@ pub fn report(world: &World, scope: Option<StableId>, options: &FitOptions) -> R
                 continue;
             }
         };
-        let mut w = vec![];
-        let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
-        for (s, inner) in &body.leaves {
-            let t = place.then(inner);
-            let m = t.solid(s);
-            if let Some(bb) = m.bounding_box() {
-                let (a, b) = (bb.min(), bb.max());
-                for k in 0..3 {
-                    lo[k] = lo[k].min(a[k]);
-                    hi[k] = hi[k].max(b[k]);
-                }
-                w.push((m, a, b));
-            }
-        }
+        let (w, lo, hi) = placed(&place, &body);
         let step = inst.properties.get("step").and_then(|v| v.trim().parse::<f64>().ok());
-        insts.push(Inst { id: *id, name: inst.name.clone(), kind: kind_of(world, *id, inst), place, body, world: w, lo, hi, step });
+        let of = entity(world, inst.of)
+            .and_then(|d| world.get::<de_shape::ShapeProgram>(d).map(|p| p.name.clone()).or_else(|| world.get::<crate::AssemblyDef>(d).map(|a| a.name.clone())))
+            .unwrap_or_default();
+        let hosts = crate::embedded::on_path(world, &[*id]);
+        insts.push(Inst { id: *id, name: inst.name.clone(), kind: kind_of(world, *id, inst), place, body, world: w, lo, hi, step, context: false, hosts, of });
     }
+    // What a fastener clamps or threads into need not be in its own assembly
+    // (a board at the top of the project, held in a case by the case's
+    // screws): the project's other parts, where it places them, are measured
+    // too, in this assembly's coordinates.
+    let around = context(world, scope, &mut notes);
+    let outside = around.len();
+    insts.extend(around);
     // Rigid groups: union of instances held by fixed joints (the ground is its own member).
     let index: HashMap<StableId, usize> = insts.iter().enumerate().map(|(n, i)| (i.id, n)).collect();
     let mut parent: Vec<usize> = (0..=insts.len()).collect();
@@ -1640,6 +1940,10 @@ pub fn report(world: &World, scope: Option<StableId>, options: &FitOptions) -> R
     let mut cx = Ctx { world, insts, profile: profile(world), rigid, seated_by, explained: Default::default() };
     let mut items = vec![];
     for n in 0..cx.insts.len() {
+        // Parts outside the assembly are reported with their own.
+        if cx.insts[n].context {
+            continue;
+        }
         let it = match cx.insts[n].kind {
             Kind::Screw { .. } => screw_item(&mut cx, n),
             Kind::Insert { .. } => insert_item(&mut cx, n),
@@ -1660,10 +1964,46 @@ pub fn report(world: &World, scope: Option<StableId>, options: &FitOptions) -> R
             items.push(it);
         }
     }
+    // Parts declared embedded in others (instance property "embedded"): inside
+    // their hosts as designed, or poking out of them.
+    let hosts: Vec<Vec<usize>> = (0..cx.insts.len())
+        .map(|e| {
+            let me = &cx.insts[e];
+            (0..cx.insts.len()).filter(|h| *h != e && !(me.context && cx.insts[*h].context) && me.hosts.iter().any(|n| crate::embedded::names(n, None, Some(&cx.insts[*h].of), std::slice::from_ref(&cx.insts[*h].name)))).collect()
+        })
+        .collect();
+    for (e, hs) in hosts.iter().enumerate() {
+        if hs.is_empty() || cx.insts[e].context {
+            continue;
+        }
+        let me = &cx.insts[e];
+        let mine = Manifold::batch_union(&me.world.iter().map(|w| w.0.clone()).collect::<Vec<_>>());
+        let theirs: Vec<Manifold> = hs.iter().flat_map(|h| cx.insts[*h].world.iter().map(|w| w.0.clone())).collect();
+        let names: Vec<String> = hs.iter().map(|h| cx.insts[*h].name.clone()).collect();
+        let inside = mine.intersection(&Manifold::batch_union(&theirs)).volume();
+        let mut refs = vec![me];
+        refs.extend(hs.iter().map(|h| &cx.insts[*h]));
+        let verdict = match crate::embedded::outside(&mine, &theirs.iter().collect::<Vec<_>>()) {
+            Some((v, lo, hi)) => {
+                let at = [0, 1, 2].map(|k| (lo[k] + hi[k]) / 2.0);
+                check("Embedded", FitStatus::Fail, format!("{} is embedded in {} but {} mm³ of it pokes out ({} × {} × {} mm)", me.name, names.join(", "), mm(v), mm(hi[0] - lo[0]), mm(hi[1] - lo[1]), mm(hi[2] - lo[2]))).value(v, "mm³").at(at)
+            }
+            None if inside <= 0.01 => check("Embedded", FitStatus::Fail, format!("{} is declared embedded in {} but is not in it", me.name, names.join(", "))),
+            None => check("Embedded", FitStatus::Pass, format!("{} is embedded in {} as declared ({} mm³ inside, none out)", me.name, names.join(", "), mm(inside))).value(inside, "mm³"),
+        };
+        items.push(item("embedded", format!("{} in {}", me.name, names.join(", ")), &refs, None, None, vec![verdict]));
+        for h in hs {
+            cx.explain(e, *h);
+        }
+    }
     // Interference at rest between anything else.
     for a in 0..cx.insts.len() {
         for b in a + 1..cx.insts.len() {
             if cx.explained.borrow().contains(&(a, b)) || !boxes_touch(&cx.insts[a], &cx.insts[b], 0.0) {
+                continue;
+            }
+            // Parts outside the assembly are only what its fasteners engage.
+            if cx.insts[a].context || cx.insts[b].context {
                 continue;
             }
             // A screw is judged by its own item against everything it passes.
@@ -1703,6 +2043,11 @@ pub fn report(world: &World, scope: Option<StableId>, options: &FitOptions) -> R
     items.sort_by_key(|i| std::cmp::Reverse(i.status));
     if items.is_empty() {
         notes.push("Nothing to check: no stock fasteners, bearings or joints here.".into());
+    }
+    if outside > 0 && items.iter().any(|i| matches!(i.kind, "screw" | "insert" | "nut" | "washer" | "bearing" | "pin")) {
+        let (s, them) = if outside == 1 { ("", "it") } else { ("s", "them") };
+        let whose = if scope.is_some() { format!("outside {name}") } else { "placed on their own".into() };
+        notes.push(format!("Fasteners, pins and bearings also measured against {outside} part{s} {whose}, where the project places {them}."));
     }
     Ok(FitReport { assembly: scope, name, profile: cx.profile.clone(), items, pass, warn, fail, ok: fail == 0, notes })
 }

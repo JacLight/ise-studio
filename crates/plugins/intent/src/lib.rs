@@ -608,9 +608,40 @@ fn no_collisions(world: &World, ps: &[PartView]) -> RequirementResult {
     // A screw in its thread, an insert in its boss, a PEM standoff pressed
     // into its sheet: overlap is how fasteners go in (as the interference check counts them).
     let fastener = |p: &PartView| p.instance.is_some_and(|i| de_assembly::fit::is_fastener(world, i));
+    // A part declared embedded in another (rebar in its slab, an insert moulded
+    // into its boss) may overlap it, as long as it stays inside its hosts.
+    let hosts: Vec<Vec<usize>> = ps.iter().enumerate().map(|(i, p)| (0..ps.len()).filter(|k| *k != i && p.hosts.iter().any(|h| ps[*k].named(h))).collect()).collect();
+    let tolerance = |i: usize| hosts[i].iter().map(|k| geometry::collision_tolerance(&ps[i], &ps[*k])).fold(0.0, f64::max);
+    let poking: Vec<Option<(f64, [f64; 3], [f64; 3])>> = hosts
+        .iter()
+        .enumerate()
+        .map(|(i, hs)| {
+            if hs.is_empty() {
+                return None;
+            }
+            let t = tolerance(i);
+            let host_solids: Vec<manifold_csg::Manifold> = hs.iter().map(|k| ps[*k].solid(t)).collect();
+            de_assembly::embedded::outside(&ps[i].solid(t), &host_solids.iter().collect::<Vec<_>>())
+        })
+        .collect();
+    let mut poked = vec![false; ps.len()];
     for (i, a) in ps.iter().enumerate() {
-        for b in &ps[i + 1..] {
+        for (k, b) in ps.iter().enumerate().skip(i + 1) {
             if fastener(a) || fastener(b) {
+                continue;
+            }
+            let embeds: Vec<usize> = [(i, k), (k, i)].into_iter().filter(|(e, h)| hosts[*e].contains(h)).map(|(e, _)| e).collect();
+            if !embeds.is_empty() {
+                // Inside its host as declared; where it pokes out, that is the violation (once per part).
+                for e in embeds {
+                    if let Some((_, lo, hi)) = poking[e]
+                        && !poked[e]
+                    {
+                        poked[e] = true;
+                        let host = if e == i { b } else { a };
+                        violations.push(Violation { parts: vec![ps[e].id, host.id], names: vec![geometry::name(&ps[e]), geometry::name(host)], region: Some([lo, hi].concat().try_into().unwrap()) });
+                    }
+                }
                 continue;
             }
             if let (Some((_, o)), _) = geometry::contact(a, b, 0.0, geometry::collision_tolerance(a, b)) {
@@ -629,10 +660,14 @@ fn no_collisions(world: &World, ps: &[PartView]) -> RequirementResult {
         limit: 0.0,
         unit: "collisions".into(),
         upper_bound: true,
-        summary: match n {
-            0 => format!("{} parts, none overlapping", ps.len()),
-            1 => "1 pair of parts overlaps".into(),
-            n => format!("{n} pairs of parts overlap"),
+        summary: match (n, poked.iter().filter(|p| **p).count()) {
+            (0, _) => {
+                let inside = hosts.iter().filter(|h| !h.is_empty()).count();
+                if inside > 0 { format!("{} parts, none overlapping ({inside} embedded in their hosts as declared)", ps.len()) } else { format!("{} parts, none overlapping", ps.len()) }
+            }
+            (n, k) if k == n => format!("{n} embedded part{} poke{} out of {} host", if n == 1 { "" } else { "s" }, if n == 1 { "s" } else { "" }, if n == 1 { "its" } else { "their" }),
+            (1, _) => "1 pair of parts overlaps".into(),
+            (n, _) => format!("{n} pairs of parts overlap"),
         },
         violations,
         fix,

@@ -92,3 +92,29 @@ fn house_declares_its_building() {
         }
     }
 }
+
+#[test]
+fn rebar_declares_the_slab_it_is_cast_in() {
+    // The house's mesh is embedded in its ground slab.
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../examples/house/house.js")).unwrap();
+    let e = runtime::evaluate(&src, &house_params(), 5.0).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(e.declared.embedded["Slab mesh X"], ["Ground slab"]);
+    assert_eq!(e.declared.embedded["Slab mesh Y"], ["Ground slab"]);
+    // Any part can be embedded in one or more others of the same program.
+    let src = r#"
+        return [part("Boss", cylinder(10, 5)), part("Core", cylinder(10, 2)), part("Insert", cylinder(4, 1.5), { embedded: ["Boss", "Core"] })];"#;
+    let e = runtime::evaluate(src, &[], 0.05).unwrap();
+    assert_eq!(e.declared.embedded["Insert"], ["Boss", "Core"]);
+    assert!(!e.declared.embedded.contains_key("Boss"));
+    // A host that is no part, or the part itself, is an error.
+    let err = runtime::evaluate(r#"return [part("Slab", box(10, 10, 2)), part("Bar", box(8, 1, 1), { embedded: "Slb" })];"#, &[], 0.05).unwrap_err();
+    assert!(err.contains("no part \"Slb\""), "{err}");
+    let err = runtime::evaluate(r#"return [part("Bar", box(8, 1, 1), { embedded: "Bar" })];"#, &[], 0.05).unwrap_err();
+    assert!(err.contains("itself"), "{err}");
+    let src = r#"
+        const L0 = level("Ground", 0);
+        return [...slab("Slab", { outline: [[0, 0], [1000, 0], [1000, 1000], [0, 1000]], thickness: 200, level: L0 }),
+                ...rebar("Bars", { path: [[40, 40, -160], [960, 40, -160]], diameter: 12, count: 5, spacing: 200, embedded: "Slab", level: L0 })];"#;
+    let e = runtime::evaluate(src, &[], 1.0).unwrap();
+    assert_eq!(e.declared.embedded["Bars"], ["Slab"]);
+}

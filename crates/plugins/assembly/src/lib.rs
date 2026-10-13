@@ -33,6 +33,7 @@ pub mod comments;
 pub mod configs;
 pub mod couplings;
 pub mod dof;
+pub mod embedded;
 pub mod fit;
 pub mod geometry;
 pub mod interference;

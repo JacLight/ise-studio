@@ -1257,7 +1257,9 @@ function Robot({ scope, frame, entities, run, view }: StudioProps) {
   );
 }
 
-type Clash = { a: string; b: string; a_path: string[]; b_path: string[]; volume: number; at?: V3; size?: V3; gap: number; joined: boolean; fastener?: boolean };
+type Clash = { a: string; b: string; a_path: string[]; b_path: string[]; volume: number; at?: V3; size?: V3; gap: number; joined: boolean; fastener?: boolean; embedded?: boolean; outside?: number };
+/** Overlap that is how the parts go together: joined, a fastener threading in, a part embedded in its host. */
+const meant = (o: Clash) => o.joined || !!o.fastener || !!o.embedded;
 type InterferenceReport = { name: string; parts: number; checked: number; overlaps: Clash[]; touching: Clash[]; near: Clash[]; clearance: number; notes: string[] };
 
 function Interference({ scope, frame, view, onSelect }: StudioProps) {
@@ -1293,19 +1295,19 @@ function Interference({ scope, frame, view, onSelect }: StudioProps) {
       {error && <p className="print-note bad">{error}</p>}
       {r && (
         <>
-          <div className={`gear-verdict ${r.overlaps.some((o) => !o.joined && !o.fastener) ? "bad" : "ok"}`}>
+          <div className={`gear-verdict ${r.overlaps.some((o) => !meant(o)) ? "bad" : "ok"}`}>
             <span>
               {r.parts} parts · {r.overlaps.length} overlap · {r.touching.length} touch{r.clearance ? ` · ${r.near.length} within ${r.clearance} mm` : ""}
             </span>
           </div>
           <ul className="aj-pairs">
-            {[...r.overlaps.filter((o) => !o.joined && !o.fastener), ...r.near, ...r.overlaps.filter((o) => o.joined || o.fastener)].slice(0, 40).map((o) => (
+            {[...r.overlaps.filter((o) => !meant(o)), ...r.near, ...r.overlaps.filter(meant)].slice(0, 40).map((o) => (
               <li key={`${o.a_path.join()}|${o.b_path.join()}`}>
                 <button title={`Select ${o.a}`} type="button" onClick={() => o.a_path[0] && onSelect(o.a_path[0])}>
-                  <span className={`aj-dot ${o.volume > 0 ? (o.joined || o.fastener ? "joined" : "hit") : "near"}`} />
+                  <span className={`aj-dot ${o.volume > 0 ? (meant(o) ? "joined" : "hit") : "near"}`} />
                   <span>
                     {o.a} – {o.b}
-                    {o.fastener ? <em>fastener</em> : o.joined && <em>joined</em>}
+                    {o.fastener ? <em>fastener</em> : o.embedded ? <em>embedded</em> : o.outside ? <em>pokes out {n1(o.outside, 1)} mm³</em> : o.joined && <em>joined</em>}
                   </span>
                   <small>{o.volume > 0 ? `${n1(o.volume, 2)} mm³` : `${n1(o.gap, 2)} mm`}</small>
                 </button>

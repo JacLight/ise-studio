@@ -24,8 +24,8 @@ const i0 = T / 2, hx = W / 2, hy = p.hallDepth; // inner face, the partition lin
 // Ground slab on the ground, with a bottom mesh of bars both ways.
 parts.push(...slab("Ground slab", { outline: outer, thickness: 250, level: L0, kind: "BASESLAB", external: true }));
 const cover = 40;
-parts.push(...rebar("Slab mesh X", { path: [[-T / 2 + cover, -T / 2 + cover, -250 + cover], [W + T / 2 - cover, -T / 2 + cover, -250 + cover]], diameter: 10, count: Math.floor((D + T - 2 * cover) / 200) + 1, spacing: 200, direction: [0, 1, 0], mark: "01", level: L0 }));
-parts.push(...rebar("Slab mesh Y", { path: [[-T / 2 + cover, -T / 2 + cover, -250 + cover + 10], [-T / 2 + cover, D + T / 2 - cover, -250 + cover + 10]], diameter: 10, count: Math.floor((W + T - 2 * cover) / 200) + 1, spacing: 200, direction: [1, 0, 0], mark: "02", level: L0 }));
+parts.push(...rebar("Slab mesh X", { path: [[-T / 2 + cover, -T / 2 + cover, -250 + cover], [W + T / 2 - cover, -T / 2 + cover, -250 + cover]], diameter: 10, count: Math.floor((D + T - 2 * cover) / 200) + 1, spacing: 200, direction: [0, 1, 0], mark: "01", level: L0, embedded: "Ground slab" }));
+parts.push(...rebar("Slab mesh Y", { path: [[-T / 2 + cover, -T / 2 + cover, -250 + cover + 10], [-T / 2 + cover, D + T / 2 - cover, -250 + cover + 10]], diameter: 10, count: Math.floor((W + T - 2 * cover) / 200) + 1, spacing: 200, direction: [1, 0, 0], mark: "02", level: L0, embedded: "Ground slab" }));
 
 // Ground floor: external walls anticlockwise (their left is inside, so doors open in).
 parts.push(
