@@ -246,6 +246,18 @@ pub fn render_framed(meshes: &[Mesh], view: View, width: u32, height: u32, frame
         }
     }
     // Outlines: where the depth jumps, the surface folds, or parts meet.
+    // Fine detail (an engraving 0.1 mm deep, a scale's graduations, embossed
+    // lettering) is a step too shallow for the jump and leaves the normals as
+    // they were, and seen square on its walls take no pixels: it shows as a
+    // kink in the depth along a surface the normals say is one plane (the
+    // depth's second difference, zero across any plane in a parallel view).
+    let px = 1.0 / scale as f32; // mm per pixel
+    let step = 0.3 * px;
+    let level = |k: usize, j: usize| {
+        let (a, b) = (normal[k], normal[j]);
+        part[k] == part[j] && a[0] * b[0] + a[1] * b[1] + a[2] * b[2] > 0.995
+    };
+    let kink = |k: usize, a: usize, b: usize| level(k, a) && level(k, b) && (depth[a] - 2.0 * depth[k] + depth[b]).abs() > step;
     let edge = |k: usize, j: usize| -> bool {
         if part[k] != part[j] {
             return true;
@@ -260,11 +272,16 @@ pub fn render_framed(meshes: &[Mesh], view: View, width: u32, height: u32, frame
         a[0] * b[0] + a[1] * b[1] + a[2] * b[2] < 0.82
     };
     let mut lines = vec![0.0f32; w * h];
+    // Detail on a dark part is drawn light (dark ink would not show on black).
+    let mut light = vec![false; w * h];
     for y in 0..h - 1 {
         for x in 0..w - 1 {
             let k = y * w + x;
             if edge(k, k + 1) || edge(k, k + w) {
                 lines[k] = 1.0;
+            } else if part[k] != u32::MAX && x > 0 && y > 0 && (kink(k, k - 1, k + 1) || kink(k, k - w, k + w)) {
+                lines[k] = 0.7;
+                light[k] = 0.2126 * rgb[k][0] + 0.7152 * rgb[k][1] + 0.0722 * rgb[k][2] < 0.3;
             }
         }
     }
@@ -274,6 +291,7 @@ pub fn render_framed(meshes: &[Mesh], view: View, width: u32, height: u32, frame
         for x in 0..width as usize {
             let mut c = [0.0f32; 3];
             let mut ink = 0.0;
+            let mut line = [0.0f32; 3];
             for sy in 0..SS {
                 for sx in 0..SS {
                     let k = (y * SS + sy) * w + x * SS + sx;
@@ -281,11 +299,15 @@ pub fn render_framed(meshes: &[Mesh], view: View, width: u32, height: u32, frame
                         c[i] += rgb[k][i];
                     }
                     ink += lines[k];
+                    let tone = if light[k] { [0.62f32, 0.63, 0.66] } else { [0.16, 0.17, 0.19] };
+                    for i in 0..3 {
+                        line[i] += tone[i] * lines[k];
+                    }
                 }
             }
             let n = (SS * SS) as f32;
             let a = (ink / n * 0.85).min(0.85);
-            let line = [0.16f32, 0.17, 0.19];
+            let line = if ink > 0.0 { line.map(|v| v / ink) } else { line };
             for i in 0..3 {
                 let v = c[i] / n * (1.0 - a) + line[i] * a;
                 out.push((v.clamp(0.0, 1.0) * 255.0).round() as u8);
@@ -621,6 +643,35 @@ mod tests {
         assert!(b[0] > 0.85 && b[150 * 400 + 200] < 0.8, "{} {}", b[0], b[150 * 400 + 200]);
         assert!((p.bounds[3] - 20.0).abs() < 1e-6 && p.mm_per_px > 0.0);
         assert!(View::parse("30,20").is_ok() && View::parse("sideways").is_err());
+    }
+
+    #[test]
+    fn a_shallow_engraving_shows_square_on() {
+        // A 40 × 20 plate with a groove 0.1 mm deep, seen straight down: the shading alone does not show it.
+        let plate = manifold_csg::Manifold::cube(40.0, 20.0, 3.0, false).difference(&manifold_csg::Manifold::cube(1.0, 10.0, 1.0, false).translate(19.5, 5.0, 2.9));
+        let (positions, normals, indices) = crate::runtime::mesh_with_normals(&plate);
+        let m = Mesh { positions, normals, indices, color: [0.8, 0.8, 0.8], metal: false };
+        let p = render(&[m], View::parse("top").unwrap(), 400, 200).unwrap();
+        let img = crate::image::decode(&p.png).unwrap();
+        let b = img.channel(crate::image::Channel::Brightness);
+        let at = |x: f64, y: f64| {
+            // World mm to picture pixels (the plate is centred, mm_per_px per pixel).
+            let px = (200.0 + (x - 20.0) / p.mm_per_px).round() as usize;
+            let py = (100.0 - (y - 10.0) / p.mm_per_px).round() as usize;
+            (py.saturating_sub(1)..=py + 1).flat_map(|yy| (px.saturating_sub(1)..=px + 1).map(move |xx| (xx, yy))).map(|(xx, yy)| b[yy * 400 + xx]).fold(f32::MAX, f32::min)
+        };
+        let plain = at(10.0, 10.0);
+        // The groove's long sides draw lines; the face beside them does not.
+        assert!(at(19.5, 10.0) < plain - 0.15 && at(20.5, 10.0) < plain - 0.15, "groove sides {} {} vs face {plain}", at(19.5, 10.0), at(20.5, 10.0));
+        assert!((at(30.0, 10.0) - plain).abs() < 0.02);
+        // On a black part the same groove is drawn light.
+        let (positions, normals, indices) = crate::runtime::mesh_with_normals(&plate);
+        let m = Mesh { positions, normals, indices, color: [0.12, 0.12, 0.13], metal: false };
+        let p = render(&[m], View::parse("top").unwrap(), 400, 200).unwrap();
+        let b = crate::image::decode(&p.png).unwrap().channel(crate::image::Channel::Brightness);
+        let px = |x: f64| (100 * 400) + (200.0 + (x - 20.0) / p.mm_per_px).round() as usize;
+        let brightest = |x: f64| (px(x) - 1..=px(x) + 1).map(|k| b[k]).fold(0.0f32, f32::max);
+        assert!(brightest(19.5) > b[px(10.0)] + 0.15, "{} vs {}", brightest(19.5), b[px(10.0)]);
     }
 
     #[test]
