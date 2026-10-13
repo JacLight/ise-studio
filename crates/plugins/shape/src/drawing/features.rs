@@ -224,7 +224,9 @@ pub fn read(faces: &[FaceInfo]) -> Features {
                 cones.push(s);
             }
         }
-        let mut whole: Vec<Stretch> = cyl.iter().filter(|c| c.1 > TAU - 1e-3).map(|c| c.0).chain(cones.iter().copied()).collect();
+        // More than half round is a hole too: a D or double-D bore (its
+        // flats are dimensioned as faces); half or less is a slot's end.
+        let mut whole: Vec<Stretch> = cyl.iter().filter(|c| c.1 > PI + 0.01).map(|c| c.0).chain(cones.iter().copied()).collect();
         whole.sort_by(|a, b| a.from.total_cmp(&b.from));
         // Stretches that meet end to end are one hole.
         let mut chains: Vec<Vec<Stretch>> = vec![];
@@ -322,22 +324,34 @@ pub fn read(faces: &[FaceInfo]) -> Features {
             .collect();
         f.turned = Some(Turned { line, outside, shoulders, fillets });
     } else {
-        // Whole outside cylinders are bosses and pins.
+        // Whole outside cylinders are bosses and pins; so is an outside cut
+        // into lands all round (a knob's grip ribs, a knurl, flats): three or
+        // more pieces of one cylinder that reach round it on every side.
         for (line, members) in &lines {
-            let mut seen: Vec<(f64, Stretch, f64)> = vec![];
+            let mut seen: Vec<(f64, Stretch, f64, usize, [f64; 6])> = vec![];
             for &i in members {
                 let x = &faces[i];
                 if x.kind != SurfaceKind::Cylinder || x.concave {
                     continue;
                 }
                 let s = span(line, x);
-                match seen.iter_mut().find(|(r, c, _)| (r - x.radius[0]).abs() < EPS && (c.from - s.from).abs() < 1e-3) {
-                    Some(c) => c.2 += x.sweep,
-                    None => seen.push((x.radius[0], s, x.sweep)),
+                match seen.iter_mut().find(|(r, c, ..)| (r - x.radius[0]).abs() < EPS && (c.from - s.from).abs() < 1e-3) {
+                    Some(c) => {
+                        c.2 += x.sweep;
+                        c.3 += 1;
+                        for k in 0..3 {
+                            c.4[k] = c.4[k].min(x.bounds[k]);
+                            c.4[k + 3] = c.4[k + 3].max(x.bounds[k + 3]);
+                        }
+                    }
+                    None => seen.push((x.radius[0], s, x.sweep, 1, x.bounds)),
                 }
             }
-            for (r, s, sweep) in seen {
-                if sweep > TAU - 1e-3 {
+            for (r, s, sweep, count, b) in seen {
+                let all_round = principal(line.dir).is_some_and(|a| {
+                    (0..3).filter(|&k| k != a).all(|k| b[k] <= line.point[k] - 0.95 * r && b[k + 3] >= line.point[k] + 0.95 * r)
+                });
+                if sweep > TAU - 1e-3 || (count >= 3 && all_round) {
                     f.bosses.push((*line, 2.0 * r, [s.from, s.to]));
                 }
             }
@@ -348,6 +362,12 @@ pub fn read(faces: &[FaceInfo]) -> Features {
     for x in faces.iter().filter(|x| x.kind == SurfaceKind::Cylinder && x.sweep < TAU - 1e-3) {
         let Some(axis) = principal(x.dir) else { continue };
         let line = Line::new(x.point, x.dir);
+        // The wall of a D bore, or a land of a ribbed outside: the hole or boss states it.
+        let in_hole = x.concave && f.holes.iter().any(|h| h.line.same(&line) && h.stretches.iter().any(|s| s.is_cylinder() && (s.r0 - x.radius[0]).abs() < EPS));
+        let in_boss = !x.concave && f.bosses.iter().any(|(l, d, _)| l.same(&line) && (d / 2.0 - x.radius[0]).abs() < EPS);
+        if in_hole || in_boss {
+            continue;
+        }
         let s = span(&line, x);
         // Its middle: the box's corner-most point on the arc is the face's centre of area direction.
         let b = x.bounds;
@@ -369,6 +389,23 @@ pub fn read(faces: &[FaceInfo]) -> Features {
             continue;
         }
         let Some(axis) = principal(q.dir) else { continue };
+        // The walls and floors of grooves cut into a round boss's rim (grip
+        // ribs, flats on a knurl) are the boss's pattern, not steps to place
+        // one by one from the datum: a face lying wholly in its outer band.
+        let in_rim = f.bosses.iter().any(|(line, dia, _)| {
+            let Some(a) = principal(line.dir) else { return false };
+            if a == axis {
+                return false;
+            }
+            let across = |k: usize, v: f64| (v - line.point[k]).powi(2);
+            let near: f64 = (0..3).filter(|&k| k != a).map(|k| across(k, line.point[k].clamp(q.bounds[k], q.bounds[k + 3]))).sum::<f64>().sqrt();
+            let far: f64 = (0..3).filter(|&k| k != a).map(|k| across(k, q.bounds[k]).max(across(k, q.bounds[k + 3]))).sum::<f64>().sqrt();
+            // Within the band (the box's far corner may stand a little past the rim).
+            near >= 0.7 * dia / 2.0 && far <= 1.2 * dia / 2.0
+        });
+        if in_rim {
+            continue;
+        }
         f.flats.push(Flat { axis, at: q.point[axis], bounds: q.bounds, area: q.area });
     }
 
