@@ -36,6 +36,7 @@ pub mod sketch;
 pub mod sketch_tools;
 pub mod solver;
 pub mod stock;
+pub mod surfacing;
 pub mod sweep;
 pub mod table;
 pub mod text;

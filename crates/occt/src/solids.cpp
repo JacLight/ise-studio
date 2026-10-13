@@ -95,6 +95,15 @@ TopoDS_Edge helix_edge(const gp_Ax3& ax, double r, double pitch, double height, 
   return e;
 }
 
+/// The start (or end) point and tangent of an edge as it runs (reversed edges run backwards).
+void edge_end(const TopoDS_Edge& e, bool end, gp_Pnt& p, gp_Vec& t) {
+  BRepAdaptor_Curve c(e);
+  bool rev = e.Orientation() == TopAbs_REVERSED;
+  bool first = rev ? end : !end;
+  c.D1(first ? c.FirstParameter() : c.LastParameter(), p, t);
+  if (rev) t.Reverse();
+}
+
 PathData build_path(const double* d, int len) {
   PathData out;
   BRepBuilderAPI_MakeWire wire;
@@ -105,6 +114,26 @@ PathData build_path(const double* d, int len) {
   gp_Pnt last;
   gp_Vec last_t;
   bool any = false;
+  auto take = [&](const TopoDS_Edge& e) {
+    gp_Pnt p0;
+    gp_Vec t0;
+    edge_end(e, false, p0, t0);
+    if (any) {
+      if (p0.Distance(last) > 1e-5) {
+        std::ostringstream m;
+        m << "path segments do not meet: one ends at (" << last.X() << ", " << last.Y() << ", " << last.Z() << "), the next starts at (" << p0.X() << ", " << p0.Y() << ", "
+          << p0.Z() << ")";
+        throw Standard_Failure(m.str().c_str());
+      }
+      if (t0.Magnitude() > 1e-12 && last_t.Magnitude() > 1e-12 && t0.Angle(last_t) > 1e-4) out.corners = true;
+    }
+    wire.Add(e);
+    if (!wire.IsDone()) throw Standard_Failure("the path's segments do not join into one wire");
+    gp_Pnt p1;
+    gp_Vec t1;
+    edge_end(e, true, p1, t1);
+    last = p1, last_t = t1, any = true;
+  };
   while (at < len) {
     int kind = (int)d[at++];
     TopoDS_Edge e;
@@ -161,33 +190,43 @@ PathData build_path(const double* d, int len) {
       in.Perform();
       if (!in.IsDone()) throw Standard_Failure("could not build the spiral");
       e = BRepBuilderAPI_MakeEdge(in.Curve()).Edge();
+    } else if (kind == 5) {
+      // Edges of a shape in the arena (an edge, a wire, or every edge of a
+      // compound in turn), each turned round to run on from the last.
+      need(1);
+      int h = (int)d[at++];
+      if (!current_arena || h < 0 || h >= (int)current_arena->shapes.size()) throw Standard_Failure("a path names an unknown shape");
+      const TopoDS_Shape& src = current_arena->shapes[h];
+      std::vector<TopoDS_Edge> list;
+      for (TopExp_Explorer w(src, TopAbs_WIRE); w.More(); w.Next())
+        for (BRepTools_WireExplorer x(TopoDS::Wire(w.Current())); x.More(); x.Next()) list.push_back(x.Current());
+      if (list.empty())
+        for (TopExp_Explorer x(src, TopAbs_EDGE); x.More(); x.Next()) list.push_back(TopoDS::Edge(x.Current()));
+      if (list.empty()) throw Standard_Failure("a path names a shape with no edges");
+      for (size_t k = 0; k < list.size(); k++) {
+        TopoDS_Edge ek = list[k];
+        if (BRep_Tool::Degenerated(ek)) continue;
+        gp_Pnt s0 = BRep_Tool::Pnt(TopExp::FirstVertex(ek, true)), s1 = BRep_Tool::Pnt(TopExp::LastVertex(ek, true));
+        if (any && s0.Distance(last) > 1e-5 && s1.Distance(last) < 1e-5) ek.Reverse();
+        if (k + 1 < list.size()) {
+          take(ek);
+        } else {
+          e = ek;
+        }
+      }
+      if (e.IsNull()) continue;
     } else {
       throw Standard_Failure("unknown path segment");
     }
-    BRepAdaptor_Curve c(e);
-    gp_Pnt p0;
-    gp_Vec t0;
-    c.D1(c.FirstParameter(), p0, t0);
-    if (any) {
-      if (p0.Distance(last) > 1e-5) {
-        std::ostringstream m;
-        m << "path segments do not meet: one ends at (" << last.X() << ", " << last.Y() << ", " << last.Z() << "), the next starts at (" << p0.X() << ", " << p0.Y() << ", "
-          << p0.Z() << ")";
-        throw Standard_Failure(m.str().c_str());
-      }
-      if (t0.Magnitude() > 1e-12 && last_t.Magnitude() > 1e-12 && t0.Angle(last_t) > 1e-4) out.corners = true;
-    }
-    wire.Add(e);
-    if (!wire.IsDone()) throw Standard_Failure("the path's segments do not join into one wire");
-    gp_Pnt p1;
-    gp_Vec t1;
-    c.D1(c.LastParameter(), p1, t1);
-    last = p1, last_t = t1, any = true;
+    take(e);
   }
   if (!any) throw Standard_Failure("the path is empty");
   out.wire = wire.Wire();
   return out;
 }
+
+
+
 
 /// One sample along a path: arclength from the start, the point, and the frame
 /// the section rides in (t along the path; n, b across it).

@@ -302,7 +302,12 @@ pub(crate) fn mesh_sweep(profile: &CrossSection, spec_json: &str, tolerance: f64
 
 /// A path's length and its ends: [length, start xyz, end xyz, start tangent, end tangent].
 fn path_info(segs: &[f64]) -> Result<Vec<f64>, String> {
-    let f = Occ::new().path_frames(segs, &Orientation::Corrected, &Place::Normal { up: [0.0, 0.0, 1.0] }, 0.5, 0.0)?;
+    path_info_in(&mut Occ::new(), segs)
+}
+
+/// As `path_info`, in an arena whose shapes the path may name (edges taken from bodies).
+fn path_info_in(occ: &mut Occ, segs: &[f64]) -> Result<Vec<f64>, String> {
+    let f = occ.path_frames(segs, &Orientation::Corrected, &Place::Normal { up: [0.0, 0.0, 1.0] }, 0.5, 0.0)?;
     let (a, b) = (f.samples[0], f.samples[f.samples.len() - 1]);
     Ok([&[b.s][..], &a.p, &b.p, &a.t, &b.t].concat())
 }
@@ -417,7 +422,13 @@ pub(crate) fn install_exact<'js>(ctx: &Ctx<'js>, native: &Object<'js>, state: &R
             })?,
         )?;
     }
-    native.set("pathInfo", Function::new(ctx.clone(), move |ctx: Ctx<'js>, segs: Vec<f64>| -> rquickjs::Result<Vec<f64>> { path_info(&segs).map_err(|e| fail(&ctx, "path", e)) })?)?;
+    {
+        let st = state.clone();
+        native.set(
+            "pathInfo",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, segs: Vec<f64>| -> rquickjs::Result<Vec<f64>> { path_info_in(&mut st.borrow_mut().arena, &segs).map_err(|e| fail(&ctx, "path", e)) })?,
+        )?;
+    }
     {
         let st = state.clone();
         native.set(

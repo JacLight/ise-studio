@@ -127,7 +127,13 @@ struct Arena {
   std::vector<double> view_data;
   // Faces or whole shapes given a colour (r g b, 0–1; r < 0 for none) and a name, for STEP (solids.cpp).
   std::vector<std::tuple<TopoDS_Shape, std::array<double, 3>, std::string>> painted;
+  // Surface results: numbers and reports (surfaces.cpp).
+  std::vector<double> surf_data;
+  std::string surf_text;
 };
+
+/// The arena the current call works in (paths can name its shapes' edges).
+thread_local Arena* current_arena = nullptr;
 
 int push(Arena* a, const TopoDS_Shape& s) {
   if (s.IsNull()) {
@@ -148,6 +154,7 @@ const TopoDS_Shape* get(Arena* a, int h) {
 
 template <typename F>
 int guard(Arena* a, F f) {
+  current_arena = a;
   try {
     return f();
   } catch (Standard_Failure& e) {
@@ -1547,3 +1554,5 @@ int occ_draft(void* p, int h, const int* idx, int n, double degrees, double dx, 
 
 // Sweeps, lofts, offsets, defeaturing, paint, checks and BREP files.
 #include "solids.cpp"
+// Surfaces: filling, networks, blends, sewing, trimming, analysis.
+#include "surfaces.cpp"

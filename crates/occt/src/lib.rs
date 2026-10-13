@@ -8,6 +8,8 @@
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
 mod solids;
+mod surfaces;
+pub use surfaces::*;
 pub use solids::*;
 
 unsafe extern "C" {
