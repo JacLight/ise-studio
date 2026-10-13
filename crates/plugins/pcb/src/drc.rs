@@ -88,6 +88,7 @@ pub fn check(board: &Board, v: &mut BoardView, cu: &[Cu]) {
             }
             smallest = Some(smallest.map_or(g, |s: f64| s.min(g)));
             let builtin = board.class_of(a.net.as_deref()).clearance.max(board.class_of(b.net.as_deref()).clearance).max(rules.min_space);
+            let builtin = crate::signal::pair_clearance(board, &*v, a.net.as_deref(), b.net.as_deref(), builtin);
             let (need, rule) = match custom.clearance(i, j, layer_name(a.layers & b.layers).as_deref()) {
                 Some((min, name)) => (min.max(rules.min_space), Some(name)),
                 None => (builtin, None),
@@ -231,6 +232,7 @@ pub fn check(board: &Board, v: &mut BoardView, cu: &[Cu]) {
     }
 
     crate::drc_extra::check(board, v, cu, &custom, &mut out);
+    crate::signal::check(board, v, &mut out);
 
     if rules.silk_height < 0.8 {
         out.push(Violation { code: "silk_text", severity: "warning", message: format!("Silkscreen text {:.2} mm tall is below what most fabs print legibly (0.8–1.0 mm)", rules.silk_height), at: [v.bounds[0], v.bounds[1]], layer: None, objects: vec![], refs: vec![] });

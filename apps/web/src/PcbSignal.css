@@ -1,0 +1,325 @@
+/* Routing constraints: net classes with impedance targets, pairs, length groups, the tuning panel. */
+
+.ps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ps-class,
+.ps-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #ece9f1;
+  border-radius: 10px;
+  background: #fbfaf7;
+}
+
+.ps-class-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: #2d2836;
+}
+
+.ps-class-head small {
+  color: var(--muted);
+  font-size: 11px;
+  flex: 1;
+}
+
+.ps-x {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.ps-x:hover {
+  background: #f0edf4;
+  color: #2d2836;
+}
+
+.ps-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 6px;
+  align-items: end;
+}
+
+.ps-field {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1px 3px;
+  font-size: 10.5px;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.ps-field.wide {
+  grid-column: span 2;
+}
+
+.ps-field span {
+  grid-column: 1 / -1;
+}
+
+.ps-field input,
+.ps-input {
+  min-width: 0;
+  width: 100%;
+  height: 24px;
+  border: 1px solid #e6e3ec;
+  border-radius: 6px;
+  padding: 0 5px;
+  font-size: 11px;
+  background: white;
+  color: #2d2836;
+}
+
+.ps-field i {
+  font-style: normal;
+  align-self: center;
+  font-size: 10px;
+}
+
+.ps-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ps-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 10px;
+  padding: 2px 4px;
+  border-bottom: 1px solid #ece9f1;
+}
+
+.ps-table td {
+  padding: 2px 4px;
+  border-bottom: 1px solid #f3f1f6;
+  color: #2d2836;
+  white-space: nowrap;
+}
+
+.ps-table td small {
+  color: var(--muted);
+}
+
+.ps-table tr.click {
+  cursor: pointer;
+}
+
+.ps-table tr.click:hover td {
+  background: #f6f4f9;
+}
+
+.ps-table tr.warn td,
+.ps-table td.bad {
+  color: #b3261e;
+}
+
+.ps-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ps-bar {
+  display: grid;
+  grid-template-columns: 52px 1fr 52px;
+  align-items: center;
+  gap: 6px;
+  height: 18px;
+  padding: 0 2px;
+  font-size: 11px;
+  color: #2d2836;
+  background: none;
+  border-radius: 4px;
+}
+
+.ps-bar i {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: #4c9a6a;
+}
+
+.ps-bar.bad i {
+  background: #d9822b;
+}
+
+.ps-bar em {
+  font-style: normal;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ps-hits {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 11px;
+  color: #2d2836;
+}
+
+.ps-hits li.error b {
+  color: #b3261e;
+}
+
+.ps-tune {
+  position: absolute;
+  top: 60px;
+  right: 12px;
+  width: 270px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: #1c1e23f2;
+  border: 1px solid #2e3138;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px #0006;
+  color: #e7e5df;
+  font-size: 11.5px;
+  z-index: 3;
+}
+
+.ps-tune .pcb-note {
+  color: #9a9ea8;
+}
+
+.ps-tune-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ps-tune .ps-x {
+  color: #9a9ea8;
+}
+
+.ps-tune .ps-x:hover {
+  background: #2b2e35;
+  color: #f3f1ea;
+}
+
+.ps-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: #15161a;
+}
+
+.ps-seg button {
+  flex: 1;
+  height: 24px;
+  font-size: 11px;
+  color: #8d919c;
+  border-radius: 6px;
+}
+
+.ps-seg button.on {
+  background: #30333b;
+  color: #f3f1ea;
+}
+
+.ps-tune-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.ps-tune-grid label {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1px 4px;
+  color: #9a9ea8;
+  font-size: 10.5px;
+}
+
+.ps-tune-grid label span {
+  grid-column: 1 / -1;
+}
+
+.ps-tune-grid input,
+.ps-tune-grid select {
+  min-width: 0;
+  height: 24px;
+  border: 1px solid #3a3d45;
+  border-radius: 6px;
+  background: #15161a;
+  color: #e7e5df;
+  font-size: 11px;
+  padding: 0 5px;
+}
+
+.ps-tune-grid i {
+  font-style: normal;
+  align-self: center;
+}
+
+.ps-tune-grid .ps-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  grid-column: 1 / -1;
+}
+
+.ps-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ps-readout div {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.ps-readout div span {
+  flex: 1;
+  color: #c7c4bd;
+}
+
+.ps-readout div.ok b {
+  color: #7fd39b;
+}
+
+.ps-readout div.bad b {
+  color: #f0a35a;
+}
+
+.ps-readout small {
+  color: #8d919c;
+}
+
+.pcb-length-readout {
+  color: #e7e5df;
+  font-variant-numeric: tabular-nums;
+}
+
+.pcb-length-readout.ok {
+  color: #7fd39b;
+}
+
+.pcb-length-readout.short {
+  color: #f0a35a;
+}
+
+.ps-tune-grid .ps-check input {
+  width: auto;
+  height: auto;
+}

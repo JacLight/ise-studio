@@ -249,6 +249,15 @@ fn plan(world: &World, id: StableId) -> Result<(SyncReport, Vec<Action>), Comman
             b.clearance = c.clearance.unwrap_or(b.clearance);
             b.via_diameter = c.via_diameter.unwrap_or(b.via_diameter);
             b.via_drill = c.via_drill.unwrap_or(b.via_drill);
+            // Electrical targets and name patterns travel too (the board works out widths from its stackup).
+            for (to, from) in [(&mut b.impedance, c.impedance), (&mut b.diff_impedance, c.diff_impedance), (&mut b.diff_gap, c.diff_gap), (&mut b.impedance_tolerance, c.impedance_tolerance), (&mut b.max_uncoupled, c.max_uncoupled), (&mut b.max_skew, c.max_skew)] {
+                if from.is_some() {
+                    *to = from;
+                }
+            }
+            if !c.patterns.is_empty() {
+                b.patterns = c.patterns.clone();
+            }
         }
         if want != board.net_classes {
             for c in &want {

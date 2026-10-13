@@ -27,8 +27,11 @@
 //! Constraints checked: clearance, hole_clearance, hole_to_hole,
 //! edge_clearance, courtyard_clearance, track_width, via_diameter, hole_size,
 //! annular_width, and disallow (track, via, micro_via, buried_via, pad, zone,
-//! text, graphic, hole, footprint). Length, skew and diff-pair constraints
-//! are read but not checked (routing constraints are parked).
+//! text, graphic, hole, footprint); and on whole nets (in `signal`): length,
+//! skew (across the nets a rule matches, or within a pair), diff_pair_gap,
+//! diff_pair_uncoupled, via_count, and Forma's impedance (Ω, per track:
+//! differential for a pair's tracks). `A.inDiffPair('USB_D')` and
+//! `A.isCoupledDiffPair()` read the pairs.
 
 use crate::sexpr::{self, Sexp};
 use crate::{bad, board_of};
@@ -83,7 +86,7 @@ pub fn length(s: &str) -> Option<f64> {
         "in" | "inch" | "\"" => 25.4,
         "um" | "µm" => 0.001,
         "cm" => 10.0,
-        "deg" | "°" => 1.0,
+        "deg" | "°" | "ohm" | "ohms" | "Ω" => 1.0,
         _ => return None,
     };
     Some(v * k)
@@ -295,6 +298,8 @@ pub struct Item {
     pub inside: Vec<String>,
     /// Areas it touches.
     pub touches: Vec<String>,
+    /// The differential pair its net is in.
+    pub pair: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -449,7 +454,9 @@ fn value(e: &Expr, a: Option<&Item>, b: Option<&Item>) -> Val {
                 "isplated" => it.plated,
                 "hasnetclass" => it.netclass.as_deref().is_some_and(|n| wild(&arg_s, n)),
                 "memberof" | "memberofgroup" | "memberoffootprint" => it.reference.as_deref().is_some_and(|r| wild(&arg_s, r)),
-                "fromto" | "indiffpair" | "iscoupleddiffpair" | "memberofsheet" => false,
+                "indiffpair" => it.pair.as_deref().is_some_and(|p| wild(&arg_s, p)) || (it.pair.is_some() && it.net.as_deref().is_some_and(|n| wild(&arg_s, n))),
+                "iscoupleddiffpair" => it.pair.is_some(),
+                "fromto" | "memberofsheet" => false,
                 _ => false,
             })
         }
@@ -506,7 +513,7 @@ pub struct Constraint {
     /// Item types a disallow constraint keeps out.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub disallow: Vec<String>,
-    /// Read but not checked (routing constraints are parked).
+    /// Read but not checked.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub unchecked: bool,
 }
@@ -526,9 +533,9 @@ pub struct Rule {
     pub severity: String,
 }
 
-pub const CHECKED: [&str; 10] = ["clearance", "hole_clearance", "hole_to_hole", "edge_clearance", "courtyard_clearance", "track_width", "via_diameter", "hole_size", "annular_width", "disallow"];
-const KNOWN: [&str; 21] = [
-    "clearance", "hole_clearance", "hole_to_hole", "edge_clearance", "courtyard_clearance", "track_width", "via_diameter", "hole_size", "annular_width", "disallow", "silk_clearance", "text_height", "text_thickness", "length", "skew", "diff_pair_gap", "diff_pair_uncoupled", "via_count", "zone_connection", "thermal_relief_gap", "physical_clearance",
+pub const CHECKED: [&str; 16] = ["clearance", "hole_clearance", "hole_to_hole", "edge_clearance", "courtyard_clearance", "track_width", "via_diameter", "hole_size", "annular_width", "disallow", "length", "skew", "diff_pair_gap", "diff_pair_uncoupled", "via_count", "impedance"];
+const KNOWN: [&str; 22] = [
+    "clearance", "hole_clearance", "hole_to_hole", "edge_clearance", "courtyard_clearance", "track_width", "via_diameter", "hole_size", "annular_width", "disallow", "silk_clearance", "text_height", "text_thickness", "length", "skew", "diff_pair_gap", "diff_pair_uncoupled", "via_count", "zone_connection", "thermal_relief_gap", "physical_clearance", "impedance",
 ];
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -745,7 +752,7 @@ mod tests {
         assert_eq!(s.rules[1].constraints[0].max, Some(8.0 * 0.0254));
         assert_eq!(s.rules[2].constraints[0].disallow, vec!["track", "via"]);
         assert_eq!(s.rules[2].severity, "warning");
-        assert!(s.rules[5].constraints[0].unchecked, "length is parked");
+        assert!(!s.rules[5].constraints[0].unchecked, "length is checked");
         assert!((s.max_clearance() - 1.5).abs() < 1e-9);
     }
 

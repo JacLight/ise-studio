@@ -54,6 +54,8 @@ pub struct BoardView {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub drc_rules: String,
     pub teardrop_settings: Option<crate::teardrops::Teardrops>,
+    /// Routing constraints: impedance targets per layer, pairs, net lengths, length groups.
+    pub signal: crate::signal::SignalView,
     /// Every piece of copper (pads, tracks, vias, graphics, teardrops) with its layers, for tools.
     #[serde(skip)]
     pub cu: Vec<Cu>,
@@ -680,9 +682,11 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
         custom_rules,
         drc_rules: board.drc_rules.clone(),
         teardrop_settings: board.teardrops.clone(),
+        signal: Default::default(),
         cu: vec![],
     };
     view.stats = stats(&view, &items);
+    view.signal = crate::signal::view(board, &view);
     crate::drc::check(board, &mut view, &cu);
     view.cu = cu;
     Ok(view)

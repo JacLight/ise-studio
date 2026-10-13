@@ -205,6 +205,20 @@ pub struct SchNetClass {
     /// Nets in the class, by name or pattern (`USB_*`, `D?`); directive labels add more.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub patterns: Vec<String>,
+    /// Electrical targets carried to the board: single-ended and differential impedance (Ω),
+    /// a fixed pair gap (mm), the tolerance (%), the longest uncoupled stretch and largest skew (mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impedance: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_impedance: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_gap: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impedance_tolerance: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_uncoupled: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_skew: Option<f64>,
 }
 
 /// Electrical-rules settings: severities, the pin-conflict matrix, exclusions.

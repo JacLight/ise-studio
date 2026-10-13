@@ -12,6 +12,7 @@ import { FabCheck, SimulateTab } from "./PcbSim";
 import { GerberViewer, ToolsTab } from "./PcbTools";
 import { LibraryPane } from "./PcbLibrary";
 import { SchematicPane } from "./Schematic";
+import { SignalPanel, type NetClassV, type PairV, type SignalV, TunePanel, type TunePlan } from "./PcbSignal";
 
 type P = [number, number];
 type Prim = { pts: P[]; r: number };
@@ -121,6 +122,7 @@ type BoardView = {
   custom_rules: RuleV[];
   drc_rules?: string;
   teardrop_settings: TeardropSettings | null;
+  signal: SignalV & { net_classes: NetClassV[] };
 };
 type Fab = { id: string; name: string; country: string; site: string; quote: string; capabilities_source: string; files: string; assembly: string; notes: string };
 type FabReport = { fab: Fab; can_make: boolean; checks: { what: string; ok: boolean; board: string; fab: string }[]; estimate: { amount: number; currency: string; working: string; source: string } | null };
@@ -161,7 +163,7 @@ type Plan = {
   via_drill: number;
   via_diameter: number;
   clearance: number;
-  runs: { layer: string; points: P[]; bulges?: number[] }[];
+  runs: { layer: string; points: P[]; bulges?: number[]; width?: number }[];
   vias: P[];
   tracks: { id: string; points: P[]; bulges?: number[] }[];
   moved_vias: { id: string; at: P }[];
@@ -169,7 +171,10 @@ type Plan = {
   end: P;
   layer: string;
   notes: string[];
+  length?: number;
+  target?: number;
 };
+type PairPlan = { ok: boolean; reached: boolean; pair: string; width: number; gap: number; centre: P[]; p: Plan; n: Plan; length_p: number; length_n: number; skew: number; notes: string[] };
 type RouteStep = { at: P | string; layer: string; diagonal_first: boolean };
 type ItemDrag = { id: string; kind: "segment" | "corner" | "arc" | "via"; index: number; from: P; client: P; moved: boolean };
 const ROUTER_MODES: RouterMode[] = ["walkaround", "shove", "highlight"];
@@ -509,7 +514,12 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
             </nav>
             <div className="pcb-side-body">
               {tab === "parts" && <PartsTab b={b} sel={sel} onSelect={(id) => setSel({ kind: "component", id })} commit={commit} hidden={hiddenParts} onHide={(id) => setHiddenParts((h) => toggle(h, id))} />}
-              {tab === "nets" && <NetsTab b={b} net={net} onNet={(n) => setNet((x) => (x === n ? null : n))} hidden={hiddenNets} onHide={(n) => setHiddenNets((h) => toggle(h, n))} />}
+              {tab === "nets" && (
+                <>
+                  <NetsTab b={b} net={net} onNet={(n) => setNet((x) => (x === n ? null : n))} hidden={hiddenNets} onHide={(n) => setHiddenNets((h) => toggle(h, n))} />
+                  {b.signal && <SignalPanel boardId={b.id} classes={b.signal.net_classes} nets={b.nets} s={b.signal} violations={b.violations} commit={commit} canEdit={props.canEdit} onNet={(n) => setNet(n)} />}
+                </>
+              )}
               {tab === "checks" && (
                 <ChecksTab
                   b={b}
@@ -887,6 +897,27 @@ function BoardCanvas(props: {
   const mouse = useRef<P | null>(null);
   const routeLayer = useRef(props.active);
   const [cursor, setCursor] = useState<P | null>(null);
+  // Differential pairs routed together (D while routing): the pair, its two start pads, the clicks, the plan.
+  const [pairMode, setPairMode] = useState(false);
+  const [pairStart, setPairStart] = useState<{ pair: string; from: [string, string] } | null>(null);
+  const [pairSteps, setPairSteps] = useState<{ at: P; layer: string }[]>([]);
+  const [pairPlan, setPairPlan] = useState<PairPlan | null>(null);
+  // Length tuning on a track (T): the track and the engine's meanders for the settings.
+  const [tune, setTune] = useState<{ track: string; net: string } | null>(null);
+  const [tunePlan, setTunePlan] = useState<TunePlan | null>(null);
+  const gen2 = useRef(0);
+  const askJson = useCallback(
+    <T,>(body: Record<string, unknown>, set: (v: T | null) => void) => {
+      const g = ++gen2.current;
+      fetch(projectUrl(`/pcb/${b.id}/router`), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+        .then(async (r) => (r.ok ? ((await r.json()) as T) : null))
+        .then((v) => {
+          if (g === gen2.current) set(v);
+        })
+        .catch(() => undefined);
+    },
+    [b.id],
+  );
   useEffect(() => {
     props.routingFlag.current = routing;
     return () => {
@@ -992,7 +1023,16 @@ function BoardCanvas(props: {
     setView({ s, tx: mx - (mx - view.tx) * f, ty: my - (my - view.ty) * f });
   };
 
-  const padAt = (p: P) => b.pads.find((q) => q.kind !== "npth" && Math.hypot(q.at[0] - p[0], q.at[1] - p[1]) < Math.max(q.size[0], q.size[1]) / 2);
+  // The nearest pad under the point (fine-pitch neighbours overlap their reach).
+  const padAt = (p: P) => {
+    let best: Pad | undefined;
+    let bd = Infinity;
+    for (const q of b.pads) {
+      const d = Math.hypot(q.at[0] - p[0], q.at[1] - p[1]);
+      if (q.kind !== "npth" && d < Math.max(q.size[0], q.size[1]) / 2 && d < bd) [best, bd] = [q, d];
+    }
+    return best;
+  };
 
   const head = (at: P | string): RouteStep => ({ at, layer: props.active, diagonal_first: posture });
   const routeSpec = (from: { at: P; layer: string }, to: RouteStep[]) => ({ board: b.id, from: from.at, layer: from.layer, to, mode: routerMode, angle, corners: arcCorners ? "arc" : "sharp", ...(width ? { width } : {}) });
@@ -1049,8 +1089,58 @@ function BoardCanvas(props: {
     props.notify(`Routed: ${parts.join(", ")}${o.collisions.length ? ` · ${o.collisions.length} clearance problem${o.collisions.length === 1 ? "" : "s"}` : ""}`);
   };
 
+  const resetPair = () => {
+    gen2.current++;
+    setPairStart(null);
+    setPairSteps([]);
+    setPairPlan(null);
+  };
+  const pairSpec = (ps: { pair: string; from: [string, string] }, stepsNow: { at: P; layer: string }[]) => ({ board: b.id, pair: ps.pair, from: ps.from, steps: stepsNow, mode: routerMode === "shove" ? "shove" : "walkaround", angle: angle === "free" ? "45" : angle, ...(arcCorners ? { corners: "arc" } : {}) });
+  // A pair starts on either pad of it: both of its pads on that part are the start.
+  const startPair = (raw: P) => {
+    const pad = padAt(raw);
+    const pair = pad && b.signal?.pairs.find((p) => p.p === pad.net || p.n === pad.net);
+    if (!pad || !pair) {
+      props.notify("Click a pad of a differential pair (nets D+/D−, _P/_N, or set in Nets › Differential pairs)");
+      return;
+    }
+    const near = (net: string) =>
+      net === pad.net
+        ? pad
+        : b.pads.filter((q) => q.component === pad.component && q.net === net).sort((a, c) => Math.hypot(a.at[0] - pad.at[0], a.at[1] - pad.at[1]) - Math.hypot(c.at[0] - pad.at[0], c.at[1] - pad.at[1]))[0];
+    const pp = near(pair.p);
+    const pn = near(pair.n);
+    if (!pp || !pn) {
+      props.notify(`${pair.name}: its other pad is not on ${pad.reference}`);
+      return;
+    }
+    setPairStart({ pair: pair.name, from: [`${pp.reference}.${pp.number}`, `${pn.reference}.${pn.number}`] });
+    setPairSteps([]);
+    if (pad.kind === "smd" && pad.layers[0] !== props.active) props.onActive(pad.layers[0]);
+  };
+  const finishPair = async (stepsNow: { at: P; layer: string }[]) => {
+    const ps = pairStart;
+    if (!ps) return;
+    if (pairPlan && !pairPlan.ok && routerMode !== "highlight") {
+      const c = pairPlan.p.collisions[0];
+      props.notify(`Not placed: ${c ? `too close to ${c.with}` : pairPlan.notes[0] ?? "it would break a clearance"} — add a corner, or Backspace`);
+      return;
+    }
+    resetPair();
+    const out = (await props.commit("pcb.route.pair", pairSpec(ps, stepsNow))) as { output?: { pair: string; length_p: number; length_n: number; skew: number; collisions: Collision[] } } | null;
+    const o = out?.output;
+    if (o) props.notify(`Routed pair ${o.pair}: ${FMT(o.length_p, 3)} / ${FMT(o.length_n, 3)} mm, skew ${FMT(o.skew, 4)} mm${o.collisions.length ? ` · ${o.collisions.length} clearance problems` : ""}`);
+  };
+
   const onDown = (e: ReactPointerEvent) => {
     if (!view) return;
+    if (routing && pairMode && e.button === 0) {
+      const raw = toBoard(e);
+      if (!pairStart) return startPair(raw);
+      if (e.detail >= 2) return void finishPair(pairSteps);
+      setPairSteps((l) => [...l, { at: snap(raw, e.altKey), layer: props.active }]);
+      return;
+    }
     if (routing && e.button === 0) {
       const raw = toBoard(e);
       if (!start) {
@@ -1120,6 +1210,40 @@ function BoardCanvas(props: {
   // Keys over the board (the workspace asks these first).
   const keyHandler = (e: KeyboardEvent): boolean => {
     const k = e.key.toLowerCase();
+    if (routing && pairMode) {
+      if (e.key === "Enter") void finishPair(pairSteps);
+      else if (e.key === "Escape") {
+        if (pairStart) resetPair();
+        else {
+          setPairMode(false);
+          setRouting(false);
+        }
+      } else if (e.key === "Backspace") {
+        if (pairSteps.length) setPairSteps((l) => l.slice(0, -1));
+        else resetPair();
+      } else if (k === "d") {
+        resetPair();
+        setPairMode(false);
+      } else if (k === "m") {
+        setRouterMode((m) => ROUTER_MODES[(ROUTER_MODES.indexOf(m) + 1) % ROUTER_MODES.length]);
+      } else return false;
+      return true;
+    }
+    if (routing && k === "d") {
+      resetRoute();
+      setPairMode(true);
+      return true;
+    }
+    if (!routing && k === "d" && props.canEdit) {
+      setRouting(true);
+      setPairMode(true);
+      return true;
+    }
+    if (!routing && k === "t" && props.canEdit && selTrackNow?.net) {
+      setTune({ track: selTrackNow.id, net: selTrackNow.net });
+      setTunePlan(null);
+      return true;
+    }
     if (routing) {
       if (e.key === "Enter") {
         void finishRoute(start && cursor ? [...steps, head(plan && !plan.reached ? plan.end : cursor)] : steps);
@@ -1181,7 +1305,8 @@ function BoardCanvas(props: {
       const pad = padAt(raw);
       const c = pad ? pad.at : snap(raw, e.altKey);
       setCursor(c);
-      if (start) ask({ op: "route", ...routeSpec(start, [...steps, head(c)]) });
+      if (pairMode && pairStart) askJson<PairPlan>({ op: "pair", ...pairSpec(pairStart, [...pairSteps, { at: snap(raw, e.altKey), layer: props.active }]) }, setPairPlan);
+      else if (start) ask({ op: "route", ...routeSpec(start, [...steps, head(c)]) });
     }
     if (itemDrag) {
       const to = snap(toBoard(e), e.altKey);
@@ -1315,7 +1440,12 @@ function BoardCanvas(props: {
   const selVia = sel?.kind === "via" ? b.vias.find((t) => t.id === sel.id) : null;
   const errorsAt = useMemo(() => b.violations.filter((v) => v.code !== "unrouted"), [b.violations]);
   // What the router's plan moves is drawn where it would go, not where it is.
-  const replaced = useMemo(() => new Set(plan?.tracks.map((t) => t.id) ?? []), [plan]);
+  const replaced = useMemo(
+    () => new Set([...(plan?.tracks.map((t) => t.id) ?? []), ...(pairPlan?.p.tracks.map((t) => t.id) ?? []), ...(tune && tunePlan ? tunePlan.edits.map((t) => t.id) : [])]),
+    [plan, pairPlan, tune, tunePlan],
+  );
+  const tunePair = tune ? b.signal?.pairs.find((p) => p.p === tune.net || p.n === tune.net) : undefined;
+  const tuneGroup = tune ? b.signal?.groups.find((g) => g.members.some((m) => m.net === tune.net)) : undefined;
   const movedVias = useMemo(() => new Map((plan?.moved_vias ?? []).map((m) => [m.id, m.at] as [string, P])), [plan]);
   const groupSet = useMemo(() => new Set(props.group), [props.group]);
   const selComp = sel?.kind === "component" ? b.components.find((c) => c.id === sel.id) : null;
@@ -1571,6 +1701,50 @@ function BoardCanvas(props: {
                 ))}
               </g>
             )}
+            {/* A pair being routed: both tracks, the coupled vias, the centreline */}
+            {pairPlan && (
+              <g pointerEvents="none" className="pcb-plan">
+                <polyline points={pts(pairPlan.centre)} fill="none" stroke="#ffffff" strokeOpacity={0.35} strokeWidth={0.06} strokeDasharray="0.3 0.25" />
+                {[pairPlan.p, pairPlan.n].flatMap((pl, k) =>
+                  pl.runs.map((r, i) => {
+                    const line = pts(flatten(r.points, r.bulges));
+                    const w = r.width ?? pl.width;
+                    return (
+                      <g key={`pp${k}${i}`}>
+                        <polyline points={line} fill="none" stroke="#ffffff" strokeOpacity={0.1} strokeWidth={w + 2 * pl.clearance} strokeLinecap="round" strokeLinejoin="round" />
+                        <polyline points={line} fill="none" stroke={COPPER[r.layer] ?? "#999"} strokeWidth={w} strokeLinecap="round" strokeLinejoin="round" opacity={0.92} />
+                      </g>
+                    );
+                  }),
+                )}
+                {[...pairPlan.p.vias, ...pairPlan.n.vias].map((at, i) => (
+                  <g key={`ppv${i}`}>
+                    <circle cx={at[0]} cy={at[1]} r={pairPlan.p.via_diameter / 2} fill="#e3dfcf" />
+                    <circle cx={at[0]} cy={at[1]} r={pairPlan.p.via_drill / 2} fill="#15161a" />
+                  </g>
+                ))}
+                {pairPlan.p.tracks.map((m) => {
+                  const t = b.tracks.find((x) => x.id === m.id);
+                  return t ? <polyline key={`ppt${m.id}`} points={pts(flatten(m.points, m.bulges))} fill="none" stroke={COPPER[t.layer] ?? "#999"} strokeWidth={t.width} strokeLinecap="round" strokeLinejoin="round" opacity={0.95} /> : null;
+                })}
+                {pairPlan.p.collisions.map((c, i) => (
+                  <g key={`ppc${i}`} transform={`translate(${c.at[0]} ${c.at[1]})`} className="pcb-collision">
+                    <circle r={0.5} fill="none" stroke="#ff4d4d" strokeWidth={0.1} />
+                    <path d="M-0.3 -0.3L0.3 0.3M-0.3 0.3L0.3 -0.3" stroke="#ff4d4d" strokeWidth={0.1} strokeLinecap="round" />
+                  </g>
+                ))}
+              </g>
+            )}
+            {/* Meanders the tuning tool would lay */}
+            {tune && tunePlan && (
+              <g pointerEvents="none" className="pcb-plan">
+                {tunePlan.edits.map((ed) => {
+                  const t = b.tracks.find((x) => x.id === ed.id);
+                  if (!t) return null;
+                  return <polyline key={`tu${ed.id}`} points={pts(flatten(ed.points, ed.bulges))} fill="none" stroke={COPPER[t.layer] ?? "#999"} strokeWidth={t.width} strokeLinecap="round" strokeLinejoin="round" opacity={0.95} />;
+                })}
+              </g>
+            )}
             {/* Selection */}
             {selTrack && <polyline points={pts(selTrack.points)} fill="none" className="pcb-chosen-line" strokeWidth={selTrack.width + 0.25} strokeLinecap="round" strokeLinejoin="round" />}
             {selVia && <circle cx={selVia.at[0]} cy={selVia.at[1]} r={selVia.diameter / 2 + 0.15} className="pcb-chosen-line" fill="none" strokeWidth={0.12} />}
@@ -1644,6 +1818,25 @@ function BoardCanvas(props: {
         >
           <Icon name="pencil" /> Route
         </button>
+        <button
+          type="button"
+          className={`pcb-chip ${routing && pairMode ? "on" : ""}`}
+          disabled={!props.canEdit}
+          onClick={() => {
+            resetPair();
+            resetRoute();
+            if (routing && pairMode) {
+              setPairMode(false);
+              setRouting(false);
+            } else {
+              setRouting(true);
+              setPairMode(true);
+            }
+          }}
+          title="Route a differential pair (D): click a pad of the pair, click corners, Enter or double-click to finish at the far pads"
+        >
+          Pair
+        </button>
         <button type="button" className="pcb-chip" onClick={() => setRouterMode(ROUTER_MODES[(ROUTER_MODES.indexOf(routerMode) + 1) % ROUTER_MODES.length])} title="Router mode (M): walk round obstacles, shove tracks and vias aside, or go straight and highlight collisions">
           {routerMode === "walkaround" ? "Walkaround" : routerMode === "shove" ? "Shove" : "Highlight"}
         </button>
@@ -1666,6 +1859,19 @@ function BoardCanvas(props: {
             {(selTrack || props.group.length > 0) && (
               <button type="button" className="pcb-chip" onClick={() => void props.commit("pcb.route.optimize", { board: b.id, targets: props.group.length ? props.group : [selTrack!.id] }, "Smoothed")} title="Fewer corners, shorter, every clearance kept">
                 Optimize
+              </button>
+            )}
+            {selTrack?.net && (
+              <button
+                type="button"
+                className={`pcb-chip ${tune ? "on" : ""}`}
+                onClick={() => {
+                  setTune(tune ? null : { track: selTrack.id, net: selTrack.net! });
+                  setTunePlan(null);
+                }}
+                title="Length-tune this net or its pair (T): meanders to a target length, its group's or its partner's"
+              >
+                Tune
               </button>
             )}
             {selTrack && !selTrack.bulges?.length && (
@@ -1705,11 +1911,42 @@ function BoardCanvas(props: {
         )}
       </div>
       <div className="pcb-legend">
-        {routing ? (
+        {routing && pairMode ? (
+          <span>
+            {pairStart ? (
+              <>
+                Pair {pairStart.pair}
+                {pairPlan ? (
+                  <>
+                    {" "}
+                    · {FMT(pairPlan.width, 3)} mm / {FMT(pairPlan.gap, 3)} gap ·{" "}
+                    <b className="pcb-length-readout">
+                      {FMT(pairPlan.length_p, 2)} / {FMT(pairPlan.length_n, 2)} mm
+                    </b>{" "}
+                    · skew {FMT(pairPlan.skew, 3)}
+                    {pairPlan.p.target != null ? ` · target ${FMT(pairPlan.p.target, 2)}` : ""}
+                    {!pairPlan.ok ? ` · ${pairPlan.p.collisions.length ? `${pairPlan.p.collisions.length} clearance problems` : pairPlan.notes[0] ?? "blocked"}` : ""}
+                  </>
+                ) : null}{" "}
+                · <kbd>V</kbd> coupled vias · <kbd>⌫</kbd> undo corner · <kbd>Enter</kbd> finish · <kbd>D</kbd> single track · <kbd>Esc</kbd>
+              </>
+            ) : (
+              <>Click a pad of a differential pair to start · <kbd>M</kbd> mode · <kbd>D</kbd> single track · <kbd>Esc</kbd> stop</>
+            )}
+          </span>
+        ) : routing ? (
           <span>
             {start ? (
               <>
                 {legNet ?? "no net"} · {FMT(width ?? plan?.width ?? 0.25, 3)} mm · {routerMode}
+                {plan?.length != null && (
+                  <>
+                    {" · "}
+                    <b className={`pcb-length-readout ${plan.target != null ? (Math.abs(plan.target - plan.length) < 0.05 ? "ok" : plan.length < plan.target ? "short" : "") : ""}`}>
+                      {FMT(plan.length, 2)} mm{plan.target != null ? ` / ${FMT(plan.target, 2)}` : ""}
+                    </b>
+                  </>
+                )}
                 {plan && !plan.reached ? " · blocked" : ""}
                 {plan?.collisions.length ? ` · ${plan.collisions.length} clearance problem${plan.collisions.length === 1 ? "" : "s"}` : ""} · <kbd>/</kbd> bend · <kbd>V</kbd> via · <kbd>W</kbd> width · <kbd>⌫</kbd> undo corner · <kbd>F</kbd> finish to pad · <kbd>Enter</kbd> finish · <kbd>Esc</kbd>
               </>
@@ -1719,10 +1956,33 @@ function BoardCanvas(props: {
           </span>
         ) : (
           <span>
-            Drag parts, tracks and vias (Alt: free angle) · <kbd>X</kbd> route · <kbd>U</kbd> connection · <kbd>B</kbd> break track · <kbd>R</kbd> turn · <kbd>F</kbd> flip side · <kbd>Del</kbd> remove
+            Drag parts, tracks and vias (Alt: free angle) · <kbd>X</kbd> route · <kbd>D</kbd> pair · <kbd>T</kbd> tune · <kbd>U</kbd> connection · <kbd>B</kbd> break track · <kbd>R</kbd> turn · <kbd>F</kbd> flip side · <kbd>Del</kbd> remove
           </span>
         )}
       </div>
+      {tune && !routing && (
+        <TunePanel
+          key={tune.track}
+          boardId={b.id}
+          net={tune.net}
+          trackId={tune.track}
+          pair={tunePair as PairV | undefined}
+          groupTarget={tuneGroup?.target}
+          plan={tunePlan}
+          onAsk={(spec) => askJson<TunePlan>({ op: "tune", ...spec }, setTunePlan)}
+          onApply={async (spec) => {
+            const out = (await props.commit("pcb.tune", spec)) as { output?: TunePlan } | null;
+            const o = out?.output;
+            setTune(null);
+            setTunePlan(null);
+            if (o) props.notify(`Tuned: ${o.nets.map((n) => `${n.net} ${FMT(n.after, 3)} mm`).join(", ")}${o.skew != null ? ` · skew ${FMT(o.skew, 4)}` : ""}`);
+          }}
+          onClose={() => {
+            setTune(null);
+            setTunePlan(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1916,6 +2176,12 @@ const CODE_NAMES: Record<string, string> = {
   single_pad_net: "Single pad",
   no_net: "No net",
   silk_text: "Silkscreen",
+  impedance: "Impedance",
+  diff_pair_gap: "Pair gap",
+  diff_pair_uncoupled: "Uncoupled",
+  length: "Length",
+  skew: "Skew",
+  via_count: "Via count",
 };
 
 function ChecksTab(props: { b: BoardView; focus: number | null; onFocus: (i: number) => void; onAutoroute: () => void; onPour: () => void; busy: string | null; canEdit: boolean }) {

@@ -95,7 +95,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
       const text = args.includes("--clear") ? "" : readFileSync(file, "utf8");
       const r = await commit("pcb.rules.set", { board, text });
       console.log(`✓ ${r.rules.length} rule(s) read`);
-      for (const u of r.unchecked) console.log(`  · ${u}: read but not checked (routing constraints are parked)`);
+      for (const u of r.unchecked) console.log(`  · ${u}: read but not checked`);
     }
     const v = await view(board);
     for (const r of v.custom_rules) console.log(`  ${r.name}${r.layer ? ` [${r.layer}]` : ""}: ${r.constraints.map((c) => `${c.kind}${c.min != null ? ` min ${c.min}` : ""}${c.max != null ? ` max ${c.max}` : ""}${c.disallow?.length ? ` ${c.disallow.join(" ")}` : ""}`).join(", ")}${r.condition ? `  when ${r.condition}` : ""}`);

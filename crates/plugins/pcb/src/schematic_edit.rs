@@ -851,6 +851,15 @@ pub struct NetClassCommand {
     pub via_diameter: Option<f64>,
     pub via_drill: Option<f64>,
     pub patterns: Option<Vec<String>>,
+    /// Impedance targets for the board (Ω; 0 clears): single-ended and differential.
+    pub impedance: Option<f64>,
+    pub diff_impedance: Option<f64>,
+    /// Fixed gap of the class's pairs (mm).
+    pub diff_gap: Option<f64>,
+    /// %, default 10.
+    pub impedance_tolerance: Option<f64>,
+    pub max_uncoupled: Option<f64>,
+    pub max_skew: Option<f64>,
     #[serde(default)]
     pub delete: bool,
 }
@@ -905,6 +914,21 @@ impl Command for NetClassCommand {
         }
         if let Some(p) = self.patterns {
             c.patterns = p.into_iter().map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect();
+        }
+        for (slot, v, what, max) in [
+            (&mut c.impedance, self.impedance, "impedance (Ω)", 500.0),
+            (&mut c.diff_impedance, self.diff_impedance, "differential impedance (Ω)", 1000.0),
+            (&mut c.diff_gap, self.diff_gap, "pair gap (mm)", 10.0),
+            (&mut c.impedance_tolerance, self.impedance_tolerance, "impedance tolerance (%)", 50.0),
+            (&mut c.max_uncoupled, self.max_uncoupled, "max uncoupled (mm)", 10000.0),
+            (&mut c.max_skew, self.max_skew, "max skew (mm)", 1000.0),
+        ] {
+            if let Some(x) = v {
+                if !x.is_finite() || x > max {
+                    return Err(bad(format!("{what} is at most {max}")));
+                }
+                *slot = (x > 0.0).then_some(x);
+            }
         }
         match pos {
             Some(i) => s.netclasses[i] = c.clone(),

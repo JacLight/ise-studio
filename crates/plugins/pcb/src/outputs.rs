@@ -191,6 +191,9 @@ pub fn readme(view: &BoardView, board: &Board, fab: Option<&crate::fabs::Fab>) -
         let _ = writeln!(s, "\nPrepared for {}: {}", f.name, f.files);
     }
     let _ = writeln!(s, "\nPlacement rotations are counter-clockwise from the top, from each footprint's IPC-7351 zero orientation; check them in the fab's assembly preview (their libraries' zero orientations differ for some packages).");
+    if let Some(note) = crate::signal::fab_note(board, view) {
+        let _ = writeln!(s, "\n{note}");
+    }
     s
 }
 
@@ -209,6 +212,9 @@ pub fn package(view: &BoardView, board: &Board, fab: Option<&str>) -> Vec<(Strin
         files.push(("bom-full.csv".into(), bom(view, board, Format::Generic).into_bytes()));
     }
     files.push(("README.txt".into(), readme(view, board, f).into_bytes()));
+    if let Some(note) = crate::signal::fab_note(board, view) {
+        files.push(("impedance.txt".into(), note.into_bytes()));
+    }
     files
 }
 

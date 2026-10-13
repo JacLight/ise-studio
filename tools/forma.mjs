@@ -34,6 +34,7 @@
 //   node tools/forma.mjs sch export <schematic> netlist|bom|svg|pdf [--format kicad|orcad|cadstar|spice] [--out f]   schematic files; sch find|erc|buses|sheets <schematic>
 //   node tools/forma.mjs pcb lib|logo|assign|variant|block …   project/global libraries, wizards, logos, footprint assignment, variants, design blocks
 //   node tools/forma.mjs pcb drc|setup|stackup|rules|teardrops <board> …   checks, stackup (2–32 layers), custom rules (.kicad_dru), teardrops
+//   node tools/forma.mjs pcb netclass|pair|group|lengths|tune|route-pair|pad-to-die <board> …   impedance targets (widths per layer), diff pairs, length groups, meanders
 //   node tools/forma.mjs pcb text|draw|image|keepout|stitch|fence <board> …   board graphics, keepouts, via stitching and fences
 //   node tools/forma.mjs pcb align|distribute|move|array|flip|swap <items…> [--board id] · pcb channel <board> --source … --to …   placement, multichannel
 //   node tools/forma.mjs simulate <schematic> [--tran 30ms] [--expect "min(V(3V3), burst) > 3.0"] [--save name]   ngspice on a schematic
@@ -87,6 +88,7 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import { request as httpRequest } from "node:http";
 import { pcbLib } from "./forma-pcblib.mjs";
 import { pcbBoard, BOARD_SUBS } from "./forma-pcbboard.mjs";
+import { pcbSignal, SIGNAL_SUBS } from "./forma-pcbsignal.mjs";
 
 const args = process.argv.slice(2);
 const urlFlag = args.indexOf("--url");
@@ -807,6 +809,8 @@ if (command === "run") {
       } else console.log(`✓ ${JSON.stringify(o)} (rev ${r.value.revision})`);
     } else if (["lib", "logo", "assign", "variant", "block"].includes(sub)) {
       failed = await pcbLib(sub, args, { engine, get, http, q });
+    } else if (SIGNAL_SUBS.includes(sub)) {
+      failed = await pcbSignal(sub, args, { engine, get, http, q });
     } else if (BOARD_SUBS.includes(sub)) {
       failed = await pcbBoard(sub, args, { engine, get, q });
     } else {

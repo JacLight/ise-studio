@@ -222,6 +222,29 @@ pub fn write(v: &BoardView, board: &Board) -> String {
     w.open("Ecad", &[("name", "Design".into())]);
     w.open("CadHeader", &[("units", "MILLIMETER".into())]);
     w.empty("Spec", &[("name", "Board".to_string())]);
+    // Controlled impedances: one spec per class, layer and kind, referenced from its copper layer.
+    let imp = crate::signal::impedance_table(board, v);
+    for (i, r) in imp.iter().enumerate() {
+        w.open("Spec", &[("name", format!("IMP_{}_{}_{}", r.class, r.layer, i + 1))]);
+        let tol = r.tolerance.to_string();
+        w.open("Impedance", &[("type", "IMPEDANCE".into()), ("transmission", if r.kind == "differential" { "EDGE_COUPLED".into() } else { "SINGLE_ENDED".into() }), ("structure", if r.model == "microstrip" { "MICROSTRIP".into() } else { "STRIPLINE".into() })]);
+        w.empty("Property", &[("value", f(r.target)), ("unit", "OHMS".into()), ("tolPlus", tol.clone()), ("tolMinus", tol.clone()), ("tolPercent", "true".into())]);
+        w.close();
+        w.open("Impedance", &[("type", "LINEWIDTH".into())]);
+        w.empty("Property", &[("value", f(r.width)), ("unit", "MM".into())]);
+        w.close();
+        if let Some(g) = r.gap {
+            w.open("Impedance", &[("type", "SPACING".into())]);
+            w.empty("Property", &[("value", f(g)), ("unit", "MM".into())]);
+            w.close();
+        }
+        for rf in &r.refs {
+            w.open("Impedance", &[("type", "REF_PLANE_LAYER_ID".into())]);
+            w.empty("Property", &[("text", layer_name(rf))]);
+            w.close();
+        }
+        w.close();
+    }
     w.close();
     w.open("CadData", &[]);
     for (n, func, side) in &layers {
@@ -247,7 +270,16 @@ pub fn write(v: &BoardView, board: &Board) -> String {
     let mut seq = 1;
     for (i, c) in copper.iter().enumerate() {
         let t = v.stackup.copper_oz.get(i).map(|oz| oz * crate::stackup::OZ_MM).unwrap_or(if i == 0 || i + 1 == n { cu } else { inner });
-        w.empty("StackupLayer", &[("layerOrGroupRef", c.clone()), ("thickness", f(t)), ("tolPlus", "0".into()), ("tolMinus", "0".into()), ("sequence", seq.to_string())]);
+        let refs: Vec<usize> = imp.iter().enumerate().filter(|(_, r)| layer_name(&r.layer) == *c).map(|(k, _)| k).collect();
+        if refs.is_empty() {
+            w.empty("StackupLayer", &[("layerOrGroupRef", c.clone()), ("thickness", f(t)), ("tolPlus", "0".into()), ("tolMinus", "0".into()), ("sequence", seq.to_string())]);
+        } else {
+            w.open("StackupLayer", &[("layerOrGroupRef", c.clone()), ("thickness", f(t)), ("tolPlus", "0".into()), ("tolMinus", "0".into()), ("sequence", seq.to_string())]);
+            for k in refs {
+                w.empty("SpecRef", &[("id", format!("IMP_{}_{}_{}", imp[k].class, imp[k].layer, k + 1))]);
+            }
+            w.close();
+        }
         seq += 1;
         if i + 1 < n {
             w.empty("StackupLayer", &[("layerOrGroupRef", format!("DIELECTRIC_{}", i + 1)), ("thickness", f(diel_of(i))), ("tolPlus", "0".into()), ("tolMinus", "0".into()), ("sequence", seq.to_string())]);
