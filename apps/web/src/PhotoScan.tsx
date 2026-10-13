@@ -138,7 +138,7 @@ export function PhotoScan(props: { active: string | null; onJob: (listener: (job
       <div className="pg-options">
         <label>
           Engine
-          <select value={engine} onChange={(e) => setEngine(e.target.value)} disabled={!!running}>
+          <select title="Which photogrammetry program turns the photos into a model" value={engine} onChange={(e) => setEngine(e.target.value)} disabled={!!running}>
             <option value="auto">Best available</option>
             {engines?.map((e) => (
               <option key={e.name} value={e.name} disabled={!e.available}>
@@ -150,7 +150,7 @@ export function PhotoScan(props: { active: string | null; onJob: (listener: (job
         </label>
         <label>
           Detail
-          <select value={detail} onChange={(e) => setDetail(e.target.value)} disabled={!!running}>
+          <select title="How fine the model is: more detail takes longer" value={detail} onChange={(e) => setDetail(e.target.value)} disabled={!!running}>
             <option value="preview">Preview</option>
             <option value="reduced">Reduced</option>
             <option value="medium">Medium</option>
@@ -162,10 +162,10 @@ export function PhotoScan(props: { active: string | null; onJob: (listener: (job
         </label>
       </div>
       <div className="scan-actions">
-        <button type="button" className="btn primary" onClick={() => files.current?.click()} disabled={!!running || !!upload || !usable.length}>
+        <button title="Pick the photos (or a zip of them) and start making a 3D model" type="button" className="btn primary" onClick={() => files.current?.click()} disabled={!!running || !!upload || !usable.length}>
           <Icon name="upload" /> Choose photos…
         </button>
-        <a className="btn" href="/photogrammetry/markers.pdf" target="_blank" rel="noreferrer">
+        <a title="Print this sheet and put the object on it so the model comes out at true size" className="btn" href="/photogrammetry/markers.pdf" target="_blank" rel="noreferrer">
           Marker sheet (PDF)
         </a>
         <input ref={files} type="file" multiple accept=".jpg,.jpeg,.png,.heic,.heif,.zip" style={{ display: "none" }} onChange={(e) => (start(e.target.files), (e.target.value = ""))} />
@@ -189,7 +189,7 @@ export function PhotoScan(props: { active: string | null; onJob: (listener: (job
             <span>
               {Math.round(job.progress * 100)}% · {job.stage} · {job.images} photos, {ENGINE_NAMES[job.engine] ?? job.engine}
             </span>
-            <button type="button" className="btn" onClick={cancel}>
+            <button title="Stop making the model from the photos" type="button" className="btn" onClick={cancel}>
               Cancel
             </button>
           </div>
@@ -243,10 +243,10 @@ export function PhotoScan(props: { active: string | null; onJob: (listener: (job
             <input placeholder="from x, y, z" value={scale.from} onChange={(e) => setScale({ ...scale, from: e.target.value })} />
             <input placeholder="to x, y, z" value={scale.to} onChange={(e) => setScale({ ...scale, to: e.target.value })} />
             <input placeholder="mm" value={scale.distance} onChange={(e) => setScale({ ...scale, distance: e.target.value })} />
-            <button type="button" className="btn" onClick={() => transform("scale")} disabled={!scale.from || !scale.to || !scale.distance}>
+            <button title="Scale the scan so the two points lie the given distance apart (as a new scan)" type="button" className="btn" onClick={() => transform("scale")} disabled={!scale.from || !scale.to || !scale.distance}>
               Scale
             </button>
-            <button type="button" className="btn" onClick={() => transform("level")}>
+            <button title="Turn the scan so its base sits flat on the floor (as a new scan)" type="button" className="btn" onClick={() => transform("level")}>
               Level on floor
             </button>
           </div>

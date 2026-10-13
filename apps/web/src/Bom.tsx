@@ -184,13 +184,13 @@ export function Workbench(props: {
     <section className="bench floating" aria-label="Bill of materials and sourcing">
       <header className="bench-head">
         <div className="bench-tabs" role="tablist">
-          <button type="button" role="tab" aria-selected={props.tab === "bom"} className={props.tab === "bom" ? "active" : ""} onClick={() => props.onTab("bom")}>
+          <button type="button" role="tab" aria-selected={props.tab === "bom"} className={props.tab === "bom" ? "active" : ""} title="Bill of materials: every part to make and buy, with quantities and costs" onClick={() => props.onTab("bom")}>
             <Icon name="list" /> Bill of materials
           </button>
-          <button type="button" role="tab" aria-selected={props.tab === "sourcing"} className={props.tab === "sourcing" ? "active" : ""} onClick={() => props.onTab("sourcing")}>
+          <button type="button" role="tab" aria-selected={props.tab === "sourcing"} className={props.tab === "sourcing" ? "active" : ""} title="Sourcing: suppliers, requests for quote and the quotes they send back" onClick={() => props.onTab("sourcing")}>
             <Icon name="truck" /> Sourcing
           </button>
-          <button type="button" role="tab" aria-selected={props.tab === "building"} className={props.tab === "building" ? "active" : ""} onClick={() => props.onTab("building")}>
+          <button type="button" role="tab" aria-selected={props.tab === "building"} className={props.tab === "building" ? "active" : ""} title="Building: levels, rooms, schedules, plans and IFC export" onClick={() => props.onTab("building")}>
             <Icon name="building" /> Building
           </button>
         </div>
@@ -305,7 +305,7 @@ function BomView(props: {
     <div className="bom">
       <div className="bom-bar">
         <div className="bom-scope">
-          <button type="button" className={`scope-chip ${!scope ? "on" : ""}`} onClick={() => setUseSelection(false)}>
+          <button type="button" className={`scope-chip ${!scope ? "on" : ""}`} title="Bill of materials for the whole project" onClick={() => setUseSelection(false)}>
             <Icon name="layers" /> Whole project
           </button>
           {picked && (
@@ -318,7 +318,7 @@ function BomView(props: {
         <div className="bom-actions">
           <label className="qty-field" title="Finished units to build">
             <span>Build</span>
-            <button type="button" aria-label="Fewer" onClick={() => setQuantity(qty > 10 ? Math.round(qty / 10) : qty - 1)}>
+            <button type="button" aria-label="Fewer" title={qty <= 1 ? "Build fewer (one is the least)" : `Build fewer: ${Math.max(1, qty > 10 ? Math.round(qty / 10) : qty - 1)} instead of ${qty}`} onClick={() => setQuantity(qty > 10 ? Math.round(qty / 10) : qty - 1)}>
               <Icon name="minus" />
             </button>
             <input
@@ -329,7 +329,7 @@ function BomView(props: {
               onBlur={() => setQuantity(Number(qtyText))}
               onKeyDown={(e) => e.key === "Enter" && setQuantity(Number(qtyText))}
             />
-            <button type="button" aria-label="More" onClick={() => setQuantity(qty >= 10 ? qty * 10 : qty + 1)}>
+            <button type="button" aria-label="More" title={`Build more: ${qty >= 10 ? qty * 10 : qty + 1} instead of ${qty}`} onClick={() => setQuantity(qty >= 10 ? qty * 10 : qty + 1)}>
               <Icon name="plus" />
             </button>
             <span>{qty === 1 ? "unit" : "units"}</span>
@@ -391,7 +391,7 @@ function BomView(props: {
 
           {bom.flags.length > 0 && (
             <div className={`bom-flags ${warnings ? "warn" : ""}`}>
-              <button type="button" className="flags-head" onClick={() => setFlagsOpen((o) => !o)} aria-expanded={flagsOpen}>
+              <button type="button" className="flags-head" title={`${flagsOpen ? "Hide" : "Show"} the BOM problems and notes`} onClick={() => setFlagsOpen((o) => !o)} aria-expanded={flagsOpen}>
                 <Icon name="alert" />
                 <span>
                   {warnings > 0 ? `${warnings} to fix` : ""}
@@ -407,7 +407,7 @@ function BomView(props: {
                     <li key={i} className={f.level}>
                       <span className="dot" />
                       {f.line ? (
-                        <button type="button" onClick={() => goTo(f.line!)}>
+                        <button type="button" title="Go to the line this is about" onClick={() => goTo(f.line!)}>
                           {f.text}
                         </button>
                       ) : (
@@ -422,13 +422,13 @@ function BomView(props: {
 
           <div className="bom-tabs">
             <div className="segmented">
-              <button type="button" className={tab === "make" ? "active" : ""} onClick={() => setTab("make")}>
+              <button type="button" className={tab === "make" ? "active" : ""} title="Parts you make: printed, machined, cut" onClick={() => setTab("make")}>
                 Make <b>{bom.make.length}</b>
               </button>
-              <button type="button" className={tab === "buy" ? "active" : ""} onClick={() => setTab("buy")}>
+              <button type="button" className={tab === "buy" ? "active" : ""} title="Parts you buy: screws, bearings, electronics and other stock items" onClick={() => setTab("buy")}>
                 Buy <b>{bom.buy.length}</b>
               </button>
-              <button type="button" className={tab === "tree" ? "active" : ""} onClick={() => setTab("tree")}>
+              <button type="button" className={tab === "tree" ? "active" : ""} title="Indented BOM: the assembly tree with quantities per parent" onClick={() => setTab("tree")}>
                 Indented
               </button>
             </div>
@@ -453,10 +453,10 @@ function BomView(props: {
             <span>
               <b>{chosen.size}</b> line{chosen.size === 1 ? "" : "s"} chosen
             </span>
-            <button type="button" className="secondary" onClick={() => setChosen(new Set())}>
+            <button type="button" className="secondary" title="Unchoose every line" onClick={() => setChosen(new Set())}>
               Clear
             </button>
-            <button type="button" className="primary" onClick={requestQuotes}>
+            <button type="button" className="primary" title="Make a request for quote from the chosen lines, with the files each supplier needs" onClick={requestQuotes}>
               <Icon name="mail" /> Request quotes
             </button>
           </div>
@@ -492,13 +492,13 @@ function ExportMenu({ items }: { items: { label: string; hint: string; href: str
   }, [open]);
   return (
     <div className="menu-host" ref={ref}>
-      <button type="button" className="secondary" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+      <button type="button" className="secondary" title="Download the BOM as CSV or JSON, or every part's files as a fabrication package" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
         <Icon name="download" /> Export <Icon name="down" />
       </button>
       {open && (
         <div className="menu floating" role="menu">
           {items.map((i) => (
-            <a key={i.label} role="menuitem" href={i.href} download={i.download ?? ""} onClick={() => setOpen(false)}>
+            <a key={i.label} role="menuitem" title={`Download ${i.label}`} href={i.href} download={i.download ?? ""} onClick={() => setOpen(false)}>
               <strong>{i.label}</strong>
               <small>{i.hint}</small>
             </a>
@@ -678,7 +678,7 @@ function MakeTable(props: {
                           <dd>{l.used_in.join(", ")}</dd>
                         </dl>
                         {props.entities.get(l.shape) && (
-                          <button type="button" className="secondary" onClick={() => props.onSelect(l.shape)}>
+                          <button type="button" className="secondary" title={`Select ${l.name} in the 3D view`} onClick={() => props.onSelect(l.shape)}>
                             <Icon name="cursor" /> Show in the view
                           </button>
                         )}
@@ -777,7 +777,7 @@ function BuyTable(props: { bom: Bom; qty: number; open: string | null; onOpen: (
                 <td className="sources" onClick={(e) => e.stopPropagation()}>
                   {(s?.sources ?? []).slice(0, 3).map((x, i) =>
                     x.url ? (
-                      <a key={i} href={x.url} target="_blank" rel="noreferrer" className="file-chip src">
+                      <a key={i} href={x.url} target="_blank" rel="noreferrer" className="file-chip src" title={`Open this item at ${x.supplier}${x.sku ? ` (SKU ${x.sku})` : ""} in a new tab`}>
                         {x.supplier}
                       </a>
                     ) : (
@@ -931,7 +931,7 @@ function TreeTable({ bom, onLine }: { bom: Bom; onLine: (k: string) => void }) {
             <td>{n.class ? <span className={`cls ${n.class}`}>{n.class === "make" ? "Make" : "Buy"}</span> : <span className="kind">{n.kind === "assembly" ? "Assembly" : n.kind === "shape" ? "Shape" : "Item"}</span>}</td>
             <td className="num">
               {n.line && items.has(n.line) ? (
-                <button type="button" className="item-link" onClick={() => onLine(n.line!)}>
+                <button type="button" className="item-link" title="Go to this line in the Make or Buy list" onClick={() => onLine(n.line!)}>
                   {items.get(n.line)}
                 </button>
               ) : null}

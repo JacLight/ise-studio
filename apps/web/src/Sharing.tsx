@@ -84,7 +84,7 @@ export function ViewLinks(props: { entities: ReadonlyMap<string, EntityView>; ha
       <div className="view-links-head">
         <h3>Anyone with the link can view</h3>
         {!adding && (
-          <button type="button" className="secondary" onClick={() => setAdding(true)}>
+          <button title="Make a link anyone can open to view the model in a browser" type="button" className="secondary" onClick={() => setAdding(true)}>
             <Icon name="link" /> New link
           </button>
         )}
@@ -99,7 +99,7 @@ export function ViewLinks(props: { entities: ReadonlyMap<string, EntityView>; ha
           {versions.length > 0 && (
             <label>
               Shows
-              <select value={version} onChange={(e) => setVersion(e.target.value)}>
+              <select title="Show the project live, or fixed at a named version" value={version} onChange={(e) => setVersion(e.target.value)}>
                 <option value="">The project as it is (live)</option>
                 {versions.map((x) => (
                   <option key={x.id} value={x.id}>
@@ -111,16 +111,16 @@ export function ViewLinks(props: { entities: ReadonlyMap<string, EntityView>; ha
           )}
           <div className="segmented" role="radiogroup" aria-label="Link lasts">
             {EXPIRY.map(([text, d]) => (
-              <button key={text} type="button" role="radio" aria-checked={days === d} className={days === d ? "active" : ""} onClick={() => setDays(d)}>
+              <button title={d === null ? "The link works until you turn it off" : `The link stops working after ${text}`} key={text} type="button" role="radio" aria-checked={days === d} className={days === d ? "active" : ""} onClick={() => setDays(d)}>
                 {text}
               </button>
             ))}
           </div>
           <div className="row-buttons">
-            <button type="submit" className="primary">
+            <button title="Make the view-only link and copy it to the clipboard" type="submit" className="primary">
               <Icon name="link" /> Create and copy link
             </button>
-            <button type="button" className="link-button" onClick={() => setAdding(false)}>
+            <button title="Close without making a link" type="button" className="link-button" onClick={() => setAdding(false)}>
               Cancel
             </button>
           </div>
@@ -143,10 +143,10 @@ export function ViewLinks(props: { entities: ReadonlyMap<string, EntityView>; ha
               {turningOff === l.id ? (
                 <span className="member-remove-ask">
                   Turn off?
-                  <button type="button" className="danger" onClick={() => void send("/shares/revoke", { id: l.id }).then(() => setTurningOff(null))}>
+                  <button title="Stop this link working for everyone who has it" type="button" className="danger" onClick={() => void send("/shares/revoke", { id: l.id }).then(() => setTurningOff(null))}>
                     Turn off
                   </button>
-                  <button type="button" className="link-button" onClick={() => setTurningOff(null)}>
+                  <button title="Leave the link working" type="button" className="link-button" onClick={() => setTurningOff(null)}>
                     Keep
                   </button>
                 </span>

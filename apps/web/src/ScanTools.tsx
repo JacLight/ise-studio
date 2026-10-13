@@ -254,7 +254,7 @@ export function ScanTools(props: {
       </header>
       <div className="panel-body">
         <div className="scan-add">
-          <button type="button" className="btn" onClick={() => fileInput.current?.click()} disabled={!!busy}>
+          <button title="Load a point cloud or mesh file from your computer as a scan" type="button" className="btn" onClick={() => fileInput.current?.click()} disabled={!!busy}>
             <Icon name="upload" /> Add a scan
           </button>
           <small>Points: XYZ, PLY, PCD, E57 · meshes: STL, OBJ, PLY, glTF, 3MF</small>
@@ -266,7 +266,7 @@ export function ScanTools(props: {
         {scans.length > 0 && (
           <div className="scan-list" role="listbox" aria-label="Scans">
             {scans.map((s) => (
-              <button type="button" role="option" aria-selected={s.id === active} key={s.id} className={`list-row ${s.id === active ? "active" : ""}`} onClick={() => setActive(s.id === active ? null : s.id)}>
+              <button title={s.id === active ? `Hide ${s.name}` : `Show ${s.name} and its tools`} type="button" role="option" aria-selected={s.id === active} key={s.id} className={`list-row ${s.id === active ? "active" : ""}`} onClick={() => setActive(s.id === active ? null : s.id)}>
                 <Icon name={s.kind === "mesh" ? "cube" : "scan"} />
                 <span>
                   {s.name}
@@ -293,16 +293,16 @@ export function ScanTools(props: {
               <section className="scan-section">
                 <h4>Mesh</h4>
                 <div className="scan-actions">
-                  <button type="button" className="btn" onClick={check} disabled={!!busy}>
+                  <button title="Look for holes, flipped or crossing triangles and other defects, and mark them on the mesh" type="button" className="btn" onClick={check} disabled={!!busy}>
                     Check
                   </button>
-                  <button type="button" className="btn" onClick={() => derive("Repair", "mesh/repair")} disabled={!!busy}>
+                  <button title="Fix holes, flipped and duplicate triangles to make a closed solid (as a new scan)" type="button" className="btn" onClick={() => derive("Repair", "mesh/repair")} disabled={!!busy}>
                     Repair
                   </button>
-                  <button type="button" className="btn" onClick={() => derive("Smooth", "mesh/smooth", { iterations: 10 })} disabled={!!busy}>
+                  <button title="Smooth out scanner noise on the mesh (10 passes, as a new scan)" type="button" className="btn" onClick={() => derive("Smooth", "mesh/smooth", { iterations: 10 })} disabled={!!busy}>
                     Smooth
                   </button>
-                  <button type="button" className="btn" onClick={() => derive("Remesh", "mesh/remesh", {})} disabled={!!busy}>
+                  <button title="Rebuild the mesh with even, well-shaped triangles (as a new scan)" type="button" className="btn" onClick={() => derive("Remesh", "mesh/remesh", {})} disabled={!!busy}>
                     Remesh
                   </button>
                 </div>
@@ -311,10 +311,10 @@ export function ScanTools(props: {
                     Keep
                     <input type="number" min={0.01} max={1} step={0.05} value={ratio} onChange={(e) => setRatio(Number(e.target.value))} />
                   </label>
-                  <button type="button" className="btn" onClick={() => derive("Decimate", "mesh/decimate", { ratio })} disabled={!!busy}>
+                  <button title="Cut the triangle count to the Keep fraction, staying close to the shape (as a new scan)" type="button" className="btn" onClick={() => derive("Decimate", "mesh/decimate", { ratio })} disabled={!!busy}>
                     Decimate
                   </button>
-                  <button type="button" className="btn" onClick={() => derive("Points", "surface/sample", { count: 50000 })} disabled={!!busy}>
+                  <button title="Sample 50,000 points from the mesh surface (as a new point scan)" type="button" className="btn" onClick={() => derive("Points", "surface/sample", { count: 50000 })} disabled={!!busy}>
                     To points
                   </button>
                 </div>
@@ -339,16 +339,16 @@ export function ScanTools(props: {
               <section className="scan-section">
                 <h4>Points</h4>
                 <div className="scan-actions">
-                  <button type="button" className="btn" onClick={() => derive("Thinned", "points/downsample", {})} disabled={!!busy}>
+                  <button title="Thin the points to an even spacing (as a new scan)" type="button" className="btn" onClick={() => derive("Thinned", "points/downsample", {})} disabled={!!busy}>
                     Thin
                   </button>
-                  <button type="button" className="btn" onClick={() => derive("Cleaned", "points/outliers", {})} disabled={!!busy}>
+                  <button title="Remove stray points far from the rest (as a new scan)" type="button" className="btn" onClick={() => derive("Cleaned", "points/outliers", {})} disabled={!!busy}>
                     Remove strays
                   </button>
-                  <button type="button" className="btn" onClick={() => derive("Normals", "points/normals", {})} disabled={!!busy}>
+                  <button title="Work out which way the surface faces at each point (needed to reconstruct)" type="button" className="btn" onClick={() => derive("Normals", "points/normals", {})} disabled={!!busy}>
                     Normals
                   </button>
-                  <button type="button" className="btn" onClick={() => derive("Surface", "surface/reconstruct", { depth: 7 })} disabled={!!busy}>
+                  <button title="Build a surface mesh through the points (as a new scan)" type="button" className="btn" onClick={() => derive("Surface", "surface/reconstruct", { depth: 7 })} disabled={!!busy}>
                     Reconstruct
                   </button>
                 </div>
@@ -358,10 +358,10 @@ export function ScanTools(props: {
             <section className="scan-section">
               <h4>Reverse engineer</h4>
               <div className="scan-actions">
-                <button type="button" className="btn" onClick={fit} disabled={!!busy}>
+                <button title="Find the plane, sphere, cylinder or other simple shape that best matches the scan" type="button" className="btn" onClick={fit} disabled={!!busy}>
                   Fit a primitive
                 </button>
-                <button type="button" className="btn" onClick={makePart} disabled={!!busy}>
+                <button title="Turn the scan into a part in the model" type="button" className="btn" onClick={makePart} disabled={!!busy}>
                   Make a part
                 </button>
               </div>
@@ -388,7 +388,7 @@ export function ScanTools(props: {
                   <option value="icp">Best fit</option>
                   <option value="best">Rough + best fit</option>
                 </select>
-                <button type="button" className="btn primary" onClick={inspect} disabled={!!busy || !target}>
+                <button title="Colour the scan by how far it lies from the chosen part, and pass or fail it on the tolerance" type="button" className="btn primary" onClick={inspect} disabled={!!busy || !target}>
                   Inspect
                 </button>
               </div>
@@ -442,7 +442,7 @@ export function ScanTools(props: {
                       </>
                     )}
                   </dl>
-                  <button type="button" className="btn" onClick={requireIt} disabled={!!busy}>
+                  <button title="Add a requirement that keeps checking this part matches the scan within the tolerance" type="button" className="btn" onClick={requireIt} disabled={!!busy}>
                     <Icon name="shield" /> Keep checking (requirement)
                   </button>
                 </div>

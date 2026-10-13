@@ -172,7 +172,7 @@ export function ViewBar(props: {
 }) {
   return (
     <div className="view-bar floating" role="toolbar" aria-label="View">
-      <button type="button" className="view-select" onClick={props.onViews}>
+      <button title="Pick a standard view, wireframe, turntable or render" type="button" className="view-select" onClick={props.onViews}>
         {VIEW_LABELS[props.view]} <Icon name="down" />
       </button>
       <i />

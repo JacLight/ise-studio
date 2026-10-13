@@ -54,13 +54,13 @@ export function SourcingView(props: { entities: ReadonlyMap<string, EntityView>;
     <div className="sourcing">
       <nav className="src-nav">
         <div className="segmented">
-          <button type="button" className={tab === "requests" ? "active" : ""} onClick={() => setTab("requests")}>
+          <button type="button" className={tab === "requests" ? "active" : ""} title="Requests for quote: what you asked which suppliers for" onClick={() => setTab("requests")}>
             Requests <b>{rfqs.length}</b>
           </button>
-          <button type="button" className={tab === "quotes" ? "active" : ""} onClick={() => setTab("quotes")}>
+          <button type="button" className={tab === "quotes" ? "active" : ""} title="Every quote suppliers sent back, across all requests" onClick={() => setTab("quotes")}>
             Quotes <b>{quotes.length}</b>
           </button>
-          <button type="button" className={tab === "suppliers" ? "active" : ""} onClick={() => setTab("suppliers")}>
+          <button type="button" className={tab === "suppliers" ? "active" : ""} title="Shops and distributors you get quotes from" onClick={() => setTab("suppliers")}>
             Suppliers <b>{suppliers.length}</b>
           </button>
         </div>
@@ -109,12 +109,12 @@ function Suppliers({ suppliers, run }: { suppliers: [string, Supplier][]; run: R
               </div>
               <div className="contact">
                 {s.email && (
-                  <a href={`mailto:${s.email}`}>
+                  <a href={`mailto:${s.email}`} title={`Email ${s.name}`}>
                     <Icon name="mail" /> {s.email}
                   </a>
                 )}
                 {s.website && (
-                  <a href={s.website.startsWith("http") ? s.website : `https://${s.website}`} target="_blank" rel="noreferrer">
+                  <a href={s.website.startsWith("http") ? s.website : `https://${s.website}`} target="_blank" rel="noreferrer" title={`Open ${s.name}'s website in a new tab`}>
                     <Icon name="link" /> {s.website.replace(/^https?:\/\//, "")}
                   </a>
                 )}
@@ -127,7 +127,7 @@ function Suppliers({ suppliers, run }: { suppliers: [string, Supplier][]; run: R
         {editing === "new" ? (
           <SupplierForm initial={EMPTY} onCancel={suppliers.length ? () => setEditing(null) : undefined} onSave={async (v) => (await run("sourcing.supplier.create", { ...v, phone: v.phone || null, lead_days: v.lead_days || null })) && setEditing(null)} />
         ) : (
-          <button type="button" className="supplier-add" onClick={() => setEditing("new")}>
+          <button type="button" className="supplier-add" title="Add a shop or distributor to ask for quotes" onClick={() => setEditing("new")}>
             <Icon name="plus" />
             <strong>Add a supplier</strong>
             <small>A shop that makes parts, or a distributor of stock items</small>
@@ -183,7 +183,7 @@ function SupplierForm({ initial, onSave, onCancel }: { initial: Supplier; onSave
       <div className="kind-pick" role="group" aria-label="What they do">
         <span>What they do</span>
         {KINDS.map((k) => (
-          <button type="button" key={k} className={`kind-chip ${k} ${s.kind.includes(k) ? "on" : ""}`} aria-pressed={s.kind.includes(k)} onClick={() => toggle(k)}>
+          <button type="button" key={k} className={`kind-chip ${k} ${s.kind.includes(k) ? "on" : ""}`} aria-pressed={s.kind.includes(k)} title={`${s.kind.includes(k) ? "They do not quote" : "They quote"} ${kindName(k).toLowerCase()}`} onClick={() => toggle(k)}>
             {kindName(k)}
           </button>
         ))}
@@ -193,11 +193,11 @@ function SupplierForm({ initial, onSave, onCancel }: { initial: Supplier; onSave
         <textarea rows={2} value={s.notes ?? ""} onChange={(e) => set({ notes: e.target.value })} placeholder="Payment terms, minimum order, who to ask for" />
       </label>
       <div className="row-buttons">
-        <button type="submit" className="primary" disabled={!s.name.trim()}>
+        <button type="submit" className="primary" disabled={!s.name.trim()} title="Save this supplier's details">
           <Icon name="check" /> Save supplier
         </button>
         {onCancel && (
-          <button type="button" className="secondary" onClick={onCancel}>
+          <button type="button" className="secondary" title="Close the form without saving" onClick={onCancel}>
             Cancel
           </button>
         )}
@@ -232,7 +232,7 @@ function Requests(props: {
         <Icon name="mail" />
         <strong>No requests for quote yet</strong>
         <p>Choose lines in the bill of materials and press Request quotes. Each supplier gets only the lines they make, with the files their shop needs.</p>
-        <button type="button" className="primary" onClick={props.onBom}>
+        <button type="button" className="primary" title="Go to the bill of materials to pick lines to request quotes for" onClick={props.onBom}>
           <Icon name="list" /> Open the bill of materials
         </button>
       </div>
@@ -244,7 +244,7 @@ function Requests(props: {
         {sorted.map(([id, r]) => {
           const n = props.quotes.filter(([, q]) => q.rfq === id).length;
           return (
-            <button type="button" key={id} className={id === current[0] ? "on" : ""} onClick={() => props.onOpen(id)}>
+            <button type="button" key={id} className={id === current[0] ? "on" : ""} title={`Open request ${r.name}`} onClick={() => props.onOpen(id)}>
               <span className={`status ${r.status}`}>{STATUS_WORDS[r.status]}</span>
               <strong>{r.name}</strong>
               <small>
@@ -319,7 +319,7 @@ function RfqDetail(props: {
         <input className="rfq-title" defaultValue={rfq.name} key={rfq.name} aria-label="Request name" onBlur={(e) => e.target.value.trim() && e.target.value !== rfq.name && update({ name: e.target.value })} />
         <div className="segmented small">
           {(["draft", "sent", "closed"] as const).map((s) => (
-            <button type="button" key={s} className={rfq.status === s ? "active" : ""} onClick={() => update({ status: s })}>
+            <button type="button" key={s} className={rfq.status === s ? "active" : ""} title={{ draft: "Mark as a draft: still being put together", sent: "Mark as sent to the suppliers", closed: "Mark as closed: no more quotes expected" }[s]} onClick={() => update({ status: s })}>
               {STATUS_WORDS[s]}
             </button>
           ))}
@@ -354,14 +354,14 @@ function RfqDetail(props: {
         {props.suppliers.map(([sid, s]) => {
           const on = rfq.suppliers.includes(sid);
           return (
-            <button type="button" key={sid} className={`pick ${on ? "on" : ""}`} aria-pressed={on} onClick={() => update({ suppliers: on ? rfq.suppliers.filter((x) => x !== sid) : [...rfq.suppliers, sid] })}>
+            <button type="button" key={sid} className={`pick ${on ? "on" : ""}`} aria-pressed={on} title={on ? `Stop asking ${s.name} for a quote` : `Ask ${s.name} for a quote`} onClick={() => update({ suppliers: on ? rfq.suppliers.filter((x) => x !== sid) : [...rfq.suppliers, sid] })}>
               {on && <Icon name="check" />}
               <strong>{s.name}</strong>
               <small>{s.kind.length ? s.kind.map(kindName).join(", ") : "Anything"}</small>
             </button>
           );
         })}
-        <button type="button" className="pick add" onClick={props.onSuppliers}>
+        <button type="button" className="pick add" title="Go to Suppliers to add one" onClick={props.onSuppliers}>
           <Icon name="plus" /> Add a supplier
         </button>
       </div>
@@ -370,7 +370,7 @@ function RfqDetail(props: {
         <>
           <h3 className="bench-section">
             Packages
-            <a className="secondary" href={projectUrl(`/rfq/${id}.zip`)} download>
+            <a className="secondary" href={projectUrl(`/rfq/${id}.zip`)} download title="Download every supplier's package in one zip">
               <Icon name="download" /> Download all
             </a>
           </h3>
@@ -394,13 +394,13 @@ function RfqDetail(props: {
                   </div>
                 </div>
                 <div className="package-actions">
-                  <button type="button" className="ib-text" onClick={() => setLetter(letter === p.letter ? null : p.letter)}>
+                  <button type="button" className="ib-text" title={`${letter === p.letter ? "Hide" : "Show"} the request letter for ${p.name}`} onClick={() => setLetter(letter === p.letter ? null : p.letter)}>
                     Letter
                   </button>
                   <a className="secondary" href={p.mailto} title="Opens a draft in your mail app; attach the package and send it yourself">
                     <Icon name="mail" /> Email draft
                   </a>
-                  <a className="primary" href={projectUrl(`/rfq/${id}.zip?supplier=${p.supplier}`)} download>
+                  <a className="primary" href={projectUrl(`/rfq/${id}.zip?supplier=${p.supplier}`)} download title={`Download ${p.name}'s package: their lines, files, BOM and letter`}>
                     <Icon name="download" /> Package
                   </a>
                 </div>
@@ -414,7 +414,7 @@ function RfqDetail(props: {
       <h3 className="bench-section">
         Quotes
         {rfq.suppliers.length > 0 && (
-          <button type="button" className="secondary" onClick={() => setRecording((r) => !r)}>
+          <button type="button" className="secondary" title="Enter the prices a supplier sent back" onClick={() => setRecording((r) => !r)}>
             <Icon name="plus" /> Record a quote
           </button>
         )}
@@ -452,7 +452,7 @@ function RecordQuote({ rfqId, rfq, suppliers, run, onDone }: { rfqId: string; rf
       <div className="form-grid">
         <label>
           Supplier
-          <select value={supplier} onChange={(e) => setSupplier(e.target.value)}>
+          <select value={supplier} title="Supplier this quote is from" onChange={(e) => setSupplier(e.target.value)}>
             {asked.map(([id, x]) => (
               <option key={id} value={id}>
                 {x.name}
@@ -505,10 +505,10 @@ function RecordQuote({ rfqId, rfq, suppliers, run, onDone }: { rfqId: string; rf
         </tbody>
       </table>
       <div className="row-buttons">
-        <button type="button" className="primary" onClick={save} disabled={!supplier}>
+        <button type="button" className="primary" title="Save these prices as the supplier's quote" onClick={save} disabled={!supplier}>
           <Icon name="check" /> Save quote
         </button>
-        <button type="button" className="secondary" onClick={onDone}>
+        <button type="button" className="secondary" title="Close without recording the quote" onClick={onDone}>
           Cancel
         </button>
       </div>
@@ -548,7 +548,7 @@ function Compare({ rfq, quotes, awards, run, supplierName }: { rfq: Rfq; quotes:
       <div className="compare-bar">
         <div className="segmented small" role="group" aria-label="Production quantity">
           {rfq.quantities.map((n) => (
-            <button type="button" key={n} className={n === q ? "active" : ""} onClick={() => setQ(n)}>
+            <button type="button" key={n} className={n === q ? "active" : ""} title={`Compare prices for a run of ${n.toLocaleString()}`} onClick={() => setQ(n)}>
               ×{n.toLocaleString()}
             </button>
           ))}
@@ -556,7 +556,7 @@ function Compare({ rfq, quotes, awards, run, supplierName }: { rfq: Rfq; quotes:
         <span className="legend">
           <i className="cheap" /> cheapest <i className="fast" /> fastest
         </span>
-        <button type="button" className="secondary" onClick={awardCheapest}>
+        <button type="button" className="secondary" title="Award each line to the supplier with the lowest price at this quantity" onClick={awardCheapest}>
           <Icon name="check" /> Award cheapest per line
         </button>
       </div>
@@ -607,7 +607,7 @@ function Compare({ rfq, quotes, awards, run, supplierName }: { rfq: Rfq; quotes:
                             </button>
                           ) : (
                             x.status !== "declined" && (
-                              <button type="button" className="award" onClick={() => run("sourcing.award", { line: l.line, quote: id, name: l.name })}>
+                              <button type="button" className="award" title={`Award ${l.name} to ${supplierName(x.supplier)}`} onClick={() => run("sourcing.award", { line: l.line, quote: id, name: l.name })}>
                                 Award
                               </button>
                             )
@@ -684,7 +684,7 @@ function Quotes({ quotes, rfqs, awards, run, supplierName, onOpen }: { quotes: [
                 </td>
                 <td>
                   {rfq ? (
-                    <button type="button" className="item-link" onClick={() => onOpen(rfq[0])}>
+                    <button type="button" className="item-link" title={`Open request ${rfq[1].name}`} onClick={() => onOpen(rfq[0])}>
                       {rfq[1].name}
                     </button>
                   ) : (
@@ -703,12 +703,12 @@ function Quotes({ quotes, rfqs, awards, run, supplierName, onOpen }: { quotes: [
                 </td>
                 <td className="row-actions">
                   {q.status !== "accepted" && (
-                    <button type="button" className="ib-text" onClick={() => run("sourcing.quote.award", { quote: id, names: Object.fromEntries((rfq?.[1].lines ?? []).map((l) => [l.line, l.name])) })}>
+                    <button type="button" className="ib-text" title={`Award every line of this quote to ${supplierName(q.supplier)}`} onClick={() => run("sourcing.quote.award", { quote: id, names: Object.fromEntries((rfq?.[1].lines ?? []).map((l) => [l.line, l.name])) })}>
                       Accept all
                     </button>
                   )}
                   {q.status !== "declined" && (
-                    <button type="button" className="ib-text" onClick={() => run("sourcing.quote.update", { target: id, status: "declined" })}>
+                    <button type="button" className="ib-text" title={`Mark ${supplierName(q.supplier)}'s quote as declined`} onClick={() => run("sourcing.quote.update", { target: id, status: "declined" })}>
                       Decline
                     </button>
                   )}

@@ -24,7 +24,7 @@ export function PreferencesDialog(props: { onClose: () => void }) {
       <div className="prefs-body">
         <label className="field">
           Lengths in
-          <select value={prefs.length} onChange={(e) => setDisplayPrefs({ length: e.target.value as LengthUnit })}>
+          <select title="Unit for showing lengths, and for numbers typed without one" value={prefs.length} onChange={(e) => setDisplayPrefs({ length: e.target.value as LengthUnit })}>
             {LENGTH_UNITS.map((u) => (
               <option key={u.unit} value={u.unit}>
                 {u.label}
@@ -55,17 +55,17 @@ export function ProjectFileRows(props: { onPrefs: () => void; onConsole: () => v
   const name = projectName || "default";
   return (
     <div className="project-file-rows">
-      <button type="button" className="list-row" onClick={props.onPrefs}>
+      <button title="Set the length unit and decimal places (⌘ ,)" type="button" className="list-row" onClick={props.onPrefs}>
         <Icon name="gear" />
         <span>Preferences: units</span>
         <kbd>⌘ ,</kbd>
       </button>
-      <button type="button" className="list-row" onClick={props.onData}>
+      <button title="Open sheets and tables of project data (T)" type="button" className="list-row" onClick={props.onData}>
         <Icon name="table" />
         <span>Data: sheets and tables</span>
         <kbd>T</kbd>
       </button>
-      <button type="button" className="list-row" onClick={props.onConsole}>
+      <button title="Open the command console (`)" type="button" className="list-row" onClick={props.onConsole}>
         <Icon name="terminal" />
         <span>Console</span>
         <kbd>`</kbd>
