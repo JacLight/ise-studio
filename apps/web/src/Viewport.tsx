@@ -705,7 +705,7 @@ const lookKey = (e: EntityView, entities: ReadonlyMap<string, EntityView>, piece
 
 function surface(look: Look, wireframe: boolean) {
   const glass = look.opacity !== undefined && look.opacity < 1;
-  const { picture, ...plain } = look;
+  const { picture, texture: _texture, ...plain } = look;
   const m = new THREE.MeshStandardMaterial({
     ...plain,
     // A printed picture (a label, a decal): its own colours; clear pixels show what is under it.
@@ -1026,25 +1026,48 @@ function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vecto
     }
   }
   if (bounds.isEmpty()) return;
-  const c = bounds.getCenter(new THREE.Vector3());
+  let c = bounds.getCenter(new THREE.Vector3());
   const radius = bounds.getBoundingSphere(new THREE.Sphere()).radius;
   let distance = (radius / Math.sin(THREE.MathUtils.degToRad(t.camera.fov / 2))) * 1.2;
   const heading = t.flight ? t.flight.to : null;
   const dir = (direction ?? (heading ? heading.position.clone().sub(heading.target) : t.camera.position.clone().sub(t.controls.target))).normalize();
   const view = { position: new THREE.Vector3(), target: c, up: (up ?? heading?.up ?? t.camera.up).clone() };
   if (fill) {
-    // Tight: the box's corners, seen from `dir`, span `fill` of the frame's height or width (whichever is reached first).
+    // Tight: what is shown (its vertices, thinned to ~40 000; else the box's corners), seen from `dir`
+    // in perspective, spans `fill` of the frame's height or width (whichever is reached first), centred.
     const right = new THREE.Vector3().crossVectors(view.up, dir).normalize();
     const screenUp = new THREE.Vector3().crossVectors(dir, right);
     const tanV = Math.tan(THREE.MathUtils.degToRad(t.camera.fov / 2)) * fill;
     const tanH = tanV * t.camera.aspect;
-    distance = 0;
-    const d = new THREE.Vector3();
-    for (let i = 0; i < 8; i++) {
-      d.set(i & 1 ? bounds.max.x : bounds.min.x, i & 2 ? bounds.max.y : bounds.min.y, i & 4 ? bounds.max.z : bounds.min.z).sub(c);
-      const z = d.dot(dir);
-      distance = Math.max(distance, z + Math.abs(d.dot(right)) / tanH, z + Math.abs(d.dot(screenUp)) / tanV);
+    const points: THREE.Vector3[] = [];
+    const meshes = box ? [] : [...t.parts].flatMap(([id, part]) => (part.group.visible ? part.meshes.filter((m) => m.visible && (!only || id === only || (m.userData.path as string[] | undefined)?.includes(only))) : []));
+    const total = meshes.reduce((n, m) => n + m.geometry.getAttribute("position").count, 0);
+    const step = Math.max(1, Math.floor(total / 40000));
+    for (const m of meshes) {
+      m.updateMatrixWorld(true);
+      const pos = m.geometry.getAttribute("position");
+      for (let i = 0; i < pos.count; i += step) points.push(new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld));
     }
+    if (!points.length) for (let i = 0; i < 8; i++) points.push(new THREE.Vector3(i & 1 ? bounds.max.x : bounds.min.x, i & 2 ? bounds.max.y : bounds.min.y, i & 4 ? bounds.max.z : bounds.min.z));
+    const d = new THREE.Vector3();
+    for (let pass = 0; pass < 4; pass++) {
+      distance = 0;
+      for (const p of points) {
+        d.copy(p).sub(c);
+        const z = d.dot(dir);
+        distance = Math.max(distance, z + Math.abs(d.dot(right)) / tanH, z + Math.abs(d.dot(screenUp)) / tanV);
+      }
+      // Aim at the middle of what the camera sees, so it sits centred in the frame.
+      let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
+      for (const p of points) {
+        d.copy(p).sub(c);
+        const depth = distance - d.dot(dir);
+        const sx = d.dot(right) / depth, sy = d.dot(screenUp) / depth;
+        [x0, x1, y0, y1] = [Math.min(x0, sx), Math.max(x1, sx), Math.min(y0, sy), Math.max(y1, sy)];
+      }
+      c = c.clone().addScaledVector(right, ((x0 + x1) / 2) * distance).addScaledVector(screenUp, ((y0 + y1) / 2) * distance);
+    }
+    view.target = c;
   }
   view.position.copy(c).addScaledVector(dir, distance);
   if (glide) return glideTo(t, view);
@@ -3501,7 +3524,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       }
       const [a, e] = [THREE.MathUtils.degToRad(az), THREE.MathUtils.degToRad(el)];
       const dir = new THREE.Vector3(Math.sin(a) * Math.cos(e), -Math.cos(a) * Math.cos(e), Math.sin(e));
-      fitView(t, undefined, true, dir, upFor(dir), undefined, fill !== undefined ? THREE.MathUtils.clamp(fill, 0.1, 1) : undefined);
+      // Straight down (or up), the azimuth says which way is up: where the camera would have tilted from
+      // (90,90 looks down with the +X end at the bottom of the picture; 0,90 as the top view, +Y up).
+      const up = Math.abs(el) > 89.9 ? new THREE.Vector3(-Math.sin(a) * Math.sign(el), Math.cos(a) * Math.sign(el), 0) : upFor(dir);
+      fitView(t, undefined, true, dir, up, undefined, fill !== undefined ? THREE.MathUtils.clamp(fill, 0.1, 1) : undefined);
     },
     tools() {
       return toolsRef.current;

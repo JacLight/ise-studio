@@ -102,13 +102,80 @@ export function studioEnvironment(width = 1024, softboxes = 1, white = false): T
   return tex;
 }
 
+/** Size of one tile of a surface texture, mm. */
+const TEXTURE_TILE_MM = 10;
+
+let stippleMap: THREE.DataTexture | null = null;
+/**
+ * A moulded stipple (a grip's pebbled rubber) as a tiling normal map: round
+ * bumps 0.2–0.35 mm across, packed at random over a 10 mm tile.
+ */
+function stipple(): THREE.DataTexture {
+  if (stippleMap) return stippleMap;
+  const n = 512;
+  const height = new Float32Array(n * n);
+  let seed = 7;
+  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let k = 0; k < 2600; k++) {
+    const cx = rand() * n, cy = rand() * n, r = 8 + rand() * 7, h = 0.6 + rand() * 0.4;
+    for (let dy = -Math.ceil(r); dy <= Math.ceil(r); dy++)
+      for (let dx = -Math.ceil(r); dx <= Math.ceil(r); dx++) {
+        const d = Math.hypot(dx, dy) / r;
+        if (d >= 1) continue;
+        const x = (Math.floor(cx) + dx + n) % n, y = (Math.floor(cy) + dy + n) % n;
+        const bump = h * Math.sqrt(1 - d * d);
+        if (bump > height[y * n + x]) height[y * n + x] = bump;
+      }
+  }
+  const data = new Uint8Array(n * n * 4);
+  const at = (x: number, y: number) => height[((y + n) % n) * n + ((x + n) % n)];
+  const strength = 3;
+  for (let y = 0; y < n; y++)
+    for (let x = 0; x < n; x++) {
+      const nx = (at(x - 1, y) - at(x + 1, y)) * strength, ny = (at(x, y - 1) - at(x, y + 1)) * strength;
+      const len = Math.hypot(nx, ny, 1);
+      const i = (y * n + x) * 4;
+      data[i] = Math.round(((nx / len) * 0.5 + 0.5) * 255);
+      data[i + 1] = Math.round(((ny / len) * 0.5 + 0.5) * 255);
+      data[i + 2] = Math.round(((1 / len) * 0.5 + 0.5) * 255);
+      data[i + 3] = 255;
+    }
+  const tex = new THREE.DataTexture(data, n, n, THREE.RGBAFormat);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.needsUpdate = true;
+  return (stippleMap = tex);
+}
+
+/** The geometry with texture coordinates projected from the box side each vertex faces (mm / tile), for surface textures. */
+function boxUvs(geometry: THREE.BufferGeometry, mmPerUnit: number): THREE.BufferGeometry {
+  const g = geometry.clone();
+  const pos = g.getAttribute("position");
+  if (!g.getAttribute("normal")) g.computeVertexNormals();
+  const nor = g.getAttribute("normal");
+  const uv = new Float32Array(pos.count * 2);
+  const k = mmPerUnit / TEXTURE_TILE_MM;
+  for (let i = 0; i < pos.count; i++) {
+    const [x, y, z] = [pos.getX(i) * k, pos.getY(i) * k, pos.getZ(i) * k];
+    const [ax, ay, az] = [Math.abs(nor.getX(i)), Math.abs(nor.getY(i)), Math.abs(nor.getZ(i))];
+    const [u, v] = ax >= ay && ax >= az ? [y, z] : ay >= az ? [x, z] : [x, y];
+    uv[i * 2] = u;
+    uv[i * 2 + 1] = v;
+  }
+  g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  return g;
+}
+
 /** A view material made physical for the path tracer. */
 function physical(m: THREE.Material): THREE.Material {
   if (!(m instanceof THREE.MeshStandardMaterial)) return m;
   // A part's material as designed (its look), not as the view paints it at
   // the moment: a picked piece leaves the rest see-through (they rendered as
   // glass), x-ray lights what is hovered. None of that is the product.
-  const look = m.userData.look as { color?: string; roughness?: number; metalness?: number; opacity?: number } | undefined;
+  const look = m.userData.look as { color?: string; roughness?: number; metalness?: number; opacity?: number; texture?: string } | undefined;
   const color = look?.color ? new THREE.Color(look.color) : m.color.clone();
   const rough = look?.roughness ?? m.roughness;
   const metal = look?.metalness ?? m.metalness;
@@ -119,7 +186,8 @@ function physical(m: THREE.Material): THREE.Material {
     metalness: metal,
     roughnessMap: m.roughnessMap,
     metalnessMap: m.metalnessMap,
-    normalMap: m.normalMap,
+    // A moulded texture the look names ("stippled" rubber) as a normal map.
+    normalMap: look?.texture === "stipple" ? stipple() : m.normalMap,
     // A part's look has no glow of its own: what glows in the view is its
     // selection or hover highlight, which a render leaves out.
     emissive: look ? 0x000000 : m.emissive.clone(),
@@ -128,6 +196,7 @@ function physical(m: THREE.Material): THREE.Material {
     alphaTest: m.alphaTest,
     side: THREE.DoubleSide,
   });
+  if (look?.texture) out.userData.texture = look.texture;
   const hsl = { h: 0, s: 0, l: 0 };
   color.getHSL(hsl);
   const seeThrough = (look ? (look.opacity ?? 1) : m.opacity) < 0.999;
@@ -167,11 +236,12 @@ function physical(m: THREE.Material): THREE.Material {
       out.metalness = 0.85;
     }
   } else if (metal < 0.2) {
-    // Plastics, masks, wood, paint: a dielectric with a faint satin coat.
+    // Plastics, masks, wood, paint: a dielectric; only a glossy one (an epoxy dome, a polished
+    // moulding) gets a clear coat, so satin and matte mouldings keep their full colour.
     out.metalness = 0;
     out.specularIntensity = 0.6;
-    out.clearcoat = rough < 0.5 ? 0.25 : 0.05;
-    out.clearcoatRoughness = 0.4;
+    out.clearcoat = rough < 0.3 ? 0.35 : 0;
+    out.clearcoatRoughness = Math.max(0.04, rough * 0.5);
   }
   return out;
 }
@@ -214,8 +284,16 @@ const WHITE_FLOOR = 0.9;
  * model for soft contact shadows. Z is up, as in the view. In the white
  * studio the backdrop is exactly what the unshadowed floor sends back, so
  * floor and backdrop meet without a horizon; `white` is that radiance.
+ * `layer` (white studio, for a saved image): "model" cuts the floor out of
+ * the picture (it still bounces light and takes the shadow) and leaves the
+ * backdrop empty; "floor" shows the floor on an empty backdrop, for its shading.
  */
-export function buildRenderScene(source: RenderSource, environment: THREE.Texture, studio: Studio = "studio"): { scene: THREE.Scene; bounds: THREE.Box3; white: number } {
+export function buildRenderScene(
+  source: RenderSource,
+  environment: THREE.Texture,
+  studio: Studio = "studio",
+  layer?: "model" | "floor",
+): { scene: THREE.Scene; bounds: THREE.Box3; white: number } {
   const scene = new THREE.Scene();
   const materials = new Map<THREE.Material, THREE.Material>();
   const convert = (m: THREE.Material) => {
@@ -240,7 +318,10 @@ export function buildRenderScene(source: RenderSource, environment: THREE.Textur
       let added = false;
       for (const [geometry, m] of pieces(mesh)) {
         if (!shaded(m)) continue;
-        const copy = new THREE.Mesh(geometry, convert(m));
+        const material = convert(m);
+        // A textured surface needs texture coordinates: projected from the box side it faces, in mm.
+        const scale = new THREE.Vector3().setFromMatrixScale(mesh.matrixWorld).x || 1;
+        const copy = new THREE.Mesh(material.userData.texture ? boxUvs(geometry, 1000 * scale) : geometry, material);
         mesh.matrixWorld.decompose(copy.position, copy.quaternion, copy.scale);
         scene.add(copy);
         added = true;
@@ -265,10 +346,13 @@ export function buildRenderScene(source: RenderSource, environment: THREE.Textur
         : new THREE.MeshPhysicalMaterial({ color: 0xf3f4f6, roughness: 0.92, metalness: 0 }),
     );
     floor.position.set((bounds.min.x + bounds.max.x) / 2, (bounds.min.y + bounds.max.y) / 2, bounds.min.z - span * 1e-4);
+    floor.userData.floor = true;
+    if (sweep && layer === "model") (floor.material as unknown as { matte: boolean }).matte = true;
     scene.add(floor);
   }
   scene.environment = environment;
-  if (sweep) scene.background = new THREE.Color().setRGB(white, white, white, THREE.LinearSRGBColorSpace);
+  if (sweep && layer) scene.background = null;
+  else if (sweep) scene.background = new THREE.Color().setRGB(white, white, white, THREE.LinearSRGBColorSpace);
   else {
     scene.background = environment;
     scene.backgroundBlurriness = 0.4;
@@ -420,14 +504,107 @@ export async function renderImage(source: RenderSource, options: RenderOptions, 
   const { width, height, samples, studio = "studio" } = options;
   // Every printed picture (labels, decals) in before the first sample.
   await picturesReady();
+  if (studio !== "white") return png((await trace(source, studio, undefined, width, height, samples, onProgress)).pixels, width, height);
+  // The white sweep: the model on a cut-out floor, then the floor alone (fewer samples) for
+  // its shading, laid on pure white. One pass with the floor in the picture leaves a grey
+  // horizon and floor grain: the big softboxes shade the floor a little far round the model.
+  const model = await trace(source, studio, "model", width, height, samples, onProgress);
+  const shade = model.floorless ? model : await trace(source, studio, "floor", width, height, Math.max(48, Math.round(samples / 3)), (n) => onProgress?.(samples + n));
+  return png(onWhite(model.pixels, shade.pixels, width, height), width, height);
+}
+
+/**
+ * The model (straight-alpha pixels over a cut-out floor) laid on pure white,
+ * with the floor's shadow from `floor` (the floor alone on an empty backdrop):
+ * each floor pixel's light against the open floor's (its median: the shadow
+ * covers little of it), smoothed of grain, the last 3 % counted as open.
+ */
+function onWhite(model: Uint8ClampedArray, floor: Uint8ClampedArray, width: number, height: number): Uint8ClampedArray {
+  const n = width * height;
+  const toLinear = (v: number) => {
+    const c = v / 255;
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  const toSrgb = (c: number) => 255 * (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055);
+  const lum = new Float32Array(n);
+  const seen: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (floor[i * 4 + 3] < 250) {
+      lum[i] = -1; // past the floor: open white
+      continue;
+    }
+    lum[i] = 0.2126 * toLinear(floor[i * 4]) + 0.7152 * toLinear(floor[i * 4 + 1]) + 0.0722 * toLinear(floor[i * 4 + 2]);
+    if (model[i * 4 + 3] === 0 && i % 7 === 0) seen.push(lum[i]);
+  }
+  seen.sort((a, b) => a - b);
+  const open = seen.length ? seen[Math.floor(seen.length / 2)] : 1;
+  let shadow = new Float32Array(n);
+  for (let i = 0; i < n; i++) shadow[i] = lum[i] < 0 ? 1 : Math.min(1, lum[i] / Math.max(open, 1e-6) / 0.97);
+  const radius = Math.max(1, Math.round(Math.max(width, height) / 600));
+  for (let pass = 0; pass < 2; pass++) {
+    const next = new Float32Array(n);
+    for (let y = 0; y < height; y++)
+      for (let x = 0; x < width; x++) {
+        let sum = 0, count = 0;
+        for (let d = -radius; d <= radius; d++) {
+          const xx = pass === 0 ? x + d : x, yy = pass === 0 ? y : y + d;
+          if (xx < 0 || yy < 0 || xx >= width || yy >= height) continue;
+          sum += shadow[yy * width + xx];
+          count++;
+        }
+        next[y * width + x] = sum / count;
+      }
+    shadow = next;
+  }
+  const out = new Uint8ClampedArray(n * 4);
+  for (let i = 0; i < n; i++) {
+    const bg = toSrgb(1 - 0.65 * (1 - shadow[i]));
+    const alpha = model[i * 4 + 3] / 255;
+    for (let c = 0; c < 3; c++) out[i * 4 + c] = Math.round(alpha * model[i * 4 + c] + (1 - alpha) * bg);
+    out[i * 4 + 3] = 255;
+  }
+  return out;
+}
+
+/** RGBA pixels as a PNG. */
+async function png(pixels: Uint8ClampedArray, width: number, height: number): Promise<Blob> {
   const canvas = document.createElement("canvas");
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true });
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext("2d")!.putImageData(new ImageData(new Uint8ClampedArray(pixels), width, height), 0, 0);
+  const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/png"));
+  if (!blob) throw new Error("the image could not be encoded");
+  return blob;
+}
+
+/**
+ * Path-traces the scene until `samples` have landed: its pixels (RGBA,
+ * straight alpha, top row first), and whether the floor was left out (a
+ * camera under it, as for a view from below: the studio is turned over too).
+ */
+async function trace(
+  source: RenderSource,
+  studio: Studio,
+  layer: "model" | "floor" | undefined,
+  width: number,
+  height: number,
+  samples: number,
+  onProgress?: (samples: number) => void,
+): Promise<{ pixels: Uint8ClampedArray; floorless: boolean }> {
+  const canvas = document.createElement("canvas");
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true, alpha: !!layer, premultipliedAlpha: false });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setPixelRatio(1);
   renderer.setSize(width, height, false);
-  const { scene, white } = buildRenderScene(source, environment(studio), studio);
+  if (layer) renderer.setClearColor(0x000000, 0);
+  const { scene, white } = buildRenderScene(source, environment(studio), studio, layer);
   expose(renderer, studio, white);
   const camera = cameraFor(source, width / height);
+  const ground = scene.children.find((o) => o.userData.floor);
+  if (layer && ground && camera.position.z < ground.position.z) {
+    scene.remove(ground);
+    scene.environmentRotation.set(Math.PI / 2, 0, 0);
+  }
   const tracer = new WebGLPathTracer(renderer);
   // Big images in tiles, so each draw call stays short.
   const tiles = Math.max(1, Math.ceil(Math.max(width, height) / 1024));
@@ -453,9 +630,13 @@ export async function renderImage(source: RenderSource, options: RenderOptions, 
       // looking at, where timers wait a second or more each (it never finished).
       await breathe();
     }
-    const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/png"));
-    if (!blob) throw new Error("the image could not be encoded");
-    return blob;
+    // The pixels as drawn, straight from the GL buffer (bottom row first).
+    const gl = renderer.getContext();
+    const raw = new Uint8Array(width * height * 4);
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, raw);
+    const pixels = new Uint8ClampedArray(width * height * 4);
+    for (let y = 0; y < height; y++) pixels.set(raw.subarray((height - 1 - y) * width * 4, (height - y) * width * 4), y * width * 4);
+    return { pixels, floorless: !!ground && !ground.parent };
   } finally {
     tracer.dispose();
     renderer.dispose();

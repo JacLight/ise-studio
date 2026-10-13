@@ -415,7 +415,8 @@ export const describeOperation = (op: string) => {
   return verb.charAt(0).toUpperCase() + verb.slice(1) + what;
 };
 
-export type Look = { color: string; metalness: number; roughness: number; opacity?: number; picture?: string };
+/** How a material looks: colour, metal or not, how rough, see-through; `picture` a printed picture on it (a label); `texture` a moulded surface texture the render draws ("stipple": a grip's pebbled rubber). */
+export type Look = { color: string; metalness: number; roughness: number; opacity?: number; picture?: string; texture?: "stipple" };
 
 const LOOKS: Record<string, Look> = {
   // Printed circuit boards (the PCB workspace's 3D part): exact names, matched before any family.
@@ -473,6 +474,12 @@ const LOOKS: Record<string, Look> = {
   aluminium: { color: "#c8d2da", metalness: 0.75, roughness: 0.28 },
   "abs plastic": { color: "#e7e2d8", metalness: 0, roughness: 0.6 },
   plastic: { color: "#d8d6d0", metalness: 0, roughness: 0.55 },
+  // Moulded plastics and labels by their short names ("ABS (yellow)", "TPE rubber", "Polycarbonate (clear)").
+  "epoxy dome": { color: "#232427", metalness: 0, roughness: 0.08 },
+  polycarbonate: { color: "#e4ecf0", metalness: 0, roughness: 0.3 },
+  abs: { color: "#e7e2d8", metalness: 0, roughness: 0.45 },
+  tpe: { color: "#25272b", metalness: 0, roughness: 0.85 },
+  pom: { color: "#f1eee6", metalness: 0, roughness: 0.4 },
   oak: { color: "#c69c6d", metalness: 0, roughness: 0.75 },
   brass: { color: "#c9a85c", metalness: 0.8, roughness: 0.3 },
   copper: { color: "#c27c56", metalness: 0.8, roughness: 0.3 },
@@ -576,7 +583,13 @@ export function materialLook(name: string | undefined): Look {
   // A printed picture ("Label print battery-label.png"): its own colours on a satin print.
   const picture = pictureIn(name);
   if (picture) return { color: "#ffffff", metalness: 0, roughness: family ? look.roughness : 0.45, picture };
-  return color ? { ...look, color } : look;
+  const out: Look = color ? { ...look, color } : { ...look };
+  // More finish words: "Badge rim (chrome)", "TPE (black, stippled)", "PC (clear)".
+  const has = (re: RegExp) => re.test(key);
+  if (has(/\b(chrome|mirror)\b/)) Object.assign(out, { metalness: 1, roughness: 0.06, color: hex ?? "#eceef0" });
+  if (has(/\b(stippled|pebbled)\b/) || (has(/\btextured\b/) && out.metalness < 0.5)) Object.assign(out, { texture: "stipple", roughness: Math.max(out.roughness, 0.55) });
+  if (has(/\b(clear|transparent)\b/) && out.metalness < 0.5) Object.assign(out, { opacity: Math.min(out.opacity ?? 1, 0.45), roughness: Math.min(out.roughness, 0.06), ...(color ? {} : { color: "#e4ecf0" }) });
+  return out;
 }
 
 /** A part's size and position in millimeters, as edited live in the UI. */
