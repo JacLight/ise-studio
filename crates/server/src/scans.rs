@@ -583,6 +583,18 @@ mod tests {
         let (_, reply) = http(at, "POST", &format!("/scans/{sid}/inspect"), json!({ "target": "Block", "tolerance": 0.35 }).to_string().as_bytes()).await;
         assert_eq!(serde_json::from_slice::<Value>(&reply).unwrap()["passed"], json!(true));
 
+        // As a requirement: failing at ±0.1, met at ±0.35, re-checked by the engine.
+        let tight = app.commit_here("intent.requirement.create", json!({ "rule": { "kind": "scan_deviation", "part": part, "scan": sid, "tolerance": { "value": 0.1, "unit": "mm" } } })).unwrap()["output"]["id"].clone();
+        let loose = app.commit_here("intent.requirement.create", json!({ "rule": { "kind": "scan_deviation", "part": part, "scan": sid, "tolerance": { "value": 0.35, "unit": "mm" } } })).unwrap()["output"]["id"].clone();
+        {
+            let project = app.project.lock().unwrap();
+            let verdict = |id: &Value| project.get::<de_intent::RequirementResult>(serde_json::from_value(id.clone()).unwrap()).cloned().expect("evaluated");
+            let (t, l) = (verdict(&tight), verdict(&loose));
+            assert!(!t.passed && l.passed, "{} / {}", t.summary, l.summary);
+            assert!((t.measured - 0.3).abs() < 0.01, "{}", t.summary);
+            assert!(t.summary.contains("worst +0.3"), "{}", t.summary);
+        }
+
         // A fit reads the top back as a plane; a reconstruction is a closed mesh scan.
         let (_, reply) = http(at, "POST", &format!("/scans/{sid}/query/fit"), json!({ "kind": "plane", "box": [0, 0, 19.5, 40, 30, 21] }).to_string().as_bytes()).await;
         let f: Value = serde_json::from_slice(&reply).unwrap();
