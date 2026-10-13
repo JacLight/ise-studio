@@ -387,6 +387,20 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
   const stats = entity.assembly;
   const [draft, setDraft] = useState<Record<string, string>>({});
   const props_ = inst.properties ?? {};
+  // Sale status, use and owner belong to buildings (a stacking plan's floors):
+  // shown where they are set, where neighbours or contents carry them, or for
+  // a floor area; anything else (an arm, a caliper) offers them on request.
+  const carries = (e: EntityView) => {
+    const p = instance(e)?.properties;
+    return !!(p?.status || p?.use || p?.owner);
+  };
+  const [addSales, setAddSales] = useState<string | null>(null);
+  const salesShown =
+    addSales === entity.id ||
+    carries(entity) ||
+    stats?.metrics?.["Net area"] != null ||
+    (inst.parent ? childrenOf(inst.parent, entities).some(carries) : false) ||
+    kids.some(carries);
   const setProp = (key: string, value: string) => run("assembly.instance.update", { target: entity.id, properties: { [key]: value } });
   const move = (k: 0 | 1 | 2, v: number) => {
     const at = [...inst.at] as [number, number, number];
@@ -430,6 +444,7 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
         </button>
       )}
 
+      {salesShown && (
       <section className="props-section">
         <header>
           <h3>Sales and use</h3>
@@ -460,6 +475,7 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
           </label>
         ))}
       </section>
+      )}
 
       {stats && (
         <div className="stats">
@@ -604,6 +620,11 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
       )}
 
       <div className="row-buttons">
+        {!salesShown && (
+          <button type="button" className="secondary" onClick={() => setAddSales(entity.id)} title="Add a sale status, use and owner, as for a floor or unit of a building in a stacking plan">
+            <Icon name="plus" /> Add sales info
+          </button>
+        )}
         {uses > 1 && (
           <button type="button" className="secondary" onClick={() => run("assembly.instance.make_unique", { target: entity.id })} title="Give this instance its own copy to customise; the others stay as they are">
             <Icon name="spark" /> Make unique
