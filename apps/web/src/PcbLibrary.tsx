@@ -63,7 +63,7 @@ function Findings({ list, onPick }: { list: Finding[] | undefined; onPick?: (f: 
         {shown.length ? `${shown.filter((f) => f.severity === "error").length} errors, ${shown.filter((f) => f.severity === "warning").length} warnings` : "Checker passes"}
       </div>
       {[...shown, ...notes].map((f, i) => (
-        <button type="button" key={i} className={`lib-finding ${f.severity}`} onClick={() => onPick?.(f)}>
+        <button type="button" key={i} className={`lib-finding ${f.severity}`} title={`Select the pins or pads this ${f.severity} is about`} onClick={() => onPick?.(f)}>
           <b>{f.code}</b> {f.message}
         </button>
       ))}
@@ -292,13 +292,13 @@ function GfxRow({ g, onChange, onDelete }: { g: any; onChange: (g: any) => void;
         />
       )}
       {"fill" in g && (
-        <select value={g.fill ?? "none"} onChange={(e) => onChange({ ...g, fill: e.target.value })}>
+        <select value={g.fill ?? "none"} title={`Fill of this ${g.kind}: none, the body colour or solid`} onChange={(e) => onChange({ ...g, fill: e.target.value })}>
           <option value="none">no fill</option>
           <option value="body">body</option>
           <option value="outline">solid</option>
         </select>
       )}
-      <button type="button" className="lib-x" onClick={onDelete} title="Delete">
+      <button type="button" className="lib-x" onClick={onDelete} title={`Delete this ${g.kind}`} aria-label={`Delete this ${g.kind}`}>
         ×
       </button>
     </div>
@@ -372,6 +372,7 @@ function SymbolEditor(props: { start: SymState; commit: Commit; canEdit: boolean
             <button
               type="button"
               className="secondary"
+              title={`Remove unit ${String.fromCharCode(64 + unit)} and its pins`}
               onClick={() => {
                 set((d) => {
                   d.units.splice(unit - 1, 1);
@@ -385,7 +386,7 @@ function SymbolEditor(props: { start: SymState; commit: Commit; canEdit: boolean
             </button>
           )}
           <div className="lib-seg" role="tablist" aria-label="Body style">
-            <button type="button" className={style === 1 ? "active" : ""} onClick={() => setStyle(1)}>
+            <button type="button" className={style === 1 ? "active" : ""} title="Normal body: the symbol's main drawing" onClick={() => setStyle(1)}>
               Normal
             </button>
             <button
@@ -476,13 +477,13 @@ function SymbolEditor(props: { start: SymState; commit: Commit; canEdit: boolean
           </label>
           <div className="lib-checks">
             <label>
-              <input type="checkbox" checked={def.show_pin_numbers} onChange={(e) => set((d) => void (d.show_pin_numbers = e.target.checked))} /> Pin numbers
+              <input type="checkbox" checked={def.show_pin_numbers} title="Show pin numbers on the placed symbol" onChange={(e) => set((d) => void (d.show_pin_numbers = e.target.checked))} /> Pin numbers
             </label>
             <label>
-              <input type="checkbox" checked={def.show_pin_names} onChange={(e) => set((d) => void (d.show_pin_names = e.target.checked))} /> Pin names
+              <input type="checkbox" checked={def.show_pin_names} title="Show pin names inside the symbol body" onChange={(e) => set((d) => void (d.show_pin_names = e.target.checked))} /> Pin names
             </label>
             <label>
-              <input type="checkbox" checked={!!s.power} onChange={(e) => setS((x) => ({ ...x, power: e.target.checked ? { net: x.def.value || "VCC", style: "bar" } : null }))} /> Power symbol
+              <input type="checkbox" checked={!!s.power} title="Make this a power symbol: it joins every point of its net, sheet-wide" onChange={(e) => setS((x) => ({ ...x, power: e.target.checked ? { net: x.def.value || "VCC", style: "bar" } : null }))} /> Power symbol
             </label>
           </div>
           {s.power && (
@@ -492,7 +493,7 @@ function SymbolEditor(props: { start: SymState; commit: Commit; canEdit: boolean
               </label>
               <label>
                 Look
-                <select value={s.power.style ?? "bar"} onChange={(e) => setS((x) => ({ ...x, power: { ...x.power!, style: e.target.value } }))}>
+                <select value={s.power.style ?? "bar"} title="How the power symbol is drawn" onChange={(e) => setS((x) => ({ ...x, power: { ...x.power!, style: e.target.value } }))}>
                   {["bar", "ground", "arrow", "circle"].map((k) => (
                     <option key={k}>{k}</option>
                   ))}
@@ -504,7 +505,7 @@ function SymbolEditor(props: { start: SymState; commit: Commit; canEdit: boolean
         <section>
           <h4>
             Fields
-            <button type="button" className="lib-add" onClick={() => set((d) => void ((d.fields = d.fields ?? {})[`Field${Object.keys(d.fields ?? {}).length + 1}`] = ""))}>
+            <button type="button" className="lib-add" title="Add a custom field to this symbol" aria-label="Add a custom field to this symbol" onClick={() => set((d) => void ((d.fields = d.fields ?? {})[`Field${Object.keys(d.fields ?? {}).length + 1}`] = ""))}>
               +
             </button>
           </h4>
@@ -521,7 +522,7 @@ function SymbolEditor(props: { start: SymState; commit: Commit; canEdit: boolean
                 }
               />
               <input value={v} onChange={(e) => set((d) => void (d.fields![k] = e.target.value))} />
-              <button type="button" className="lib-x" onClick={() => set((d) => void delete d.fields![k])}>
+              <button type="button" className="lib-x" title={`Remove the ${k} field`} aria-label={`Remove the ${k} field`} onClick={() => set((d) => void delete d.fields![k])}>
                 ×
               </button>
             </div>
@@ -540,7 +541,7 @@ function SymbolEditor(props: { start: SymState; commit: Commit; canEdit: boolean
               ["arc", { kind: "arc", c: [0, 0], r: 2.54, start: 0, end: 180 }],
               ["text", { kind: "text", at: [0, 0], text: "Text", size: 1.27 }],
             ].map(([k, g]) => (
-              <button type="button" key={k as string} className="secondary small" onClick={() => setUnitGfx([...(units[unit - 1] ?? []), g])}>
+              <button type="button" key={k as string} className="secondary small" title={`Add a ${k as string} to the drawing of this unit`} onClick={() => setUnitGfx([...(units[unit - 1] ?? []), g])}>
                 + {k as string}
               </button>
             ))}
@@ -565,27 +566,27 @@ function SymbolEditor(props: { start: SymState; commit: Commit; canEdit: boolean
           }}
         />
         <div className="lib-actions">
-          <button type="button" className="primary" disabled={!props.canEdit} onClick={save}>
+          <button type="button" className="primary" disabled={!props.canEdit} title={`Save this symbol into the ${s.library} library`} onClick={save}>
             Save to {s.library}
           </button>
           {s.renameFrom && (
             <>
-              <button type="button" className="secondary" disabled={!props.canEdit || !props.schematic} onClick={() => props.commit("pcb.lib.place", { schematic: props.schematic, symbol: s.renameFrom, at: [50.8, 50.8], body_style: style }, `Placed ${s.renameFrom}`)}>
+              <button type="button" className="secondary" disabled={!props.canEdit || !props.schematic} title={`Place ${s.renameFrom} on the schematic`} onClick={() => props.commit("pcb.lib.place", { schematic: props.schematic, symbol: s.renameFrom, at: [50.8, 50.8], body_style: style }, `Placed ${s.renameFrom}`)}>
                 Place
               </button>
-              <button type="button" className="secondary" disabled={!props.canEdit} onClick={async () => {
+              <button type="button" className="secondary" disabled={!props.canEdit} title="Push this symbol's changes to every part already placed from it" onClick={async () => {
                 const o = outOf(await props.commit("pcb.lib.symbol.push", { symbol: s.renameFrom }));
                 if (o) props.notify(`Updated ${o.updated.length} placed part(s)`);
               }}>
                 Update placed
               </button>
-              <a className="secondary lib-link" href={projectUrl(`/pcb/libs/symbol/${encodeURIComponent(s.renameFrom)}/svg?download=1&unit=${unit}`)}>
+              <a className="secondary lib-link" title="Download this unit's drawing as an SVG file" href={projectUrl(`/pcb/libs/symbol/${encodeURIComponent(s.renameFrom)}/svg?download=1&unit=${unit}`)}>
                 SVG
               </a>
-              <button type="button" className="secondary" disabled={!props.canEdit} onClick={() => setS((x) => ({ ...x, def: { ...x.def, name: `${x.def.name}_copy` }, renameFrom: null }))}>
+              <button type="button" className="secondary" disabled={!props.canEdit} title="Start a copy of this symbol under a new name (kept when you save)" onClick={() => setS((x) => ({ ...x, def: { ...x.def, name: `${x.def.name}_copy` }, renameFrom: null }))}>
                 Duplicate
               </button>
-              <button type="button" className="secondary danger" disabled={!props.canEdit} onClick={async () => {
+              <button type="button" className="secondary danger" disabled={!props.canEdit} title={`Delete ${s.renameFrom} from the library`} onClick={async () => {
                 if (await props.commit("pcb.lib.delete", { symbols: [s.renameFrom] }, `Deleted ${s.renameFrom}`)) props.onSaved();
               }}>
                 Delete
@@ -597,7 +598,7 @@ function SymbolEditor(props: { start: SymState; commit: Commit; canEdit: boolean
       <div className="lib-table-wrap">
         <div className="lib-table-head">
           <h4>Pins</h4>
-          <button type="button" className="secondary small" onClick={() => {
+          <button type="button" className="secondary small" title="Add a pin numbered after the highest one" onClick={() => {
             set((d) => {
               const nums = d.pins.map((p) => Number(p.number)).filter(Number.isFinite);
               const n = String((nums.length ? Math.max(...nums) : 0) + 1);
@@ -645,21 +646,21 @@ function SymbolEditor(props: { start: SymState; commit: Commit; canEdit: boolean
                   <input value={p.name} onChange={(e) => set((d) => void (d.pins[i].name = e.target.value))} />
                 </td>
                 <td>
-                  <select value={p.etype} onChange={(e) => set((d) => void (d.pins[i].etype = e.target.value))}>
+                  <select value={p.etype} title={`Electrical type of pin ${p.number}, checked by the ERC`} onChange={(e) => set((d) => void (d.pins[i].etype = e.target.value))}>
                     {PIN_TYPES.map((t) => (
                       <option key={t}>{t}</option>
                     ))}
                   </select>
                 </td>
                 <td>
-                  <select value={p.shape ?? "line"} onChange={(e) => set((d) => void (d.pins[i].shape = e.target.value === "line" ? undefined : e.target.value))}>
+                  <select value={p.shape ?? "line"} title={`How pin ${p.number} is drawn (inverted, clock …)`} onChange={(e) => set((d) => void (d.pins[i].shape = e.target.value === "line" ? undefined : e.target.value))}>
                     {PIN_SHAPES.map((t) => (
                       <option key={t}>{t}</option>
                     ))}
                   </select>
                 </td>
                 <td>
-                  <select value={p.side} onChange={(e) => set((d) => void (d.pins[i].side = e.target.value))}>
+                  <select value={p.side} title={`Which side of the body pin ${p.number} sticks out of`} onChange={(e) => set((d) => void (d.pins[i].side = e.target.value))}>
                     {SIDES.map((t) => (
                       <option key={t}>{t}</option>
                     ))}
@@ -675,7 +676,7 @@ function SymbolEditor(props: { start: SymState; commit: Commit; canEdit: boolean
                   <input type="number" step={1.27} value={p.at[1]} onChange={(e) => set((d) => void (d.pins[i].at = [d.pins[i].at[0], Number(e.target.value)]))} />
                 </td>
                 <td>
-                  <select value={p.unit ?? 0} onChange={(e) => set((d) => void (d.pins[i].unit = Number(e.target.value) || undefined))}>
+                  <select value={p.unit ?? 0} title={`Which unit pin ${p.number} belongs to (all: shared by every unit)`} onChange={(e) => set((d) => void (d.pins[i].unit = Number(e.target.value) || undefined))}>
                     <option value={0}>all</option>
                     {Array.from({ length: unitCount }, (_, k) => (
                       <option key={k} value={k + 1}>
@@ -685,13 +686,13 @@ function SymbolEditor(props: { start: SymState; commit: Commit; canEdit: boolean
                   </select>
                 </td>
                 <td>
-                  <input type="checkbox" checked={!!p.hidden} onChange={(e) => set((d) => void (d.pins[i].hidden = e.target.checked || undefined))} />
+                  <input type="checkbox" checked={!!p.hidden} title={`Hide pin ${p.number} on the drawing (it still connects)`} onChange={(e) => set((d) => void (d.pins[i].hidden = e.target.checked || undefined))} />
                 </td>
                 <td>
                   <input value={(p.pads ?? []).join(",")} placeholder={p.number} onChange={(e) => set((d) => void (d.pins[i].pads = e.target.value.split(",").map((x) => x.trim()).filter(Boolean)))} />
                 </td>
                 <td>
-                  <button type="button" className="lib-x" onClick={() => set((d) => void d.pins.splice(i, 1))}>
+                  <button type="button" className="lib-x" title={`Delete pin ${p.number}`} aria-label={`Delete pin ${p.number}`} onClick={() => set((d) => void d.pins.splice(i, 1))}>
                     ×
                   </button>
                 </td>
@@ -854,7 +855,7 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
           </span>
           <label className="lib-inline">
             Grid
-            <select value={grid} onChange={(e) => setGrid(Number(e.target.value))}>
+            <select value={grid} title="Snap step for dragging pads" onChange={(e) => setGrid(Number(e.target.value))}>
               {[0.01, 0.05, 0.1, 0.25, 0.5, 1.27].map((g) => (
                 <option key={g} value={g}>
                   {g} mm
@@ -862,7 +863,7 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
               ))}
             </select>
           </label>
-          <button type="button" className="secondary" onClick={props.onWizard}>
+          <button type="button" className="secondary" title="Make a land pattern from package dimensions (SOIC, QFN, BGA …)" onClick={props.onWizard}>
             <Icon name="spark" /> Wizard
           </button>
           <button
@@ -903,7 +904,7 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
           </label>
           <label>
             Kind
-            <select value={fp.kind} onChange={(e) => set((d) => void (d.kind = e.target.value))}>
+            <select value={fp.kind} title="What kind of part this footprint is for (sets defaults and checks)" onChange={(e) => set((d) => void (d.kind = e.target.value))}>
               {["resistor", "capacitor", "led", "diode", "inductor", "ic", "connector", "switch", "module", "hole", "logo"].map((k) => (
                 <option key={k}>{k}</option>
               ))}
@@ -911,7 +912,7 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
           </label>
           <div className="lib-row">
             <label className="lib-inline">
-              <input type="checkbox" checked={!fp.courtyard} onChange={(e) => set((d) => void (d.courtyard = e.target.checked ? null : view?.courtyard))} /> Courtyard from pads + body
+              <input type="checkbox" checked={!fp.courtyard} title="Work the courtyard out from the pads and body; untick to type its edges" onChange={(e) => set((d) => void (d.courtyard = e.target.checked ? null : view?.courtyard))} /> Courtyard from pads + body
             </label>
           </div>
           {fp.courtyard && (
@@ -923,20 +924,20 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
           )}
           <div className="lib-row">
             <label className="lib-inline">
-              <input type="checkbox" checked={!(fp.silk?.length)} onChange={(e) => set((d) => void (d.silk = e.target.checked ? [] : (view?.silk ?? [])))} /> Silkscreen from the body outline
+              <input type="checkbox" checked={!(fp.silk?.length)} title="Draw the silkscreen from the body outline; untick to keep your own" onChange={(e) => set((d) => void (d.silk = e.target.checked ? [] : (view?.silk ?? [])))} /> Silkscreen from the body outline
             </label>
           </div>
         </section>
         <section>
           <h4>
             Body (3D and height)
-            <button type="button" className="lib-add" onClick={() => set((d) => void d.body.push({ shape: "box", at: [0, 0], size: [1, 1], z: [0, 1], material: "Epoxy" }))}>
+            <button type="button" className="lib-add" title="Add a body block (sets the 3D look and height)" aria-label="Add a body block" onClick={() => set((d) => void d.body.push({ shape: "box", at: [0, 0], size: [1, 1], z: [0, 1], material: "Epoxy" }))}>
               +
             </button>
           </h4>
           {fp.body.map((b, i) => (
             <div className="lib-row wrap" key={i}>
-              <select value={b.shape} onChange={(e) => set((d) => void (d.body[i].shape = e.target.value))}>
+              <select value={b.shape} title="Shape of this body block" onChange={(e) => set((d) => void (d.body[i].shape = e.target.value))}>
                 <option>box</option>
                 <option>cylinder</option>
               </select>
@@ -946,18 +947,18 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
               <Num v={b.size[1]} on={(n) => set((d) => void (d.body[i].size[1] = n))} w={52} />
               z <Num v={b.z[0]} on={(n) => set((d) => void (d.body[i].z[0] = n))} w={48} />
               <Num v={b.z[1]} on={(n) => set((d) => void (d.body[i].z[1] = n))} w={48} />
-              <select value={b.material} onChange={(e) => set((d) => void (d.body[i].material = e.target.value))}>
+              <select value={b.material} title="Material of this body block (its look in 3D)" onChange={(e) => set((d) => void (d.body[i].material = e.target.value))}>
                 {["Epoxy", "Ceramic", "Steel", "Nylon", "Black plastic", "Gold", "LED", "FR4"].map((m) => (
                   <option key={m}>{m}</option>
                 ))}
               </select>
-              <button type="button" className="lib-x" onClick={() => set((d) => void d.body.splice(i, 1))}>
+              <button type="button" className="lib-x" title="Remove this body block" aria-label="Remove this body block" onClick={() => set((d) => void d.body.splice(i, 1))}>
                 ×
               </button>
             </div>
           ))}
           <label className="lib-inline">
-            <input type="checkbox" checked={!!s.model} onChange={(e) => setS((x) => ({ ...x, model: e.target.checked ? { offset: [0, 0, 0], rotation: 0 } : null }))} /> 3D model placement
+            <input type="checkbox" checked={!!s.model} title="Use a 3D model file with its own offset and turn" onChange={(e) => setS((x) => ({ ...x, model: e.target.checked ? { offset: [0, 0, 0], rotation: 0 } : null }))} /> 3D model placement
           </label>
           {s.model && (
             <div className="lib-row wrap">
@@ -974,7 +975,7 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
           <section className="lib-pad-props">
             <h4>Pad {p.number || "(no number)"}</h4>
             <div className="lib-row wrap">
-              <select value={p.kind} onChange={(e) => setPad(sel, (q) => {
+              <select value={p.kind} title={`Kind of pad ${p.number}: surface mount, plated hole or bare hole`} onChange={(e) => setPad(sel, (q) => {
                 q.kind = e.target.value;
                 q.drill = e.target.value === "smd" ? null : (q.drill ?? [Math.min(q.size[0], q.size[1]) * 0.5, Math.min(q.size[0], q.size[1]) * 0.5]);
               })}>
@@ -982,7 +983,7 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
                 <option value="tht">Through-hole</option>
                 <option value="npth">Hole (no copper)</option>
               </select>
-              <select value={shapeOf(p)} onChange={(e) => setShape(sel, e.target.value)}>
+              <select value={shapeOf(p)} title={`Shape of pad ${p.number}`} onChange={(e) => setShape(sel, e.target.value)}>
                 {PAD_SHAPES.map((k) => (
                   <option key={k}>{k}</option>
                 ))}
@@ -998,7 +999,7 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
                 chamfer <Num v={p.chamfer.ratio} step={0.05} on={(n) => setPad(sel, (q) => void (q.chamfer!.ratio = n))} w={52} />
                 {["top_left", "top_right", "bottom_left", "bottom_right"].map((c) => (
                   <label key={c} className="lib-inline">
-                    <input type="checkbox" checked={p.chamfer!.corners.includes(c)} onChange={(e) => setPad(sel, (q) => void (q.chamfer!.corners = e.target.checked ? [...q.chamfer!.corners, c] : q.chamfer!.corners.filter((x) => x !== c)))} />
+                    <input type="checkbox" checked={p.chamfer!.corners.includes(c)} title={`Chamfer the ${c.replace("_", " ")} corner of the pad`} onChange={(e) => setPad(sel, (q) => void (q.chamfer!.corners = e.target.checked ? [...q.chamfer!.corners, c] : q.chamfer!.corners.filter((x) => x !== c)))} />
                     {c.replace("_", " ")}
                   </label>
                 ))}
@@ -1037,14 +1038,14 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
             {p.kind === "tht" && (
               <div className="lib-row wrap">
                 <label className="lib-inline">
-                  <input type="checkbox" checked={!!p.stack} onChange={(e) => setPad(sel, (q) => void (q.stack = e.target.checked ? { inner: { shape: "circle", size: [q.drill ? q.drill[0] + 0.4 : 1, q.drill ? q.drill[0] + 0.4 : 1] }, opposite: null, remove_inner: false } : null))} /> Pad stack
+                  <input type="checkbox" checked={!!p.stack} title="Different pad sizes on the inner and far-side layers" onChange={(e) => setPad(sel, (q) => void (q.stack = e.target.checked ? { inner: { shape: "circle", size: [q.drill ? q.drill[0] + 0.4 : 1, q.drill ? q.drill[0] + 0.4 : 1] }, opposite: null, remove_inner: false } : null))} /> Pad stack
                 </label>
                 {p.stack && (
                   <>
                     inner ø<Num v={p.stack.inner?.size?.[0]} on={(n) => setPad(sel, (q) => void (q.stack.inner = { shape: "circle", size: [n, n] }))} w={52} />
                     far side <Num v={p.stack.opposite?.size?.[0]} on={(n) => setPad(sel, (q) => void (q.stack.opposite = n ? { shape: q.shape === "custom" ? "rect" : q.shape, size: [n, n * (q.size[1] / q.size[0])] } : null))} w={52} />
                     <label className="lib-inline">
-                      <input type="checkbox" checked={!!p.stack.remove_inner} onChange={(e) => setPad(sel, (q) => void (q.stack.remove_inner = e.target.checked))} /> no inner copper
+                      <input type="checkbox" checked={!!p.stack.remove_inner} title="Leave out the pad on inner layers where nothing connects" onChange={(e) => setPad(sel, (q) => void (q.stack.remove_inner = e.target.checked))} /> no inner copper
                     </label>
                   </>
                 )}
@@ -1052,7 +1053,7 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
             )}
             <div className="lib-row wrap">
               pour
-              <select value={p.zone_connection ?? ""} onChange={(e) => setPad(sel, (q) => void (q.zone_connection = e.target.value || null))}>
+              <select value={p.zone_connection ?? ""} title={`How copper pours join pad ${p.number}`} onChange={(e) => setPad(sel, (q) => void (q.zone_connection = e.target.value || null))}>
                 <option value="">as the zone</option>
                 <option value="thermal">thermal</option>
                 <option value="solid">solid</option>
@@ -1061,7 +1062,7 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
               gap <Num v={p.thermal_gap} on={(n) => setPad(sel, (q) => void (q.thermal_gap = n || null))} w={50} /> spoke <Num v={p.thermal_spoke} on={(n) => setPad(sel, (q) => void (q.thermal_spoke = n || null))} w={50} />
               {p.kind === "smd" && (
                 <label className="lib-inline">
-                  <input type="checkbox" checked={!!p.no_paste} onChange={(e) => setPad(sel, (q) => void (q.no_paste = e.target.checked || undefined))} /> no paste
+                  <input type="checkbox" checked={!!p.no_paste} title="No solder paste on this pad" onChange={(e) => setPad(sel, (q) => void (q.no_paste = e.target.checked || undefined))} /> no paste
                 </label>
               )}
             </div>
@@ -1076,7 +1077,7 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
               }))} title="Give every pad of this kind this pad's size, shape and drill">
                 Push to all
               </button>
-              <button type="button" className="secondary small" onClick={() => set((d) => {
+              <button type="button" className="secondary small" title={`Copy pad ${p.number} beside itself with the next free number`} onClick={() => set((d) => {
                 const q = structuredClone(d.pads[sel]);
                 q.at = [r4(q.at[0] + 1), q.at[1]];
                 const nums = d.pads.map((x) => Number(x.number)).filter(Number.isFinite);
@@ -1093,21 +1094,21 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
           if (i >= 0) setSel(i);
         }} />
         <div className="lib-actions">
-          <button type="button" className="primary" disabled={!props.canEdit} onClick={save}>
+          <button type="button" className="primary" disabled={!props.canEdit} title={`Save this footprint into the ${s.library} library`} onClick={save}>
             Save to {s.library}
           </button>
           {s.renameFrom && (
             <>
-              <button type="button" className="secondary" disabled={!props.canEdit || !props.boardId} onClick={() => props.commit("pcb.lib.footprint.push", { footprint: s.renameFrom }, "Updated on the boards that use it")}>
+              <button type="button" className="secondary" disabled={!props.canEdit || !props.boardId} title="Push this footprint's changes to every board part that uses it" onClick={() => props.commit("pcb.lib.footprint.push", { footprint: s.renameFrom }, "Updated on the boards that use it")}>
                 Update boards
               </button>
-              <button type="button" className="secondary" disabled={!props.canEdit || !props.boardId} onClick={() => props.commit("pcb.component.create", { board: props.boardId, reference: fp.kind === "logo" ? "LOGO1" : "U99", footprint: s.renameFrom, at: [5, 5] }, `Placed ${s.renameFrom} on the board`)}>
+              <button type="button" className="secondary" disabled={!props.canEdit || !props.boardId} title={`Place ${s.renameFrom} on the open board`} onClick={() => props.commit("pcb.component.create", { board: props.boardId, reference: fp.kind === "logo" ? "LOGO1" : "U99", footprint: s.renameFrom, at: [5, 5] }, `Placed ${s.renameFrom} on the board`)}>
                 Place on board
               </button>
-              <a className="secondary lib-link" href={projectUrl(`/pcb/libs/footprint/${encodeURIComponent(s.renameFrom)}/svg?download=1`)}>
+              <a className="secondary lib-link" title="Download this footprint as an SVG file" href={projectUrl(`/pcb/libs/footprint/${encodeURIComponent(s.renameFrom)}/svg?download=1`)}>
                 SVG
               </a>
-              <button type="button" className="secondary danger" disabled={!props.canEdit} onClick={async () => {
+              <button type="button" className="secondary danger" disabled={!props.canEdit} title={`Delete ${s.renameFrom} from the library`} onClick={async () => {
                 if (await props.commit("pcb.lib.delete", { footprints: [s.renameFrom] }, `Deleted ${s.renameFrom}`)) props.onSaved();
               }}>
                 Delete
@@ -1119,7 +1120,7 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
       <div className="lib-table-wrap">
         <div className="lib-table-head">
           <h4>Pads</h4>
-          <button type="button" className="secondary small" onClick={() => set((d) => {
+          <button type="button" className="secondary small" title="Add a pad like the last one, a pitch below it, with the next number" onClick={() => set((d) => {
             const nums = d.pads.map((x) => Number(x.number)).filter(Number.isFinite);
             const last = d.pads[d.pads.length - 1];
             d.pads.push({ ...(last ? structuredClone(last) : { kind: "smd", shape: "round_rect", size: [1, 0.6], corner: 0.25 }), number: String((nums.length ? Math.max(...nums) : 0) + 1), at: last ? [last.at[0], r4(last.at[1] - 1.27)] : [0, 0] } as Pad);
@@ -1167,7 +1168,7 @@ function FootprintEditor(props: { start: FpState; commit: Commit; canEdit: boole
                 </td>
                 <td>{q.drill ? q.drill.join("×") : "—"}</td>
                 <td>
-                  <button type="button" className="lib-x" onClick={() => {
+                  <button type="button" className="lib-x" title={`Delete pad ${q.number}`} aria-label={`Delete pad ${q.number}`} onClick={() => {
                     set((d) => void d.pads.splice(i, 1));
                     setSel(null);
                   }}>
@@ -1237,7 +1238,7 @@ function WizardDialog(props: { onDone: (fp: Fp) => void; onClose: () => void }) 
         <header>
           <h3>Footprint wizard</h3>
           <span className="lib-muted">IPC-7351B land patterns from the package's dimensions (ranges as min–max)</span>
-          <button type="button" className="lib-x" onClick={props.onClose}>
+          <button type="button" className="lib-x" title="Close the footprint wizard" aria-label="Close the footprint wizard" onClick={props.onClose}>
             ×
           </button>
         </header>
@@ -1245,7 +1246,7 @@ function WizardDialog(props: { onDone: (fp: Fp) => void; onClose: () => void }) 
           <div className="lib-wiz-form">
             <label>
               Package
-              <select onChange={(e) => setW(structuredClone(presets[Number(e.target.value)].wizard))}>
+              <select title="Start from a package family; its dimensions fill in below" onChange={(e) => setW(structuredClone(presets[Number(e.target.value)].wizard))}>
                 {presets.map((p, i) => (
                   <option key={p.name} value={i}>
                     {p.name}
@@ -1262,7 +1263,7 @@ function WizardDialog(props: { onDone: (fp: Fp) => void; onClose: () => void }) 
           </div>
         </div>
         <footer>
-          <button type="button" className="primary" disabled={!view} onClick={() => props.onDone(view.footprint)}>
+          <button type="button" className="primary" disabled={!view} title="Open this land pattern in the footprint editor to finish and save" onClick={() => props.onDone(view.footprint)}>
             Edit this footprint
           </button>
         </footer>
@@ -1338,7 +1339,7 @@ function LogoTab(props: { commit: Commit; canEdit: boolean; boardId: string | nu
         {img && <img src={img.url} alt="" className="lib-logo-src" />}
         <label>
           Threshold {threshold}
-          <input type="range" min={1} max={254} value={threshold} onChange={(e) => setThreshold(Number(e.target.value))} />
+          <input type="range" min={1} max={254} value={threshold} title="Brightness that splits the art from the background" onChange={(e) => setThreshold(Number(e.target.value))} />
         </label>
         <label>
           Width (mm) <input type="number" step={0.5} value={size} onChange={(e) => setSize(Number(e.target.value))} />
@@ -1348,7 +1349,7 @@ function LogoTab(props: { commit: Commit; canEdit: boolean; boardId: string | nu
         </label>
         <label>
           Make
-          <select value={layer} onChange={(e) => setLayer(e.target.value)}>
+          <select value={layer} title="What to make from the image: silkscreen, copper or a schematic graphic" onChange={(e) => setLayer(e.target.value)}>
             <option value="silk">Silkscreen logo</option>
             <option value="copper">Copper logo (exposed, no paste)</option>
             <option value="symbol">Schematic graphic</option>
@@ -1359,11 +1360,11 @@ function LogoTab(props: { commit: Commit; canEdit: boolean; boardId: string | nu
         </label>
         {error && <p className="lib-error">{error}</p>}
         <div className="lib-actions">
-          <button type="button" className="primary" disabled={!view || !props.canEdit} onClick={() => save(false)}>
+          <button type="button" className="primary" disabled={!view || !props.canEdit} title={`Save ${name} into the Project library`} onClick={() => save(false)}>
             Save to Project library
           </button>
           {view?.kind !== "symbol" && (
-            <button type="button" className="secondary" disabled={!view || !props.canEdit || !props.boardId} onClick={() => save(true)}>
+            <button type="button" className="secondary" disabled={!view || !props.canEdit || !props.boardId} title={`Save ${name} and drop it on the open board`} onClick={() => save(true)}>
               Save and place on board
             </button>
           )}
@@ -1453,7 +1454,7 @@ function AssignTab(props: { schematic: string | null; commit: Commit; canEdit: b
           </tbody>
         </table>
         <div className="lib-actions">
-          <button type="button" className="primary" disabled={!props.canEdit || !Object.keys(pending).length} onClick={async () => {
+          <button type="button" className="primary" disabled={!props.canEdit || !Object.keys(pending).length} title="Write the footprints you picked onto the schematic parts" onClick={async () => {
             const out = outOf(await props.commit("pcb.lib.assign", { schematic: props.schematic, footprints: pending }, `Assigned ${Object.keys(pending).length} footprint(s)`));
             if (out) {
               setPending({});
@@ -1470,22 +1471,22 @@ function AssignTab(props: { schematic: string | null; commit: Commit; canEdit: b
             <div className="lib-row">
               <input placeholder="Filter by name or words" value={q} onChange={(e) => setQ(e.target.value)} />
               <label className="lib-inline">
-                <input type="checkbox" checked={fits} onChange={(e) => setFits(e.target.checked)} /> fits {part.pads.length} pads
+                <input type="checkbox" checked={fits} title="Only list footprints whose pad count fits this part" onChange={(e) => setFits(e.target.checked)} /> fits {part.pads.length} pads
               </label>
-              <button type="button" className="secondary small" onClick={searchKicad}>
+              <button type="button" className="secondary small" title="Search the official KiCad footprint libraries" onClick={searchKicad}>
                 KiCad
               </button>
             </div>
             <div className="lib-fp-list">
               {list.map((f: any) => (
-                <button type="button" key={f.source + f.name} className={`lib-fp-item ${look === f.name ? "sel" : ""}`} onMouseEnter={() => setLook(f.name)} onClick={() => setPending((x) => ({ ...x, [part.reference]: f.name }))}>
+                <button type="button" key={f.source + f.name} className={`lib-fp-item ${look === f.name ? "sel" : ""}`} title={`Use ${f.name} for ${part.reference}`} onMouseEnter={() => setLook(f.name)} onClick={() => setPending((x) => ({ ...x, [part.reference]: f.name }))}>
                   <b>{f.name}</b> <span className="lib-tag">{f.source}</span>
                   {part.candidates.includes(f.name) && <span className="lib-tag good">suggested</span>}
                   <small>{f.description}</small>
                 </button>
               ))}
               {kicad.map((k: any) => (
-                <button type="button" key={k.id} className={`lib-fp-item ${look === `kicad:${k.id}` ? "sel" : ""}`} onMouseEnter={() => setLook(`kicad:${k.id}`)} onClick={async () => {
+                <button type="button" key={k.id} className={`lib-fp-item ${look === `kicad:${k.id}` ? "sel" : ""}`} title={`Copy ${k.id} into the project and use it for ${part.reference}`} onMouseEnter={() => setLook(`kicad:${k.id}`)} onClick={async () => {
                   const f = await getJson(`/pcb/kicad/footprint/${encodeURIComponent(k.id)}`);
                   const o = outOf(await props.commit("pcb.lib.footprint.save", { library: "KiCad-copies", footprint: { ...f.footprint, name: k.id.split(":")[1] }, origin: `KiCad ${k.id}` }));
                   if (o) setPending((x) => ({ ...x, [part.reference]: o.footprint }));
@@ -1529,12 +1530,12 @@ function VariantsTab(props: { schematic: string | null; commit: Commit; canEdit:
     <div className="lib-variants">
       <div className="lib-row wrap">
         {data.variants.map((x: any) => (
-          <button type="button" key={x.id} className={`lib-chip ${v?.id === x.id ? "active" : ""}`} onClick={() => setCur(x.id)}>
+          <button type="button" key={x.id} className={`lib-chip ${v?.id === x.id ? "active" : ""}`} title={`Edit the ${x.variant.name} variant`} onClick={() => setCur(x.id)}>
             {x.variant.name} <span className="lib-muted">{x.fitted ?? "?"} fitted</span>
           </button>
         ))}
         <input placeholder="New variant" value={name} onChange={(e) => setName(e.target.value)} />
-        <button type="button" className="secondary small" disabled={!name || !props.canEdit} onClick={async () => {
+        <button type="button" className="secondary small" disabled={!name || !props.canEdit} title={v ? `Make a variant with the name typed, starting from ${v.variant.name}` : "Make a variant with the name typed"} onClick={async () => {
           const o = outOf(await props.commit("pcb.variant.create", { schematic: props.schematic, name, ...(v ? { copy_from: v.variant.name } : {}) }, `Variant ${name}`));
           if (o) {
             setCur(o.id);
@@ -1555,18 +1556,18 @@ function VariantsTab(props: { schematic: string | null; commit: Commit; canEdit:
             </label>
             {data.board && (
               <>
-                <a className="secondary lib-link" href={projectUrl(`/pcb/${data.board}/variant/${encodeURIComponent(v.variant.name)}/bom.csv?format=jlcpcb`)}>
+                <a className="secondary lib-link" title={`Download the ${v.variant.name} bill of materials (JLCPCB CSV)`} href={projectUrl(`/pcb/${data.board}/variant/${encodeURIComponent(v.variant.name)}/bom.csv?format=jlcpcb`)}>
                   BOM
                 </a>
-                <a className="secondary lib-link" href={projectUrl(`/pcb/${data.board}/variant/${encodeURIComponent(v.variant.name)}/positions.csv?format=jlcpcb`)}>
+                <a className="secondary lib-link" title={`Download the ${v.variant.name} pick-and-place positions (JLCPCB CSV)`} href={projectUrl(`/pcb/${data.board}/variant/${encodeURIComponent(v.variant.name)}/positions.csv?format=jlcpcb`)}>
                   Positions
                 </a>
-                <a className="secondary lib-link" href={projectUrl(`/pcb/${data.board}/variant/${encodeURIComponent(v.variant.name)}/fab.zip?fab=jlcpcb`)}>
+                <a className="secondary lib-link" title={`Download the ${v.variant.name} fab package: Gerbers, drill, BOM and positions`} href={projectUrl(`/pcb/${data.board}/variant/${encodeURIComponent(v.variant.name)}/fab.zip?fab=jlcpcb`)}>
                   Fab package
                 </a>
               </>
             )}
-            <button type="button" className="secondary danger small" disabled={!props.canEdit} onClick={() => props.commit("pcb.variant.delete", { target: v.id }, "Variant deleted")}>
+            <button type="button" className="secondary danger small" disabled={!props.canEdit} title={`Delete the ${v.variant.name} variant`} onClick={() => props.commit("pcb.variant.delete", { target: v.id }, "Variant deleted")}>
               Delete
             </button>
           </div>
@@ -1586,7 +1587,7 @@ function VariantsTab(props: { schematic: string | null; commit: Commit; canEdit:
                 <tr key={p.reference} className={fitted(p.reference, p.dnp) ? "" : "lib-dnp"}>
                   <td>{p.reference}</td>
                   <td>
-                    <input type="checkbox" disabled={!props.canEdit} checked={fitted(p.reference, p.dnp)} onChange={(e) => change(p.reference, { dnp: e.target.checked === !p.dnp ? null : !e.target.checked })} />
+                    <input type="checkbox" disabled={!props.canEdit} checked={fitted(p.reference, p.dnp)} title={`Fit ${p.reference} in this variant (untick: do not place)`} onChange={(e) => change(p.reference, { dnp: e.target.checked === !p.dnp ? null : !e.target.checked })} />
                   </td>
                   {(["value", "mpn", "lcsc"] as const).map((k) => (
                     <td key={k}>
@@ -1630,7 +1631,7 @@ function BlocksTab(props: { schematic: string | null; commit: Commit; canEdit: b
         <div className="lib-row wrap">
           {parts.map((r) => (
             <label key={r} className={`lib-chip ${picked.includes(r) ? "active" : ""}`}>
-              <input type="checkbox" checked={picked.includes(r)} onChange={(e) => setPicked((x) => (e.target.checked ? [...x, r] : x.filter((y) => y !== r)))} />
+              <input type="checkbox" checked={picked.includes(r)} title={`Include ${r} in the block`} onChange={(e) => setPicked((x) => (e.target.checked ? [...x, r] : x.filter((y) => y !== r)))} />
               {r}
             </label>
           ))}
@@ -1638,7 +1639,7 @@ function BlocksTab(props: { schematic: string | null; commit: Commit; canEdit: b
         <div className="lib-row wrap">
           <input placeholder="Block name (USB-C power)" value={name} onChange={(e) => setName(e.target.value)} />
           <input placeholder="Description" value={desc} onChange={(e) => setDesc(e.target.value)} />
-          <button type="button" className="primary small" disabled={!props.canEdit || !name || !picked.length || !props.schematic} onClick={async () => {
+          <button type="button" className="primary small" disabled={!props.canEdit || !name || !picked.length || !props.schematic} title="Save the ticked parts, their wiring and board layout as a reusable block" onClick={async () => {
             if (await props.commit("pcb.block.save", { schematic: props.schematic, name, references: picked, description: desc, replace: blocks.some((b) => b.block.name === name) }, `Saved block ${name}`)) {
               setPicked([]);
               getJson("/pcb/blocks").then((r) => setBlocks(r.blocks));
@@ -1667,10 +1668,10 @@ function BlocksTab(props: { schematic: string | null; commit: Commit; canEdit: b
                 {b.block.layout ? ` · layout: ${b.block.layout.parts.length} parts, ${b.block.layout.copper.length} copper` : ""}
               </div>
             </div>
-            <button type="button" className="secondary small" disabled={!props.canEdit || !props.schematic} onClick={() => props.commit("pcb.block.place", { block: b.block.name, schematic: props.schematic, at: xyOf(at), ...(boardAt ? { board_at: xyOf(boardAt) } : {}) }, `Placed ${b.block.name}`)}>
+            <button type="button" className="secondary small" disabled={!props.canEdit || !props.schematic} title={`Place ${b.block.name} at the sheet (and board) position above`} onClick={() => props.commit("pcb.block.place", { block: b.block.name, schematic: props.schematic, at: xyOf(at), ...(boardAt ? { board_at: xyOf(boardAt) } : {}) }, `Placed ${b.block.name}`)}>
               Place
             </button>
-            <button type="button" className="secondary small danger" disabled={!props.canEdit} onClick={async () => {
+            <button type="button" className="secondary small danger" disabled={!props.canEdit} title={`Delete the ${b.block.name} block`} onClick={async () => {
               if (await props.commit("pcb.block.delete", { target: b.id }, `Deleted ${b.block.name}`)) setBlocks((x) => x.filter((y) => y.id !== b.id));
             }}>
               Delete
@@ -1719,19 +1720,19 @@ function TableTab(props: { libs: any; commit: Commit; canEdit: boolean; reload: 
             .map((r) => (
               <tr key={r.kind + r.name}>
                 <td>
-                  <input type="checkbox" disabled={!props.canEdit} checked={!!entry(r).pinned} onChange={(e) => setEntry(r, { pinned: e.target.checked })} />
+                  <input type="checkbox" disabled={!props.canEdit} checked={!!entry(r).pinned} title={`Pin ${r.name} to the top of the library lists`} onChange={(e) => setEntry(r, { pinned: e.target.checked })} />
                 </td>
                 <td>
                   <b>{r.name}</b>
                 </td>
                 <td>{r.kind}</td>
                 <td>
-                  <input type="checkbox" disabled={!props.canEdit} checked={entry(r).enabled !== false} onChange={(e) => setEntry(r, { enabled: e.target.checked })} />
+                  <input type="checkbox" disabled={!props.canEdit} checked={entry(r).enabled !== false} title={`Offer ${r.name} in this project (untick to hide it)`} onChange={(e) => setEntry(r, { enabled: e.target.checked })} />
                 </td>
                 <td className="lib-muted">{r.detail}</td>
                 <td>
                   {r.kind === "global" && (
-                    <button type="button" className="secondary small" disabled={!props.canEdit} onClick={async () => {
+                    <button type="button" className="secondary small" disabled={!props.canEdit} title={`Copy the ${r.name} library from this computer into the project`} onClick={async () => {
                       const lib = await getJson(`/pcb/libs/global/${encodeURIComponent(r.name)}`);
                       if (await props.commit("pcb.lib.import", { library: r.name, symbols: lib.symbols, footprints: lib.footprints, origin: `global library ${r.name}` }, `Copied ${r.name} into the project`)) props.reload();
                     }}>
@@ -1739,7 +1740,7 @@ function TableTab(props: { libs: any; commit: Commit; canEdit: boolean; reload: 
                     </button>
                   )}
                   {r.kind === "project" && (
-                    <button type="button" className="secondary small" onClick={async () => {
+                    <button type="button" className="secondary small" title={`Save the ${r.name} library to this computer for other projects`} onClick={async () => {
                       try {
                         const o = await postJson(`/pcb/libs/global/${encodeURIComponent(exportName)}/from-project?library=${encodeURIComponent(r.name)}`, {});
                         props.notify(`Saved ${o.added_symbols} symbols and ${o.added_footprints} footprints to ${o.name} on this computer`);
@@ -1769,6 +1770,16 @@ function TableTab(props: { libs: any; commit: Commit; canEdit: boolean; reload: 
 // ---- The view ----------------------------------------------------------------------
 
 type Section = "symbols" | "footprints" | "logo" | "assign" | "variants" | "blocks" | "libraries";
+
+const TAB_TIPS: Record<Section, string> = {
+  symbols: "Draw and edit schematic symbols",
+  footprints: "Draw and edit footprints (land patterns)",
+  logo: "Turn an image into a silkscreen or copper logo",
+  assign: "Pick a footprint for each schematic part",
+  variants: "Build variants: parts left off or changed per build",
+  blocks: "Save and reuse circuit blocks",
+  libraries: "Which libraries this project uses, pinned and enabled",
+};
 
 export function LibraryPane(props: { boardId: string | null; revision: number; commit: Commit; notify: (m: string) => void; canEdit: boolean }) {
   const [section, setSection] = useState<Section>(() => {
@@ -1839,7 +1850,7 @@ export function LibraryPane(props: { boardId: string | null; revision: number; c
     <div className="lib-pane">
       <nav className="lib-nav" role="tablist">
         {tabs.map(([k, label]) => (
-          <button key={k} type="button" role="tab" aria-selected={section === k} className={section === k ? "active" : ""} onClick={() => setSection(k)}>
+          <button key={k} type="button" role="tab" aria-selected={section === k} className={section === k ? "active" : ""} title={TAB_TIPS[k]} onClick={() => setSection(k)}>
             {label}
           </button>
         ))}
@@ -1851,11 +1862,11 @@ export function LibraryPane(props: { boardId: string | null; revision: number; c
           <aside className="lib-list">
             <input placeholder="Filter" value={filter} onChange={(e) => setFilter(e.target.value)} />
             <div className="lib-row">
-              <button type="button" className="secondary small" onClick={() => (section === "symbols" ? setSym(blankSymbol()) : setFp(blankFootprint()))}>
+              <button type="button" className="secondary small" title={section === "symbols" ? "Start a new blank symbol" : "Start a new blank footprint"} onClick={() => (section === "symbols" ? setSym(blankSymbol()) : setFp(blankFootprint()))}>
                 + New
               </button>
               {section === "footprints" && (
-                <button type="button" className="secondary small" onClick={() => setWizard(true)}>
+                <button type="button" className="secondary small" title="Make a land pattern from package dimensions (SOIC, QFN, BGA …)" onClick={() => setWizard(true)}>
                   Wizard
                 </button>
               )}
@@ -1867,7 +1878,7 @@ export function LibraryPane(props: { boardId: string | null; revision: number; c
                   <option key={n} value={n} />
                 ))}
               </datalist>
-              <button type="button" className="secondary small" disabled={!copyFrom} onClick={() => (section === "symbols" ? openSymbol(copyFrom) : openFootprint(copyFrom))}>
+              <button type="button" className="secondary small" disabled={!copyFrom} title={`Open a copy of the built-in ${section === "symbols" ? "symbol" : "footprint"} named to the left`} onClick={() => (section === "symbols" ? openSymbol(copyFrom) : openFootprint(copyFrom))}>
                 Open
               </button>
             </div>
@@ -1877,7 +1888,7 @@ export function LibraryPane(props: { boardId: string | null; revision: number; c
                 {(section === "symbols" ? l.symbols : l.footprints)
                   .filter((x: any) => match(x.full))
                   .map((x: any) => (
-                    <button type="button" key={x.full} className={`lib-item ${(section === "symbols" ? sym?.renameFrom : fp?.renameFrom) === x.full ? "sel" : ""}`} onClick={() => (section === "symbols" ? openSymbol(x.full) : openFootprint(x.full))}>
+                    <button type="button" key={x.full} className={`lib-item ${(section === "symbols" ? sym?.renameFrom : fp?.renameFrom) === x.full ? "sel" : ""}`} title={`Edit ${x.full}`} onClick={() => (section === "symbols" ? openSymbol(x.full) : openFootprint(x.full))}>
                       {x.name}
                       <small>{section === "symbols" ? `${x.pins} pins${x.units > 1 ? ` · ${x.units} units` : ""}${x.extends ? ` · from ${x.extends}` : ""}${x.power ? " · power" : ""}${x.demorgan ? " · De Morgan" : ""}` : `${x.pads} pads · ${x.kind}`}</small>
                     </button>
@@ -1890,7 +1901,7 @@ export function LibraryPane(props: { boardId: string | null; revision: number; c
                 .filter(match)
                 .slice(0, 80)
                 .map((n: string) => (
-                  <button type="button" key={n} className="lib-item builtin" onClick={() => (section === "symbols" ? openSymbol(n) : openFootprint(n))}>
+                  <button type="button" key={n} className="lib-item builtin" title={`Open a copy of built-in ${n} to change and save`} onClick={() => (section === "symbols" ? openSymbol(n) : openFootprint(n))}>
                     {n}
                   </button>
                 ))}

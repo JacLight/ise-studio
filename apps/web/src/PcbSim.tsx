@@ -88,13 +88,13 @@ export function FabCheck(props: { boardId: string; revision: number }) {
       <div className="pcb-glayers">
         {layers.layers.map((l) => (
           <label key={l.file} className={l.error ? "bad" : ""} title={l.error ?? `${l.objects ?? ""} objects`}>
-            <input type="checkbox" checked={!!on[l.file]} disabled={!!l.error} onChange={(e) => setOn({ ...on, [l.file]: e.target.checked })} />
+            <input type="checkbox" checked={!!on[l.file]} disabled={!!l.error} title={`Show ${l.file} in the fab view`} onChange={(e) => setOn({ ...on, [l.file]: e.target.checked })} />
             <i style={{ background: layerColor(l.function ?? "") }} />
             {l.function ?? l.file}
           </label>
         ))}
       </div>
-      <button type="button" className="secondary" onClick={run} disabled={busy}>
+      <button type="button" className="secondary" onClick={run} disabled={busy} title="Read the exported Gerber and drill files back and compare them with the board">
         <Icon name="check" /> {busy ? "Reading the files back…" : "Check the files against the board"}
       </button>
       {check && (
@@ -307,7 +307,7 @@ export function SimulateTab(props: { boardId: string; revision: number }) {
       <div className="pcb-sim-form">
         <label>
           <span>Analysis</span>
-          <select value={kind} onChange={(e) => setKind(e.target.value as "tran" | "dc" | "ac")}>
+          <select value={kind} title="Transient: over time; DC sweep: the source net swept; AC: frequency response" onChange={(e) => setKind(e.target.value as "tran" | "dc" | "ac")}>
             <option value="tran">Transient</option>
             <option value="dc">DC sweep</option>
             <option value="ac">AC (small signal)</option>
@@ -329,7 +329,7 @@ export function SimulateTab(props: { boardId: string; revision: number }) {
           <textarea rows={2} value={expect} onChange={(e) => setExpect(e.target.value)} spellCheck={false} />
         </label>
         <div className="row">
-          <button type="button" onClick={() => run()} disabled={busy}>
+          <button type="button" onClick={() => run()} disabled={busy} title="Run this analysis on the schematic with ngspice and check the expectations">
             <Icon name="play" /> {busy ? "Running ngspice…" : "Simulate"}
           </button>
         </div>
@@ -357,7 +357,7 @@ export function SimulateTab(props: { boardId: string; revision: number }) {
           <div className="pcb-sim-signals">
             {result.signals.map((s, i) => (
               <label key={s.name}>
-                <input type="checkbox" checked={shown.includes(s.name)} onChange={(e) => setShown(e.target.checked ? [...shown, s.name] : shown.filter((n) => n !== s.name))} />
+                <input type="checkbox" checked={shown.includes(s.name)} title={`Plot ${s.name}`} onChange={(e) => setShown(e.target.checked ? [...shown, s.name] : shown.filter((n) => n !== s.name))} />
                 <i style={{ background: PALETTE[i % PALETTE.length] }} />
                 {s.name}
               </label>

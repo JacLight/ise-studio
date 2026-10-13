@@ -148,6 +148,34 @@ type Detail = { board: BoardView; size: P; errors: number; fabs: FabReport[]; bo
 type BoardEntry = { id: string; name: string; layers: number; model: string | null; errors: number | null; components: number | null };
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
 type Tab = "parts" | "nets" | "checks" | "setup" | "fab" | "bom" | "sim" | "tools";
+const SIDE_TAB_TIPS: Record<Tab, string> = {
+  parts: "Parts on the board: find, select, move and flip",
+  nets: "Nets and how much of each is routed",
+  checks: "Design-rule check results, autoroute and ground pour",
+  setup: "Stackup, teardrops, custom rules, arrange, text and keepouts",
+  fab: "Board specs, fab checks and the files to send",
+  bom: "Bill of materials, prices and where to buy",
+  sim: "Simulate the circuit",
+  tools: "Panelize and engineering calculators",
+};
+const LAYER_TIPS: Record<LayerKey, string> = {
+  top: "top copper",
+  bottom: "bottom copper",
+  inner: "inner copper layers",
+  zones: "copper pours",
+  silk: "silkscreen",
+  drawings: "drawing and comment layers",
+  areas: "keepout and placement areas",
+  courtyard: "part courtyards",
+  ratsnest: "ratsnest lines for unrouted connections",
+  drc: "design-rule check markers",
+};
+const PANE_TIPS: Record<"schematic" | "split" | "board" | "library", string> = {
+  schematic: "Show the schematic only",
+  split: "Schematic and board side by side",
+  board: "Show the board only",
+  library: "Symbol and footprint libraries",
+};
 type Selection = { kind: "component" | "track" | "via" | "zone"; id: string } | null;
 type LayerKey = "top" | "bottom" | "inner" | "silk" | "courtyard" | "ratsnest" | "zones" | "drc" | "drawings" | "areas";
 // The interactive router (engine: POST /pcb/<id>/router, pcb.route.interactive / pcb.route.drag).
@@ -506,7 +534,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
                   ["tools", "Tools", null],
                 ] as [Tab, string, number | null][]
               ).map(([k, label, n]) => (
-                <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>
+                <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "active" : ""} title={SIDE_TAB_TIPS[k]} onClick={() => setTab(k)}>
                   {label}
                   {n !== null && <span className={`pcb-count ${k === "checks" ? "bad" : ""}`}>{n}</span>}
                 </button>
@@ -590,7 +618,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
                   ["library", "Library"],
                 ] as const
               ).map(([k, label]) => (
-                <button key={k} type="button" role="tab" aria-selected={pane === k} className={pane === k ? "active" : ""} onClick={() => setPane(k)}>
+                <button key={k} type="button" role="tab" aria-selected={pane === k} className={pane === k ? "active" : ""} title={PANE_TIPS[k]} onClick={() => setPane(k)}>
                   {label}
                 </button>
               ))}
@@ -607,7 +635,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
           </button>
           {b && <KicadImport run={commit} canEdit={props.canEdit} onMade={(id) => setBoardId(id)} label="Import" />}
           {b?.model && (
-            <button type="button" className="secondary pcb-3d" onClick={() => props.onShow3D(b.model!)}>
+            <button type="button" className="secondary pcb-3d" title="Show the board with its parts as a 3D model in the main view" onClick={() => props.onShow3D(b.model!)}>
               <Icon name="cube" /> Show in 3D
             </button>
           )}
@@ -775,7 +803,7 @@ function InterchangeFiles(props: { boardId: string; revision: number }) {
     <div className="pcb-files pcb-interchange">
       {list.map((f) => (
         <span key={f.name} className="pcb-file" title={f.what}>
-          <a href={url(f.name)} target="_blank" rel="noreferrer">
+          <a href={url(f.name)} target="_blank" rel="noreferrer" title={`Open ${f.name} in a new tab: ${f.what}`}>
             {f.name}
           </a>
           <small>{f.what}</small>
@@ -825,7 +853,7 @@ function NewBoard(props: { run: (op: string, p: Record<string, unknown>, done?: 
           </label>
           <label>
             Layers
-            <select value={layers} onChange={(e) => setLayers(+e.target.value)}>
+            <select value={layers} title="Copper layers for the new board" onChange={(e) => setLayers(+e.target.value)}>
               {[2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 32].map((n) => (
                 <option key={n} value={n}>
                   {n}
@@ -833,7 +861,7 @@ function NewBoard(props: { run: (op: string, p: Record<string, unknown>, done?: 
               ))}
             </select>
           </label>
-          <button type="submit" className="primary" disabled={!props.canEdit}>
+          <button type="submit" className="primary" disabled={!props.canEdit} title="Make an empty board this size, ready for parts">
             New board
           </button>
         </form>
@@ -1794,7 +1822,7 @@ function BoardCanvas(props: {
             ["drc", "DRC"],
           ] as [LayerKey, string][]
         ).map(([k, label]) => (
-          <button key={k} type="button" className={`pcb-chip ${layers[k] ? "on" : ""}`} aria-pressed={layers[k]} onClick={() => props.onLayers({ ...layers, [k]: !layers[k] })}>
+          <button key={k} type="button" className={`pcb-chip ${layers[k] ? "on" : ""}`} aria-pressed={layers[k]} title={`${layers[k] ? "Hide" : "Show"} ${LAYER_TIPS[k]}`} onClick={() => props.onLayers({ ...layers, [k]: !layers[k] })}>
             {(k === "top" || k === "bottom") && <i className="sw" style={{ background: COPPER[k] }} />}
             {label}
           </button>
@@ -2032,7 +2060,7 @@ function PartsTab(props: { b: BoardView; sel: Selection; onSelect: (id: string) 
       </div>
       <div className="pcb-list" ref={listRef}>
         {list.map((c) => (
-          <button key={c.id} data-id={c.id} type="button" className={`pcb-row ${chosen?.id === c.id ? "active" : ""} ${c.dnp ? "dnp" : ""}`} onClick={() => props.onSelect(c.id)}>
+          <button key={c.id} data-id={c.id} type="button" className={`pcb-row ${chosen?.id === c.id ? "active" : ""} ${c.dnp ? "dnp" : ""}`} title={`Select ${c.reference} on the board${c.dnp ? " (not placed in this build)" : ""}${!c.known ? "; its footprint is unknown" : ""}`} onClick={() => props.onSelect(c.id)}>
             <span className="ref">{c.reference}</span>
             <span className="val">
               {c.value || c.footprint}
@@ -2077,7 +2105,7 @@ function PartCard(props: { c: Comp; b: BoardView; commit: (op: string, p: Record
       <div className="pcb-card-head">
         <b>{c.reference}</b>
         <span>{c.value}</span>
-        <button type="button" className="pcb-side-toggle" onClick={() => props.commit("pcb.component.update", { target: c.id, side: c.side === "top" ? "bottom" : "top" })}>
+        <button type="button" className="pcb-side-toggle" title={`Flip ${c.reference} to the ${c.side === "top" ? "bottom" : "top"} side (F)`} onClick={() => props.commit("pcb.component.update", { target: c.id, side: c.side === "top" ? "bottom" : "top" })}>
           {c.side === "top" ? "Top" : "Bottom"} side
         </button>
       </div>
@@ -2103,7 +2131,7 @@ function PartCard(props: { c: Comp; b: BoardView; commit: (op: string, p: Record
           <>
             <dt>LCSC</dt>
             <dd>
-              <a href={`https://www.lcsc.com/product-detail/${c.lcsc}.html`} target="_blank" rel="noreferrer">
+              <a href={`https://www.lcsc.com/product-detail/${c.lcsc}.html`} target="_blank" rel="noreferrer" title={`Open ${c.lcsc} on LCSC in a new tab`}>
                 {c.lcsc} <Icon name="external" />
               </a>
             </dd>
@@ -2143,7 +2171,7 @@ function NetsTab(props: { b: BoardView; net: string | null; onNet: (n: string) =
       </div>
       <div className="pcb-list">
         {b.nets.map((n) => (
-          <button key={n.name} type="button" className={`pcb-row net ${props.net === n.name ? "active" : ""}`} onClick={() => props.onNet(n.name)}>
+          <button key={n.name} type="button" className={`pcb-row net ${props.net === n.name ? "active" : ""}`} title={props.net === n.name ? `Stop highlighting ${n.name}` : `Highlight ${n.name} on the board`} onClick={() => props.onNet(n.name)}>
             <span className={`state ${n.routed ? "ok" : "open"}`} title={n.routed ? "Routed" : `${n.islands} pieces`} />
             <span className="val">
               {n.name}
@@ -2202,16 +2230,16 @@ function ChecksTab(props: { b: BoardView; focus: number | null; onFocus: (i: num
         </div>
       </div>
       <div className="pcb-actions">
-        <button type="button" className="secondary" disabled={!props.canEdit || !!props.busy} onClick={props.onAutoroute}>
+        <button type="button" className="secondary" disabled={!props.canEdit || !!props.busy} title="Route every unrouted net automatically" onClick={props.onAutoroute}>
           <Icon name="spark" /> {props.busy ?? "Autoroute"}
         </button>
-        <button type="button" className="secondary" disabled={!props.canEdit} onClick={props.onPour}>
+        <button type="button" className="secondary" disabled={!props.canEdit} title="Pour the GND net over the bottom copper layer" onClick={props.onPour}>
           <Icon name="layers" /> Ground pour
         </button>
       </div>
       <div className="pcb-list">
         {b.violations.map((v, i) => (
-          <button key={i} type="button" className={`pcb-row viol ${v.severity} ${props.focus === i ? "active" : ""}`} onClick={() => props.onFocus(i)}>
+          <button key={i} type="button" className={`pcb-row viol ${v.severity} ${props.focus === i ? "active" : ""}`} title={`Zoom to this ${v.severity} on the board`} onClick={() => props.onFocus(i)}>
             <span className="vtag">{CODE_NAMES[v.code] ?? v.code}</span>
             <span className="val">{v.message}</span>
           </button>
@@ -2276,7 +2304,7 @@ function SetupTab(props: { b: BoardView; commit: (op: string, p: Record<string, 
       <div className="pcb-specs-grid">
         <label className="pcb-spec">
           <span>Copper layers</span>
-          <select value={b.layers.length} disabled={!canEdit} onChange={(e) => commit("pcb.stackup.set", { board: b.id, layers: +e.target.value }, `${e.target.value} copper layers`)}>
+          <select value={b.layers.length} disabled={!canEdit} title="Number of copper layers; the stackup is rebuilt to match" onChange={(e) => commit("pcb.stackup.set", { board: b.id, layers: +e.target.value }, `${e.target.value} copper layers`)}>
             {LAYER_COUNTS.map((n) => (
               <option key={n} value={n}>
                 {n}
@@ -2305,7 +2333,7 @@ function SetupTab(props: { b: BoardView; commit: (op: string, p: Record<string, 
                   {(r.kind === "core" || r.kind === "prepreg") && d ? (
                     <>
                       <td>
-                        <select value={d.kind} disabled={!canEdit} onChange={(e) => thick(d, k, { kind: e.target.value as Dielectric["kind"] })}>
+                        <select value={d.kind} disabled={!canEdit} title="Core (cured laminate) or prepreg (bonding sheet)" onChange={(e) => thick(d, k, { kind: e.target.value as Dielectric["kind"] })}>
                           <option value="core">core</option>
                           <option value="prepreg">prepreg</option>
                         </select>
@@ -2333,13 +2361,13 @@ function SetupTab(props: { b: BoardView; commit: (op: string, p: Record<string, 
         </tbody>
       </table>
       <div className="pcb-row-actions">
-        <button type="button" className="small primary" disabled={!canEdit || JSON.stringify(diel) === stKey} onClick={() => commit("pcb.stackup.set", { board: b.id, dielectrics: diel }, "Stackup set")}>
+        <button type="button" className="small primary" disabled={!canEdit || JSON.stringify(diel) === stKey} title="Set the stackup to the dielectrics edited above" onClick={() => commit("pcb.stackup.set", { board: b.id, dielectrics: diel }, "Stackup set")}>
           Apply
         </button>
-        <button type="button" className="small" disabled={!canEdit} onClick={() => commit("pcb.stackup.set", { board: b.id, fit_thickness: true }, "Thickness fitted to the stackup")}>
+        <button type="button" className="small" disabled={!canEdit} title="Set the board thickness to what the stackup adds up to" onClick={() => commit("pcb.stackup.set", { board: b.id, fit_thickness: true }, "Thickness fitted to the stackup")}>
           Fit thickness
         </button>
-        <button type="button" className="small" disabled={!canEdit || !st.custom} onClick={() => commit("pcb.stackup.set", { board: b.id, standard: true }, "Standard stackup")}>
+        <button type="button" className="small" disabled={!canEdit || !st.custom} title="Go back to the standard stackup for this layer count and thickness" onClick={() => commit("pcb.stackup.set", { board: b.id, standard: true }, "Standard stackup")}>
           Standard
         </button>
       </div>
@@ -2347,13 +2375,13 @@ function SetupTab(props: { b: BoardView; commit: (op: string, p: Record<string, 
       <h4 className="pcb-h">Teardrops</h4>
       <div className="pcb-checks-row">
         <label>
-          <input type="checkbox" checked={!!td} disabled={!canEdit} onChange={(e) => commit("pcb.teardrops.set", { board: b.id, enabled: e.target.checked })} /> On
+          <input type="checkbox" checked={!!td} disabled={!canEdit} title="Widen tracks where they meet pads and vias, so joints are stronger" onChange={(e) => commit("pcb.teardrops.set", { board: b.id, enabled: e.target.checked })} /> On
         </label>
         {td && (
           <>
             {(["vias", "pads", "smd", "curved"] as const).map((k) => (
               <label key={k}>
-                <input type="checkbox" checked={td[k]} disabled={!canEdit} onChange={(e) => commit("pcb.teardrops.set", { board: b.id, [k]: e.target.checked })} /> {k === "smd" ? "SMD pads" : k === "pads" ? "THT pads" : k}
+                <input type="checkbox" checked={td[k]} disabled={!canEdit} title={k === "curved" ? "Curved teardrop sides instead of straight" : `Add teardrops at ${k === "smd" ? "SMD pads" : k === "pads" ? "through-hole pads" : "vias"}`} onChange={(e) => commit("pcb.teardrops.set", { board: b.id, [k]: e.target.checked })} /> {k === "smd" ? "SMD pads" : k === "pads" ? "THT pads" : k}
               </label>
             ))}
             <span className="pcb-note">{b.teardrops.length} on the board</span>
@@ -2365,7 +2393,7 @@ function SetupTab(props: { b: BoardView; commit: (op: string, p: Record<string, 
       <p className="pcb-note">KiCad rules language: (rule "name" (condition "A.NetClass == 'HV'") (constraint clearance (min 1.5mm))).</p>
       <textarea className="pcb-rules" value={rules} spellCheck={false} disabled={!canEdit} onChange={(e) => setRules(e.target.value)} rows={7} placeholder={'(version 1)\n(rule "HV"\n  (condition "A.NetClass == \'HV\' && B.NetClass != \'HV\'")\n  (constraint clearance (min 1.5mm)))'} />
       <div className="pcb-row-actions">
-        <button type="button" className="small primary" disabled={!canEdit || rules === (b.drc_rules ?? "")} onClick={() => commit("pcb.rules.set", { board: b.id, text: rules }, "Rules set")}>
+        <button type="button" className="small primary" disabled={!canEdit || rules === (b.drc_rules ?? "")} title="Use these rules in the design-rule check" onClick={() => commit("pcb.rules.set", { board: b.id, text: rules }, "Rules set")}>
           Apply rules
         </button>
         <span className="pcb-note">
@@ -2397,17 +2425,17 @@ function SetupTab(props: { b: BoardView; commit: (op: string, p: Record<string, 
             ["center_y", "Centre Y"],
           ] as [string, string][]
         ).map(([k, label]) => (
-          <button key={k} type="button" className="small" disabled={!canEdit} onClick={() => arrange("pcb.align", { to: k }, `Aligned ${label.toLowerCase()}`)}>
+          <button key={k} type="button" className="small" disabled={!canEdit} title={`Align the listed parts: ${label.toLowerCase()}`} onClick={() => arrange("pcb.align", { to: k }, `Aligned ${label.toLowerCase()}`)}>
             {label}
           </button>
         ))}
-        <button type="button" className="small" disabled={!canEdit} onClick={() => arrange("pcb.distribute", { axis: "x" }, "Distributed along x")}>
+        <button type="button" className="small" disabled={!canEdit} title="Space the listed parts evenly along X" onClick={() => arrange("pcb.distribute", { axis: "x" }, "Distributed along x")}>
           Distribute X
         </button>
-        <button type="button" className="small" disabled={!canEdit} onClick={() => arrange("pcb.distribute", { axis: "y" }, "Distributed along y")}>
+        <button type="button" className="small" disabled={!canEdit} title="Space the listed parts evenly along Y" onClick={() => arrange("pcb.distribute", { axis: "y" }, "Distributed along y")}>
           Distribute Y
         </button>
-        <button type="button" className="small" disabled={!canEdit} onClick={() => arrange("pcb.flip", {}, "Flipped to the other side")}>
+        <button type="button" className="small" disabled={!canEdit} title="Move the listed parts to the other side of the board" onClick={() => arrange("pcb.flip", {}, "Flipped to the other side")}>
           Flip
         </button>
       </div>
@@ -2417,6 +2445,7 @@ function SetupTab(props: { b: BoardView; commit: (op: string, p: Record<string, 
           type="button"
           className="small"
           disabled={!canEdit}
+          title="Copy the listed parts into a grid: nx by ny copies, dx and dy mm apart"
           onClick={() => {
             const [nx, ny, dx, dy] = num(grid);
             arrange("pcb.array", { grid: { nx, ny, dx, dy } }, "Array made");
@@ -2434,7 +2463,7 @@ function SetupTab(props: { b: BoardView; commit: (op: string, p: Record<string, 
         </label>
         <label className="pcb-spec">
           <span>Layer</span>
-          <select value={text.layer} onChange={(e) => setText({ ...text, layer: e.target.value })}>
+          <select value={text.layer} title="Layer the text goes on" onChange={(e) => setText({ ...text, layer: e.target.value })}>
             {[...GRAPHIC_LAYERS, ...b.layers].map((l) => (
               <option key={l} value={l}>
                 {l}
@@ -2450,7 +2479,7 @@ function SetupTab(props: { b: BoardView; commit: (op: string, p: Record<string, 
           <span>Size / font</span>
           <span className="pcb-inline">
             <input type="number" step={0.1} min={0.3} value={text.size} onChange={(e) => setText({ ...text, size: +e.target.value })} />
-            <select value={text.font} onChange={(e) => setText({ ...text, font: e.target.value })}>
+            <select value={text.font} title="Font: KiCad stroke font or Inter outlines" onChange={(e) => setText({ ...text, font: e.target.value })}>
               <option value="stroke">Stroke</option>
               <option value="Inter">Inter</option>
             </select>
@@ -2459,12 +2488,13 @@ function SetupTab(props: { b: BoardView; commit: (op: string, p: Record<string, 
       </div>
       <div className="pcb-row-actions">
         <label>
-          <input type="checkbox" checked={text.knockout} onChange={(e) => setText({ ...text, knockout: e.target.checked })} /> Knockout
+          <input type="checkbox" checked={text.knockout} title="Cut the letters out of a filled box instead of drawing them" onChange={(e) => setText({ ...text, knockout: e.target.checked })} /> Knockout
         </label>
         <button
           type="button"
           className="small primary"
           disabled={!canEdit || !text.text.trim()}
+          title="Put this text on the board at x,y"
           onClick={() => commit("pcb.graphic.create", { board: b.id, layer: text.layer, kind: "text", text: text.text, at: num(text.at), size: text.size, ...(text.font !== "stroke" ? { font: text.font } : {}), knockout: text.knockout }, "Text added")}
         >
           Add text
@@ -2478,6 +2508,7 @@ function SetupTab(props: { b: BoardView; commit: (op: string, p: Record<string, 
         <button
           type="button"
           className="small primary"
+          title="Add a keepout over this rectangle: no tracks, vias or pours inside"
           disabled={!canEdit || num(keepout.rect).length !== 4 || num(keepout.rect).some((v) => !Number.isFinite(v))}
           onClick={() => {
             const [x0, y0, x1, y1] = num(keepout.rect);
@@ -2496,7 +2527,7 @@ function SetupTab(props: { b: BoardView; commit: (op: string, p: Record<string, 
               <li key={g.id}>
                 <b>{g.kind}</b> {g.text ? `“${g.text}” ` : ""}on {g.layer}
                 {g.value != null ? ` · ${FMT(g.value, 3)} mm` : ""}
-                <button type="button" className="tiny" disabled={!canEdit} onClick={() => commit("pcb.delete", { targets: [g.id] })} aria-label="Delete">
+                <button type="button" className="tiny" disabled={!canEdit} onClick={() => commit("pcb.delete", { targets: [g.id] })} aria-label={`Delete this ${g.kind}`} title={`Delete this ${g.kind} on ${g.layer}`}>
                   ×
                 </button>
               </li>
@@ -2504,7 +2535,7 @@ function SetupTab(props: { b: BoardView; commit: (op: string, p: Record<string, 
             {b.areas.map((a) => (
               <li key={a.id}>
                 <b>{a.placement?.length ? "placement" : "keepout"}</b> {a.name} · no {[a.no_tracks && "tracks", a.no_vias && "vias", a.no_pads && "pads", a.no_pours && "pours", a.no_footprints && "footprints"].filter(Boolean).join(", ") || "—"}
-                <button type="button" className="tiny" disabled={!canEdit} onClick={() => commit("pcb.delete", { targets: [a.id] })} aria-label="Delete">
+                <button type="button" className="tiny" disabled={!canEdit} onClick={() => commit("pcb.delete", { targets: [a.id] })} aria-label={`Delete the area ${a.name}`} title={`Delete the ${a.placement?.length ? "placement" : "keepout"} area ${a.name}`}>
                   ×
                 </button>
               </li>
@@ -2524,7 +2555,7 @@ function FabTab(props: { d: Detail; commit: (op: string, p: Record<string, unkno
   const sel = (label: string, value: string | number, options: (string | number)[], key: string, num = false) => (
     <label className="pcb-spec">
       <span>{label}</span>
-      <select value={value} onChange={(e) => set({ [key]: num ? +e.target.value : e.target.value })}>
+      <select value={value} title={`${label} of the boards to order; fab checks update`} onChange={(e) => set({ [key]: num ? +e.target.value : e.target.value })}>
         {(options.includes(value) ? options : [value, ...options]).map((o) => (
           <option key={o} value={o}>
             {o}
@@ -2576,13 +2607,13 @@ function FabTab(props: { d: Detail; commit: (op: string, p: Record<string, unkno
               )}
               <p className="pcb-fab-files">{r.fab.assembly}</p>
               <div className="pcb-fab-actions">
-                <a className="button primary small" href={projectUrl(`/pcb/${b.id}/fab.zip?fab=${r.fab.id}`)} download>
+                <a className="button primary small" href={projectUrl(`/pcb/${b.id}/fab.zip?fab=${r.fab.id}`)} download title={`Download the files ${r.fab.name} wants, in one zip`}>
                   <Icon name="download" /> Package
                 </a>
-                <a className="button secondary small" href={r.fab.quote} target="_blank" rel="noreferrer">
+                <a className="button secondary small" href={r.fab.quote} target="_blank" rel="noreferrer" title={`Open the ${r.fab.name} quote page in a new tab to upload the package`}>
                   Quote page <Icon name="external" />
                 </a>
-                <button type="button" className={`small ${chosen ? "chosen" : ""}`} onClick={() => set({ fab: chosen ? "" : r.fab.id })}>
+                <button type="button" className={`small ${chosen ? "chosen" : ""}`} title={chosen ? `Stop using ${r.fab.name} for this board` : `Make this board at ${r.fab.name} (used for the BOM price)`} onClick={() => set({ fab: chosen ? "" : r.fab.id })}>
                   {chosen ? "Chosen" : "Choose"}
                 </button>
               </div>
@@ -2594,7 +2625,7 @@ function FabTab(props: { d: Detail; commit: (op: string, p: Record<string, unkno
       <div className="pcb-files">
         {d.files.map((f) => (
           <span key={f} className="pcb-file">
-            <a href={fileUrl(f)} target="_blank" rel="noreferrer">
+            <a href={fileUrl(f)} target="_blank" rel="noreferrer" title={`Open ${f} in a new tab`}>
               {f}
             </a>
             <a href={fileUrl(f, "?download=1")} aria-label={`Download ${f}`}>
@@ -2603,7 +2634,7 @@ function FabTab(props: { d: Detail; commit: (op: string, p: Record<string, unkno
           </span>
         ))}
       </div>
-      <a className="button secondary pcb-all" href={projectUrl(`/pcb/${b.id}/fab.zip`)} download>
+      <a className="button secondary pcb-all" href={projectUrl(`/pcb/${b.id}/fab.zip`)} download title="Download every fab file in one zip, not tailored to a fab">
         <Icon name="download" /> Everything (generic package)
       </a>
       <h4 className="pcb-h">For other EDA tools</h4>
@@ -2675,7 +2706,7 @@ function ShopTab(props: { d: Detail; commit: (op: string, p: Record<string, unkn
             {l.links.length > 0 ? (
               <div className="links">
                 {l.links.map((k) => (
-                  <a key={k.name} href={k.url} target="_blank" rel="noreferrer">
+                  <a key={k.name} href={k.url} target="_blank" rel="noreferrer" title={`Look up ${l.mpn || l.value} at ${k.name} (new tab)`}>
                     {k.name}
                   </a>
                 ))}
@@ -2731,6 +2762,7 @@ function Keys() {
           <button
             type="button"
             className="secondary small"
+            title="Save the distributor keys typed above"
             disabled={!Object.values(draft).some((v) => v.trim())}
             onClick={async () => {
               const body = Object.fromEntries(Object.entries(draft).filter(([, v]) => v.trim()));

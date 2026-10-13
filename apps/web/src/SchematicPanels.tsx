@@ -53,7 +53,7 @@ export function ItemProps(props: { v: SchematicV; sel: NonNullable<Sel>; commit:
   const upd = (p: Record<string, unknown>) => void commit("pcb.schematic.item.update", { target: sel.id, ...p });
   const head = (title: string, sub?: string) => (
     <>
-      <button type="button" className="sch-back" onClick={props.onBack}>
+      <button type="button" className="sch-back" title="Back to the list of all parts" onClick={props.onBack}>
         ← All parts
       </button>
       <div className="sch-props-head">
@@ -72,7 +72,7 @@ export function ItemProps(props: { v: SchematicV; sel: NonNullable<Sel>; commit:
         <Field label="Text" value={l.text} disabled={!canEdit} onSave={(t) => t.trim() && upd({ text: t })} />
         <label className="sch-field">
           <span>Kind</span>
-          <select value={l.kind} disabled={!canEdit} onChange={(e) => upd({ kind: e.target.value })}>
+          <select value={l.kind} disabled={!canEdit} title="Label kind: local to this sheet, global across sheets, hierarchical to the parent sheet, power, or a directive" onChange={(e) => upd({ kind: e.target.value })}>
             {kinds.map((k) => (
               <option key={k} value={k}>
                 {k}
@@ -83,7 +83,7 @@ export function ItemProps(props: { v: SchematicV; sel: NonNullable<Sel>; commit:
         {(l.kind === "global" || l.kind === "hierarchical") && (
           <label className="sch-field">
             <span>Shape</span>
-            <select defaultValue="" disabled={!canEdit} onChange={(e) => upd({ shape: e.target.value })}>
+            <select defaultValue="" disabled={!canEdit} title="Label outline: the signal direction it shows" onChange={(e) => upd({ shape: e.target.value })}>
               {["", "input", "output", "bidirectional", "tri_state", "passive"].map((k) => (
                 <option key={k} value={k}>
                   {k || "default"}
@@ -114,14 +114,14 @@ export function ItemProps(props: { v: SchematicV; sel: NonNullable<Sel>; commit:
             ["center", "Centre"],
             ["right", "Right"],
           ].map(([k, label]) => (
-            <button key={k} type="button" className={(t.justify || "left") === k ? "on" : ""} disabled={!canEdit} onClick={() => upd({ justify: k })}>
+            <button key={k} type="button" className={(t.justify || "left") === k ? "on" : ""} disabled={!canEdit} title={`Align the note text ${label.toLowerCase()}`} onClick={() => upd({ justify: k })}>
               {label}
             </button>
           ))}
-          <button type="button" className={t.bold ? "on" : ""} disabled={!canEdit} onClick={() => upd({ bold: !t.bold })}>
+          <button type="button" className={t.bold ? "on" : ""} disabled={!canEdit} title="Bold note text" aria-label="Bold" onClick={() => upd({ bold: !t.bold })}>
             <b>B</b>
           </button>
-          <button type="button" className={t.italic ? "on" : ""} disabled={!canEdit} onClick={() => upd({ italic: !t.italic })}>
+          <button type="button" className={t.italic ? "on" : ""} disabled={!canEdit} title="Italic note text" aria-label="Italic" onClick={() => upd({ italic: !t.italic })}>
             <i>I</i>
           </button>
           <button type="button" className={t.angle ? "on" : ""} disabled={!canEdit} onClick={() => upd({ angle: t.angle ? 0 : 90 })} title="Vertical">
@@ -146,7 +146,7 @@ export function ItemProps(props: { v: SchematicV; sel: NonNullable<Sel>; commit:
               <span className="m">{m.member}</span>
               <span className={`n ${m.net ? "" : "none"}`}>{m.net ?? "unused"}</span>
               {!out.has(m.member) && (
-                <button type="button" className="secondary" disabled={!canEdit} onClick={() => void commit("pcb.schematic.bus.unfold", { bus: b.id, members: [m.member] }, `${m.member} broken out`)}>
+                <button type="button" className="secondary" disabled={!canEdit} title={`Add a bus entry and a ${m.member} label so this member can be wired`} onClick={() => void commit("pcb.schematic.bus.unfold", { bus: b.id, members: [m.member] }, `${m.member} broken out`)}>
                   Break out
                 </button>
               )}
@@ -154,7 +154,7 @@ export function ItemProps(props: { v: SchematicV; sel: NonNullable<Sel>; commit:
           ))}
         </div>
         {b.name && (
-          <button type="button" className="primary" disabled={!canEdit} onClick={() => void commit("pcb.schematic.bus.unfold", { bus: b.id }, "Members broken out")}>
+          <button type="button" className="primary" disabled={!canEdit} title="Add a bus entry and label for each member of this bus" onClick={() => void commit("pcb.schematic.bus.unfold", { bus: b.id }, "Members broken out")}>
             Break out every member
           </button>
         )}
@@ -171,7 +171,7 @@ export function ItemProps(props: { v: SchematicV; sel: NonNullable<Sel>; commit:
       {head(sel.kind === "wire" ? "Wire" : sel.kind === "entry" ? "Bus entry" : sel.kind === "junction" ? "Junction" : "No-connect flag", sel.kind === "wire" ? (v.wires.find((w) => w.id === sel.id)?.net ?? "no net") : undefined)}
       {sel.kind === "entry" && (
         <div className="sch-props-row">
-          <button type="button" className="secondary" disabled={!canEdit} onClick={() => void commit("pcb.schematic.move", { targets: [sel.id], mirror: "x" })}>
+          <button type="button" className="secondary" disabled={!canEdit} title="Flip the bus entry to slant the other way (X)" onClick={() => void commit("pcb.schematic.move", { targets: [sel.id], mirror: "x" })}>
             Flip
           </button>
         </div>
@@ -206,7 +206,7 @@ function GraphicProps(props: { g: GraphicV; commit: Commit; canEdit: boolean; he
                 ["dot", "···"],
                 ["dash_dot", "-·-"],
               ].map(([k, l]) => (
-                <button key={k} type="button" className={(entity?.dash || "solid") === k ? "on" : ""} disabled={!canEdit} onClick={() => set({ dash: k })}>
+                <button key={k} type="button" className={(entity?.dash || "solid") === k ? "on" : ""} disabled={!canEdit} title={`${{ solid: "Solid", dash: "Dashed", dot: "Dotted", dash_dot: "Dash-dot" }[k]} outline`} aria-label={`${{ solid: "Solid", dash: "Dashed", dot: "Dotted", dash_dot: "Dash-dot" }[k]} outline`} onClick={() => set({ dash: k })}>
                   {l}
                 </button>
               ))}
@@ -245,13 +245,13 @@ function TableCells(props: { cells: string[][]; onSave: (c: string[][]) => void;
         </tbody>
       </table>
       <div className="sch-props-row">
-        <button type="button" className="secondary" disabled={props.disabled} onClick={() => props.onSave([...cells, Array(cols).fill("")])}>
+        <button type="button" className="secondary" disabled={props.disabled} title="Add a row at the bottom of the table" onClick={() => props.onSave([...cells, Array(cols).fill("")])}>
           + Row
         </button>
-        <button type="button" className="secondary" disabled={props.disabled} onClick={() => props.onSave(cells.map((r) => [...r, ""]))}>
+        <button type="button" className="secondary" disabled={props.disabled} title="Add a column on the right of the table" onClick={() => props.onSave(cells.map((r) => [...r, ""]))}>
           + Column
         </button>
-        <button type="button" className="secondary" disabled={props.disabled || cells.length < 2} onClick={() => props.onSave(cells.slice(0, -1))}>
+        <button type="button" className="secondary" disabled={props.disabled || cells.length < 2} title="Remove the table's last row" onClick={() => props.onSave(cells.slice(0, -1))}>
           − Row
         </button>
       </div>
@@ -294,7 +294,7 @@ export function SheetsPanel(props: { v: SchematicV; sheet: string; onSheet: (s: 
           const s = v.sheets.find((x) => x.id === id)!;
           const syms = v.symbols.filter((x) => x.sheet === id).length;
           return (
-            <button key={id} type="button" className={`pcb-row ${id === props.sheet ? "active" : ""}`} style={{ paddingLeft: 10 + depth(id) * 16 }} onClick={() => props.onSheet(id)}>
+            <button key={id} type="button" className={`pcb-row ${id === props.sheet ? "active" : ""}`} style={{ paddingLeft: 10 + depth(id) * 16 }} title={`Open sheet ${s.page}: ${s.name}`} onClick={() => props.onSheet(id)}>
               <span className="ref">{s.page}</span>
               <span className="val">
                 {s.name}
@@ -314,17 +314,17 @@ export function SheetsPanel(props: { v: SchematicV; sheet: string; onSheet: (s: 
           <Field label="Page" value={cur.page} disabled={!canEdit} onSave={(page) => void commit("pcb.schematic.sheet", { schematic: v.id, id: cur.id, page })} />
           <label className="sch-field">
             <span>Paper</span>
-            <select value={cur.paper} disabled={!canEdit} onChange={(e) => void commit("pcb.schematic.sheet", { schematic: v.id, id: cur.id, paper: e.target.value })}>
+            <select value={cur.paper} disabled={!canEdit} title="Paper size of this sheet" onChange={(e) => void commit("pcb.schematic.sheet", { schematic: v.id, id: cur.id, paper: e.target.value })}>
               {["A4", "A3", "A2", "A1", "Letter", "Tabloid"].map((p) => (
                 <option key={p}>{p}</option>
               ))}
             </select>
           </label>
           <label className="sch-check">
-            <input type="checkbox" checked={cur.portrait} disabled={!canEdit} onChange={(e) => void commit("pcb.schematic.sheet", { schematic: v.id, id: cur.id, portrait: e.target.checked })} /> Portrait
+            <input type="checkbox" checked={cur.portrait} disabled={!canEdit} title="Turn this sheet's paper upright" onChange={(e) => void commit("pcb.schematic.sheet", { schematic: v.id, id: cur.id, portrait: e.target.checked })} /> Portrait
           </label>
           <div className="sch-props-row wrap">
-            <button type="button" className="secondary" disabled={!canEdit || !!cur.instance_of} onClick={() => void addSheet()}>
+            <button type="button" className="secondary" disabled={!canEdit || !!cur.instance_of} title="Add a child sheet inside this one, shown here as a sheet box" onClick={() => void addSheet()}>
               + Sub-sheet
             </button>
             {cur.parent && (
@@ -352,6 +352,7 @@ export function SheetsPanel(props: { v: SchematicV; sheet: string; onSheet: (s: 
                 type="button"
                 className="secondary danger"
                 disabled={!canEdit || used(cur.id) || v.sheets.some((s) => s.parent === cur.id)}
+                title="Delete this sheet (only when it has no parts, wires or sub-sheets)"
                 onClick={async () => {
                   const back = cur.parent ?? v.sheets.find((s) => s.id !== cur.id)!.id;
                   await commit("pcb.schematic.sheet", { schematic: v.id, id: cur.id, delete: true }, "Sheet deleted");
@@ -363,7 +364,7 @@ export function SheetsPanel(props: { v: SchematicV; sheet: string; onSheet: (s: 
             )}
           </div>
           {cur.parent && (
-            <button type="button" className="sch-back" onClick={() => props.onSheet(cur.parent!)}>
+            <button type="button" className="sch-back" title="Go to the parent sheet (Backspace)" onClick={() => props.onSheet(cur.parent!)}>
               ↑ Up to {v.sheets.find((s) => s.id === cur.parent)?.name}
             </button>
           )}
@@ -454,7 +455,7 @@ export function FieldsPanel(props: { v: SchematicV; commit: Commit; canEdit: boo
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter" />
         </label>
         <label className="sch-check">
-          <input type="checkbox" checked={group} onChange={(e) => setGroup(e.target.checked)} /> Group alike
+          <input type="checkbox" checked={group} title="One row per group of identical parts (same value, footprint and fields) instead of one per part" onChange={(e) => setGroup(e.target.checked)} /> Group alike
         </label>
       </div>
       <div className="schx-grid-wrap">
@@ -490,7 +491,7 @@ export function FieldsPanel(props: { v: SchematicV; commit: Commit; canEdit: boo
                   if (c === "DNP")
                     return (
                       <td key={c}>
-                        <input type="checkbox" checked={!!val} disabled={!canEdit} onChange={(e) => save(r.members, c, e.target.checked ? "yes" : "no")} />
+                        <input type="checkbox" checked={!!val} disabled={!canEdit} title="Do not populate: leave these parts off the assembled board" onChange={(e) => save(r.members, c, e.target.checked ? "yes" : "no")} />
                       </td>
                     );
                   return (
@@ -509,6 +510,7 @@ export function FieldsPanel(props: { v: SchematicV; commit: Commit; canEdit: boo
           type="button"
           className="secondary"
           disabled={!canEdit}
+          title="Add a column for a field of your own (Tolerance, Voltage, Datasheet…)"
           onClick={() => {
             const n = window.prompt("New field name (e.g. Tolerance, Voltage, Datasheet)");
             if (n?.trim()) setExtra([...extra, n.trim()]);
@@ -516,7 +518,7 @@ export function FieldsPanel(props: { v: SchematicV; commit: Commit; canEdit: boo
         >
           + Field
         </button>
-        <button type="button" className="secondary" onClick={csv}>
+        <button type="button" className="secondary" title="Download this field table as a CSV file" onClick={csv}>
           <Icon name="download" /> CSV
         </button>
       </div>
@@ -558,7 +560,7 @@ function Section(props: { title: string; children: React.ReactNode; open?: boole
   const [open, setOpen] = useState(!!props.open);
   return (
     <div className={`schx-sec ${open ? "open" : ""}`}>
-      <button type="button" className="schx-sec-head" onClick={() => setOpen(!open)}>
+      <button type="button" className="schx-sec-head" title={`${open ? "Collapse" : "Expand"} ${props.title}`} onClick={() => setOpen(!open)}>
         <Icon name={open ? "down" : "chevron"} /> {props.title}
       </button>
       {open && <div className="schx-sec-body">{props.children}</div>}
@@ -599,21 +601,21 @@ export function SetupPanel(props: { v: SchematicV; commit: Commit; canEdit: bool
         ))}
         <div className="sch-props-row wrap">
           <label className="sch-check">
-            <input type="checkbox" checked={!s.drawing_sheet.no_title_block} disabled={!canEdit} onChange={(e) => updSch({ drawing_sheet: { ...s.drawing_sheet, no_title_block: !e.target.checked } })} /> Title block
+            <input type="checkbox" checked={!s.drawing_sheet.no_title_block} disabled={!canEdit} title="Draw the title block in the corner of every sheet" onChange={(e) => updSch({ drawing_sheet: { ...s.drawing_sheet, no_title_block: !e.target.checked } })} /> Title block
           </label>
           <label className="sch-check">
-            <input type="checkbox" checked={!s.drawing_sheet.no_zones} disabled={!canEdit} onChange={(e) => updSch({ drawing_sheet: { ...s.drawing_sheet, no_zones: !e.target.checked } })} /> Zone references
+            <input type="checkbox" checked={!s.drawing_sheet.no_zones} disabled={!canEdit} title="Draw the lettered and numbered zone grid around the border" onChange={(e) => updSch({ drawing_sheet: { ...s.drawing_sheet, no_zones: !e.target.checked } })} /> Zone references
           </label>
         </div>
         <h4 className="sch-sub">Extra items on every sheet</h4>
         {(s.drawing_sheet.items ?? []).map((it, i) => (
           <div key={i} className="schx-row">
-            <select value={it.kind} disabled={!canEdit} onChange={(e) => updSch({ drawing_sheet: { ...s.drawing_sheet, items: (s.drawing_sheet.items ?? []).map((x, j) => (j === i ? { ...x, kind: e.target.value } : x)) } })}>
+            <select value={it.kind} disabled={!canEdit} title="What this item draws: text, a line or a box" onChange={(e) => updSch({ drawing_sheet: { ...s.drawing_sheet, items: (s.drawing_sheet.items ?? []).map((x, j) => (j === i ? { ...x, kind: e.target.value } : x)) } })}>
               <option value="text">Text</option>
               <option value="line">Line</option>
               <option value="rect">Box</option>
             </select>
-            <select value={it.corner || "rb"} disabled={!canEdit} onChange={(e) => updSch({ drawing_sheet: { ...s.drawing_sheet, items: (s.drawing_sheet.items ?? []).map((x, j) => (j === i ? { ...x, corner: e.target.value } : x)) } })}>
+            <select value={it.corner || "rb"} disabled={!canEdit} title="Sheet corner the item is placed from" onChange={(e) => updSch({ drawing_sheet: { ...s.drawing_sheet, items: (s.drawing_sheet.items ?? []).map((x, j) => (j === i ? { ...x, corner: e.target.value } : x)) } })}>
               {["rb", "lb", "rt", "lt"].map((c) => (
                 <option key={c} value={c}>
                   {{ rb: "↘", lb: "↙", rt: "↗", lt: "↖" }[c]}
@@ -632,12 +634,12 @@ export function SetupPanel(props: { v: SchematicV; commit: Commit; canEdit: bool
                 if (end.length === 2 && end.every(Number.isFinite)) updSch({ drawing_sheet: { ...s.drawing_sheet, items: (s.drawing_sheet.items ?? []).map((x, j) => (j === i ? { ...x, end } : x)) } });
               }} />
             )}
-            <button type="button" className="schx-x" disabled={!canEdit} onClick={() => updSch({ drawing_sheet: { ...s.drawing_sheet, items: (s.drawing_sheet.items ?? []).filter((_, j) => j !== i) } })}>
+            <button type="button" className="schx-x" disabled={!canEdit} title="Remove this item from every sheet" aria-label="Remove this item from every sheet" onClick={() => updSch({ drawing_sheet: { ...s.drawing_sheet, items: (s.drawing_sheet.items ?? []).filter((_, j) => j !== i) } })}>
               ×
             </button>
           </div>
         ))}
-        <button type="button" className="secondary" disabled={!canEdit} onClick={() => updSch({ drawing_sheet: { ...s.drawing_sheet, items: [...(s.drawing_sheet.items ?? []), { kind: "text", corner: "rb", at: [4, 36], text: "Drawn by ${AUTHOR}" }] } })}>
+        <button type="button" className="secondary" disabled={!canEdit} title="Add text, a line or a box drawn on every sheet" onClick={() => updSch({ drawing_sheet: { ...s.drawing_sheet, items: [...(s.drawing_sheet.items ?? []), { kind: "text", corner: "rb", at: [4, 36], text: "Drawn by ${AUTHOR}" }] } })}>
           + Item
         </button>
       </Section>
@@ -647,7 +649,7 @@ export function SetupPanel(props: { v: SchematicV; commit: Commit; canEdit: bool
             <div className="schx-class-head">
               <span className="schx-dot" style={{ background: c.color ?? "#1b7f3d" }} />
               <strong>{c.name}</strong>
-              <button type="button" className="schx-x" disabled={!canEdit} onClick={() => void commit("pcb.schematic.netclass", { schematic: v.id, name: c.name, delete: true })}>
+              <button type="button" className="schx-x" disabled={!canEdit} title={`Delete net class ${c.name}`} aria-label={`Delete net class ${c.name}`} onClick={() => void commit("pcb.schematic.netclass", { schematic: v.id, name: c.name, delete: true })}>
                 ×
               </button>
             </div>
@@ -670,7 +672,7 @@ export function SetupPanel(props: { v: SchematicV; commit: Commit; canEdit: bool
           }}
         >
           <input value={newClass} onChange={(e) => setNewClass(e.target.value)} placeholder="New class: Power, USB, Fast…" disabled={!canEdit} />
-          <button type="submit" className="secondary" disabled={!canEdit || !newClass.trim()}>
+          <button type="submit" className="secondary" disabled={!canEdit || !newClass.trim()} title="Add a net class with this name">
             Add
           </button>
         </form>
@@ -683,7 +685,7 @@ export function SetupPanel(props: { v: SchematicV; commit: Commit; canEdit: bool
               const m = e.target.value.split(/[\s,]+/).filter(Boolean);
               if (m.length) updSch({ bus_aliases: { ...s.bus_aliases, [name]: m } });
             }} />
-            <button type="button" className="schx-x" disabled={!canEdit} onClick={() => {
+            <button type="button" className="schx-x" disabled={!canEdit} title={`Delete bus alias ${name}`} aria-label={`Delete bus alias ${name}`} onClick={() => {
               const a = { ...s.bus_aliases };
               delete a[name];
               updSch({ bus_aliases: a });
@@ -692,7 +694,7 @@ export function SetupPanel(props: { v: SchematicV; commit: Commit; canEdit: bool
             </button>
           </div>
         ))}
-        <button type="button" className="secondary" disabled={!canEdit} onClick={() => {
+        <button type="button" className="secondary" disabled={!canEdit} title="Name a group of signals to use as a bus ({USB} → DP DM VBUS)" onClick={() => {
           const name = window.prompt("Alias name (e.g. USB)");
           const members = name && window.prompt(`Members of ${name} (e.g. DP DM VBUS)`);
           if (name?.trim() && members?.trim()) updSch({ bus_aliases: { ...s.bus_aliases, [name.trim()]: members.split(/[\s,]+/).filter(Boolean) } });
@@ -744,7 +746,7 @@ export function SetupPanel(props: { v: SchematicV; commit: Commit; canEdit: bool
           return (
             <label key={code} className="sch-field schx-sev">
               <span>{label}</span>
-              <select value={cur} disabled={!canEdit} onChange={(e) => void commit("pcb.schematic.erc", { schematic: v.id, severities: { [code]: e.target.value } })}>
+              <select value={cur} disabled={!canEdit} title={`How a "${label}" finding counts: error, warning, or not reported`} onChange={(e) => void commit("pcb.schematic.erc", { schematic: v.id, severities: { [code]: e.target.value } })}>
                 <option value="default">default</option>
                 <option value="error">error</option>
                 <option value="warning">warning</option>
@@ -754,7 +756,7 @@ export function SetupPanel(props: { v: SchematicV; commit: Commit; canEdit: bool
           );
         })}
         {(s.erc.exclusions?.length ?? 0) > 0 && (
-          <button type="button" className="secondary" disabled={!canEdit} onClick={() => void commit("pcb.schematic.erc", { schematic: v.id, include: (s.erc.exclusions ?? []).map((x) => x.key) }, "Exclusions cleared")}>
+          <button type="button" className="secondary" disabled={!canEdit} title="Count every excluded finding again" onClick={() => void commit("pcb.schematic.erc", { schematic: v.id, include: (s.erc.exclusions ?? []).map((x) => x.key) }, "Exclusions cleared")}>
             Clear {s.erc.exclusions!.length} exclusion{s.erc.exclusions!.length === 1 ? "" : "s"}
           </button>
         )}
@@ -768,12 +770,12 @@ export function SetupPanel(props: { v: SchematicV; commit: Commit; canEdit: bool
               <input type="checkbox" checked={!!t.visible} disabled={!canEdit} onChange={(e) => updSch({ field_templates: s.field_templates.map((x, j) => (j === i ? { ...x, visible: e.target.checked } : x)) })} />
               <Icon name="eye" />
             </label>
-            <button type="button" className="schx-x" disabled={!canEdit} onClick={() => updSch({ field_templates: s.field_templates.filter((_, j) => j !== i) })}>
+            <button type="button" className="schx-x" disabled={!canEdit} title={`Delete field template ${t.name}`} aria-label={`Delete field template ${t.name}`} onClick={() => updSch({ field_templates: s.field_templates.filter((_, j) => j !== i) })}>
               ×
             </button>
           </div>
         ))}
-        <button type="button" className="secondary" disabled={!canEdit} onClick={() => {
+        <button type="button" className="secondary" disabled={!canEdit} title="Add a field that every new part gets" onClick={() => {
           const n = window.prompt("Field every new part gets (e.g. Tolerance)");
           if (n?.trim()) updSch({ field_templates: [...s.field_templates, { name: n.trim(), value: "", visible: false }] });
         }}>
@@ -785,7 +787,7 @@ export function SetupPanel(props: { v: SchematicV; commit: Commit; canEdit: bool
           <div key={k} className="schx-row">
             <strong className="schx-alias">{"${" + k + "}"}</strong>
             <input defaultValue={val} disabled={!canEdit} onBlur={(e) => updSch({ text_vars: { ...s.text_vars, [k]: e.target.value } })} />
-            <button type="button" className="schx-x" disabled={!canEdit} onClick={() => {
+            <button type="button" className="schx-x" disabled={!canEdit} title={`Delete text variable \${${k}}`} aria-label={`Delete text variable ${k}`} onClick={() => {
               const t = { ...s.text_vars };
               delete t[k];
               updSch({ text_vars: t });
@@ -794,7 +796,7 @@ export function SetupPanel(props: { v: SchematicV; commit: Commit; canEdit: bool
             </button>
           </div>
         ))}
-        <button type="button" className="secondary" disabled={!canEdit} onClick={() => {
+        <button type="button" className="secondary" disabled={!canEdit} title="Add a text variable that notes and the title block can use as ${NAME}" onClick={() => {
           const n = window.prompt("Variable name (e.g. AUTHOR)");
           if (n?.trim()) updSch({ text_vars: { ...s.text_vars, [n.trim().toUpperCase()]: "" } });
         }}>
@@ -804,14 +806,14 @@ export function SetupPanel(props: { v: SchematicV; commit: Commit; canEdit: bool
       <Section title="Annotation">
         <label className="sch-field">
           <span>Order</span>
-          <select value={ann.order} onChange={(e) => setAnn({ ...ann, order: e.target.value })}>
+          <select value={ann.order} title="Order references are numbered in across each sheet" onChange={(e) => setAnn({ ...ann, order: e.target.value })}>
             <option value="rows">Across, then down</option>
             <option value="columns">Down, then across</option>
           </select>
         </label>
         <label className="sch-field">
           <span>Numbers</span>
-          <select value={ann.numbering} onChange={(e) => setAnn({ ...ann, numbering: e.target.value })}>
+          <select value={ann.numbering} title="Numbering: one run across all sheets, or starting at page × 100 / × 1000 on each sheet" onChange={(e) => setAnn({ ...ann, numbering: e.target.value })}>
             <option value="continuous">Continuous</option>
             <option value="sheet">Page × 100</option>
             <option value="sheet1000">Page × 1000</option>
@@ -819,12 +821,13 @@ export function SetupPanel(props: { v: SchematicV; commit: Commit; canEdit: bool
         </label>
         {ann.numbering === "continuous" && <Field label="Start at" value={ann.start} onSave={(x) => setAnn({ ...ann, start: x })} />}
         <label className="sch-check">
-          <input type="checkbox" checked={ann.reset} onChange={(e) => setAnn({ ...ann, reset: e.target.checked })} /> Renumber everything (not only R?)
+          <input type="checkbox" checked={ann.reset} title="Also renumber parts that already have numbers, not only unnumbered ones (R?)" onChange={(e) => setAnn({ ...ann, reset: e.target.checked })} /> Renumber everything (not only R?)
         </label>
         <button
           type="button"
           className="primary"
           disabled={!canEdit}
+          title="Number part references (R?, C? → R1, C1…) with these settings"
           onClick={async () => {
             const out = (await commit("pcb.schematic.annotate", { schematic: v.id, order: ann.order, numbering: ann.numbering, start: Number(ann.start) || 1, reset: ann.reset })) as { output?: { renamed: unknown[] } } | null;
             if (out?.output) props.notify(`${out.output.renamed.length} reference${out.output.renamed.length === 1 ? "" : "s"} numbered`);
@@ -855,21 +858,21 @@ export function ExportMenu(props: { v: SchematicV; sheet: string; onClose: () =>
     <div className="schx-menu" onPointerDown={(e) => e.stopPropagation()}>
       <div className="schx-menu-head">
         <strong>Export</strong>
-        <button type="button" className="schx-x" onClick={props.onClose}>
+        <button type="button" className="schx-x" title="Close the export menu" aria-label="Close the export menu" onClick={props.onClose}>
           ×
         </button>
       </div>
       <h4 className="sch-sub">Drawings</h4>
       <div className="schx-links">
-        <a href={url(`/pcb/schematic/${v.id}/schematic.pdf`)}>PDF, every sheet</a>
-        <a href={url(`/pcb/schematic/${v.id}/sheet/${encodeURIComponent(props.sheet)}.svg`)}>SVG, this sheet</a>
+        <a href={url(`/pcb/schematic/${v.id}/schematic.pdf`)} title="Download every sheet as one PDF">PDF, every sheet</a>
+        <a href={url(`/pcb/schematic/${v.id}/sheet/${encodeURIComponent(props.sheet)}.svg`)} title="Download the sheet you are on as an SVG drawing">SVG, this sheet</a>
       </div>
       <h4 className="sch-sub">Netlist</h4>
       <div className="schx-links">
-        <a href={url(`/pcb/schematic/${v.id}/netlist`, { format: "kicad" })}>KiCad .net</a>
-        <a href={url(`/pcb/schematic/${v.id}/netlist`, { format: "orcad" })}>OrCAD PCB2</a>
-        <a href={url(`/pcb/schematic/${v.id}/netlist`, { format: "cadstar" })}>CADSTAR</a>
-        <a href={url(`/pcb/schematic/${v.id}/netlist`, { format: "spice" })}>SPICE</a>
+        <a href={url(`/pcb/schematic/${v.id}/netlist`, { format: "kicad" })} title="Download the netlist for KiCad (.net)">KiCad .net</a>
+        <a href={url(`/pcb/schematic/${v.id}/netlist`, { format: "orcad" })} title="Download the netlist in OrCAD PCB2 format">OrCAD PCB2</a>
+        <a href={url(`/pcb/schematic/${v.id}/netlist`, { format: "cadstar" })} title="Download the netlist in CADSTAR format">CADSTAR</a>
+        <a href={url(`/pcb/schematic/${v.id}/netlist`, { format: "spice" })} title="Download a SPICE netlist for circuit simulation">SPICE</a>
       </div>
       <h4 className="sch-sub">Bill of materials</h4>
       <label className="sch-field">
@@ -882,9 +885,9 @@ export function ExportMenu(props: { v: SchematicV; sheet: string; onClose: () =>
       </label>
       {custom.length > 0 && <p className="small">Your fields: {custom.join(", ")}</p>}
       <label className="sch-check">
-        <input type="checkbox" checked={dnp} onChange={(e) => setDnp(e.target.checked)} /> Include do-not-populate parts
+        <input type="checkbox" checked={dnp} title="List do-not-populate parts in the BOM too" onChange={(e) => setDnp(e.target.checked)} /> Include do-not-populate parts
       </label>
-      <a className="primary schx-btn" href={url(`/pcb/schematic/${v.id}/bom`, { group, fields, ...(dnp ? { dnp: "1" } : {}) })}>
+      <a className="primary schx-btn" title="Download the bill of materials as CSV, grouped and with the columns above" href={url(`/pcb/schematic/${v.id}/bom`, { group, fields, ...(dnp ? { dnp: "1" } : {}) })}>
         <Icon name="download" /> BOM CSV
       </a>
     </div>
@@ -970,6 +973,7 @@ export function FindBar(props: { v: SchematicV; commit: Commit; canEdit: boolean
           <button
             type="button"
             disabled={!hits[k] || hits[k].kind === "net"}
+            title="Replace the text in the current match only"
             onClick={async () => {
               const h = hits[k];
               await props.commit("pcb.schematic.replace", { schematic: v.id, find, replace, match_case: caseOn, whole_word: word, wildcards: wild, in: ["values", "fields", "labels", "texts", "references"], targets: [h.id] });
@@ -980,6 +984,7 @@ export function FindBar(props: { v: SchematicV; commit: Commit; canEdit: boolean
           <button
             type="button"
             disabled={!hits.length}
+            title="Replace in every match (values, fields, labels and notes)"
             onClick={async () => {
               const out = (await props.commit("pcb.schematic.replace", { schematic: v.id, find, replace, match_case: caseOn, whole_word: word, wildcards: wild, in: ["values", "fields", "labels", "texts"] })) as { output?: { count: number } } | null;
               if (out?.output) props.notify(`${out.output.count} replaced`);
@@ -992,7 +997,7 @@ export function FindBar(props: { v: SchematicV; commit: Commit; canEdit: boolean
       {find && hits.length > 0 && (
         <div className="schx-hits">
           {hits.slice(0, 40).map((h, i) => (
-            <button key={`${h.kind}${h.id}${h.sheet}`} type="button" className={i === k ? "active" : ""} onClick={() => go(i)}>
+            <button key={`${h.kind}${h.id}${h.sheet}`} type="button" className={i === k ? "active" : ""} title={`Go to ${h.kind} ${h.text}`} onClick={() => go(i)}>
               <span className="kind">{h.kind}</span> {h.text}
               {h.sheet && v.sheets.length > 1 ? <small> · {v.sheets.find((s) => s.id === h.sheet)?.name}</small> : null}
             </button>
@@ -1026,18 +1031,18 @@ export function ErcPanel(props: { v: SchematicV; onFocus: (x: Erc) => void; comm
       </div>
       <div className="sch-props-row wrap">
         <label className="sch-check">
-          <input type="checkbox" checked={warn} onChange={(e) => setWarn(e.target.checked)} /> Warnings
+          <input type="checkbox" checked={warn} title="List warnings as well as errors" onChange={(e) => setWarn(e.target.checked)} /> Warnings
         </label>
         {excluded > 0 && (
           <label className="sch-check">
-            <input type="checkbox" checked={showExcluded} onChange={(e) => setShowExcluded(e.target.checked)} /> Excluded
+            <input type="checkbox" checked={showExcluded} title="Also list findings you marked as reviewed" onChange={(e) => setShowExcluded(e.target.checked)} /> Excluded
           </label>
         )}
       </div>
       <div className="pcb-list sch-list">
         {list.map((x, i) => (
           <div key={`${x.key}${i}`} className={`schx-erc ${x.excluded ? "excluded" : ""}`}>
-            <button type="button" className="pcb-row sch-erc" onClick={() => props.onFocus(x)}>
+            <button type="button" className="pcb-row sch-erc" title="Show where this is on the sheet" onClick={() => props.onFocus(x)}>
               <span className={`sch-sev ${x.severity}`} />
               <span className="val">
                 {x.message}
