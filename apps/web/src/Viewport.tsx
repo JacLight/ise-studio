@@ -454,6 +454,23 @@ const MM = 1000; // engine meters -> scene millimeters
 /** Most points kept in one markup stroke, and the screen distance (px) between them. */
 const STROKE_POINTS = 400;
 const STROKE_STEP = 3;
+// Clicks pass through what is not drawn: a piece switched off in the components
+// tree (its material hidden) is not hit, so the part behind it is picked.
+const meshRaycast = THREE.Mesh.prototype.raycast;
+THREE.Mesh.prototype.raycast = function (raycaster, intersects) {
+  const before = intersects.length;
+  meshRaycast.call(this, raycaster, intersects);
+  const mat = this.material;
+  if (Array.isArray(mat) ? !mat.some((m) => m.visible === false) : mat.visible !== false) return;
+  let w = before;
+  for (let i = before; i < intersects.length; i++) {
+    const hit = intersects[i];
+    const m = Array.isArray(mat) ? mat[hit.face?.materialIndex ?? 0] : mat;
+    if (m && m.visible !== false) intersects[w++] = hit;
+  }
+  intersects.length = w;
+};
+
 const OUTLINE = new THREE.Color("#8b66ef");
 /** Pre-selection glow for what the pointer is over in the components tree. */
 const HOVER = "#9a7cf0";
@@ -1910,7 +1927,9 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
           if (!hit) return;
           drag.current = { kind: "plane", id, normal: pick.normal, origin, startHit: hit, start, targets };
           gizmo.setActive(pick);
-        } else if ((pick?.kind === "center" || (!e.shiftKey && hitSelectedBody(r))) && !callbacks.current.entities.get(id)?.placed?.by) {
+        } else if ((pick?.kind === "center" || (e.altKey && !e.shiftKey && hitSelectedBody(r))) && !callbacks.current.entities.get(id)?.placed?.by) {
+          // A plain press on the part only picks (a face, a piece, the part behind);
+          // it moves from the centre handle, or with Alt held on its body.
           const hit = r.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -start.z), new THREE.Vector3());
           if (!hit) return;
           // Not moved until the pointer travels, even from the centre handle:
