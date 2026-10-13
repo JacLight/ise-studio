@@ -96,7 +96,12 @@ export function App({ engine }: { engine: Engine }) {
   const [isolated, setIsolated] = useState<string | null>(null);
   const [colorBy, setColorBy] = useState<"material" | "status">("material");
   const [objectsTab, setObjectsTab] = useState<"tree" | "stacking">("tree");
-  useEffect(() => setSelectedPartName(null), [selected]);
+  // A new selection starts with no piece picked, unless the tree picked one with it.
+  const pendingPiece = useRef<string | null>(null);
+  useEffect(() => {
+    setSelectedPartName(pendingPiece.current);
+    pendingPiece.current = null;
+  }, [selected]);
   const [panel, setPanel] = useState<PanelKind | null>(null);
   const [bench, setBench] = useState<Bench | null>(null);
   const [dialog, setDialog] = useState<"share" | "storage" | null>(null);
@@ -1848,7 +1853,13 @@ export function App({ engine }: { engine: Engine }) {
                     selected={selected}
                     hidden={hiddenItems}
                     isolated={isolated}
-                    onSelect={select}
+                    onSelect={(id, piece) => {
+                      if (piece && id === selected) setSelectedPartName(piece);
+                      else {
+                        pendingPiece.current = piece ?? null;
+                        select(id);
+                      }
+                    }}
                     onToggleHidden={(id) =>
                       setHiddenItems((h) => {
                         const n = new Set(h);

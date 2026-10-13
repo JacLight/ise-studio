@@ -61,6 +61,8 @@ export function partMaterial(e: EntityView, materialName: string | null, entitie
 
 /** The parts of an assembly (empty for a single solid). */
 export const assemblyParts = (e: EntityView | undefined) => e?.shape?.parts ?? [];
+/** The key that hides one piece of a part made of several (the tree's eye on a sub-part). */
+export const subPartKey = (id: string, name: string) => `${id}#${name}`;
 
 /** How a part is made, in shop words. */
 export const PROCESS_NAMES: Record<string, string> = {

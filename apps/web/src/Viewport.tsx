@@ -55,6 +55,7 @@ import {
   fmt,
   material,
   assemblyParts,
+  subPartKey,
   partMaterial,
   instance,
   isDefinition,
@@ -2515,7 +2516,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         paintInstance(part, entities, selected, props.hidden, props.isolated, props.colorBy, props.tints);
         continue;
       }
-      part.group.visible = !props.hidden.has(id) && (!props.isolated || props.isolated === id);
+      // "Show only" may name one piece of a part ("id#piece").
+      const [isoId, isoPiece] = props.isolated ? [props.isolated.split("#")[0], props.isolated.includes("#") ? props.isolated.slice(props.isolated.indexOf("#") + 1) : null] : [null, null];
+      part.group.visible = !props.hidden.has(id) && (!isoId || isoId === id);
+      const pieces = assemblyParts(entities.get(id));
       // The rest of the assembly turns to X-ray so a part inside stays visible.
       bodyMaterials(part.body).forEach((m, i) => {
         const base = m.userData.look as Look;
@@ -2528,6 +2532,9 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         m.transparent = opacity < 1;
         m.opacity = opacity;
         m.depthWrite = opacity >= 1;
+        // A piece switched off in the tree (or not the one shown alone) is not drawn.
+        const piece = pieces[i]?.name;
+        m.visible = !piece || (!props.hidden.has(subPartKey(id, piece)) && (!isoPiece || isoPiece === piece));
         m.needsUpdate = true;
       });
       part.body.castShadow = !(id === selected && props.selectedPart);

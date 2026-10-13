@@ -140,7 +140,7 @@ export function ToolRail(props: {
         <IconButton icon="comment" label="Comment (C)" className={props.commenting ? "active" : ""} onClick={props.onComment} />
         {props.openComments > 0 && <span className="rail-badge">{props.openComments > 99 ? "99+" : props.openComments}</span>}
       </span>
-      <IconButton icon="layers" label="Project objects" className={active("objects")} onClick={() => props.onPanel("objects")} />
+      <IconButton icon="layers" label="Components: parts, materials, layers (show/hide)" className={active("objects")} onClick={() => props.onPanel("objects")} />
       <IconButton icon="sliders" label="Object properties" className={active("properties")} onClick={() => props.onPanel("properties")} />
       <IconButton icon="shield" label="Requirements" className={active("requirements")} onClick={() => props.onPanel("requirements")} />
       <IconButton icon="history" label="Change history" className={active("history")} onClick={() => props.onPanel("history")} />

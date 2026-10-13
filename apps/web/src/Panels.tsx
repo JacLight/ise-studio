@@ -63,7 +63,7 @@ export type Run = (operation: string, parameters: Record<string, unknown>) => Pr
 
 const TITLES: Record<PanelKind, string> = {
   project: "Your workspace",
-  objects: "Project objects",
+  objects: "Components",
   properties: "Properties",
   requirements: "Requirements",
   history: "History and versions",

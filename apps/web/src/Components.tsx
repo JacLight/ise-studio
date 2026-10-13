@@ -7,6 +7,7 @@ import { type EntityView, projectUrl } from "./engine";
 import { Icon } from "./icons";
 import {
   assemblyDef,
+  assemblyParts,
   childrenOf,
   configurations,
   definitionName,
@@ -16,6 +17,7 @@ import {
   isPart,
   partName,
   program,
+  subPartKey,
   usesOf,
 } from "./model";
 import { AXIS_COLORS } from "./gizmo";
@@ -52,7 +54,8 @@ export function ComponentTree(props: {
   selected: string | null;
   hidden: ReadonlySet<string>;
   isolated: string | null;
-  onSelect: (id: string) => void;
+  /** Picks an item, or one piece of it by name. */
+  onSelect: (id: string, piece?: string) => void;
   onToggleHidden: (id: string) => void;
   onIsolate: (id: string | null) => void;
 }) {
@@ -76,13 +79,16 @@ export function ComponentTree(props: {
   const row = (e: EntityView, depth: number): React.ReactNode => {
     const inst = instance(e);
     const kids = inst && assemblyDef(props.entities.get(inst.of)) ? childrenOf(inst.of, props.entities) : [];
-    const expanded = open.has(e.id) || openPath.has(e.id);
+    // A part made of several pieces (shells, grip, trigger…) lists them, each with its own eye.
+    const pieces = !inst ? assemblyParts(e) : [];
+    const expandable = kids.length > 0 || pieces.length > 1;
+    const expanded = open.has(e.id) || openPath.has(e.id) || (pieces.length > 1 && props.selected === e.id);
     const hidden = props.hidden.has(e.id);
     const shared = inst ? usesOf(inst.of, props.entities) : 0;
     return (
       <div key={e.id}>
         <div className={`tree-row ${props.selected === e.id ? "active" : ""} ${hidden ? "is-hidden" : ""}`} style={{ paddingLeft: 6 + depth * 14 }}>
-          {kids.length ? (
+          {expandable ? (
             <button
               type="button"
               className={`tree-twist ${expanded ? "open" : ""}`}
@@ -100,7 +106,7 @@ export function ComponentTree(props: {
             <span className="tree-twist" />
           )}
           <button type="button" className="tree-name" onClick={() => props.onSelect(e.id)}>
-            <Icon name={kids.length ? "layers" : "cube"} />
+            <Icon name={expandable ? "layers" : "cube"} />
             <span>{partName(e)}</span>
             {inst && shared > 1 && <small title={`${definitionName(inst.of, props.entities)}, used ${shared} times`}>×{shared}</small>}
             <StatusChip status={inst?.properties?.status} />
@@ -115,6 +121,30 @@ export function ComponentTree(props: {
           </span>
         </div>
         {expanded && kids.map((k) => row(k, depth + 1))}
+        {expanded &&
+          pieces.length > 1 &&
+          pieces.map((piece) => {
+            const key = subPartKey(e.id, piece.name);
+            const off = props.hidden.has(key);
+            const only = props.isolated === key;
+            return (
+              <div key={key} className={`tree-row ${off || hidden ? "is-hidden" : ""}`} style={{ paddingLeft: 6 + (depth + 1) * 14 }}>
+                <span className="tree-twist" />
+                <button type="button" className="tree-name" onClick={() => props.onSelect(e.id, piece.name)}>
+                  <Icon name="cube" />
+                  <span>{piece.name}</span>
+                </button>
+                <span className="tree-actions">
+                  <button type="button" title={only ? "Show everything" : "Show only this"} className={only ? "on" : ""} onClick={() => props.onIsolate(only ? null : key)}>
+                    <Icon name="fit" />
+                  </button>
+                  <button type="button" title={off ? "Show" : "Hide"} onClick={() => props.onToggleHidden(key)}>
+                    <Icon name="eye" />
+                  </button>
+                </span>
+              </div>
+            );
+          })}
       </div>
     );
   };
@@ -123,7 +153,7 @@ export function ComponentTree(props: {
     <div className="component-tree">
       {props.isolated && (
         <button type="button" className="isolate-banner" onClick={() => props.onIsolate(null)}>
-          Showing only {partName(props.entities.get(props.isolated) ?? ({ components: {} } as EntityView))} · Show everything
+          Showing only {props.isolated.includes("#") ? props.isolated.split("#").slice(1).join("#") : partName(props.entities.get(props.isolated) ?? ({ components: {} } as EntityView))} · Show everything
         </button>
       )}
       {top.map((e) => row(e, 0))}
