@@ -101,6 +101,28 @@ pub struct AwardView {
     pub lead_days: Option<u32>,
 }
 
+/// One definition a line's parts come from: a shape (in a configuration)
+/// and, for a multi-part program, the part. A line merges identical parts,
+/// so it can come from several; a client finds them in its scene with this.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Use {
+    pub shape: StableId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub part: Option<String>,
+}
+
+const USES: usize = 64;
+
+fn note_source(uses: &mut Vec<Use>, u: Option<Use>) {
+    if let Some(u) = u {
+        if uses.len() < USES && !uses.contains(&u) {
+            uses.push(u);
+        }
+    }
+}
+
 /// A fabricated part.
 #[derive(Clone, Debug, Serialize)]
 pub struct MakeLine {
@@ -143,6 +165,8 @@ pub struct MakeLine {
     pub cost_source: &'static str,
     /// Where it is used (assembly paths), the first few.
     pub used_in: Vec<String>,
+    /// Every definition its parts come from.
+    pub uses: Vec<Use>,
     /// What it is as a building element ("IfcWall", "IfcSlab"), when the program says.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ifc_class: Option<String>,
@@ -181,6 +205,8 @@ pub struct BuyLine {
     /// "award", "list" (the item's own or a source's price) or "none".
     pub cost_source: &'static str,
     pub used_in: Vec<String>,
+    /// Every definition (or entity a source claims) it comes from.
+    pub uses: Vec<Use>,
     /// What it is as a building element ("IfcDoor", "IfcWindow"), when the program says.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ifc_class: Option<String>,
@@ -464,12 +490,14 @@ impl<'w> Walker<'w> {
         let material = self.material(material_id);
         let material_name = material.map(|m| m.name.clone()).or(material_name);
         let key = make_key(base_name(&name), material_name.as_deref(), process.as_deref(), size, volume_mm3);
+        let source = Use { shape, config: config.clone(), part: part.clone() };
         if let Some(acc) = self.make.iter_mut().find(|a| a.line.key == key) {
             if acc.line.name != name {
                 acc.line.name = base_name(&name).to_string();
             }
             acc.line.qty += total;
             note_use(&mut acc.line.used_in, path);
+            note_source(&mut acc.line.uses, Some(source));
             return key;
         }
         let cut_mm = if fabricate::is_sheet(process.as_deref()) {
@@ -504,6 +532,7 @@ impl<'w> Walker<'w> {
             extended: None,
             cost_source: "none",
             used_in,
+            uses: vec![source],
             ifc_class: None,
         };
         self.make.push(MakeAcc { line, cost: material.and_then(|m| m.cost.clone()), density: material.map(|m| m.density.canonical()), pierces: cut_mm.map(|c| c.1).unwrap_or(0) });
@@ -511,7 +540,10 @@ impl<'w> Walker<'w> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn add_buy(&mut self, item: BuyItem, origin: &str, shape: Option<StableId>, part: Option<String>, total: u32, path: &[String]) -> String {
+    /// `at`: the definition it comes from, when it is part of the model (a
+    /// stock shape or part); `line_shape` says whether that is the line's
+    /// own geometry (else it is only what brings it, as a board its parts).
+    fn add_buy(&mut self, item: BuyItem, origin: &str, at: Option<Use>, line_shape: bool, total: u32, path: &[String]) -> String {
         let key = buy_key(&item.name, item.stock.as_ref());
         let qty = total * item.qty.max(1);
         if let Some(l) = self.buy.iter_mut().find(|l| l.key == key) {
@@ -520,6 +552,7 @@ impl<'w> Walker<'w> {
             }
             l.qty += qty;
             note_use(&mut l.used_in, path);
+            note_source(&mut l.uses, at);
             return key;
         }
         if item.stock.is_none() {
@@ -528,6 +561,12 @@ impl<'w> Walker<'w> {
         let mut used_in = vec![];
         note_use(&mut used_in, path);
         let mass_kg = item.stock.as_ref().and_then(|s| s.mass_g).map(|g| g / 1000.0).or(item.mass_kg);
+        let (shape, part) = match at.as_ref().filter(|_| line_shape) {
+            Some(u) => (Some(u.shape), u.part.clone()),
+            None => (None, None),
+        };
+        let mut uses = vec![];
+        note_source(&mut uses, at);
         self.buy.push(BuyLine {
             key: key.clone(),
             item: 0,
@@ -545,6 +584,7 @@ impl<'w> Walker<'w> {
             award: None,
             cost_source: "none",
             used_in,
+            uses,
             ifc_class: None,
         });
         key
@@ -568,7 +608,8 @@ impl<'w> Walker<'w> {
                 claimed = true;
                 for item in items {
                     let (name, per) = (item.name.clone(), item.qty.max(1));
-                    let key = self.add_buy(item, s.name(), None, None, total, path);
+                    let at = Use { shape: id, config: config.map(str::to_string), part: None };
+                    let key = self.add_buy(item, s.name(), Some(at), false, total, path);
                     nodes.push(Node { name, kind: "item", qty: per, total: total * per, line: Some(key), class: Some("buy"), id: None, config: None, instances: vec![], children: vec![] });
                 }
             }
@@ -622,7 +663,7 @@ impl<'w> Walker<'w> {
             path.push(info.name.clone());
             let declared = &info.stats.declared;
             if let Some(stock) = &declared.stock {
-                let key = self.add_buy(BuyItem { name: info.name.clone(), stock: Some(stock.clone()), qty: 1, mass_kg: info.masses.iter().copied().sum::<Option<f64>>() }, "stock", Some(id), None, total, &path[..path.len() - 1]);
+                let key = self.add_buy(BuyItem { name: info.name.clone(), stock: Some(stock.clone()), qty: 1, mass_kg: info.masses.iter().copied().sum::<Option<f64>>() }, "stock", Some(Use { shape: id, config: info.config.clone(), part: None }), true, total, &path[..path.len() - 1]);
                 n.line = Some(key);
                 n.class = Some("buy");
             } else if info.stats.parts.is_empty() {
@@ -639,7 +680,7 @@ impl<'w> Walker<'w> {
                 for (i, p) in info.stats.parts.iter().enumerate() {
                     let (key, class) = if p.process.as_deref() == Some("buy") {
                         let stock = declared.parts.get(&p.name).cloned();
-                        (self.add_buy(BuyItem { name: p.name.clone(), stock, qty: 1, mass_kg: info.masses.get(i).copied().flatten() }, "stock", Some(id), Some(p.name.clone()), total, path), "buy")
+                        (self.add_buy(BuyItem { name: p.name.clone(), stock, qty: 1, mass_kg: info.masses.get(i).copied().flatten() }, "stock", Some(Use { shape: id, config: info.config.clone(), part: Some(p.name.clone()) }), true, total, path), "buy")
                     } else {
                         let size = sorted([0, 1, 2].map(|k| p.bounds_max[k] - p.bounds_min[k]));
                         let mid = match &p.material {

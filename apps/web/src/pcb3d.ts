@@ -430,7 +430,7 @@ function dispose(o: THREE.Object3D) {
 type Entry = { board: string; text: string; look: THREE.Group | null; group: THREE.Group | null; meshes: THREE.Mesh[] };
 
 /** How the components tree shows a board's pieces: hidden, shown alone, lit up ("*" for all). */
-export type BoardPaint = { pieces: string[]; hidden: (piece: string) => boolean; isolated: string | null; hot: string | null };
+export type BoardPaint = { pieces: string[]; hidden: (piece: string) => boolean; isolated: string | null; hot: "*" | string[] };
 
 const HOT_TINT = new THREE.Color("#c4b2ff");
 const PLAIN = new THREE.Color("#ffffff");
@@ -458,7 +458,7 @@ class PcbLooks {
       else boardPiece ??= name;
     }
     const shown = (piece: string | null) => !piece || (!how.hidden(piece) && (!how.isolated || how.isolated === piece));
-    const hot = (piece: string | null) => how.hot === "*" || (!!piece && how.hot === piece);
+    const hot = (piece: string | null) => how.hot === "*" || (!!piece && how.hot.includes(piece));
     look.traverse((o) => {
       const refsOf = o.userData.refs as string[] | undefined;
       if (o instanceof THREE.InstancedMesh && refsOf) {

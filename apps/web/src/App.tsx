@@ -28,6 +28,7 @@ import { Icon } from "./icons";
 import { sketchOf } from "./sketchModel";
 import { ComponentTree, ComponentsBody, InstanceBody, ParameterSets, StackingPlan, parameterSet, stackingSubject } from "./Components";
 import { type AiMode, type Group, type PanelKind, type UiPrefs, loadPrefs, savePrefs } from "./ui";
+import { DOCK_MIN_WINDOW, type DockPlace, type DockSlot, Splitter, layoutDocks, useWindowSize } from "./Dock";
 import { IMPORT_ACCEPT, IMPORT_FORMATS, type ImportReply, importSummary, importable } from "./fileFormats";
 import { ProjectsHome } from "./ProjectsHome";
 import { VersionsSection, openVersion } from "./Versions";
@@ -75,6 +76,18 @@ const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && !!t.clos
 const fmtNum = (v: number) => Number(v.toFixed(2)).toLocaleString("en-US");
 
 
+/** The edge each tool panel docks to first: lists to the left (beside the tools), details to the right. */
+const DOCK_SIDE: Record<PanelKind, "left" | "right"> = {
+  project: "left",
+  components: "left",
+  objects: "left",
+  history: "left",
+  comments: "right",
+  properties: "right",
+  requirements: "right",
+  views: "right",
+};
+
 /** Teammates' colours (cursor, name tag, selection outline): distinct from the app's own violet. */
 const MATE_COLORS = ["#e2553f", "#1f9d74", "#2f7de1", "#d4880f", "#c23d8f", "#0f9fb3"];
 
@@ -105,8 +118,48 @@ export function App({ engine }: { engine: Engine }) {
     setSelectedPartName(pendingPiece.current);
     pendingPiece.current = null;
   }, [selected]);
-  const [panel, setPanel] = usePersisted<PanelKind | null>("panel", null);
+  // Tool panels: one floats at a time; any number can be docked to a window edge,
+  // and stay open there while others come and go.
+  const [panel, setFloatPanel] = usePersisted<PanelKind | null>("panel", null);
+  const floatRef = useRef(panel);
+  floatRef.current = panel;
+  const dockRef = useRef(prefs.dock);
+  dockRef.current = prefs.dock;
+  const dockedOpen = prefs.dock.open.filter((k) => prefs.dock.panels[k]);
+  const panelOpen = (k: PanelKind) => panel === k || dockedOpen.includes(k);
+  /** Opens a panel (or, with null, closes the floating one). A docked kind opens in its dock. */
+  const setPanel = useCallback((v: PanelKind | null | ((p: PanelKind | null) => PanelKind | null)) => {
+    const next = typeof v === "function" ? v(floatRef.current) : v;
+    if (next && dockRef.current.panels[next]) {
+      setPrefs((p) => (p.dock.open.includes(next) ? p : { ...p, dock: { ...p.dock, open: [...p.dock.open, next] } }));
+      return;
+    }
+    floatRef.current = next;
+    setFloatPanel(next);
+  }, []);
+  const closeDocked = useCallback((k: PanelKind) => setPrefs((p) => ({ ...p, dock: { ...p.dock, open: p.dock.open.filter((x) => x !== k) } })), []);
+  /** Docks a tool panel to an edge (it stays open there), or floats it again (null). */
+  const dockPanel = useCallback((k: PanelKind, side: "left" | "right" | null) => {
+    setPrefs((p) => {
+      const panels = { ...p.dock.panels };
+      if (side) panels[k] = side;
+      else delete panels[k];
+      const open = p.dock.open.filter((x) => x !== k);
+      return { ...p, dock: { ...p.dock, panels, open: side ? [...open, k] : open } };
+    });
+    if (side) {
+      if (floatRef.current === k) {
+        floatRef.current = null;
+        setFloatPanel(null);
+      }
+    } else {
+      floatRef.current = k;
+      setFloatPanel(k);
+    }
+  }, []);
   const [bench, setBench] = usePersisted<Bench | null>("bench", null);
+  const [bomHover, setBomHover] = useState<string[] | null>(null);
+  const win = useWindowSize();
   const [dialog, setDialog] = useState<"share" | "storage" | null>(null);
   const [consoleOpen, setConsoleOpen] = usePersisted("consoleOpen", false);
   const [dataOpen, setDataOpen] = usePersisted("dataOpen", false);
@@ -347,9 +400,10 @@ export function App({ engine }: { engine: Engine }) {
   );
 
   // Docking changes the canvas width; the renderer keeps its state.
+  const dockShape = `${prefs.aiMode}|${prefs.dock.open.join(",")}|${JSON.stringify(prefs.dock.panels)}|${prefs.dock.bench}|${bench ? 1 : 0}`;
   useEffect(() => {
     requestAnimationFrame(() => viewport.current?.resize());
-  }, [prefs.aiMode, focus]);
+  }, [dockShape, focus]);
 
   const notify = useCallback((text: string) => {
     setToast(text);
@@ -1190,7 +1244,8 @@ export function App({ engine }: { engine: Engine }) {
     [groups, state.entities],
   );
   const select = useCallback(
-    (id: string | null, add = false, single = false) => {
+    /** `quiet`: leave the panels as they are (a pick from the BOM). */
+    (id: string | null, add = false, single = false, quiet = false) => {
       if (add && id && selected && id !== selected) {
         // Shift-click: add it to the group, or take it out again.
         setAlso((a) => (a.includes(id) ? a.filter((x) => x !== id) : [...a, id]));
@@ -1207,7 +1262,8 @@ export function App({ engine }: { engine: Engine }) {
       const g = id && !add && !single ? groupFor(id) : null;
       setAlso(g ? g.members.filter((m) => m !== id) : []);
       setSelected(id);
-      if (id) setPanel((p) => (p === "objects" || p === "components" ? p : "properties"));
+      // Properties come up, unless a list of items is in use (floating, or the tree docked).
+      if (id && !quiet) setPanel((p) => (p === "objects" || p === "components" || (!p && dockRef.current.open.includes("components") && !dockRef.current.panels.properties) ? p : "properties"));
     },
     [selected, groupFor],
   );
@@ -1222,7 +1278,7 @@ export function App({ engine }: { engine: Engine }) {
       const all = [...new Set([...now, ...ids])];
       setSelected(all[0] ?? null);
       setAlso(all.slice(1));
-      if (all.length) setPanel((p) => (p === "objects" || p === "components" || p === "views" ? p : "properties"));
+      if (all.length) setPanel((p) => (p === "objects" || p === "components" || p === "views" || (!p && dockRef.current.open.includes("components") && !dockRef.current.panels.properties) ? p : "properties"));
     },
     [selected],
   );
@@ -1319,7 +1375,13 @@ export function App({ engine }: { engine: Engine }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const togglePanel = useCallback((p: PanelKind) => setPanel((current) => (current === p ? null : p)), []);
+  const togglePanel = useCallback(
+    (p: PanelKind) => {
+      if (dockRef.current.panels[p]) return dockRef.current.open.includes(p) ? closeDocked(p) : setPanel(p);
+      setPanel((current) => (current === p ? null : p));
+    },
+    [closeDocked, setPanel],
+  );
   const hide = useCallback((g: Group) => setPrefs((p) => ({ ...p, hidden: { ...p.hidden, [g]: true } })), []);
   const show = useCallback((g: Group) => setPrefs((p) => ({ ...p, hidden: { ...p.hidden, [g]: false } })), []);
   const restoreAll = useCallback(() => {
@@ -1509,8 +1571,37 @@ export function App({ engine }: { engine: Engine }) {
   const docked = prefs.aiMode === "docked" && !focus;
   const context = `${projectTitle()} · ${selectedPart ? partName(selectedPart) : "No selection"}`;
 
+  // Docked panels, from each window edge in: the AI outermost on the right, then tool panels, then the BOM.
+  const canDock = win.w > DOCK_MIN_WINDOW && !focus;
+  const sized = (id: string, usual: number) => prefs.dock.sizes[id] ?? usual;
+  const slots: DockSlot[] = [];
+  if (canDock && docked) slots.push({ id: "ai", side: "right", size: sized("ai", 390), min: 300, max: 760, initial: 390 });
+  if (canDock) {
+    for (const k of dockedOpen) {
+      const usual = k === "properties" ? 340 : 300;
+      slots.push({ id: k, side: prefs.dock.panels[k]!, size: sized(k, usual), min: 220, max: 640, initial: usual });
+    }
+  }
+  const benchSide = prefs.dock.bench;
+  if (canDock && bench && benchSide !== "float") {
+    const id = `bench-${benchSide}`;
+    const usual = benchSide === "bottom" ? 360 : 640;
+    slots.push({ id, side: benchSide, size: sized(id, usual), min: benchSide === "bottom" ? 170 : 440, max: 1200, initial: usual });
+  }
+  const docks = layoutDocks(slots, win.w, win.h);
+  const dockSize = (id: string) => (px: number) => setPrefs((p) => ({ ...p, dock: { ...p.dock, sizes: { ...p.dock.sizes, [id]: px } } }));
+  const splitter = (id: string, label: string) => {
+    const place = docks.places.get(id);
+    return place ? <Splitter place={place} label={label} onSize={dockSize(id)} /> : null;
+  };
+  // The floating tool panel, then the docked ones (floating too where the window is too small to dock).
+  const shownPanels: { kind: PanelKind; place?: DockPlace | null }[] = [
+    ...(panel && !prefs.dock.panels[panel] ? [{ kind: panel }] : []),
+    ...dockedOpen.map((kind) => ({ kind, place: docks.places.get(kind) ?? null })),
+  ];
+
   return (
-    <div className={`app ${docked ? "is-docked" : ""} ${focus ? "is-focus" : ""}`}>
+    <div className={`app ${docked ? "is-docked" : ""} ${focus ? "is-focus" : ""} ${docks.viewWidth < 1320 ? "view-narrow" : ""} ${docks.viewWidth < 700 ? "view-tight" : ""}`} style={docks.vars}>
       <main className="workspace" aria-label="Modeling canvas">
         <Viewport
           ref={viewport}
@@ -1532,7 +1623,8 @@ export function App({ engine }: { engine: Engine }) {
           comments={commentsView}
           selectedPart={selectedPartName}
           hidden={shownHidden}
-          hovered={panel === "components" ? treeHover : null}
+          hovered={bomHover ?? (panelOpen("components") ? treeHover : null)}
+          hoverXray={!!bomHover}
           isolated={isolated}
           colorBy={colorBy}
           tints={layerFx.tints}
@@ -1715,6 +1807,7 @@ export function App({ engine }: { engine: Engine }) {
           ) : (
             <ToolRail
               panel={panel}
+              docked={dockedOpen}
               canEdit={state.connection === "online"}
               onPanel={togglePanel}
               onSelectTool={() => select(null)}
@@ -1771,19 +1864,45 @@ export function App({ engine }: { engine: Engine }) {
         <Workbench
           tab={bench}
           onTab={setBench}
-          onClose={() => setBench(null)}
+          onClose={() => {
+            setBench(null);
+            setBomHover(null);
+          }}
           entities={state.entities}
           revision={state.revision}
           selected={selected}
+          selectedPiece={selectedPartName}
           run={run}
           notify={notify}
-          onSelect={(id) => select(id)}
+          onSelect={(id, piece) => {
+            if (piece && id === selected) setSelectedPartName(piece);
+            else {
+              pendingPiece.current = piece ?? null;
+              select(id, false, true, true);
+            }
+          }}
+          onHover={setBomHover}
+          dock={docks.places.get(`bench-${benchSide}`) ?? null}
+          dockSide={benchSide}
+          onDock={(side) => {
+            setPrefs((p) => ({ ...p, dock: { ...p.dock, bench: side } }));
+          }}
+          splitter={splitter(`bench-${benchSide}`, "Resize the bill of materials")}
         />
       )}
 
-      {!focus && panel && (
-        <ToolPanel kind={panel} onClose={() => setPanel(null)}>
-          {panel === "project" && (
+      {!focus &&
+        shownPanels.map(({ kind, place }) => (
+        <ToolPanel
+          key={`${place === undefined ? "float" : "dock"}-${kind}`}
+          kind={kind}
+          onClose={() => (place === undefined ? setPanel(null) : closeDocked(kind))}
+          dock={place ?? null}
+          dockSide={prefs.dock.panels[kind] ?? DOCK_SIDE[kind]}
+          onDock={(side) => dockPanel(kind, side)}
+          splitter={splitter(kind, `Resize ${kind}`)}
+        >
+          {kind === "project" && (
             <>
               <ProjectFileRows onPrefs={() => setPrefsOpen(true)} onConsole={() => setConsoleOpen(true)} onData={() => setDataOpen(true)} notify={notify} />
               <ProjectBody
@@ -1794,7 +1913,7 @@ export function App({ engine }: { engine: Engine }) {
               />
             </>
           )}
-          {panel === "comments" && (
+          {kind === "comments" && (
             <CommentsPanel
               threads={threads}
               active={openThread}
@@ -1806,7 +1925,7 @@ export function App({ engine }: { engine: Engine }) {
               onNew={() => !commenting && toggleCommenting()}
             />
           )}
-          {panel === "components" && (
+          {kind === "components" && (
             <ComponentsBody
               query={componentQuery}
               onQuery={setComponentQuery}
@@ -1863,7 +1982,7 @@ export function App({ engine }: { engine: Engine }) {
               })()}
             </ComponentsBody>
           )}
-          {panel === "objects" && (
+          {kind === "objects" && (
             <ObjectsBody
               parts={parts}
               materials={materials}
@@ -1907,7 +2026,7 @@ export function App({ engine }: { engine: Engine }) {
 
             />
           )}
-          {panel === "objects" && (
+          {kind === "objects" && (
             <>
               <h3 className="panel-section">Draft</h3>
               <DraftSection
@@ -1923,16 +2042,16 @@ export function App({ engine }: { engine: Engine }) {
               />
             </>
           )}
-          {panel === "properties" && selectedPart && instance(selectedPart) && (
+          {kind === "properties" && selectedPart && instance(selectedPart) && (
             <>
               <InstanceBody entity={selectedPart} entities={state.entities} run={run} onSelect={select} joints={jointView} />
               <ArraySection entity={selectedPart} entities={state.entities} run={run} notify={notify} />
             </>
           )}
-          {panel === "properties" && selectedPart && draftOf(selectedPart) && (
+          {kind === "properties" && selectedPart && draftOf(selectedPart) && (
             <DraftProperties entity={selectedPart} entities={state.entities} also={also} run={run} notify={notify} onSelect={(id) => setSelected(id)} />
           )}
-          {panel === "properties" && !(selectedPart && (instance(selectedPart) || draftOf(selectedPart))) && (
+          {kind === "properties" && !(selectedPart && (instance(selectedPart) || draftOf(selectedPart))) && (
             <PropertiesBody
               part={selectedPart}
               shape={selectedPart && isPart(selectedPart) ? (live?.id === selectedPart.id ? live : shapeOf(selectedPart)) : null}
@@ -1986,7 +2105,7 @@ export function App({ engine }: { engine: Engine }) {
               onExplode={setExplode}
             />
           )}
-          {panel === "requirements" && (
+          {kind === "requirements" && (
             <RequirementsPanel
               requirements={requirements}
               entities={state.entities}
@@ -2003,7 +2122,7 @@ export function App({ engine }: { engine: Engine }) {
               onCheck={runCheck}
             />
           )}
-          {panel === "history" && (
+          {kind === "history" && (
             <HistoryBody
               history={state.history}
               userId={state.userId}
@@ -2014,7 +2133,7 @@ export function App({ engine }: { engine: Engine }) {
               versions={<VersionsSection revision={state.revision} me={me} run={run} entities={state.entities} markAt={markAt} onMarked={() => setMarkAt(null)} />}
             />
           )}
-          {panel === "views" && (
+          {kind === "views" && (
             <ViewsBody
               view={view}
               wireframe={wireframe}
@@ -2036,9 +2155,9 @@ export function App({ engine }: { engine: Engine }) {
               }}
             />
           )}
-          {panel === "views" && <SelectionTools {...selectionActions} />}
+          {kind === "views" && <SelectionTools {...selectionActions} />}
         </ToolPanel>
-      )}
+      ))}
 
       {!focus && (
         <AiPanel
@@ -2068,6 +2187,8 @@ export function App({ engine }: { engine: Engine }) {
             say("assistant", "Discarded. Nothing was changed.");
           }}
           onMoved={(aiPosition) => update({ aiPosition })}
+          dock={docks.places.get("ai") ?? null}
+          splitter={splitter("ai", "Resize Forma AI")}
         />
       )}
 

@@ -2,13 +2,16 @@
 // costs, and who quotes it. The engine works the BOM out (configurations,
 // nested assemblies, merging, estimates, awards); this draws it.
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { type EntityView, projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
 import { PROCESS_NAMES, assemblyDef, instance, materialLook, program } from "./model";
 import { BuildingView } from "./Building";
 import { SourcingView } from "./Sourcing";
+import { type LineUse, type SceneIndex, definitionKeys, keysFor, lineMatches, sceneIndex, selectionUses } from "./bomLinks";
+import type { DockPlace } from "./Dock";
+import type { DockSide } from "./ui";
 
 export type Estimate = { material?: number; process?: number; setup: number; hours?: number; basis: string[] };
 export type AwardView = { id: string; supplier: string; supplier_name: string; quote?: string; unit_price: number | null; currency: string; lead_days?: number };
@@ -49,6 +52,8 @@ export type MakeLine = {
   extended: number | null;
   cost_source: "award" | "estimate" | "none";
   used_in: string[];
+  /** Every definition its parts come from: how it finds its parts in the view. */
+  uses?: LineUse[];
 };
 export type BuyLine = {
   key: string;
@@ -68,6 +73,7 @@ export type BuyLine = {
   award?: AwardView;
   cost_source: "award" | "list" | "none";
   used_in: string[];
+  uses?: LineUse[];
 };
 export type BomNode = {
   name: string;
@@ -109,6 +115,12 @@ export function money(v: number | null | undefined, currency = "USD", digits?: n
 
 const kg = (v: number | null | undefined) => (v == null ? "—" : v >= 1 ? `${v.toLocaleString("en-US", { maximumFractionDigits: 2 })} kg` : `${(v * 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} g`);
 const dims = (s: [number, number, number]) => s.map((v) => (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2))).join(" × ");
+
+/** Where a line's parts come from (an engine without `uses`: its first definition). */
+function lineUses(l: MakeLine | BuyLine): LineUse[] {
+  if (l.uses) return l.uses;
+  return l.shape ? [{ shape: l.shape, config: "config" in l ? (l as MakeLine).config : undefined, part: l.part }] : [];
+}
 
 export const processName = (p?: string | null) => (p ? (PROCESS_NAMES[p] ?? p) : "No process");
 
@@ -170,18 +182,33 @@ export function Workbench(props: {
   entities: ReadonlyMap<string, EntityView>;
   revision: number;
   selected: string | null;
+  /** The piece picked inside the selected item, if one is. */
+  selectedPiece?: string | null;
   run: Run;
   notify: (m: string) => void;
-  onSelect: (id: string) => void;
+  /** Select an item (and a piece of it) in the view. */
+  onSelect: (id: string, piece?: string | null) => void;
+  /** Light these up in the view ("id" or "id#piece"), or nothing. */
+  onHover?: (keys: string[] | null) => void;
+  /** Docked: where it sits; else it floats large over the model. */
+  dock?: DockPlace | null;
+  /** Where the viewer keeps it: docked to an edge, or floating. */
+  dockSide?: DockSide | "float";
+  onDock?: (side: DockSide | "float") => void;
+  splitter?: ReactNode;
 }) {
   const [rfqOpen, setRfqOpen] = useState<string | null>(null);
+  const docked = props.dock ?? null;
+  // Esc closes it while it floats over the model; docked, it stays (Esc is for the view).
   useEffect(() => {
+    if (docked) return;
     const key = (e: KeyboardEvent) => e.key === "Escape" && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) && props.onClose();
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [props]);
+  }, [props, docked]);
+  const where = props.dockSide ?? "float";
   return (
-    <section className="bench floating" aria-label="Bill of materials and sourcing">
+    <section className={docked ? `bench docked dock-${docked.side}` : "bench floating"} style={docked?.style} aria-label="Bill of materials and sourcing">
       <header className="bench-head">
         <div className="bench-tabs" role="tablist">
           <button type="button" role="tab" aria-selected={props.tab === "bom"} className={props.tab === "bom" ? "active" : ""} title="Bill of materials: every part to make and buy, with quantities and costs" onClick={() => props.onTab("bom")}>
@@ -194,11 +221,21 @@ export function Workbench(props: {
             <Icon name="building" /> Building
           </button>
         </div>
-        <IconButton icon="close" label="Close (Esc)" onClick={props.onClose} />
+        <div className="bench-actions">
+          {props.onDock && (
+            <div className="bench-place" role="group" aria-label="Where the workbench sits">
+              <IconButton icon="dockBottom" label="Dock to the bottom edge, under the model" pressed={where === "bottom"} className={where === "bottom" ? "on" : ""} onClick={() => props.onDock!("bottom")} />
+              <IconButton icon="dock" label="Dock to the right edge, beside the model" pressed={where === "right"} className={where === "right" ? "on" : ""} onClick={() => props.onDock!("right")} />
+              <IconButton icon="expand" label="Float it large, over the model" pressed={where === "float"} className={where === "float" ? "on" : ""} onClick={() => props.onDock!("float")} />
+            </div>
+          )}
+          <IconButton icon="close" label={docked ? "Close the workbench" : "Close (Esc)"} onClick={props.onClose} />
+        </div>
       </header>
       {props.tab === "bom" ? (
         <BomView
           {...props}
+          compact={docked?.side === "bottom"}
           onRequest={(id) => {
             setRfqOpen(id);
             props.onTab("sourcing");
@@ -209,6 +246,7 @@ export function Workbench(props: {
       ) : (
         <SourcingView entities={props.entities} revision={props.revision} run={props.run} notify={props.notify} open={rfqOpen} onOpen={setRfqOpen} onBom={() => props.onTab("bom")} />
       )}
+      {docked && props.splitter}
     </section>
   );
 }
@@ -217,14 +255,26 @@ function BomView(props: {
   entities: ReadonlyMap<string, EntityView>;
   revision: number;
   selected: string | null;
+  selectedPiece?: string | null;
   run: Run;
   notify: (m: string) => void;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, piece?: string | null) => void;
+  onHover?: (keys: string[] | null) => void;
   onRequest: (rfq: string) => void;
+  /** Docked under the model: one bar holds scope, lists, totals and actions, so the lines get the room. */
+  compact?: boolean;
 }) {
   const picked = scopeOf(props.entities, props.selected);
-  const [useSelection, setUseSelection] = useState(true);
-  const scope = useSelection && picked ? picked : null;
+  // The whole project, or (by choice) the item selected; a selection made from
+  // the BOM's own lines leaves what it lists alone.
+  const [useSelection, setUseSelection] = useState(false);
+  const fromBom = useRef<string | null>(null);
+  const [held, setHeld] = useState(picked);
+  useEffect(() => {
+    if (!props.selected || props.selected !== fromBom.current) setHeld(picked);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picked?.id, picked?.name]);
+  const scope = useSelection && held ? held : null;
   const [qty, setQty] = useState(1);
   const [qtyText, setQtyText] = useState("1");
   const [tab, setTab] = useState<"make" | "buy" | "tree">("make");
@@ -247,6 +297,41 @@ function BomView(props: {
     const keys = new Set([...bom.make.map((l) => l.key), ...bom.buy.map((l) => l.key)]);
     setChosen((c) => new Set([...c].filter((k) => keys.has(k))));
   }, [bom]);
+
+  // Linked to the view: a line lights every copy of its parts, a click selects
+  // the first, and what is selected in the view marks its lines.
+  const index = useMemo(() => sceneIndex(props.entities, scope?.id ?? null), [props.entities, scope?.id]);
+  const keysOf = useCallback((l: MakeLine | BuyLine | { uses: LineUse[] }) => keysFor("key" in l ? lineUses(l) : l.uses, index), [index]);
+  const { onHover } = props;
+  const hover = useCallback((keys: string[] | null) => onHover?.(keys && keys.length ? keys : null), [onHover]);
+  useEffect(() => () => onHover?.(null), [onHover]);
+  const pick = (keys: string[]) => {
+    if (!keys.length) return;
+    const [id, piece] = keys[0].split("#");
+    fromBom.current = id;
+    props.onSelect(id, piece ?? null);
+  };
+  const linked = useMemo(() => {
+    const out = new Set<string>();
+    if (!bom || !props.selected) return out;
+    const sel = selectionUses(props.entities, props.selected, props.selectedPiece ?? null);
+    const lines = [...bom.make, ...bom.buy];
+    for (const loose of [false, true]) {
+      for (const l of lines) if (lineMatches(lineUses(l), sel, loose)) out.add(l.key);
+      if (out.size) break;
+    }
+    return out;
+  }, [bom, props.entities, props.selected, props.selectedPiece]);
+  // A selection made in the view (or the tree) brings its line into sight.
+  useEffect(() => {
+    if (!bom || !linked.size || props.selected === fromBom.current) return;
+    const inMake = bom.make.some((l) => linked.has(l.key));
+    const inBuy = bom.buy.some((l) => linked.has(l.key));
+    if (tab === "make" && !inMake && inBuy) setTab("buy");
+    else if (tab === "buy" && !inBuy && inMake) setTab("make");
+    window.setTimeout(() => document.querySelector(".bom-table tr.linked")?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 40);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linked]);
 
   const goTo = (line: string) => {
     if (!bom) return;
@@ -301,20 +386,52 @@ function BomView(props: {
   const flagged = useMemo(() => new Set(bom?.flags.filter((f) => f.line && f.level === "warning").map((f) => f.line!) ?? []), [bom]);
   const currentBreak = bom?.totals.breaks.find((b) => b.qty === qty);
 
+  const lists = bom && (
+    <div className="segmented">
+      <button type="button" className={tab === "make" ? "active" : ""} title="Parts you make: printed, machined, cut" onClick={() => setTab("make")}>
+        Make <b>{bom.make.length}</b>
+      </button>
+      <button type="button" className={tab === "buy" ? "active" : ""} title="Parts you buy: screws, bearings, electronics and other stock items" onClick={() => setTab("buy")}>
+        Buy <b>{bom.buy.length}</b>
+      </button>
+      <button type="button" className={tab === "tree" ? "active" : ""} title="Indented BOM: the assembly tree with quantities per parent" onClick={() => setTab("tree")}>
+        Indented
+      </button>
+    </div>
+  );
+
   return (
-    <div className="bom">
+    <div className={`bom ${props.compact ? "compact" : ""}`}>
       <div className="bom-bar">
+        {props.compact && lists}
         <div className="bom-scope">
           <button type="button" className={`scope-chip ${!scope ? "on" : ""}`} title="Bill of materials for the whole project" onClick={() => setUseSelection(false)}>
             <Icon name="layers" /> Whole project
           </button>
-          {picked && (
-            <button type="button" className={`scope-chip ${scope ? "on" : ""}`} onClick={() => setUseSelection(true)} title="The item selected in the view">
-              <Icon name="cube" /> {picked.name}
+          {held && (
+            <button type="button" className={`scope-chip ${scope ? "on" : ""}`} onClick={() => setUseSelection(true)} title={`List just ${held.name}, the item selected in the view`}>
+              <Icon name="cube" /> {held.name}
             </button>
           )}
-          {!picked && <span className="bom-hint">Select a part or assembly to list just that</span>}
+          {!held && !props.compact && <span className="bom-hint">Select a part or assembly to list just that</span>}
         </div>
+        {props.compact && bom && (
+          <div className={`bom-glance ${loading ? "refreshing" : ""}`}>
+            <span className="lead" title={`Cost per unit${bom.totals.unpriced > 0 ? ", partial: some lines have no price" : ""} · estimates unless quoted`}>
+              <AnimatedNumber value={bom.totals.per_unit} format={(v) => money(v, cur, 2)} />
+              <small>per unit{bom.totals.unpriced > 0 ? " · partial" : ""}</small>
+            </span>
+            <span title={`Make: ${bom.make.reduce((n, l) => n + l.qty, 0)} parts on ${bom.make.length} lines`}>
+              <small>Make</small> {money(bom.totals.make / qty, cur, 2)}
+            </span>
+            <span title={`Buy: ${bom.buy.reduce((n, l) => n + l.qty, 0)} items on ${bom.buy.length} lines`}>
+              <small>Buy</small> {money(bom.totals.buy / qty, cur, 2)}
+            </span>
+            <span title={bom.totals.mass_kg == null ? "Some parts have no material" : "Mass per unit"}>
+              <small>Mass</small> {kg(bom.totals.mass_kg)}
+            </span>
+          </div>
+        )}
         <div className="bom-actions">
           <label className="qty-field" title="Finished units to build">
             <span>Build</span>
@@ -349,6 +466,7 @@ function BomView(props: {
       {!bom && !error && <BomSkeleton />}
       {bom && (
         <>
+          {!props.compact && (
           <div className={`bom-summary ${loading ? "refreshing" : ""}`}>
             <div className="kpi lead">
               <small>Cost per unit{bom.totals.unpriced > 0 ? " · partial" : ""}</small>
@@ -388,6 +506,7 @@ function BomView(props: {
               ))}
             </div>
           </div>
+          )}
 
           {bom.flags.length > 0 && (
             <div className={`bom-flags ${warnings ? "warn" : ""}`}>
@@ -420,30 +539,22 @@ function BomView(props: {
             </div>
           )}
 
+          {!props.compact && (
           <div className="bom-tabs">
-            <div className="segmented">
-              <button type="button" className={tab === "make" ? "active" : ""} title="Parts you make: printed, machined, cut" onClick={() => setTab("make")}>
-                Make <b>{bom.make.length}</b>
-              </button>
-              <button type="button" className={tab === "buy" ? "active" : ""} title="Parts you buy: screws, bearings, electronics and other stock items" onClick={() => setTab("buy")}>
-                Buy <b>{bom.buy.length}</b>
-              </button>
-              <button type="button" className={tab === "tree" ? "active" : ""} title="Indented BOM: the assembly tree with quantities per parent" onClick={() => setTab("tree")}>
-                Indented
-              </button>
-            </div>
+            {lists}
             <span className="bom-note">
               {tab === "tree" ? "Quantities per parent · total per unit" : `Quantities per unit${qty > 1 ? ` · extended for ${qty.toLocaleString()}` : ""}`}
               {currentBreak && !currentBreak.complete ? " · some lines have no price" : ""}
             </span>
           </div>
+          )}
 
-          <div className="bom-table-wrap">
+          <div className="bom-table-wrap" onMouseLeave={() => hover(null)}>
             {tab === "make" && (
-              <MakeTable bom={bom} qty={qty} open={open} onOpen={setOpen} chosen={chosen} onToggle={toggle} flash={flash} flagged={flagged} scope={scope?.id ?? "project"} onSelect={props.onSelect} entities={props.entities} />
+              <MakeTable bom={bom} qty={qty} open={open} onOpen={setOpen} chosen={chosen} onToggle={toggle} flash={flash} flagged={flagged} scope={scope?.id ?? "project"} linked={linked} onHover={(l) => hover(keysOf(l))} onPick={(l) => pick(keysOf(l))} />
             )}
-            {tab === "buy" && <BuyTable bom={bom} qty={qty} open={open} onOpen={setOpen} chosen={chosen} onToggle={toggle} flash={flash} flagged={flagged} />}
-            {tab === "tree" && <TreeTable bom={bom} onLine={goTo} />}
+            {tab === "buy" && <BuyTable bom={bom} qty={qty} open={open} onOpen={setOpen} chosen={chosen} onToggle={toggle} flash={flash} flagged={flagged} linked={linked} onHover={(l) => hover(keysOf(l))} onPick={(l) => pick(keysOf(l))} />}
+            {tab === "tree" && <TreeTable bom={bom} onLine={goTo} linked={linked} keysOf={(n, parent) => nodeKeys(n, parent, bom, props.entities, index, keysOf)} onHover={hover} onPick={pick} />}
             {tab !== "tree" && (tab === "make" ? bom.make : bom.buy).length === 0 && (
               <div className="bom-empty">{tab === "make" ? "Nothing to make here." : "Nothing bought here. Programs declare bought items with stock({ partNumber, … })."}</div>
             )}
@@ -535,6 +646,26 @@ function Check({ on, onClick, label }: { on: boolean; onClick: () => void; label
   );
 }
 
+/** The chevron that opens a line's details (cost basis, prices). */
+function Disclose({ open, label, onClick }: { open: boolean; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`line-disclose ${open ? "open" : ""}`}
+      aria-expanded={open}
+      aria-label={`${open ? "Hide" : "Show"} the details of ${label}`}
+      title={`${open ? "Hide" : "Show"} the details of ${label}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      onDoubleClick={(e) => e.stopPropagation()}
+    >
+      <Icon name="chevron" />
+    </button>
+  );
+}
+
 function MakeTable(props: {
   bom: Bom;
   qty: number;
@@ -545,8 +676,9 @@ function MakeTable(props: {
   flash: string | null;
   flagged: Set<string>;
   scope: string;
-  onSelect: (id: string) => void;
-  entities: ReadonlyMap<string, EntityView>;
+  linked: Set<string>;
+  onHover: (l: MakeLine) => void;
+  onPick: (l: MakeLine) => void;
 }) {
   const { bom, qty } = props;
   const cur = bom.totals.currency;
@@ -576,11 +708,20 @@ function MakeTable(props: {
           const isOpen = props.open === l.key;
           return (
             <Fragment key={l.key}>
-              <tr id={`bom-${l.key}`} className={`${isOpen ? "open" : ""} ${props.flash === l.key ? "flash" : ""} ${props.chosen.has(l.key) ? "chosen" : ""}`} onClick={() => props.onOpen(isOpen ? null : l.key)}>
+              <tr
+                id={`bom-${l.key}`}
+                className={`${isOpen ? "open" : ""} ${props.flash === l.key ? "flash" : ""} ${props.chosen.has(l.key) ? "chosen" : ""} ${props.linked.has(l.key) ? "linked" : ""}`}
+                onMouseEnter={() => props.onHover(l)}
+                onClick={() => props.onPick(l)}
+                onDoubleClick={() => props.onOpen(isOpen ? null : l.key)}
+              >
                 <td className="c-check">
                   <Check on={props.chosen.has(l.key)} label={`Choose ${l.name}`} onClick={() => props.onToggle(l.key)} />
                 </td>
-                <td className="c-item">{l.item}</td>
+                <td className="c-item">
+                  <Disclose open={isOpen} label={l.name} onClick={() => props.onOpen(isOpen ? null : l.key)} />
+                  {l.item}
+                </td>
                 <td className="c-name">
                   <strong>
                     {props.flagged.has(l.key) && <span className="warn-dot" title="Needs attention" />}
@@ -677,11 +818,9 @@ function MakeTable(props: {
                           <dt>Used in</dt>
                           <dd>{l.used_in.join(", ")}</dd>
                         </dl>
-                        {props.entities.get(l.shape) && (
-                          <button type="button" className="secondary" title={`Select ${l.name} in the 3D view`} onClick={() => props.onSelect(l.shape)}>
-                            <Icon name="cursor" /> Show in the view
-                          </button>
-                        )}
+                        <button type="button" className="secondary" title={`Select ${l.name} in the 3D view`} onClick={() => props.onPick(l)}>
+                          <Icon name="cursor" /> Show in the view
+                        </button>
                       </div>
                     </div>
                   </td>
@@ -707,7 +846,19 @@ function MakeTable(props: {
   );
 }
 
-function BuyTable(props: { bom: Bom; qty: number; open: string | null; onOpen: (k: string | null) => void; chosen: Set<string>; onToggle: (k: string) => void; flash: string | null; flagged: Set<string> }) {
+function BuyTable(props: {
+  bom: Bom;
+  qty: number;
+  open: string | null;
+  onOpen: (k: string | null) => void;
+  chosen: Set<string>;
+  onToggle: (k: string) => void;
+  flash: string | null;
+  flagged: Set<string>;
+  linked: Set<string>;
+  onHover: (l: BuyLine) => void;
+  onPick: (l: BuyLine) => void;
+}) {
   const { bom, qty } = props;
   const cur = bom.totals.currency;
   const all = bom.buy.length > 0 && bom.buy.every((l) => props.chosen.has(l.key));
@@ -735,11 +886,20 @@ function BuyTable(props: { bom: Bom; qty: number; open: string | null; onOpen: (
           const isOpen = props.open === l.key;
           return (
             <Fragment key={l.key}>
-              <tr id={`bom-${l.key}`} className={`${isOpen ? "open" : ""} ${props.flash === l.key ? "flash" : ""} ${props.chosen.has(l.key) ? "chosen" : ""} ${!s ? "missing" : ""}`} onClick={() => props.onOpen(isOpen ? null : l.key)}>
+              <tr
+                id={`bom-${l.key}`}
+                className={`${isOpen ? "open" : ""} ${props.flash === l.key ? "flash" : ""} ${props.chosen.has(l.key) ? "chosen" : ""} ${!s ? "missing" : ""} ${props.linked.has(l.key) ? "linked" : ""}`}
+                onMouseEnter={() => props.onHover(l)}
+                onClick={() => props.onPick(l)}
+                onDoubleClick={() => props.onOpen(isOpen ? null : l.key)}
+              >
                 <td className="c-check">
                   <Check on={props.chosen.has(l.key)} label={`Choose ${l.name}`} onClick={() => props.onToggle(l.key)} />
                 </td>
-                <td className="c-item">{l.item}</td>
+                <td className="c-item">
+                  <Disclose open={isOpen} label={s?.part_number ?? l.name} onClick={() => props.onOpen(isOpen ? null : l.key)} />
+                  {l.item}
+                </td>
                 <td className="c-name">
                   {s ? (
                     <strong className="pn">{s.part_number}</strong>
@@ -872,7 +1032,31 @@ function BuyTable(props: { bom: Bom; qty: number; open: string | null; onOpen: (
   );
 }
 
-function TreeTable({ bom, onLine }: { bom: Bom; onLine: (k: string) => void }) {
+/** What an indented-BOM row lights: every copy of its definition, or (a part or item) its line's parts under its parent. */
+function nodeKeys(n: BomNode, parent: BomNode | null, bom: Bom, entities: ReadonlyMap<string, EntityView>, index: SceneIndex, keysOf: (l: { uses: LineUse[] }) => string[]): string[] {
+  if (n.id) return definitionKeys(n.id, n.config, entities, index);
+  const l = n.line ? (bom.make.find((x) => x.key === n.line) ?? bom.buy.find((x) => x.key === n.line)) : undefined;
+  if (!l) return [];
+  const uses = lineUses(l);
+  const under = parent?.id ? uses.filter((u) => u.shape === parent.id) : [];
+  return keysOf({ uses: under.length ? under : uses });
+}
+
+function TreeTable({
+  bom,
+  onLine,
+  linked,
+  keysOf,
+  onHover,
+  onPick,
+}: {
+  bom: Bom;
+  onLine: (k: string) => void;
+  linked: Set<string>;
+  keysOf: (n: BomNode, parent: BomNode | null) => string[];
+  onHover: (keys: string[] | null) => void;
+  onPick: (keys: string[]) => void;
+}) {
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const items = useMemo(() => {
     const m = new Map<string, number>();
@@ -880,15 +1064,15 @@ function TreeTable({ bom, onLine }: { bom: Bom; onLine: (k: string) => void }) {
     for (const l of bom.buy) m.set(l.key, l.item);
     return m;
   }, [bom]);
-  const rows: { n: BomNode; depth: number; path: string; kids: boolean }[] = [];
-  const walk = (nodes: BomNode[], depth: number, at: string) =>
+  const rows: { n: BomNode; depth: number; path: string; kids: boolean; parent: BomNode | null }[] = [];
+  const walk = (nodes: BomNode[], depth: number, at: string, parent: BomNode | null) =>
     nodes.forEach((n, i) => {
       const path = `${at}/${i}`;
       const kids = (n.children?.length ?? 0) > 0;
-      rows.push({ n, depth, path, kids });
-      if (kids && !closed.has(path)) walk(n.children!, depth + 1, path);
+      rows.push({ n, depth, path, kids, parent });
+      if (kids && !closed.has(path)) walk(n.children!, depth + 1, path, n);
     });
-  walk(bom.tree, 0, "");
+  walk(bom.tree, 0, "", null);
   const flip = useCallback(
     (p: string) =>
       setClosed((c) => {
@@ -911,12 +1095,25 @@ function TreeTable({ bom, onLine }: { bom: Bom; onLine: (k: string) => void }) {
         </tr>
       </thead>
       <tbody>
-        {rows.map(({ n, depth, path, kids }) => (
-          <tr key={path} className={`depth-${Math.min(depth, 6)} ${n.kind}`}>
+        {rows.map(({ n, depth, path, kids, parent }) => (
+          <tr
+            key={path}
+            className={`depth-${Math.min(depth, 6)} ${n.kind} ${n.line && linked.has(n.line) ? "linked" : ""}`}
+            onMouseEnter={() => onHover(keysOf(n, parent))}
+            onClick={() => onPick(keysOf(n, parent))}
+          >
             <td className="tree-name">
               <span style={{ paddingLeft: depth * 18 }} className="tree-indent">
                 {kids ? (
-                  <button type="button" className={`twisty ${closed.has(path) ? "" : "open"}`} onClick={() => flip(path)} aria-label={closed.has(path) ? "Expand" : "Collapse"}>
+                  <button
+                    type="button"
+                    className={`twisty ${closed.has(path) ? "" : "open"}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      flip(path);
+                    }}
+                    aria-label={closed.has(path) ? "Expand" : "Collapse"}
+                  >
                     <Icon name="chevron" />
                   </button>
                 ) : (
@@ -931,7 +1128,15 @@ function TreeTable({ bom, onLine }: { bom: Bom; onLine: (k: string) => void }) {
             <td>{n.class ? <span className={`cls ${n.class}`}>{n.class === "make" ? "Make" : "Buy"}</span> : <span className="kind">{n.kind === "assembly" ? "Assembly" : n.kind === "shape" ? "Shape" : "Item"}</span>}</td>
             <td className="num">
               {n.line && items.has(n.line) ? (
-                <button type="button" className="item-link" title="Go to this line in the Make or Buy list" onClick={() => onLine(n.line!)}>
+                <button
+                  type="button"
+                  className="item-link"
+                  title="Go to this line in the Make or Buy list"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onLine(n.line!);
+                  }}
+                >
                   {items.get(n.line)}
                 </button>
               ) : null}

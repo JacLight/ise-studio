@@ -636,7 +636,7 @@
 .b3d {
   position: absolute;
   z-index: 6;
-  left: 50%;
+  left: calc(var(--dock-l, 0px) + (100% - var(--dock-l, 0px) - var(--dock-r, 0px)) / 2);
   top: 22px;
   transform: translateX(-50%);
   display: flex;

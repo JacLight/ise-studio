@@ -12,7 +12,7 @@
 // • Esc steps back from face to part. Values snap to 1 mm (⇧ 10, ⌥ 0.1),
 //   preview live, and commit once on release; Esc mid-drag cancels.
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { attachTumble, attachWalk, type Tumble } from "./tumble";
@@ -378,8 +378,11 @@ type Props = {
   pickableParts?: string[] | null;
   /** Items (or instances at any depth) hidden from view. */
   hidden: ReadonlySet<string>;
-  /** The item (or "id#piece") the pointer is over in the components tree: lit up here. */
-  hovered?: string | null;
+  /** What the pointer is over in the components tree or the BOM, lit up here: items (or instances
+   * at any depth) by id, or one piece of one as "id#piece"; a BOM line lights every instance of it. */
+  hovered?: string | readonly string[] | null;
+  /** While something is lit, show the rest faint so lit parts inside the model show through. */
+  hoverXray?: boolean;
   /** Show only this item or instance, if set. */
   isolated: string | null;
   /** Paint instances by their sale status instead of their materials. */
@@ -475,6 +478,9 @@ const OUTLINE = new THREE.Color("#8b66ef");
 /** Pre-selection glow for what the pointer is over in the components tree. */
 const HOVER = "#9a7cf0";
 const HOVER_GLOW = 0.5;
+/** Through the X-ray, lit parts take one strong violet (whatever their own colour). */
+const XRAY_LIT = "#6a46dc";
+const XRAY_GLOW = 0.42;
 const POS_KEYS = ["x", "y", "z"] as const;
 const SIZE_KEYS = ["width", "depth", "height"] as const;
 const GIZMO_SCALE = 0.085; // of camera distance
@@ -725,7 +731,7 @@ function buildInstance(e: EntityView, entities: ReadonlyMap<string, EntityView>,
     mesh.quaternion.set(...o.transform.q);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    mesh.userData = { id: e.id, path: o.path, shape: o.shape };
+    mesh.userData = { id: e.id, path: o.path, shape: o.shape, pieces: parts.map((p) => p.name) };
     // Drawn as a GPU instance with every other mesh of its geometry and look (see batchLayer).
     BatchLayer.adopt(mesh);
     group.add(mesh);
@@ -850,42 +856,63 @@ export function statusColor(status: string | undefined) {
  * instance (at any depth) tinted, and, by status, each shape painted with the
  * sale status of the nearest instance above it that has one.
  */
-function paintInstance(part: Part, entities: ReadonlyMap<string, EntityView>, selected: string | null, hidden: ReadonlySet<string>, isolated: string | null, colorBy: "material" | "status", tints?: ReadonlyMap<string, string>, hovered?: string | null) {
+function paintInstance(part: Part, entities: ReadonlyMap<string, EntityView>, selected: string | null, hidden: ReadonlySet<string>, isolated: string | null, colorBy: "material" | "status", tints?: ReadonlyMap<string, string>, hovered: readonly Hover[] = [], xray = false) {
   // Hovering something inside the selection in the tree: its glow alone shows,
   // the rest of the selection goes quiet so the child stands out.
-  const within = !!hovered && !!selected && hovered !== selected && part.meshes.some((m) => {
+  const lit = hovered.filter((h) => h.id !== selected);
+  const within = !!selected && lit.length > 0 && part.meshes.some((m) => {
     const p = m.userData.path as string[];
-    return p.includes(hovered) && p.includes(selected);
+    return p.includes(selected) && lit.some((h) => p.includes(h.id));
   });
+  // X-ray (a BOM line under the pointer): everything else goes faint, so parts inside show.
+  const faint = xray && hovered.length > 0;
   for (const mesh of part.meshes) {
     const path = mesh.userData.path as string[];
     mesh.visible = !path.some((id) => hidden.has(id)) && (!isolated || path.includes(isolated));
-    const hot = !!hovered && hovered !== selected && path.includes(hovered);
+    // The whole mesh, or (a BOM line, a piece in the tree) some of its pieces.
+    const mine = lit.filter((h) => path.includes(h.id));
+    const pieces = (mesh.userData.pieces as string[] | undefined) ?? [];
+    const hotAt = (i: number) => mine.some((h) => !h.piece || (!!pieces[i] && (pieces[i] === h.piece || pieces[i].startsWith(`${h.piece}/`))));
+    const hot = mine.length > 0 && (pieces.length ? pieces.some((_, i) => hotAt(i)) : mine.some((h) => !h.piece));
     const chosen = !hot && !within && !!selected && path.includes(selected);
     let status: string | undefined;
     for (let i = path.length - 1; i >= 0 && !status; i--) status = instance(entities.get(path[i]))?.properties?.status;
     let tint: string | undefined;
     for (let i = path.length - 1; i >= 0 && !tint; i--) tint = tints?.get(path[i]);
     const paint = colorBy === "status" ? statusColor(status) : (tint ?? null);
-    for (const m of bodyMaterials(mesh)) {
+    bodyMaterials(mesh).forEach((m, i) => {
       const look = m.userData.look as Look;
       m.color.set(paint ?? look.color);
       const glass = (look.opacity ?? 1) < 1 && !paint;
       m.transparent = glass;
       m.opacity = glass ? look.opacity! : 1;
       m.depthWrite = !glass;
-      m.emissive.set(chosen ? ACCENT : hot ? HOVER : "#000000");
-      m.emissiveIntensity = chosen ? 0.3 : hot ? HOVER_GLOW : 0;
+      const glow = hot && (!pieces.length || hotAt(i));
+      m.emissive.set(chosen ? ACCENT : glow ? HOVER : "#000000");
+      m.emissiveIntensity = chosen ? 0.3 : glow ? HOVER_GLOW : 0;
+      // Through the X-ray, what is lit is painted outright: small parts must not be missed.
+      if (faint && glow) {
+        m.color.set(XRAY_LIT);
+        m.emissiveIntensity = XRAY_GLOW;
+      }
       // The child under the pointer also shows through the parts around it.
-      if (within && !hot && !glass) {
+      if ((within && !hot && !glass) || (faint && !glow && !chosen)) {
         m.transparent = true;
-        m.opacity = 0.35;
+        m.opacity = faint ? Math.min(m.opacity, 0.16) : 0.35;
         m.depthWrite = false;
       }
       m.needsUpdate = true;
-    }
+    });
   }
 }
+
+/** One thing lit up: an item or instance (at any depth) by id, or one piece of it. */
+type Hover = { id: string; piece: string | null };
+const hoverList = (h: string | readonly string[] | null | undefined): Hover[] =>
+  (h == null ? [] : typeof h === "string" ? [h] : h).map((k) => {
+    const at = k.indexOf("#");
+    return at < 0 ? { id: k, piece: null } : { id: k.slice(0, at), piece: k.slice(at + 1) };
+  });
 
 function disposePart(part: Part) {
   for (const mesh of part.meshes) {
@@ -2484,6 +2511,11 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     };
   }, []);
 
+  // What is lit up, kept by value so a new list with the same keys repaints nothing.
+  const hoverKey = typeof props.hovered === "string" ? props.hovered : (props.hovered ?? []).join("\n");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const hovers = useMemo(() => hoverList(props.hovered), [hoverKey]);
+
   // Sync meshes with engine state and any live edit.
   useEffect(() => {
     const t = three.current;
@@ -2550,27 +2582,33 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       // The picked part of an assembly glows; the rest of the assembly stays as built.
       const picked = id === selected && props.selectedPart ? assemblyParts(entities.get(id)).findIndex((p) => p.name === props.selectedPart) : -1;
       if (part.shared) {
-        paintInstance(part, entities, selected, props.hidden, props.isolated, props.colorBy, props.tints, props.hovered);
+        paintInstance(part, entities, selected, props.hidden, props.isolated, props.colorBy, props.tints, hovers, !!props.hoverXray);
         continue;
       }
       // "Show only" may name one piece of a part ("id#piece").
       const [isoId, isoPiece] = props.isolated ? [props.isolated.split("#")[0], props.isolated.includes("#") ? props.isolated.slice(props.isolated.indexOf("#") + 1) : null] : [null, null];
       part.group.visible = !props.hidden.has(id) && (!isoId || isoId === id);
       const pieces = assemblyParts(entities.get(id));
-      const hov = props.hovered ?? null;
-      const hotAll = hov === id && id !== selected;
-      const hotPiece = hov?.startsWith(`${id}#`) ? hov.slice(id.length + 1) : null;
+      const lit = hovers.filter((h) => h.id === id);
+      const xray = !!props.hoverXray && hovers.length > 0;
+      const hotAll = id !== selected && lit.some((h) => !h.piece);
+      const hotPieces = lit.flatMap((h) => (h.piece ? [h.piece] : []));
       // The rest of the assembly turns to X-ray so a part inside stays visible.
       bodyMaterials(part.body).forEach((m, i) => {
         const base = m.userData.look as Look;
-        const ghost = picked >= 0 && i !== picked;
-        const opacity = ghost ? Math.min(base.opacity ?? 1, 0.14) : (base.opacity ?? 1);
+        // The piece (or whole part) under the pointer in the components tree glows softly.
+        const hot = i !== picked && (hotAll || (!!pieces[i] && hotPieces.some((hp) => pieces[i].name === hp || pieces[i].name.startsWith(`${hp}/`))));
+        // X-ray for a BOM line: all but what it lists (and what is picked) goes faint.
+        const ghost = (picked >= 0 && i !== picked) || (xray && !hot && i !== picked && !(id === selected && picked < 0));
+        const opacity = ghost ? Math.min(base.opacity ?? 1, xray ? 0.16 : 0.14) : (base.opacity ?? 1);
         // A layer's colour paints its parts; without one, the part's own look.
         m.color.set(props.colorBy === "material" ? (props.tints?.get(id) ?? base.color) : m.color);
-        // The piece (or whole part) under the pointer in the components tree glows softly.
-        const hot = i !== picked && (hotAll || (!!hotPiece && !!pieces[i] && (pieces[i].name === hotPiece || pieces[i].name.startsWith(`${hotPiece}/`))));
         m.emissive.set(i === picked ? ACCENT : hot ? HOVER : "#000000");
         m.emissiveIntensity = i === picked ? 0.45 : hot ? HOVER_GLOW : 0;
+        if (xray && hot && props.colorBy === "material") {
+          m.color.set(XRAY_LIT);
+          m.emissiveIntensity = XRAY_GLOW;
+        }
         m.transparent = opacity < 1;
         m.opacity = opacity;
         m.depthWrite = opacity >= 1;
@@ -2581,7 +2619,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       });
       part.body.castShadow = !(id === selected && props.selectedPart);
       // A board's own drawing follows the tree too (its parts are drawn per component).
-      if (pieces.length) pcbLooks.paint(id, { pieces: pieces.map((p) => p.name), hidden: (n) => props.hidden.has(subPartKey(id, n)), isolated: isoId === id ? isoPiece : null, hot: hotAll ? "*" : hotPiece });
+      if (pieces.length) pcbLooks.paint(id, { pieces: pieces.map((p) => p.name), hidden: (n) => props.hidden.has(subPartKey(id, n)), isolated: isoId === id ? isoPiece : null, hot: hotAll ? "*" : hotPieces });
     }
     const sel = selected ? t.parts.get(selected) : undefined;
     shape.current = sel ? (live?.id === selected ? { ...live } : { ...sel.base }) : null;
@@ -2620,7 +2658,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       cam.updateProjectionMatrix();
     }
     t.invalidate();
-  }, [entities, selected, live, props.also, props.pivotMode, props.pivotLive, props.selectedPart, props.hidden, props.isolated, props.colorBy, props.teammates, props.tints, props.hovered]);
+  }, [entities, selected, live, props.also, props.pivotMode, props.pivotLive, props.selectedPart, props.hidden, props.isolated, props.colorBy, props.teammates, props.tints, hovers, props.hoverXray]);
 
   // Draft objects: redrawn when they or the selection change.
   useEffect(() => {

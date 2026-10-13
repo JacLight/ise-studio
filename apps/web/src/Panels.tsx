@@ -2,6 +2,7 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useDraggable } from "./drag";
+import type { DockPlace } from "./Dock";
 import { AXIS_COLORS } from "./gizmo";
 import { type EntityView, type HistoryEntry, type PartStats, type ProjectEntry, type ShapeStats, projectName, projectTitle, projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
@@ -71,17 +72,48 @@ const TITLES: Record<PanelKind, string> = {
   comments: "Comments",
 };
 
-export function ToolPanel(props: { kind: PanelKind; title?: string; onClose: () => void; children: ReactNode }) {
+/**
+ * A tool panel: floating (moved by its header), or docked flush to a window
+ * edge with a splitter on its inner edge. `onDock` docks it to `dockSide`,
+ * moves it to the other edge, or floats it again (null).
+ */
+export function ToolPanel(props: {
+  kind: PanelKind;
+  title?: string;
+  onClose: () => void;
+  children: ReactNode;
+  dock?: DockPlace | null;
+  dockSide?: "left" | "right";
+  onDock?: (side: "left" | "right" | null) => void;
+  splitter?: ReactNode;
+}) {
   const ref = useRef<HTMLElement>(null);
   const handle = useDraggable(ref, null);
   const title = props.title ?? TITLES[props.kind];
+  const name = TITLES[props.kind].split(":")[0].toLowerCase();
+  const docked = props.dock?.side === "left" || props.dock?.side === "right" ? props.dock : null;
+  const side = docked ? (docked.side as "left" | "right") : (props.dockSide ?? "left");
+  const other = side === "left" ? "right" : "left";
   return (
-    <aside ref={ref} className="tool-panel floating" aria-label={title}>
-      <header className="panel-handle" tabIndex={0} aria-label={`Move ${title} panel using arrow keys`} {...handle}>
+    <aside ref={ref} className={docked ? `tool-panel docked dock-${side}` : "tool-panel floating"} style={docked?.style} aria-label={title}>
+      <header className="panel-handle" tabIndex={docked ? -1 : 0} aria-label={docked ? title : `Move ${title} panel using arrow keys`} {...(docked ? {} : handle)}>
         <strong>{title}</strong>
-        <IconButton icon="close" label={`Close ${title}`} onClick={props.onClose} />
+        <div className="panel-actions">
+          {props.onDock && docked && <IconButton icon={other === "left" ? "dockLeft" : "dock"} label={`Move the ${name} panel to the ${other} edge`} onClick={() => props.onDock!(other)} />}
+          {props.onDock && (
+            <IconButton
+              icon={side === "left" ? "dockLeft" : "dock"}
+              pressed={!!docked}
+              className={docked ? "on" : ""}
+              label={docked ? `Float the ${name} panel` : `Dock the ${name} panel to the ${side} edge`}
+              onClick={() => props.onDock!(docked ? null : side)}
+            />
+          )}
+          <IconButton icon="close" label={`Close ${title}`} onClick={props.onClose} />
+        </div>
       </header>
       <div className="panel-body">{props.children}</div>
+      {docked && props.splitter}
     </aside>
   );
 }
