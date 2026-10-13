@@ -839,6 +839,50 @@ fn install_native<'js>(ctx: &Ctx<'js>, arena: &Rc<RefCell<Arena>>, tolerance: f6
     }
 
     install_pictures(ctx, &native)?;
+    crate::scans::install_queries(ctx, &native)?;
+
+    // Scans: mesh files with repairs, solids from scans, mesh operations on solids.
+    {
+        let arena = arena.clone();
+        native.set(
+            "importMeshWith",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String, options: String| -> rquickjs::Result<String> {
+                let o: serde_json::Value = serde_json::from_str(&options).unwrap_or_default();
+                let bodies = crate::scans::import_mesh_with(&sha, &o).map_err(|e| throw(&ctx, format!("importMesh: {e}")))?;
+                let list: Vec<(String, u32, Option<String>)> = bodies.into_iter().map(|(n, m, c)| (n, push_solid(&arena, m), c.map(crate::assets::hex))).collect();
+                Ok(serde_json::to_string(&list).unwrap())
+            })?,
+        )?;
+    }
+    {
+        let arena = arena.clone();
+        native.set(
+            "scanSolid",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, op: String, sha: String, options: String| -> rquickjs::Result<u32> {
+                let o: serde_json::Value = serde_json::from_str(&options).unwrap_or_default();
+                let m = crate::scans::scan_solid(&op, &sha, &o).map_err(|e| throw(&ctx, format!("{op}: {e}")))?;
+                Ok(push_solid(&arena, m))
+            })?,
+        )?;
+    }
+    {
+        let arena = arena.clone();
+        native.set(
+            "meshOp",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, op: String, h: u32, options: String| -> rquickjs::Result<u32> {
+                if op == "refine" {
+                    return Ok(h);
+                }
+                let o: serde_json::Value = serde_json::from_str(&options).unwrap_or_default();
+                let m = {
+                    let a = arena.borrow();
+                    let s = a.solids.get(h as usize).ok_or_else(|| throw(&ctx, "unknown solid"))?;
+                    crate::scans::solid_op(s, &op, &o).map_err(|e| throw(&ctx, format!("{op}: {e}")))?
+                };
+                Ok(push_solid(&arena, m))
+            })?,
+        )?;
+    }
 
     {
         let arena = arena.clone();

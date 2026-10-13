@@ -1678,3 +1678,6 @@ int occ_draft(void* p, int h, const int* idx, int n, double degrees, double dx, 
 
 // Sweeps, lofts, offsets, defeaturing, paint, checks and BREP files.
 #include "solids.cpp"
+
+// B-spline faces from scans, merged flat faces, tessellation with angle control.
+#include "scan.cpp"

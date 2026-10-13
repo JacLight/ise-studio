@@ -56,6 +56,7 @@ pub fn path(sha: &str) -> Result<PathBuf, String> {
         .iter()
         .map(|k| k.ext())
         .chain(PICTURES)
+        .chain(crate::scans::POINT_EXTS)
         .map(|k| dir.join(format!("{sha}.{k}")))
         .find(|p| p.is_file())
         .ok_or_else(|| format!("the file {} is not on this computer yet: it comes from a teammate who has it, as soon as one is online", &sha[..12]))
@@ -85,6 +86,19 @@ pub fn store_as(sha: &str, bytes: &[u8]) -> Result<PathBuf, String> {
         std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&p, bytes)).map_err(|e| format!("could not store the file: {e}"))?;
     }
     Ok(p)
+}
+
+/// Keeps a scan (point cloud or mesh) under the extension it reads as
+/// (`crate::scans::ext_of`); returns its hash.
+pub fn store_scan(bytes: &[u8], ext: &str) -> Result<String, String> {
+    let sha = sha256(bytes);
+    if path(&sha).is_ok() {
+        return Ok(sha);
+    }
+    let dir = DIR.get().ok_or("stored files are not available here")?;
+    let p = dir.join(format!("{sha}.{ext}"));
+    std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&p, bytes)).map_err(|e| format!("could not store the file: {e}"))?;
+    Ok(sha)
 }
 
 /// The folder stored files live in, if set.

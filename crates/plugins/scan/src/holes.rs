@@ -18,10 +18,13 @@ pub struct Filled {
     pub triangles_added: usize,
 }
 
-/// Fills every hole whose rim has at most `max_edges` edges.
+/// Fills every hole whose rim has at most `max_edges` edges. A patch that
+/// would cross itself or the mesh is tried again another way (ear clipping,
+/// then unrefined) before it is kept.
 pub fn fill_holes(m: &mut Mesh, max_edges: usize, refine: bool) -> Filled {
     let loops = m.boundary_loops();
     let mut out = Filled::default();
+    let original = crate::spatial::TriBvh::new(m);
     for lp in loops {
         if lp.len() < 3 {
             continue;
@@ -31,11 +34,19 @@ pub fn fill_holes(m: &mut Mesh, max_edges: usize, refine: bool) -> Filled {
             continue;
         }
         let before = m.triangles.len();
-        let patch = triangulate(m, &lp);
-        let first = m.triangles.len();
-        m.triangles.extend(patch);
-        if refine && lp.len() > 3 {
-            refine_patch(m, &lp, first);
+        let vertices = m.positions.len();
+        let attempts: &[(bool, bool)] = if refine { &[(false, true), (true, true), (true, false), (false, false)] } else { &[(false, false), (true, false)] };
+        for (k, &(ear, fair)) in attempts.iter().enumerate() {
+            let patch = if ear || lp.len() > 60 { ear_clip(m, &lp) } else { min_weight(m, &lp) };
+            m.triangles.extend(patch);
+            if fair && lp.len() > 3 {
+                refine_patch(m, &lp, before);
+            }
+            if k + 1 == attempts.len() || patch_clean(m, &original, before) {
+                break;
+            }
+            m.triangles.truncate(before);
+            m.positions.truncate(vertices);
         }
         out.triangles_added += m.triangles.len() - before;
         out.filled += 1;
@@ -43,9 +54,49 @@ pub fn fill_holes(m: &mut Mesh, max_edges: usize, refine: bool) -> Filled {
     out
 }
 
-/// The triangles closing one loop (wound to match the rim).
-fn triangulate(m: &Mesh, lp: &[u32]) -> Vec<[u32; 3]> {
-    if lp.len() <= 60 { min_weight(m, lp) } else { ear_clip(m, lp) }
+/// Whether the triangles from `first` on cross neither each other nor the mesh they patch.
+fn patch_clean(m: &Mesh, original: &crate::spatial::TriBvh, first: usize) -> bool {
+    use crate::spatial::triangles_intersect;
+    let boxes: Vec<(V3, V3)> = (first..m.triangles.len()).map(|t| {
+        let c = m.corners(t);
+        let mut lo = [f64::INFINITY; 3];
+        let mut hi = [f64::NEG_INFINITY; 3];
+        for p in c {
+            for k in 0..3 {
+                lo[k] = lo[k].min(p[k]);
+                hi[k] = hi[k].max(p[k]);
+            }
+        }
+        (lo, hi)
+    }).collect();
+    let mut cand = Vec::new();
+    for (i, t) in (first..m.triangles.len()).enumerate() {
+        let tri = m.triangles[t];
+        let c = m.corners(t);
+        for (j, u) in (first..m.triangles.len()).enumerate().skip(i + 1) {
+            let (a, b) = (boxes[i], boxes[j]);
+            if (0..3).any(|k| a.0[k] > b.1[k] || b.0[k] > a.1[k]) {
+                continue;
+            }
+            if m.triangles[u].iter().any(|v| tri.contains(v)) {
+                continue;
+            }
+            if triangles_intersect(c, m.corners(u)) {
+                return false;
+            }
+        }
+        original.overlapping(boxes[i].0, boxes[i].1, &mut cand);
+        for &o in &cand {
+            let ot = original.mesh.triangles[o as usize];
+            if ot.iter().any(|v| tri.contains(v)) {
+                continue;
+            }
+            if triangles_intersect(c, original.mesh.corners(o as usize)) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// The normal of the rim's triangle at each loop edge (for the dihedral term).

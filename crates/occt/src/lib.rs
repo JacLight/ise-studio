@@ -9,6 +9,8 @@ use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
 mod solids;
 pub use solids::*;
+mod scan;
+pub use scan::*;
 
 unsafe extern "C" {
     fn occ_arena_new() -> *mut c_void;
