@@ -851,11 +851,17 @@ export function statusColor(status: string | undefined) {
  * sale status of the nearest instance above it that has one.
  */
 function paintInstance(part: Part, entities: ReadonlyMap<string, EntityView>, selected: string | null, hidden: ReadonlySet<string>, isolated: string | null, colorBy: "material" | "status", tints?: ReadonlyMap<string, string>, hovered?: string | null) {
+  // Hovering something inside the selection in the tree: its glow alone shows,
+  // the rest of the selection goes quiet so the child stands out.
+  const within = !!hovered && !!selected && hovered !== selected && part.meshes.some((m) => {
+    const p = m.userData.path as string[];
+    return p.includes(hovered) && p.includes(selected);
+  });
   for (const mesh of part.meshes) {
     const path = mesh.userData.path as string[];
     mesh.visible = !path.some((id) => hidden.has(id)) && (!isolated || path.includes(isolated));
-    const chosen = !!selected && path.includes(selected);
-    const hot = !chosen && !!hovered && path.includes(hovered);
+    const hot = !!hovered && hovered !== selected && path.includes(hovered);
+    const chosen = !hot && !within && !!selected && path.includes(selected);
     let status: string | undefined;
     for (let i = path.length - 1; i >= 0 && !status; i--) status = instance(entities.get(path[i]))?.properties?.status;
     let tint: string | undefined;
@@ -870,6 +876,12 @@ function paintInstance(part: Part, entities: ReadonlyMap<string, EntityView>, se
       m.depthWrite = !glass;
       m.emissive.set(chosen ? ACCENT : hot ? HOVER : "#000000");
       m.emissiveIntensity = chosen ? 0.3 : hot ? HOVER_GLOW : 0;
+      // The child under the pointer also shows through the parts around it.
+      if (within && !hot && !glass) {
+        m.transparent = true;
+        m.opacity = 0.35;
+        m.depthWrite = false;
+      }
       m.needsUpdate = true;
     }
   }
