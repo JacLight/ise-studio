@@ -496,9 +496,19 @@ pub async fn start(State(server): State<Arc<Server>>, Query(query): Query<HashMa
 
 /// Runs a program, passing each output line (stdout and stderr) to `line`,
 /// stopping it when the job is cancelled.
-fn run_program(mut cmd: Command, flag: &AtomicBool, mut line: impl FnMut(&str)) -> Result<(), String> {
+fn run_program(cmd: Command, flag: &AtomicBool, mut line: impl FnMut(&str)) -> Result<(), String> {
+    run_program_talk(cmd, flag, false, |l| {
+        line(l);
+        None
+    })
+}
+
+/// As `run_program`; with `talk`, what `line` answers is written to the program's stdin as a line.
+fn run_program_talk(mut cmd: Command, flag: &AtomicBool, talk: bool, mut line: impl FnMut(&str) -> Option<String>) -> Result<(), String> {
+    use std::io::Write;
     let name = cmd.get_program().to_string_lossy().rsplit('/').next().unwrap_or("program").to_string();
-    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null()).spawn().map_err(|e| format!("could not run {name}: {e}"))?;
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(if talk { Stdio::piped() } else { Stdio::null() }).spawn().map_err(|e| format!("could not run {name}: {e}"))?;
+    let mut stdin = child.stdin.take();
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     let mut readers = Vec::new();
     if let Some(out) = child.stdout.take() {
@@ -522,7 +532,10 @@ fn run_program(mut cmd: Command, flag: &AtomicBool, mut line: impl FnMut(&str)) 
     loop {
         match rx.recv_timeout(std::time::Duration::from_millis(200)) {
             Ok(l) => {
-                line(&l);
+                if let (Some(reply), Some(input)) = (line(&l), stdin.as_mut()) {
+                    let _ = writeln!(input, "{reply}");
+                    let _ = input.flush();
+                }
                 tail.push(l);
                 if tail.len() > 8 {
                     tail.remove(0);
@@ -582,6 +595,8 @@ struct Raw {
     depth: usize,
     version: String,
     notes: Vec<String>,
+    /// Markers already found in each camera's photo (index into `cameras`).
+    detections: Option<Vec<(usize, Vec<de_scan::markers::Detection>)>>,
 }
 
 fn run(server: &Server, id: &str, set: &PhotoSet, flag: &AtomicBool) -> Result<Value, String> {
@@ -640,14 +655,32 @@ fn run_object_capture(server: &Server, id: &str, job: &Job, images: &FsPath, wor
     let bin = object_capture_helper(server)?;
     let out = work.join("out");
     let mut cmd = Command::new(bin);
-    cmd.arg(images).arg(&out).args(["--detail", &job.detail]);
+    // Cameras first; then the model of only the box over the marker sheet (when the photos show it), so the
+    // model's triangles go to the object rather than the table round it.
+    cmd.arg(images).arg(&out).args(["--detail", &job.detail, "--ask-bounds"]);
     if job.mask {
         cmd.arg("--mask");
     }
     let (mut model, mut poses, mut rejected, mut depth, mut error, mut notes) = (None::<String>, Value::Null, Vec::new(), 0usize, None::<String>, Vec::new());
+    let mut detections = None;
     update(server, id, |j| j.advance("Object Capture", 0.02, 0.03, 0.0));
-    run_program(cmd, flag, |l| {
-        let Ok(v) = serde_json::from_str::<Value>(l) else { return };
+    run_program_talk(cmd, flag, true, |l| {
+        let Ok(v) = serde_json::from_str::<Value>(l) else { return None };
+        if v["awaiting"] == "bounds" {
+            update(server, id, |j| j.advance("finding the scale markers", 0.5, 0.55, 0.0));
+            let cameras = oc_cameras(&poses, images);
+            let found = detect_markers(images, &cameras);
+            let sheet = de_scan::markers::Sheet::default();
+            let reply = match photo::marker_scaling(&cameras, &found, &sheet) {
+                Ok((s, _)) => {
+                    notes.push("modelled only the box over the marker sheet".into());
+                    sheet_box(&s.transform, &sheet)
+                }
+                Err(_) => json!({}),
+            };
+            detections = Some(found);
+            return Some(reply.to_string());
+        }
         if let Some(p) = v["progress"].as_f64() {
             update(server, id, |j| j.advance(&j.stage.clone(), 0.03, 0.85, p));
         }
@@ -677,6 +710,7 @@ fn run_object_capture(server: &Server, id: &str, job: &Job, images: &FsPath, wor
         if let Some(e) = v["error"].as_str() {
             error = Some(e.to_string());
         }
+        None
     })
     .map_err(|e| error.clone().unwrap_or(e))?;
     if let Some(e) = error {
@@ -692,6 +726,16 @@ fn run_object_capture(server: &Server, id: &str, job: &Job, images: &FsPath, wor
         *p = p.map(|v| v * 1000.0);
     }
     let cloud = Cloud { positions: mesh.positions.clone(), normals: vec![], colors: vec![] };
+    let cameras = oc_cameras(&poses, images);
+    if cameras.is_empty() {
+        notes.push("Object Capture gave no camera poses (macOS 14+ does): marker scaling is not possible; scale with a known distance".into());
+    }
+    Ok(Raw { mesh: Some(mesh), cloud, cameras, rejected, reprojection: None, depth, version: object_capture_info(server).version.unwrap_or_default(), notes, detections })
+}
+
+/// RealityKit's camera poses (column-major camera-to-world, metres; its camera
+/// x right, y up, looking −z) as Forma's cameras, millimetres.
+fn oc_cameras(poses: &Value, images: &FsPath) -> Vec<Camera> {
     let mut cameras = Vec::new();
     for p in poses.as_array().into_iter().flatten() {
         let m: Vec<f64> = p["matrix"].as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
@@ -700,7 +744,6 @@ fn run_object_capture(server: &Server, id: &str, job: &Job, images: &FsPath, wor
             continue;
         }
         let name = p["image"].as_str().unwrap_or_default().to_string();
-        // Column-major camera-to-world, RealityKit's camera (x right, y up, looking −z).
         let col = |c: usize| [m[c * 4], m[c * 4 + 1], m[c * 4 + 2]];
         let (x, y, z, c) = (col(0), col(1), col(2), col(3).map(|v| v * 1000.0));
         let rotation = [x, [-y[0], -y[1], -y[2]], [-z[0], -z[1], -z[2]]];
@@ -708,10 +751,75 @@ fn run_object_capture(server: &Server, id: &str, job: &Job, images: &FsPath, wor
         let (w, h) = image_size(&images.join(&name)).unwrap_or(((k[6] * 2.0) as u32, (k[7] * 2.0) as u32));
         cameras.push(Camera { name, width: w, height: h, fx: k[0], fy: k[4], cx: k[6], cy: k[7], dist: [0.0; 4], rotation, translation });
     }
-    if cameras.is_empty() {
-        notes.push("Object Capture gave no camera poses (macOS 14+ does): marker scaling is not possible; scale with a known distance".into());
+    cameras
+}
+
+/// The marker sheet's markers found in each camera's photo.
+fn detect_markers(images: &FsPath, cameras: &[Camera]) -> Vec<(usize, Vec<de_scan::markers::Detection>)> {
+    let mut out = Vec::new();
+    for (ci, cam) in cameras.iter().enumerate() {
+        if let Some((g, w, h)) = decode_gray(&images.join(&cam.name)) {
+            out.push((ci, de_scan::markers::detect(&g, w, h)));
+        }
     }
-    Ok(Raw { mesh: Some(mesh), cloud, cameras, rejected, reprojection: None, depth, version: object_capture_info(server).version.unwrap_or_default(), notes })
+    out
+}
+
+/// The box an object on the marker sheet stands in, as the engine's frame
+/// sees it (axis-aligned there, metres): the sheet's field and half its size
+/// again round it (as the cleaning keeps), from just under the sheet to
+/// 500 mm over it. `s` takes the engine's frame (mm) to the sheet's.
+fn sheet_box(s: &Similarity, sheet: &de_scan::markers::Sheet) -> Value {
+    let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
+    for (_, c) in &sheet.markers {
+        lo = [lo[0].min(c[0]), lo[1].min(c[1])];
+        hi = [hi[0].max(c[0]), hi[1].max(c[1])];
+    }
+    let h = sheet.marker / 2.0;
+    let (lo, hi) = ([lo[0] + h, lo[1] + h], [hi[0] - h, hi[1] - h]);
+    let grow = (hi[0] - lo[0]).max(hi[1] - lo[1]) * 0.5;
+    let r = &s.rotation;
+    let (box_lo, box_hi) = ([lo[0] - grow, lo[1] - grow, -10.0], [hi[0] + grow, hi[1] + grow, 500.0]);
+    let (mut a, mut b) = ([f64::MAX; 3], [f64::MIN; 3]);
+    for corner in 0..8 {
+        let p = [if corner & 1 == 0 { box_lo[0] } else { box_hi[0] }, if corner & 2 == 0 { box_lo[1] } else { box_hi[1] }, if corner & 4 == 0 { box_lo[2] } else { box_hi[2] }];
+        // x = Rᵀ (p − t) / s, then metres.
+        let d = [p[0] - s.translation[0], p[1] - s.translation[1], p[2] - s.translation[2]];
+        let q = [0, 1, 2].map(|i| (r[0][i] * d[0] + r[1][i] * d[1] + r[2][i] * d[2]) / s.scale / 1000.0);
+        for k in 0..3 {
+            a[k] = a[k].min(q[k]);
+            b[k] = b[k].max(q[k]);
+        }
+    }
+    // The same box turned with the sheet (macOS 13+). RealityKit turns an oriented box about its own centre,
+    // which (min + max) / 2 places in the session's frame: so the centre there, ± the half-sizes along the sheet.
+    let centre = [0, 1, 2].map(|k| (box_lo[k] + box_hi[k]) / 2.0);
+    let d = [centre[0] - s.translation[0], centre[1] - s.translation[1], centre[2] - s.translation[2]];
+    let c = [0, 1, 2].map(|i| (r[0][i] * d[0] + r[1][i] * d[1] + r[2][i] * d[2]) / s.scale / 1000.0);
+    let half = [0, 1, 2].map(|k| (box_hi[k] - box_lo[k]) / 2.0 / s.scale / 1000.0);
+    let (o_lo, o_hi) = ([0, 1, 2].map(|k| c[k] - half[k]), [0, 1, 2].map(|k| c[k] + half[k]));
+    let rt = [[r[0][0], r[1][0], r[2][0]], [r[0][1], r[1][1], r[2][1]], [r[0][2], r[1][2], r[2][2]]];
+    json!({ "min": a, "max": b, "oriented": { "rotation": rotation_quaternion(&rt), "min": o_lo, "max": o_hi } })
+}
+
+/// A rotation matrix (rows) as a unit quaternion [w, x, y, z].
+fn rotation_quaternion(m: &[[f64; 3]; 3]) -> [f64; 4] {
+    let trace = m[0][0] + m[1][1] + m[2][2];
+    let q = if trace > 0.0 {
+        let s = (trace + 1.0).sqrt() * 2.0;
+        [0.25 * s, (m[2][1] - m[1][2]) / s, (m[0][2] - m[2][0]) / s, (m[1][0] - m[0][1]) / s]
+    } else if m[0][0] > m[1][1] && m[0][0] > m[2][2] {
+        let s = (1.0 + m[0][0] - m[1][1] - m[2][2]).sqrt() * 2.0;
+        [(m[2][1] - m[1][2]) / s, 0.25 * s, (m[0][1] + m[1][0]) / s, (m[0][2] + m[2][0]) / s]
+    } else if m[1][1] > m[2][2] {
+        let s = (1.0 + m[1][1] - m[0][0] - m[2][2]).sqrt() * 2.0;
+        [(m[0][2] - m[2][0]) / s, (m[0][1] + m[1][0]) / s, 0.25 * s, (m[1][2] + m[2][1]) / s]
+    } else {
+        let s = (1.0 + m[2][2] - m[0][0] - m[1][1]).sqrt() * 2.0;
+        [(m[1][0] - m[0][1]) / s, (m[0][2] + m[2][0]) / s, (m[1][2] + m[2][1]) / s, 0.25 * s]
+    };
+    let n = q.iter().map(|v| v * v).sum::<f64>().sqrt();
+    q.map(|v| v / n)
 }
 
 fn image_size(path: &FsPath) -> Option<(u32, u32)> {
@@ -905,7 +1013,8 @@ fn run_colmap(server: &Server, id: &str, job: &Job, images: &FsPath, work: &FsPa
         }
     }
     if cloud.is_empty() && cpu_dense {
-        match cpu_dense_cloud(server, id, job, &bin, images, &best_dir, work, flag) {
+        let aspect = model.cameras.first().map(|c| c.width.max(c.height) as f64 / c.width.min(c.height).max(1) as f64).unwrap_or(1.5);
+        match cpu_dense_cloud(server, id, job, (&bin, images, &best_dir, work), (model.cameras.len(), aspect), flag) {
             Ok((c, r)) => {
                 notes.push(format!("dense matching (Forma, on the CPU): {} points from {} of {} photos in {:.0} s", r.points, r.matched, r.photos, r.seconds));
                 if !r.skipped.is_empty() {
@@ -930,25 +1039,29 @@ fn run_colmap(server: &Server, id: &str, job: &Job, images: &FsPath, work: &FsPa
     if cloud.len() < 50 {
         return Err(format!("COLMAP solved {} cameras but only {} good points: the surface needs more texture (see the capture guide)", model.cameras.len(), cloud.len()));
     }
-    Ok(Raw { mesh, cloud, cameras: model.cameras, rejected, reprojection: Some(mean_error), depth: 0, version: info.version.unwrap_or_default(), notes })
+    Ok(Raw { mesh, cloud, cameras: model.cameras, rejected, reprojection: Some(mean_error), depth: 0, version: info.version.unwrap_or_default(), notes, detections: None })
 }
 
-/// Photo sizes Forma's dense matching works at, by detail.
-fn dense_size(detail: &str) -> usize {
-    match detail {
+/// The longer side Forma's dense matching works at: by detail, made smaller
+/// for many photos so they all fit in memory together (about 11 bytes a
+/// pixel: grey, colour, depth and normal; 100 million pixels, ~1.1 GB).
+fn dense_size(detail: &str, photos: usize, aspect: f64) -> usize {
+    let wanted = match detail {
         "preview" => 640,
         "reduced" => 900,
         "medium" => 1200,
         _ => 1600,
-    }
+    };
+    let per_photo = 100e6 / photos.max(1) as f64;
+    let fits = (per_photo * aspect.max(1.0)).sqrt() as usize;
+    wanted.min(fits).max(320)
 }
 
 /// Forma's dense matching (`de_scan::mvs`) on COLMAP's solved cameras, for
 /// COLMAP builds without CUDA: COLMAP undistorts the photos (on the CPU),
 /// Forma matches them; an oriented, coloured cloud.
-#[allow(clippy::too_many_arguments)]
-fn cpu_dense_cloud(server: &Server, id: &str, job: &Job, bin: &FsPath, images: &FsPath, model_dir: &FsPath, work: &FsPath, flag: &AtomicBool) -> Result<(Cloud, de_scan::mvs::Report), String> {
-    let size = dense_size(&job.detail);
+fn cpu_dense_cloud(server: &Server, id: &str, job: &Job, (bin, images, model_dir, work): (&FsPath, &FsPath, &FsPath, &FsPath), (photos, aspect): (usize, f64), flag: &AtomicBool) -> Result<(Cloud, de_scan::mvs::Report), String> {
+    let size = dense_size(&job.detail, photos, aspect);
     let dense = work.join("dense");
     update(server, id, |j| j.advance("dense matching: undistorting the photos", 0.5, 0.52, 0.0));
     let mut cmd = Command::new(bin);
@@ -988,18 +1101,21 @@ fn transform_camera(c: &Camera, s: &Similarity) -> Camera {
 fn finish(server: &Server, id: &str, job: &Job, set: &PhotoSet, images: &FsPath, mut raw: Raw, t0: std::time::Instant) -> Result<Value, String> {
     // Size and floor: the marker sheet when the photos show it.
     update(server, id, |j| j.advance("finding the scale markers", 0.88, 0.93, 0.0));
-    let mut detections = Vec::new();
-    let mut photos_with_markers = 0;
-    for (ci, cam) in raw.cameras.iter().enumerate() {
-        if let Some((g, w, h)) = decode_gray(&images.join(&cam.name)) {
-            let found = de_scan::markers::detect(&g, w, h);
-            if !found.is_empty() {
-                photos_with_markers += 1;
+    // (Object Capture's run may have found them already, to model only the box over the sheet.)
+    let detections = match raw.detections.take() {
+        Some(d) => d,
+        None => {
+            let mut d = Vec::new();
+            for (ci, cam) in raw.cameras.iter().enumerate() {
+                if let Some((g, w, h)) = decode_gray(&images.join(&cam.name)) {
+                    d.push((ci, de_scan::markers::detect(&g, w, h)));
+                }
+                update(server, id, |j| j.advance("finding the scale markers", 0.88, 0.93, (ci + 1) as f64 / raw.cameras.len().max(1) as f64));
             }
-            detections.push((ci, found));
+            d
         }
-        update(server, id, |j| j.advance("finding the scale markers", 0.88, 0.93, (ci + 1) as f64 / raw.cameras.len().max(1) as f64));
-    }
+    };
+    let photos_with_markers = detections.iter().filter(|(_, f)| !f.is_empty()).count();
     let sheet = de_scan::markers::Sheet::default();
     let size = {
         let (lo, hi) = raw.cloud.bounds();
@@ -1146,8 +1262,11 @@ fn finish(server: &Server, id: &str, job: &Job, set: &PhotoSet, images: &FsPath,
             depth: 0,
             version: String::new(),
             notes: vec![],
+            detections: None,
         };
-        let cleaned = if k == 1.0 { clean(&raw, levelled, field, metric, object_size) } else { clean(&nominal(&raw), levelled, field.map(|f| f.map(|v| v * k)), metric, object_size * k) };
+        // The markers' field is small (190 × 110 mm): the crop round it reaches half its size further, so a longer object is not cut at its edge.
+        let grow = if marker_field.is_some() { 0.5 } else { 0.0 };
+        let cleaned = if k == 1.0 { clean(&raw, levelled, field, grow, metric, object_size) } else { clean(&nominal(&raw), levelled, field.map(|f| f.map(|v| v * k)), grow, metric, object_size * k) };
         match cleaned.map(|(mut m, r)| {
             for p in m.positions.iter_mut() {
                 *p = p.map(|v| v / k);
@@ -1172,13 +1291,13 @@ fn finish(server: &Server, id: &str, job: &Job, set: &PhotoSet, images: &FsPath,
 /// but whole, even where it reaches past the field; holes filled, lightened
 /// to at most 200 000 triangles. Points are thinned of outliers, the things
 /// standing in the field picked out, and meshed (Poisson) first.
-fn clean(raw: &Raw, levelled: bool, field: Option<[f64; 4]>, metric: bool, size: f64) -> Result<(Mesh, Vec<Value>), String> {
+fn clean(raw: &Raw, levelled: bool, field: Option<[f64; 4]>, grow: f64, metric: bool, size: f64) -> Result<(Mesh, Vec<Value>), String> {
     use de_shape::scans::{cloud_op, mesh_op, reconstruct};
     let mut steps = Vec::new();
     let within = |f: &[f64; 4], p: &V3| p[0] > f[0] && p[1] > f[1] && p[0] < f[2] && p[1] < f[3];
-    // The field only seeds the object: the crop round it is half its size wider each way, so an object longer than the field is not cut at its edge.
+    // The field only seeds the object; the crop round it reaches `grow` × its size further each way.
     let region = field.map(|f| {
-        let m = (f[2] - f[0]).max(f[3] - f[1]) * 0.5;
+        let m = (f[2] - f[0]).max(f[3] - f[1]) * grow;
         [f[0] - m, f[1] - m, f[2] + m, f[3] + m]
     });
     let inside = |p: &V3| field.is_none_or(|f| within(&f, p));
@@ -1242,7 +1361,7 @@ fn clean(raw: &Raw, levelled: bool, field: Option<[f64; 4]>, metric: bool, size:
             steps.push(r);
         }
     }
-    let (t, r) = standing(m, |p| inside(p) && (!levelled || p[2] > cut));
+    let (t, r) = standing(m, |p| inside(p) && (!levelled || p[2] > cut), levelled);
     m = t;
     steps.push(r);
     let (t, r) = mesh_op(&m, "fillHoles", &json!({ "fair": false }))?;
@@ -1258,18 +1377,22 @@ fn clean(raw: &Raw, levelled: bool, field: Option<[f64; 4]>, metric: bool, size:
 }
 
 /// The pieces of a mesh standing in the field (`seed` true at one of their
-/// vertices), each at least 2 % of the biggest such piece: the object, whole,
-/// and its loose parts, without the things round it. The largest piece when
-/// none stands there.
-fn standing(m: Mesh, seed: impl Fn(&V3) -> bool) -> (Mesh, Value) {
+/// vertices): the biggest, and any other at least 2 % its size that (when
+/// `levelled`) reaches a quarter of its height — the object, whole, and its
+/// loose parts, without the things round it or scraps of the floor. The
+/// largest piece when none stands there.
+fn standing(m: Mesh, seed: impl Fn(&V3) -> bool, levelled: bool) -> (Mesh, Value) {
     let pieces = m.split_components();
     let total = pieces.len();
     let stands: Vec<bool> = pieces.iter().map(|p| p.positions.iter().any(&seed)).collect();
-    let biggest = pieces.iter().zip(&stands).filter(|(_, s)| **s).map(|(p, _)| p.triangles.len()).max().unwrap_or(0);
+    let top = |p: &Mesh| p.positions.iter().map(|v| v[2]).fold(f64::MIN, f64::max);
+    // Pieces come biggest first: the first standing one is the object.
+    let main = stands.iter().position(|s| *s);
+    let (biggest, main_top) = main.map(|i| (pieces[i].triangles.len(), top(&pieces[i]))).unwrap_or((0, 0.0));
     let mut out = Mesh::default();
     let mut kept = 0;
-    for (p, s) in pieces.iter().zip(&stands) {
-        if *s && p.triangles.len() * 50 >= biggest {
+    for (i, (p, s)) in pieces.iter().zip(&stands).enumerate() {
+        if *s && (Some(i) == main || (p.triangles.len() * 50 >= biggest && (!levelled || top(p) >= 0.25 * main_top))) {
             out.merge(p);
             kept += 1;
         }
@@ -1294,6 +1417,53 @@ mod tests {
         let e = explain("Object Capture could not build the model: The operation couldn’t be completed. (CoreOC.PhotogrammetrySession.Error error 6.)", 40);
         assert!(e.contains("could not be placed") && !e.contains("only 40"), "{e}");
         assert_eq!(explain("no photos in x.zip", 0), "no photos in x.zip");
+    }
+
+    #[test]
+    fn object_capture_models_the_box_over_the_sheet() {
+        // The engine's frame: metres-ish units turned and shifted from the sheet's (mm).
+        let s = Similarity { scale: 1000.0 / 0.8, rotation: photo::quat_rotation([0.8, 0.3, -0.2, 0.4]), translation: [30.0, -20.0, 5.0] };
+        let b = sheet_box(&s, &de_scan::markers::Sheet::default());
+        let (lo, hi): (Vec<f64>, Vec<f64>) = (b["min"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect(), b["max"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect());
+        // Where a sheet point is in the engine's frame, metres: s⁻¹(p) / 1000.
+        let engine = |p: V3| {
+            let r = &s.rotation;
+            let d = [p[0] - s.translation[0], p[1] - s.translation[1], p[2] - s.translation[2]];
+            [0, 1, 2].map(|i| (r[0][i] * d[0] + r[1][i] * d[1] + r[2][i] * d[2]) / s.scale / 1000.0)
+        };
+        let inside = |q: V3| (0..3).all(|k| q[k] >= lo[k] && q[k] <= hi[k]);
+        // The sheet's centre, an object's top, the end of a 360 mm long one: in. Far off the sheet, or 1 m up: out.
+        for p in [[0.0, 0.0, 0.0], [0.0, 0.0, 300.0], [180.0, 0.0, 20.0]] {
+            assert!(inside(engine(p)), "{p:?}");
+        }
+        for p in [[900.0, 0.0, 0.0], [0.0, 0.0, 1500.0]] {
+            assert!(!inside(engine(p)), "{p:?}");
+        }
+        // The turned box: centred where the sheet's box is, as big as it, its rotation the sheet's.
+        let o = &b["oriented"];
+        let (olo, ohi): (Vec<f64>, Vec<f64>) = (o["min"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect(), o["max"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect());
+        let centre = engine([0.0, 0.0, 245.0]);
+        for k in 0..3 {
+            assert!(((olo[k] + ohi[k]) / 2.0 - centre[k]).abs() < 1e-9);
+        }
+        assert!(((ohi[0] - olo[0]) * s.scale * 1000.0 - 380.0).abs() < 1e-6 && ((ohi[2] - olo[2]) * s.scale * 1000.0 - 510.0).abs() < 1e-6);
+        let q: Vec<f64> = o["rotation"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+        let m = photo::quat_rotation([q[0], q[1], q[2], q[3]]);
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!((m[i][j] - s.rotation[j][i]).abs() < 1e-9, "{m:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn dense_matching_shrinks_photos_to_fit_many() {
+        // 48 photos at 3:2 fit at the detail's size; 300 do not, and are matched smaller.
+        assert_eq!(dense_size("medium", 48, 1.5), 1200);
+        assert_eq!(dense_size("full", 48, 1.5), 1600);
+        let many = dense_size("full", 300, 1.5);
+        assert!(many < 800 && (many * many) as f64 / 1.5 * 300.0 <= 100e6, "{many}");
+        assert_eq!(dense_size("preview", 100_000, 1.5), 320);
     }
 
     #[test]
@@ -1448,13 +1618,19 @@ mod tests {
         }
         m.merge(&cube(0.0, 0.0, 60.0, 10.0, 10.0));
         m.merge(&cube(260.0, 0.0, 0.0, 50.0, 50.0));
+        // A scrap of the floor left just over the cut, beside the object's foot.
+        let mut scrap = de_scan::mesh::cube(60.0, 30.0, 1.0);
+        for p in scrap.positions.iter_mut() {
+            *p = [p[0] - 80.0, p[1] + 22.0, p[2] + 0.5];
+        }
+        m.merge(&scrap);
         let field = [-95.0, -55.0, 95.0, 55.0];
-        let (kept, r) = standing(m, |p| p[0] > field[0] && p[1] > field[1] && p[0] < field[2] && p[1] < field[3]);
+        let (kept, r) = standing(m, |p| p[0] > field[0] && p[1] > field[1] && p[0] < field[2] && p[1] < field[3], true);
         let (lo, hi) = kept.bounds();
-        assert_eq!(r["pieces"], json!([2, 3]), "{r}");
-        assert!(hi[0] - lo[0] > 199.0 && hi[0] < 150.0, "{lo:?} {hi:?}");
+        assert_eq!(r["pieces"], json!([2, 4]), "{r}");
+        assert!(hi[0] - lo[0] > 199.0 && hi[0] < 150.0 && hi[1] < 25.0, "{lo:?} {hi:?}");
         // Nothing standing in the field: the largest piece.
-        let (largest, r) = standing(cube(400.0, 0.0, 0.0, 10.0, 10.0), |_| false);
+        let (largest, r) = standing(cube(400.0, 0.0, 0.0, 10.0, 10.0), |_| false, true);
         assert_eq!((largest.triangles.len(), r["operation"].as_str()), (12, Some("largest")));
     }
 
