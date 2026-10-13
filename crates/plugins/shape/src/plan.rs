@@ -285,6 +285,8 @@ pub fn draw(model: &Model, view: &View, sheet: Sheet, title: &Title, scale: Opti
 
     // Plan marks: door swings, sills, treads.
     if let Some(level) = &level_name {
+        // What room names keep clear of besides walls: door swings, treads, sills.
+        let mut marks: Vec<Vec<[f64; 2]>> = vec![];
         for e in &model.elements {
             let (lo, hi) = geom::bounds(&e.mesh);
             let arriving = arrives(&e.info.class) && (hi[2] - floor).abs() <= 50.0 && lo[2] < floor;
@@ -292,6 +294,7 @@ pub fn draw(model: &Model, view: &View, sheet: Sheet, title: &Title, scale: Opti
                 continue;
             }
             for m in &e.info.plan {
+                marks.push(m.points.clone());
                 let pts: Vec<[f64; 2]> = m.points.iter().map(|p| to(*p)).collect();
                 d.strokes.push(Stroke { pen: if m.dashed && !arriving { Pen::Hidden } else { Pen::Thin }, points: pts });
             }
@@ -301,9 +304,28 @@ pub fn draw(model: &Model, view: &View, sheet: Sheet, title: &Title, scale: Opti
             if s.outline.is_empty() || s.outline[0].len() < 3 {
                 continue;
             }
-            let at = to(geom::label_point(&s.outline[0], &s.outline[1..]));
-            d.texts.push(Text { at: [at[0], at[1] + 1.0], size: 2.5, text: s.long_name.clone().unwrap_or_else(|| s.name.clone()).to_uppercase(), anchor: Anchor::Middle, angle: 0.0, bold: true });
-            d.texts.push(Text { at: [at[0], at[1] - 3.5], size: 2.0, text: format!("{:.1} m²", s.area()), anchor: Anchor::Middle, angle: 0.0, bold: false });
+            // Where the room is roomiest, the name kept inside its walls:
+            // on two lines, then smaller, when the room is narrow.
+            let (p, run) = room_label(&s.outline[0], &s.outline[1..], &marks);
+            let at = to(p);
+            let room_w = run * k * 0.9;
+            let name = s.long_name.clone().unwrap_or_else(|| s.name.clone()).to_uppercase();
+            let width = |t: &str, size: f64| crate::drawing::text_width(&Text { at: [0.0, 0.0], size, text: t.into(), anchor: Anchor::Middle, angle: 0.0, bold: true });
+            let mut lines = vec![name.clone()];
+            if width(&name, 2.5) > room_w
+                && let Some(cut) = name.char_indices().filter(|(_, c)| *c == ' ').map(|(i, _)| i).min_by_key(|i| (*i as i64 - name.len() as i64 / 2).abs())
+            {
+                lines = vec![name[..cut].trim().to_string(), name[cut..].trim().to_string()];
+            }
+            let widest = lines.iter().map(|l| width(l, 2.5)).fold(0.0, f64::max);
+            let size = if widest > room_w { (2.5 * room_w / widest).max(1.6) } else { 2.5 };
+            let step = size * 1.6;
+            let top = at[1] + 1.0 + step * (lines.len() - 1) as f64 / 2.0;
+            for (i, l) in lines.iter().enumerate() {
+                d.texts.push(Text { at: [at[0], top - step * i as f64], size, text: l.clone(), anchor: Anchor::Middle, angle: 0.0, bold: true });
+            }
+            let below = top - step * (lines.len() - 1) as f64 - 4.5 * size / 2.5;
+            d.texts.push(Text { at: [at[0], below], size: 2.0f64.min(size), text: format!("{:.1} m²", s.area()), anchor: Anchor::Middle, angle: 0.0, bold: false });
         }
     }
 
@@ -434,6 +456,78 @@ fn fill(d: &mut Drawing, polys: &[Vec<[f64; 2]>], to: &dyn Fn([f64; 2]) -> [f64;
         for t in geom::triangulate(o, &mine) {
             d.fills.push(vec![to(pts[t[0]]), to(pts[t[1]]), to(pts[t[2]])]);
         }
+    }
+}
+
+/// Where a room's label goes: the point inside it farthest from its walls
+/// (sampled on a grid, a horizontal run counting double, as labels are
+/// wide), and the length of the horizontal run through it (model units).
+fn room_label(outer: &[[f64; 2]], holes: &[Vec<[f64; 2]>], marks: &[Vec<[f64; 2]>]) -> ([f64; 2], f64) {
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for p in outer {
+        for k in 0..2 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    let loops: Vec<&[[f64; 2]]> = std::iter::once(outer).chain(holes.iter().map(Vec::as_slice)).collect();
+    let in_room = |p: [f64; 2]| inside(p, outer) && !holes.iter().any(|h| inside(p, h));
+    let seg = |p: [f64; 2], a: [f64; 2], b: [f64; 2]| {
+        let ab = [b[0] - a[0], b[1] - a[1]];
+        let t = (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / (ab[0] * ab[0] + ab[1] * ab[1]).max(1e-12)).clamp(0.0, 1.0);
+        let q = [a[0] + ab[0] * t - p[0], a[1] + ab[1] * t - p[1]];
+        (q[0] * q[0] + q[1] * q[1]).sqrt()
+    };
+    // Clearance from the walls and from the door swings and treads drawn in the room.
+    let wall = |p: [f64; 2]| {
+        let mut best = f64::INFINITY;
+        for l in &loops {
+            for i in 0..l.len() {
+                best = best.min(seg(p, l[i], l[(i + 1) % l.len()]));
+            }
+        }
+        for m in marks {
+            for w in m.windows(2) {
+                best = best.min(seg(p, w[0], w[1]));
+            }
+        }
+        best
+    };
+    // The run across the room at p's height, from wall to wall.
+    let run = |p: [f64; 2]| {
+        let mut xs: Vec<f64> = vec![];
+        for l in &loops {
+            for i in 0..l.len() {
+                let (a, b) = (l[i], l[(i + 1) % l.len()]);
+                if (a[1] <= p[1]) != (b[1] <= p[1]) {
+                    xs.push(a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]));
+                }
+            }
+        }
+        let left = xs.iter().copied().filter(|x| *x <= p[0]).fold(f64::NEG_INFINITY, f64::max);
+        let right = xs.iter().copied().filter(|x| *x >= p[0]).fold(f64::INFINITY, f64::min);
+        if left.is_finite() && right.is_finite() { ((left + right) / 2.0, right - left) } else { (p[0], 0.0) }
+    };
+    let n = 24;
+    let mut best: Option<([f64; 2], f64, f64)> = None;
+    for i in 1..n {
+        for j in 1..n {
+            let p = [lo[0] + (hi[0] - lo[0]) * i as f64 / n as f64, lo[1] + (hi[1] - lo[1]) * j as f64 / n as f64];
+            if !in_room(p) {
+                continue;
+            }
+            let (mid, len) = run(p);
+            let q = [mid, p[1]];
+            // Clearance up and down, and half the run across: a label is wide, not tall.
+            let score = wall(q).min(len / 4.0);
+            if best.is_none_or(|b| score > b.1) {
+                best = Some((q, score, len));
+            }
+        }
+    }
+    match best {
+        Some((p, _, len)) => (p, len),
+        None => (geom::label_point(outer, holes), hi[0] - lo[0]),
     }
 }
 
