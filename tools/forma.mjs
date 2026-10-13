@@ -46,7 +46,7 @@
 //   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
 //   node tools/forma.mjs get <id>             one entity in full (program source, params, results)
 //   node tools/forma.mjs commit <operation> '<json>'   one command (same $file inlining)
-//   node tools/forma.mjs image add <file> …   store pictures (PNG, JPEG) or fonts (TTF, OTF) for programs; prints each id
+//   node tools/forma.mjs image add <file> … [--name label.png]   store pictures (PNG, JPEG) or fonts (TTF, OTF) for programs; prints each id (--name: what one file is called in the project)
 //   node tools/forma.mjs image list           the pictures and fonts in the project
 //   node tools/forma.mjs image profile <file|id> --height mm   a photo's object measured: its outline as a profile to revolve
 //   node tools/forma.mjs look [what] [--view iso|front|top|…|az,el] [--size 1000x750] [--box x0,y0,z0,x1,y1,z1] [--out file.png]
@@ -1410,8 +1410,15 @@ if (command === "run") {
   const q = project ? `?project=${encodeURIComponent(project)}` : "";
   const sub = file;
   if (sub === "add") {
-    const files = args.slice(2);
-    if (!files.length) {
+    // --name gives the one file added a name of its own (a label's material names its picture by it).
+    const at = args.indexOf("--name");
+    const given = at > 0 ? args[at + 1] : undefined;
+    const files = args.slice(2).filter((_, i) => at < 0 || (i + 2 !== at && i + 2 !== at + 1));
+    if (at > 0 && (files.length !== 1 || !given || given.includes("/"))) {
+      console.error("✗ --name names one file: forma image add <file> --name <name.png>");
+      failed = true;
+      files.length = 0;
+    } else if (!files.length) {
       console.error("✗ say which file: forma image add <photo.png|logo.jpg|font.ttf> …");
       failed = true;
     }
@@ -1424,7 +1431,7 @@ if (command === "run") {
         failed = true;
         continue;
       }
-      const name = f.split("/").pop();
+      const name = given ?? f.split("/").pop();
       const res = await fetch(`${http}/images/${encodeURIComponent(name)}${q}`, { method: "POST", body: bytes });
       if (!res.ok) {
         console.error(`✗ ${await res.text()}`);

@@ -521,9 +521,15 @@ const COLOUR_WORDS: Record<string, string> = {
   brown: "#7a5236",
 };
 
-/** A picture a material prints (see pictures.ts): a stored picture's file name or id in its name. */
+/**
+ * A picture a material prints (see pictures.ts): a stored picture's file
+ * name in its name ("Label print battery-label.png"), or its id or the id's
+ * first 8 or more characters ("Label print 1f6b353f").
+ */
 export function pictureIn(name: string): string | undefined {
-  return name.match(/[\w.-]+\.(?:png|jpe?g)\b/i)?.[0] ?? name.match(/\b[0-9a-f]{32,64}\b/i)?.[0];
+  const file = name.match(/[\w.-]+\.(?:png|jpe?g)\b/i)?.[0];
+  if (file) return file;
+  return name.match(/\b[0-9a-f]{8,64}\b/gi)?.find((t) => /[0-9]/.test(t) && /[a-f]/i.test(t));
 }
 
 /** How a material renders; unknown materials get a neutral look. A colour in the name wins over the family's own. */

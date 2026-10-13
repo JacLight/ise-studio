@@ -16,6 +16,12 @@ const pictures = () =>
     .then((r) => (r.ok ? r.json() : []))
     .catch(() => [] as Entry[]));
 
+/** The picture a reference names: its file name, its id, or the id's first characters. */
+const named = (e: Entry, ref: string) => {
+  const r = ref.toLowerCase();
+  return e.name.toLowerCase() === r || e.id === r || (/^[0-9a-f]{8,}$/.test(r) && e.id.startsWith(r));
+};
+
 const textures = new Map<string, THREE.Texture>();
 const loading = new Set<Promise<void>>();
 /** Called when a picture arrives (the view redraws). */
@@ -43,12 +49,12 @@ export function pictureTexture(ref: string): THREE.Texture {
   const job = (async () => {
     const list = await pictures();
     // A name the project lists, newest first; else the reference is an id.
-    const entry = [...list].reverse().find((e) => e.name.toLowerCase() === ref.toLowerCase() || e.id === ref);
+    const entry = [...list].reverse().find((e) => named(e, ref));
     if (!entry) {
       // A picture added after the list was read: read it again once.
       listing = null;
       const again = await pictures();
-      const late = [...again].reverse().find((e) => e.name.toLowerCase() === ref.toLowerCase() || e.id === ref);
+      const late = [...again].reverse().find((e) => named(e, ref));
       if (!late) return console.warn(`printed picture ${ref}: no picture of that name in the project (add it with ./forma image add)`);
       return load(texture, late.id);
     }
