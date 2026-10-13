@@ -100,6 +100,22 @@ pub struct KicadBoard {
     pub notes: Vec<String>,
     /// How far the board was moved to put its lower-left corner at the origin (Forma coordinates).
     pub shift: P,
+    /// Keepouts (rule areas).
+    pub areas: Vec<KArea>,
+    /// Blind, buried and micro vias: (index into `vias`, what it is).
+    pub via_specs: Vec<(usize, crate::vias::ViaSpec)>,
+    /// The board had teardrops.
+    pub teardrops: bool,
+}
+
+/// A keepout read from a board file.
+#[derive(Clone, Debug)]
+pub struct KArea {
+    pub name: String,
+    pub outline: Vec<P>,
+    pub layers: Vec<String>,
+    /// tracks, vias, pads, pours, footprints kept out.
+    pub no: [bool; 5],
 }
 
 // ---- Small geometry --------------------------------------------------------------
@@ -259,20 +275,13 @@ fn cu_layer(k: &str) -> Option<&'static str> {
     match k {
         "F.Cu" => Some("top"),
         "B.Cu" => Some("bottom"),
-        "In1.Cu" => Some("in1"),
-        "In2.Cu" => Some("in2"),
-        _ => None,
+        _ => k.strip_prefix("In").and_then(|r| r.strip_suffix(".Cu")).and_then(|n| n.parse::<usize>().ok()).filter(|n| (1..=30).contains(n)).map(|n| crate::COPPER_NAMES[n]),
     }
 }
 
-fn kicad_layer(f: &str) -> &'static str {
-    match f {
-        "top" => "F.Cu",
-        "bottom" => "B.Cu",
-        "in1" => "In1.Cu",
-        "in2" => "In2.Cu",
-        _ => "F.Cu",
-    }
+/// KiCad's name for a Forma layer ("in3" → "In3.Cu", "silk_top" → "F.SilkS").
+fn kicad_layer(f: &str) -> String {
+    crate::rules::kicad_layer(f)
 }
 
 /// Polylines joined end to end into closed loops (ends within `tol`).
@@ -825,14 +834,14 @@ pub fn parse_board(text: &str) -> Result<KicadBoard, String> {
     if cu.is_empty() {
         cu = vec!["F.Cu".into(), "B.Cu".into()];
     }
-    if cu.len() > 4 {
-        return Err(format!("the board has {} copper layers; Forma makes 2- and 4-layer boards", cu.len()));
+    if cu.len() > 32 {
+        return Err(format!("the board has {} copper layers; Forma makes 2 to 32", cu.len()));
     }
-    let layers: u8 = if cu.len() > 2 { 4 } else { 2 };
-    if cu.len() == 3 {
-        notes.push("3 copper layers became a 4-layer stack".into());
+    let layers: u8 = (cu.len().max(2) + cu.len() % 2) as u8;
+    if cu.len() % 2 == 1 {
+        notes.push(format!("{} copper layers became a {layers}-layer stack", cu.len()));
     }
-    let forma_layers: Vec<String> = if layers == 4 { crate::LAYERS.iter().map(|s| s.to_string()).collect() } else { vec!["top".into(), "bottom".into()] };
+    let forma_layers: Vec<String> = std::iter::once("top".to_string()).chain(crate::COPPER_NAMES[1..layers as usize - 1].iter().map(|s| s.to_string())).chain(std::iter::once("bottom".to_string())).collect();
     let thickness = root.find("general").and_then(|g| g.value_num("thickness")).unwrap_or(1.6);
     let mut nets = Nets(HashMap::new());
     for e in root.find_all("net") {
@@ -944,6 +953,7 @@ pub fn parse_board(text: &str) -> Result<KicadBoard, String> {
     // Tracks and vias.
     let mut segs = Vec::new();
     let mut vias = Vec::new();
+    let mut via_specs = Vec::new();
     let mut skipped_layers = 0;
     for e in root.args() {
         if e.is("segment") || e.is("arc") {
@@ -973,11 +983,18 @@ pub fn parse_board(text: &str) -> Result<KicadBoard, String> {
             }
         } else if e.is("via") {
             let Some(p) = xy(e, "at") else { continue };
-            if e.has_atom("blind") || e.has_atom("micro") {
-                notes.push("a blind or micro via came in as a through via".into());
-            }
             let diameter = e.value_num("size").unwrap_or(0.6);
             let drill = e.value_num("drill").unwrap_or(diameter / 2.0);
+            if e.has_atom("blind") || e.has_atom("micro") {
+                let ls: Vec<&'static str> = e.find("layers").map(|l| l.args().iter().filter_map(|a| a.text()).filter_map(cu_layer).collect()).unwrap_or_default();
+                if ls.len() == 2 {
+                    let outer = |l: &str| l == "top" || l == "bottom";
+                    let kind = if e.has_atom("micro") { crate::vias::ViaKind::Micro } else if outer(ls[0]) || outer(ls[1]) { crate::vias::ViaKind::Blind } else { crate::vias::ViaKind::Buried };
+                    via_specs.push((vias.len(), crate::vias::ViaSpec { kind, from: Some(ls[0].to_string()), to: Some(ls[1].to_string()), ..Default::default() }));
+                } else {
+                    notes.push("a blind or micro via with unknown layers came in as a through via".into());
+                }
+            }
             vias.push(KVia { net: nets.of(e), at: mv(kf(p[0], p[1])), drill, diameter });
         }
     }
@@ -991,10 +1008,22 @@ pub fn parse_board(text: &str) -> Result<KicadBoard, String> {
 
     // Pours.
     let mut zones = Vec::new();
+    let mut areas = Vec::new();
+    let mut had_teardrops = false;
     for z in root.find_all("zone") {
-        if z.find("keepout").is_some() {
-            notes.push("a keep-out (rule area) was left out".into());
+        if let Some(k) = z.find("keepout") {
+            let no = |what: &str| k.value(what) == Some("not_allowed");
+            let mut ls: Vec<String> = z.value("layer").into_iter().chain(z.find("layers").map(|l| l.args().iter().filter_map(|a| a.text()).collect::<Vec<_>>()).unwrap_or_default()).flat_map(|l| if l.starts_with('*') || l.starts_with("F&B") { forma_layers.clone() } else { cu_layer(l).map(|x| vec![x.to_string()]).unwrap_or_default() }).collect();
+            ls.dedup();
+            let poly: Vec<P> = z.find("polygon").map(pts_of).unwrap_or_default().into_iter().map(|p| mv(kf(p[0], p[1]))).collect();
+            if poly.len() >= 3 {
+                areas.push(KArea { name: z.value("name").map(str::to_string).unwrap_or_else(|| format!("Keepout {}", areas.len() + 1)), outline: poly, layers: if ls.len() == forma_layers.len() { vec![] } else { ls }, no: [no("tracks"), no("vias"), no("pads"), no("copperpour"), no("footprints")] });
+            }
             continue;
+        }
+        if z.find("attr").is_some_and(|a| a.find("teardrop").is_some()) {
+            had_teardrops = true;
+            continue; // teardrops are worked out from the board's settings
         }
         let net = z.value("net_name").map(str::to_string).filter(|s| !s.is_empty()).or_else(|| nets.of(z));
         let Some(net) = net else {
@@ -1011,7 +1040,7 @@ pub fn parse_board(text: &str) -> Result<KicadBoard, String> {
         }
         for n in names {
             match n.as_str() {
-                "*.Cu" => zl.extend(forma_layers.iter().map(|l| crate::LAYERS.iter().find(|x| **x == l.as_str()).copied().unwrap_or("top"))),
+                "*.Cu" => zl.extend(forma_layers.iter().map(|l| crate::COPPER_NAMES.iter().find(|x| **x == l.as_str()).copied().unwrap_or("top"))),
                 "F&B.Cu" => zl.extend(["top", "bottom"]),
                 other => {
                     if let Some(l) = cu_layer(other) {
@@ -1107,6 +1136,9 @@ pub fn parse_board(text: &str) -> Result<KicadBoard, String> {
         rules,
         notes,
         shift,
+        areas,
+        via_specs,
+        teardrops: had_teardrops,
     })
 }
 
@@ -1150,7 +1182,7 @@ pub fn create_board(tx: &mut Tx, k: &KicadBoard, name: Option<String>, at: Optio
         cutouts: k.cutouts.clone(),
         sketch: None,
         layers: k.layers,
-        thickness: k.thickness.clamp(0.2, 3.2),
+        thickness: k.thickness.clamp(0.2, 8.0),
         finish: "HASL lead-free".into(),
         copper_oz: 1.0,
         inner_copper_oz: 0.5,
@@ -1164,6 +1196,9 @@ pub fn create_board(tx: &mut Tx, k: &KicadBoard, name: Option<String>, at: Optio
         quantity: 5,
         fab: None,
         sourcing: BTreeMap::new(),
+        stackup: None,
+        drc_rules: String::new(),
+        teardrops: k.teardrops.then(crate::teardrops::Teardrops::default),
     };
     let id = tx.create();
     tx.set(id, board)?;
@@ -1195,10 +1230,16 @@ pub fn create_board(tx: &mut Tx, k: &KicadBoard, name: Option<String>, at: Optio
         tx.set(tid, Track { board: id, net: t.net.clone(), layer: t.layer.clone(), width: t.width, points: t.points.clone(), auto: false, reroute: false, bulges: vec![] })?;
         tx.add_dependency(id, tid)?;
     }
-    for v in &k.vias {
+    for (i, v) in k.vias.iter().enumerate() {
         let vid = tx.create();
-        tx.set(vid, Via { board: id, net: v.net.clone(), at: v.at, drill: v.drill, diameter: v.diameter, auto: false })?;
+        let spec = k.via_specs.iter().find(|(j, _)| *j == i).map(|(_, s)| s.clone()).unwrap_or_default();
+        tx.set(vid, Via { board: id, net: v.net.clone(), at: v.at, drill: v.drill, diameter: v.diameter, auto: false, spec })?;
         tx.add_dependency(id, vid)?;
+    }
+    for a in &k.areas {
+        let aid = tx.create();
+        tx.set(aid, crate::areas::RuleArea { board: id, name: a.name.clone(), outline: a.outline.clone(), layers: a.layers.clone(), no_tracks: a.no[0], no_vias: a.no[1], no_pads: a.no[2], no_pours: a.no[3], no_footprints: a.no[4], placement: vec![] })?;
+        tx.add_dependency(id, aid)?;
     }
     for z in &k.zones {
         let zid = tx.create();
@@ -1216,6 +1257,10 @@ pub fn create_board(tx: &mut Tx, k: &KicadBoard, name: Option<String>, at: Optio
                 connection: z.connection,
                 thermal_gap: z.thermal_gap,
                 thermal_spoke: z.thermal_spoke,
+                hatch: None,
+                cutouts: vec![],
+                min_island_area: None,
+                name: None,
             },
         )?;
         tx.add_dependency(id, zid)?;
@@ -1321,9 +1366,9 @@ pub fn export_with(view: &BoardView, board: &Board, zones: &BTreeMap<StableId, Z
         list("title_block", vec![list("title", vec![s(view.name.clone())]), list("rev", vec![s(view.revision.clone())]), list("company", vec![s("Made with Forma")])]),
     ];
     let mut layer_table: Vec<Sexp> = vec![Sexp::List(vec![atom("0"), s("F.Cu"), atom("signal")])];
-    if four {
-        layer_table.push(Sexp::List(vec![atom("1"), s("In1.Cu"), atom("signal")]));
-        layer_table.push(Sexp::List(vec![atom("2"), s("In2.Cu"), atom("signal")]));
+    let _ = four;
+    for k in 1..view.layers.len().saturating_sub(1) {
+        layer_table.push(Sexp::List(vec![atom(k.to_string()), s(format!("In{k}.Cu")), atom("signal")]));
     }
     layer_table.push(Sexp::List(vec![atom("31"), s("B.Cu"), atom("signal")]));
     for (k, name, user) in [
@@ -1353,7 +1398,35 @@ pub fn export_with(view: &BoardView, board: &Board, zones: &BTreeMap<StableId, Z
         layer_table.push(Sexp::List(v));
     }
     items.push(list("layers", layer_table));
-    items.push(list("setup", vec![list("pad_to_mask_clearance", vec![n(view.rules.mask_expansion)]), list("allow_soldermask_bridges_in_footprints", vec![atom("no")])]));
+    // The physical stackup.
+    let mut stack: Vec<Sexp> = vec![
+        list("layer", vec![s("F.SilkS"), list("type", vec![s("Top Silk Screen")])]),
+        list("layer", vec![s("F.Paste"), list("type", vec![s("Top Solder Paste")])]),
+        list("layer", vec![s("F.Mask"), list("type", vec![s("Top Solder Mask")]), list("thickness", vec![n(crate::stackup::MASK_MM)])]),
+    ];
+    for (i, l) in view.layers.iter().enumerate() {
+        let oz = view.stackup.copper_oz.get(i).copied().unwrap_or(1.0);
+        stack.push(list("layer", vec![s(kicad_layer(l)), list("type", vec![s("copper")]), list("thickness", vec![n(oz * crate::stackup::OZ_MM)])]));
+        if let Some(d) = view.stackup.dielectrics.get(i) {
+            stack.push(list(
+                "layer",
+                vec![
+                    s(format!("dielectric {}", i + 1)),
+                    list("type", vec![s(if d.kind == crate::stackup::DielectricKind::Core { "core" } else { "prepreg" })]),
+                    list("thickness", vec![n(d.thickness)]),
+                    list("material", vec![s(d.material.clone())]),
+                    list("epsilon_r", vec![n(d.epsilon_r.unwrap_or(4.5))]),
+                    list("loss_tangent", vec![n(d.loss_tangent.unwrap_or(0.02))]),
+                ],
+            ));
+        }
+    }
+    stack.push(list("layer", vec![s("B.Mask"), list("type", vec![s("Bottom Solder Mask")]), list("thickness", vec![n(crate::stackup::MASK_MM)])]));
+    stack.push(list("layer", vec![s("B.Paste"), list("type", vec![s("Bottom Solder Paste")])]));
+    stack.push(list("layer", vec![s("B.SilkS"), list("type", vec![s("Bottom Silk Screen")])]));
+    stack.push(list("copper_finish", vec![s(view.finish.clone())]));
+    stack.push(list("dielectric_constraints", vec![atom("no")]));
+    items.push(list("setup", vec![list("stackup", stack), list("pad_to_mask_clearance", vec![n(view.rules.mask_expansion)]), list("allow_soldermask_bridges_in_footprints", vec![atom("no")])]));
     // Nets, numbered in name order.
     let mut names: Vec<String> = view.nets.iter().map(|x| x.name.clone()).collect();
     for p in &view.pads {
@@ -1502,7 +1575,109 @@ pub fn export_with(view: &BoardView, board: &Board, zones: &BTreeMap<StableId, Z
         }
     }
     for v in &view.vias {
-        items.push(list("via", vec![page.xy("at", v.at), list("size", vec![n(v.diameter)]), list("drill", vec![n(v.drill)]), list("layers", vec![s("F.Cu"), s("B.Cu")]), net_num(&v.net), u(&format!("via {}", v.id))]));
+        let mut vv = vec![];
+        match v.kind {
+            "blind" | "buried" => vv.push(atom("blind")),
+            "micro" => vv.push(atom("micro")),
+            _ => {}
+        }
+        vv.extend([page.xy("at", v.at), list("size", vec![n(v.diameter)]), list("drill", vec![n(v.drill)]), list("layers", vec![s(kicad_layer(&v.from)), s(kicad_layer(&v.to))])]);
+        if !v.stack.is_empty() {
+            // A per-layer padstack (KiCad 9); pads of 0 are removed on their layers.
+            if v.stack.values().any(|d| *d == 0.0) {
+                vv.push(list("remove_unused_layers", vec![atom("yes")]));
+            }
+            let mut ps = vec![list("mode", vec![atom("custom")])];
+            for (l, d) in v.stack.iter().filter(|(_, d)| **d > 0.0) {
+                ps.push(list("layer", vec![s(kicad_layer(l)), list("size", vec![n(*d)])]));
+            }
+            vv.push(list("padstack", ps));
+        }
+        if let Some(td) = &board.teardrops {
+            vv.push(list(
+                "teardrops",
+                vec![
+                    list("best_length_ratio", vec![n(td.length_ratio)]),
+                    list("max_length", vec![n(td.max_length)]),
+                    list("best_width_ratio", vec![n(td.width_ratio)]),
+                    list("max_width", vec![n(td.max_width)]),
+                    list("curve_points", vec![atom(if td.curved { "5" } else { "0" })]),
+                    list("filter_ratio", vec![n(td.max_track_ratio)]),
+                    list("enabled", vec![atom(if td.vias { "yes" } else { "no" })]),
+                    list("allow_two_segments", vec![atom("yes")]),
+                    list("prefer_zone_connections", vec![atom("yes")]),
+                ],
+            ));
+        }
+        vv.extend([net_num(&v.net), u(&format!("via {}", v.id))]);
+        items.push(list("via", vv));
+    }
+    // Teardrops as KiCad stores them: filled zones marked as teardrops.
+    for (i, t) in view.teardrops.iter().enumerate() {
+        let pts: Vec<Sexp> = t.polygon.iter().map(|p| page.xy("xy", *p)).collect();
+        items.push(list(
+            "zone",
+            vec![
+                net_num(&t.net),
+                list("net_name", vec![s(t.net.clone().unwrap_or_default())]),
+                list("layer", vec![s(kicad_layer(&t.layer))]),
+                u(&format!("teardrop {} {i}", t.track)),
+                list("hatch", vec![atom("full"), n(0.1)]),
+                list("priority", vec![atom("30000")]),
+                list("attr", vec![list("teardrop", vec![list("type", vec![atom("padvia")])])]),
+                list("connect_pads", vec![atom("yes"), list("clearance", vec![n(0.0)])]),
+                list("min_thickness", vec![n(0.0254)]),
+                list("filled_areas_thickness", vec![atom("no")]),
+                list("fill", vec![atom("yes"), list("thermal_gap", vec![n(0.5)]), list("thermal_bridge_width", vec![n(0.5)])]),
+                list("polygon", vec![list("pts", pts.clone())]),
+                list("filled_polygon", vec![list("layer", vec![s(kicad_layer(&t.layer))]), list("pts", pts)]),
+            ],
+        ));
+    }
+    // Board graphics, as drawn (strokes as lines, fills as filled polygons).
+    for gv in &view.graphics {
+        let layer = kicad_layer(&gv.layer);
+        for (si, st) in gv.strokes.iter().enumerate() {
+            for (k, w) in st.windows(2).enumerate() {
+                items.push(list("gr_line", vec![page.xy("start", w[0]), page.xy("end", w[1]), stroke(gv.width), list("layer", vec![s(layer.clone())]), u(&format!("gfx {} {si} {k}", gv.id))]));
+            }
+        }
+        for (fi, island) in gv.fills.iter().enumerate() {
+            // KiCad polygons have no holes: join each hole to the outline by a cut-in.
+            let pts: Vec<Sexp> = crate::gerber::cut_in(island).iter().map(|p| page.xy("xy", *p)).collect();
+            let mut pv = vec![list("pts", pts), stroke(0.0), list("fill", vec![atom("solid")]), list("layer", vec![s(layer.clone())])];
+            if gv.net.is_some() {
+                pv.push(net_num(&gv.net));
+            }
+            pv.push(u(&format!("gfx fill {} {fi}", gv.id)));
+            items.push(list("gr_poly", pv));
+        }
+    }
+    // Rule areas (keepouts).
+    for a in &view.areas {
+        let pts: Vec<Sexp> = a.outline.iter().map(|p| page.xy("xy", *p)).collect();
+        let allow = |no: bool| atom(if no { "not_allowed" } else { "allowed" });
+        let mut layers_s = vec![];
+        for l in &a.layers {
+            layers_s.push(s(kicad_layer(l)));
+        }
+        items.push(list(
+            "zone",
+            vec![
+                list("net", vec![atom("0")]),
+                list("net_name", vec![s("")]),
+                list("layers", layers_s),
+                u(&format!("area {}", a.id)),
+                list("name", vec![s(a.name.clone())]),
+                list("hatch", vec![atom("edge"), n(0.5)]),
+                list("connect_pads", vec![list("clearance", vec![n(0.0)])]),
+                list("min_thickness", vec![n(0.25)]),
+                list("filled_areas_thickness", vec![atom("no")]),
+                list("keepout", vec![list("tracks", vec![allow(a.no_tracks)]), list("vias", vec![allow(a.no_vias)]), list("pads", vec![allow(a.no_pads)]), list("copperpour", vec![allow(a.no_pours)]), list("footprints", vec![allow(a.no_footprints)])]),
+                list("fill", vec![list("thermal_gap", vec![n(0.5)]), list("thermal_bridge_width", vec![n(0.5)])]),
+                list("polygon", vec![list("pts", pts)]),
+            ],
+        ));
     }
     for z in &view.zones {
         let set = zones.get(&z.id);
@@ -1524,7 +1699,24 @@ pub fn export_with(view: &BoardView, board: &Board, zones: &BTreeMap<StableId, Z
         zv.push(list("connect_pads", cp));
         zv.push(list("min_thickness", vec![n(set.map(|x| x.min_width).unwrap_or(0.25))]));
         zv.push(list("filled_areas_thickness", vec![atom("no")]));
-        zv.push(list("fill", vec![list("thermal_gap", vec![n(gap)]), list("thermal_bridge_width", vec![n(spoke)])]));
+        if let Some(name) = set.and_then(|x| x.name.clone()) {
+            zv.push(list("name", vec![s(name)]));
+        }
+        if let Some(limit) = set.and_then(|x| x.min_island_area) {
+            zv.push(list("island_removal_mode", vec![atom("2")]));
+            zv.push(list("island_area_min", vec![n(limit)]));
+        } else if set.is_some_and(|x| !x.remove_islands) {
+            zv.push(list("island_removal_mode", vec![atom("1")]));
+        }
+        let mut fill = vec![list("thermal_gap", vec![n(gap)]), list("thermal_bridge_width", vec![n(spoke)])];
+        if let Some(h) = set.and_then(|x| x.hatch.clone()) {
+            fill.insert(0, list("mode", vec![atom("hatch")]));
+            fill.push(list("hatch_thickness", vec![n(h.width)]));
+            fill.push(list("hatch_gap", vec![n(h.gap)]));
+            fill.push(list("hatch_orientation", vec![n(h.angle)]));
+            fill.push(list("hatch_border_algorithm", vec![atom("hatch_thickness")]));
+        }
+        zv.push(list("fill", fill));
         zv.push(list("polygon", vec![list("pts", z.outline.iter().map(|p| page.xy("xy", *p)).collect())]));
         items.push(list("zone", zv));
     }

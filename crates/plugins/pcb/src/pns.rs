@@ -562,7 +562,7 @@ pub fn fillet(points: &[P], radius: f64) -> (Vec<P>, Vec<f64>) {
 #[derive(Clone, Debug)]
 pub struct Fixed {
     pub shape: Shape,
-    pub mask: u8,
+    pub mask: u32,
     pub net: Option<String>,
     pub label: String,
 }
@@ -632,10 +632,10 @@ pub struct Node {
 impl Node {
     pub fn new(board: &Board, v: &BoardView) -> Node {
         let layers = v.layers.clone();
-        let all = ((1u16 << layers.len()) - 1) as u8;
+        let all = ((1u64 << layers.len()) - 1) as u32;
         let mut fixed = Vec::new();
         for p in &v.pads {
-            let mut mask = 0u8;
+            let mut mask = 0u32;
             for l in &p.layers {
                 if let Some(k) = layer_index(&layers, l) {
                     mask |= 1 << k;
@@ -668,8 +668,8 @@ impl Node {
         Node { layers, fixed, lines, vias, outline: v.outline.clone(), cutouts: v.cutouts.clone(), edge: board.rules.edge_clearance, clearances, default_clearance, min_space: board.rules.min_space, reach }
     }
 
-    pub fn all_layers(&self) -> u8 {
-        ((1u16 << self.layers.len()) - 1) as u8
+    pub fn all_layers(&self) -> u32 {
+        ((1u64 << self.layers.len()) - 1) as u32
     }
 
     pub fn clearance(&self, a: &Option<String>, b: &Option<String>) -> f64 {
@@ -695,7 +695,7 @@ impl Node {
         }
     }
 
-    fn mask_of(&self, r: Ref) -> u8 {
+    fn mask_of(&self, r: Ref) -> u32 {
         match r {
             Ref::Fixed(i) => self.fixed[i].mask,
             Ref::Line(i, _) => 1 << self.lines[i].layer,
@@ -729,7 +729,7 @@ impl Node {
     }
 
     /// Everything on `mask` near `bbox`.
-    fn near(&self, mask: u8, bbox: [f64; 4], reach: f64) -> Vec<Ref> {
+    fn near(&self, mask: u32, bbox: [f64; 4], reach: f64) -> Vec<Ref> {
         let mut out = Vec::new();
         for (i, f) in self.fixed.iter().enumerate() {
             if f.mask & mask != 0 && geom::bbox_overlap(&f.shape.bbox, &bbox, reach) {
@@ -757,7 +757,7 @@ impl Node {
     }
 
     /// What `s` (of `net`, on `mask`) comes too close to; `skip` leaves things out.
-    pub fn collisions(&self, s: &Shape, mask: u8, net: &Option<String>, skip: &dyn Fn(Ref) -> bool) -> Vec<(Ref, f64, f64)> {
+    pub fn collisions(&self, s: &Shape, mask: u32, net: &Option<String>, skip: &dyn Fn(Ref) -> bool) -> Vec<(Ref, f64, f64)> {
         let mut out = Vec::new();
         for r in self.near(mask, s.bbox, self.reach + 0.01) {
             let other = self.net_of(r);
@@ -807,7 +807,7 @@ impl Node {
     }
 
     /// Octagons of everything on `layer` that `pick` chooses, as a line of `width` on `net` sees them.
-    fn hulls(&self, mask: u8, width: f64, net: &Option<String>, dirs: usize, pick: &dyn Fn(Ref) -> bool) -> Vec<(Ref, Vec<P>)> {
+    fn hulls(&self, mask: u32, width: f64, net: &Option<String>, dirs: usize, pick: &dyn Fn(Ref) -> bool) -> Vec<(Ref, Vec<P>)> {
         let all = [f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY];
         let mut out = Vec::new();
         for r in self.near(mask, all, 0.0) {
@@ -841,11 +841,11 @@ impl Node {
 
     // ---- Shove ----
 
-    fn pusher_shapes(&self, p: Pusher) -> Vec<(Shape, u8)> {
+    fn pusher_shapes(&self, p: Pusher) -> Vec<(Shape, u32)> {
         match p {
             Pusher::Line(i) => {
                 let l = &self.lines[i];
-                l.points.windows(2).map(|w| (Shape::capsule(w[0], w[1], l.width / 2.0), 1u8 << l.layer)).collect()
+                l.points.windows(2).map(|w| (Shape::capsule(w[0], w[1], l.width / 2.0), 1u32 << l.layer)).collect()
             }
             Pusher::Via(i) => vec![(Shape::circle(self.vias[i].at, self.vias[i].diameter / 2.0), self.all_layers())],
         }
@@ -904,7 +904,7 @@ impl Node {
                 queue.extend(attached.into_iter().map(Pusher::Line));
             }
             for i in lines {
-                let mask = 1u8 << self.lines[i].layer;
+                let mask = 1u32 << self.lines[i].layer;
                 let still = shapes.iter().any(|(s, m)| m & mask != 0 && !self.collisions(s, mask, &net, &|r| !matches!(r, Ref::Line(j, _) if j == i)).is_empty());
                 if !still {
                     continue;
@@ -926,7 +926,7 @@ impl Node {
         let l = self.lines[li].clone();
         let net = self.pusher_net(p);
         let grow = self.clearance(&l.net, &net) + l.width / 2.0 + MARGIN;
-        let mask = 1u8 << l.layer;
+        let mask = 1u32 << l.layer;
         let shapes = self.pusher_shapes(p);
         // Only the pusher's pieces that come too close: the rest may lie at exactly the clearance.
         let need = self.clearance(&l.net, &net);
@@ -1086,7 +1086,7 @@ impl Node {
     /// Returns the line and whether it reached its end (an end too close to
     /// another net's copper is stopped short of it).
     fn walkaround(&self, s: &LegSpec, pick: &dyn Fn(Ref) -> bool) -> Result<(Vec<P>, bool), ()> {
-        let mask = 1u8 << s.layer;
+        let mask = 1u32 << s.layer;
         let all = self.hulls(mask, s.width, s.net, s.angle.dirs(), pick);
         let at_start: BTreeSet<Ref> = all.iter().filter(|(_, h)| inside(s.from, h)).map(|(r, _)| *r).collect();
         let at_end: BTreeSet<Ref> = all.iter().filter(|(r, h)| inside(s.to, h) && !at_start.contains(r)).map(|(r, _)| *r).collect();

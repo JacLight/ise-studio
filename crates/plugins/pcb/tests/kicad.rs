@@ -176,7 +176,7 @@ fn a_kicad8_file_lands_in_forma_coordinates() {
     assert!((k.thickness - 1.2).abs() < 1e-9);
     assert_eq!(k.cutouts.len(), 1, "the round hole on Edge.Cuts is a cutout");
     assert!((de_pcb::geom::polygon_area(&k.outline) - 600.0).abs() < 1e-6);
-    assert!(k.notes.iter().any(|n| n.contains("keep-out")));
+    assert_eq!(k.areas.len(), 1, "the keep-out comes in as a rule area");
     assert_eq!(k.zones.len(), 1);
     let z = &k.zones[0];
     assert_eq!((z.net.as_str(), z.layer.as_str(), z.priority), ("GND", "bottom", 2));
@@ -259,7 +259,7 @@ fn bad_files_are_refused_clearly() {
     assert!(kicad::parse_board("(kicad_sch (version 1))").unwrap_err().contains("not a KiCad board"));
     assert!(kicad::parse_board("(kicad_pcb (version 20240108))").unwrap_err().contains("outline"));
     let six = "(kicad_pcb (layers (0 \"F.Cu\" signal) (1 \"In1.Cu\" signal) (2 \"In2.Cu\" signal) (3 \"In3.Cu\" signal) (4 \"In4.Cu\" signal) (31 \"B.Cu\" signal)))";
-    assert!(kicad::parse_board(six).unwrap_err().contains("6 copper layers"));
+    assert!(kicad::parse_board(six).unwrap_err().contains("outline"), "6 copper layers are fine; the outline is missing");
     assert!(kicad::parse_board("(kicad_pcb (a").is_err());
 }
 

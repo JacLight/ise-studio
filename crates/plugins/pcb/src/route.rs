@@ -116,7 +116,7 @@ impl Grid {
 #[derive(Clone)]
 struct Obstacle {
     prim: Prim,
-    layers: u8,
+    layers: u32,
     net: Option<String>,
 }
 
@@ -474,7 +474,7 @@ impl Command for Autoroute {
         let nl = all_layers.len();
         let mut base: Vec<Obstacle> = Vec::new();
         for p in &view.pads {
-            let mut mask = 0u8;
+            let mut mask = 0u32;
             for l in &p.layers {
                 if let Some(k) = board::layer_index(&all_layers, l) {
                     mask |= 1 << k;
@@ -492,7 +492,7 @@ impl Command for Autoroute {
             }
         }
         for v in &view.vias {
-            base.push(Obstacle { prim: Prim::circle(v.at, v.diameter / 2.0), layers: ((1u16 << nl) - 1) as u8, net: v.net.clone() });
+            base.push(Obstacle { prim: Prim::circle(v.at, v.diameter / 2.0), layers: ((1u64 << nl) - 1) as u32, net: v.net.clone() });
         }
         // Pours are refilled around new copper; they do not block.
         let holes: Vec<Prim> = view.holes.iter().map(|h| Prim::rect(h.at, h.size[0], h.size[1], h.rotation, h.size[0].min(h.size[1]) / 2.0)).collect();
@@ -729,7 +729,7 @@ fn route_net(tx: &mut Tx, board_id: StableId, ctx: &Ctx, net: &str, base: &[Obst
         };
         if rip {
             // Who owns the soft copper the path crosses (cells and via spots)?
-            let mut probe: Vec<(P, f64, u8)> = Vec::new();
+            let mut probe: Vec<(P, f64, u32)> = Vec::new();
             for (idx, n) in path.iter().enumerate() {
                 let (l, k) = (n / ncell, n % ncell);
                 if m.soft[l][k] {
@@ -862,9 +862,9 @@ fn emit_track(tx: &mut Tx, board: StableId, net: &str, layer: &str, w: f64, run:
 
 #[allow(clippy::too_many_arguments)]
 fn emit_via(tx: &mut Tx, board: StableId, net: &str, at: P, drill: f64, diameter: f64, nl: usize, out: &mut NetCopper) -> Result<(), CommandError> {
-    out.obstacles.push(Obstacle { prim: Prim::circle(at, diameter / 2.0), layers: ((1u16 << nl) - 1) as u8, net: Some(net.to_string()) });
+    out.obstacles.push(Obstacle { prim: Prim::circle(at, diameter / 2.0), layers: ((1u64 << nl) - 1) as u32, net: Some(net.to_string()) });
     let id = tx.create();
-    tx.set(id, Via { board, net: Some(net.to_string()), at, drill, diameter, auto: true })?;
+    tx.set(id, Via { board, net: Some(net.to_string()), at, drill, diameter, auto: true, spec: Default::default() })?;
     tx.add_dependency(board, id)?;
     out.created.push(id);
     out.vias += 1;

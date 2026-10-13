@@ -106,12 +106,7 @@ struct Layer {
 }
 
 fn layer_dir(l: &str) -> &'static str {
-    match l {
-        "top" => "top",
-        "in1" => "in1",
-        "in2" => "in2",
-        _ => "bottom",
-    }
+    crate::COPPER_NAMES.iter().find(|x| **x == l).copied().unwrap_or("bottom")
 }
 
 /// The ODB++ tree: (path inside the zip, bytes).
@@ -161,8 +156,9 @@ pub fn files(v: &BoardView, board: &Board) -> Vec<(String, Vec<u8>)> {
     }
     for x in &v.vias {
         for (ci, l) in cu_names.iter().enumerate() {
+            let Some(dia) = crate::gerber::via_pad(v, x, &v.layers[ci]) else { continue };
             let li = idx(l, &lay);
-            let fid = lay[li].feats.pad(x.at, format!("r{}", um(x.diameter)), 0.0, ";.pad_usage=via");
+            let fid = lay[li].feats.pad(x.at, format!("r{}", um(dia)), 0.0, ";.pad_usage=via");
             if let Some(nn) = &x.net {
                 net_fids.entry(nn.clone()).or_default().push((ci, fid, "VIA"));
             }
@@ -177,6 +173,43 @@ pub fn files(v: &BoardView, board: &Board) -> Vec<(String, Vec<u8>)> {
             }
             let fid = lay[li].feats.surface(island);
             net_fids.entry(z.net.clone()).or_default().push((ci, fid, "PLN"));
+        }
+    }
+    for t in &v.teardrops {
+        let li = idx(layer_dir(&t.layer), &lay);
+        let ci = cu_names.iter().position(|x| *x == layer_dir(&t.layer)).unwrap();
+        let fid = lay[li].feats.surface(std::slice::from_ref(&t.polygon));
+        if let Some(nn) = &t.net {
+            net_fids.entry(nn.clone()).or_default().push((ci, fid, "PLN"));
+        }
+    }
+    // Board graphics: copper (with their net), silkscreen.
+    for g in &v.graphics {
+        let target = match g.layer.as_str() {
+            "silk_top" => "silk_top",
+            "silk_bottom" => "silk_bot",
+            "mask_top" => "mask_top",
+            "mask_bottom" => "mask_bot",
+            "paste_top" => "paste_top",
+            "paste_bottom" => "paste_bot",
+            l if v.layers.iter().any(|x| x == l) => layer_dir(l),
+            _ => continue,
+        };
+        let li = idx(target, &lay);
+        let ci = cu_names.iter().position(|x| *x == target);
+        let mut fids = Vec::new();
+        for island in g.fills.iter().filter(|i| !i.is_empty()) {
+            fids.push((lay[li].feats.surface(island), "PLN"));
+        }
+        for st in &g.strokes {
+            for seg in st.windows(2) {
+                fids.push((lay[li].feats.line(seg[0], seg[1], g.width), "TRC"));
+            }
+        }
+        if let (Some(ci), Some(nn)) = (ci, &g.net) {
+            for (fid, k) in fids {
+                net_fids.entry(nn.clone()).or_default().push((ci, fid, k));
+            }
         }
     }
     let e = v.rules.mask_expansion;

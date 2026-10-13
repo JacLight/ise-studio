@@ -285,7 +285,8 @@ pub fn copper(view: &BoardView, layer: &str) -> String {
         g.polyline(t.width, "Conductor", &t.points, &[("N", field(t.net.as_deref().unwrap_or("N/C")))]);
     }
     for v in &view.vias {
-        let d = g.aperture(format!("C,{}", n(v.diameter)), "ViaPad");
+        let Some(dia) = via_pad(view, v, layer) else { continue };
+        let d = g.aperture(format!("C,{}", n(dia)), "ViaPad");
         g.attrs(&[("N", field(v.net.as_deref().unwrap_or("N/C")))]);
         g.flash(d, v.at);
         g.clear_attrs(true);
@@ -293,7 +294,54 @@ pub fn copper(view: &BoardView, layer: &str) -> String {
     for p in view.pads.iter().filter(|p| p.layers.iter().any(|l| l == layer)) {
         g.pad(p, 0.0, pad_function(p), &pad_attrs(p));
     }
+    for t in view.teardrops.iter().filter(|t| t.layer == layer) {
+        g.region(std::slice::from_ref(&t.polygon), "Conductor", &[("N", field(t.net.as_deref().unwrap_or("N/C")))]);
+    }
+    graphics(&mut g, view, layer, "Conductor");
     g.finish()
+}
+
+/// A via's pad diameter on a copper layer (None where it has no pad there).
+pub fn via_pad(view: &BoardView, v: &crate::board::ViaView, layer: &str) -> Option<f64> {
+    let i = view.layers.iter().position(|l| l == layer)?;
+    let a = view.layers.iter().position(|l| *l == v.from).unwrap_or(0);
+    let b = view.layers.iter().position(|l| *l == v.to).unwrap_or(view.layers.len() - 1);
+    if i < a.min(b) || i > a.max(b) {
+        return None;
+    }
+    let d = v.stack.get(layer).copied().unwrap_or(v.diameter);
+    (d > 0.0).then_some(d)
+}
+
+/// Board graphics on a layer: strokes and filled regions.
+fn graphics(g: &mut Gerber, view: &BoardView, layer: &str, function: &str) {
+    for gv in view.graphics.iter().filter(|x| x.layer == layer) {
+        let attrs: Vec<(&str, String)> = gv.net.as_ref().map(|n| vec![("N", field(n))]).unwrap_or_default();
+        for island in &gv.fills {
+            g.region(island, function, &attrs);
+        }
+        for s in &gv.strokes {
+            g.polyline(gv.width, function, s, &attrs);
+        }
+    }
+}
+
+/// A drawing layer (fabrication, user, comments) when anything is on it.
+pub fn drawing(view: &BoardView, layer: &str) -> Option<String> {
+    if !view.graphics.iter().any(|g| g.layer == layer) {
+        return None;
+    }
+    let function = match layer {
+        "fab_top" => "AssemblyDrawing,Top",
+        "fab_bottom" => "AssemblyDrawing,Bot",
+        "courtyard_top" => "Other,Courtyard_Top",
+        "courtyard_bottom" => "Other,Courtyard_Bottom",
+        "comments" => "Other,Comment",
+        _ => "OtherDrawing,Drawings",
+    };
+    let mut g = Gerber::new(view, function, false);
+    graphics(&mut g, view, layer, "Other,Drawing");
+    Some(g.finish())
 }
 
 /// Solder mask openings for one side (negative: the image is where mask is absent).
@@ -307,6 +355,7 @@ pub fn mask(view: &BoardView, top: bool) -> String {
             g.pad(p, if p.kind == PadKind::Npth { 0.0 } else { e }, pad_function(p), &[]);
         }
     }
+    graphics(&mut g, view, if top { "mask_top" } else { "mask_bottom" }, "Other,Opening");
     g.finish()
 }
 
@@ -323,6 +372,7 @@ pub fn paste(view: &BoardView, top: bool) -> String {
             }
         }
     }
+    graphics(&mut g, view, if top { "paste_top" } else { "paste_bottom" }, "Other,Paste");
     g.finish()
 }
 
@@ -341,6 +391,7 @@ pub fn silk(view: &BoardView, top: bool) -> String {
             }
         }
     }
+    graphics(&mut g, view, if top { "silk_top" } else { "silk_bottom" }, "Other,Legend");
     g.finish()
 }
 
@@ -357,8 +408,29 @@ pub fn profile(view: &BoardView) -> String {
 
 /// Excellon drill file, plated or not: decimal millimetres, slots routed with G85.
 pub fn drill(view: &BoardView, plated: bool) -> String {
+    drill_span(view, plated, None)
+}
+
+/// The layer pairs blind and buried vias are drilled between (1-based layer numbers).
+pub fn spans(view: &BoardView) -> Vec<(usize, usize, [String; 2])> {
+    let mut out: Vec<(usize, usize, [String; 2])> = Vec::new();
+    for h in &view.holes {
+        if let Some(s) = &h.span {
+            let a = view.layers.iter().position(|l| *l == s[0]).unwrap_or(0) + 1;
+            let b = view.layers.iter().position(|l| *l == s[1]).unwrap_or(0) + 1;
+            if !out.iter().any(|x| x.0 == a && x.1 == b) {
+                out.push((a, b, s.clone()));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Excellon drill file for through holes (`span` None) or one blind/buried layer pair.
+pub fn drill_span(view: &BoardView, plated: bool, span: Option<&[String; 2]>) -> String {
     let mut tools: Vec<f64> = Vec::new();
-    let holes: Vec<&crate::board::Hole> = view.holes.iter().filter(|h| h.plated == plated).collect();
+    let holes: Vec<&crate::board::Hole> = view.holes.iter().filter(|h| h.plated == plated && h.span.as_ref() == span).collect();
     for h in &holes {
         let d = (h.size[0].min(h.size[1]) * 1000.0).round() / 1000.0;
         if !tools.iter().any(|t| (t - d).abs() < 1e-9) {
@@ -372,7 +444,15 @@ pub fn drill(view: &BoardView, plated: bool) -> String {
     let _ = writeln!(s, "; DRILL file: {} rev {} ({})", view.name, view.revision, if plated { "plated" } else { "not plated" });
     let _ = writeln!(s, "; FORMAT={{-:-/ absolute / metric / decimal}}");
     let _ = writeln!(s, "; #@! TF.GenerationSoftware,Forma,PCB,{}", env!("CARGO_PKG_VERSION"));
-    let _ = writeln!(s, "; #@! TF.FileFunction,{},1,{n_layers},{}", if plated { "Plated" } else { "NonPlated" }, if plated { "PTH" } else { "NPTH" });
+    let (from, to, kind) = match span {
+        Some(sp) => {
+            let a = view.layers.iter().position(|l| *l == sp[0]).unwrap_or(0) + 1;
+            let b = view.layers.iter().position(|l| *l == sp[1]).unwrap_or(0) + 1;
+            (a, b, if a == 1 || b == n_layers { "Blind" } else { "Buried" })
+        }
+        None => (1, n_layers, if plated { "PTH" } else { "NPTH" }),
+    };
+    let _ = writeln!(s, "; #@! TF.FileFunction,{},{from},{to},{kind}", if plated { "Plated" } else { "NonPlated" });
     let _ = writeln!(s, "FMAT,2");
     let _ = writeln!(s, "METRIC");
     for (i, t) in tools.iter().enumerate() {
@@ -423,7 +503,15 @@ pub fn files(view: &BoardView) -> Vec<(String, String)> {
     out.push((format!("{stem}-F_Silkscreen.gto"), silk(view, true)));
     out.push((format!("{stem}-B_Silkscreen.gbo"), silk(view, false)));
     out.push((format!("{stem}-Edge_Cuts.gm1"), profile(view)));
+    for (layer, name) in [("fab_top", "F_Fab.gbr"), ("fab_bottom", "B_Fab.gbr"), ("user", "Dwgs_User.gbr"), ("comments", "Cmts_User.gbr")] {
+        if let Some(text) = drawing(view, layer) {
+            out.push((format!("{stem}-{name}"), text));
+        }
+    }
     out.push((format!("{stem}-PTH.drl"), drill(view, true)));
+    for (a, b, sp) in spans(view) {
+        out.push((format!("{stem}-{a}-{b}.drl"), drill_span(view, true, Some(&sp))));
+    }
     out.push((format!("{stem}-NPTH.drl"), drill(view, false)));
     out
 }

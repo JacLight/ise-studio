@@ -189,7 +189,7 @@ fn apply(tx: &mut Tx, board: StableId, plan: &Plan) -> Result<Value, CommandErro
     }
     for at in &plan.vias {
         let id = tx.create();
-        tx.set(id, Via { board, net: plan.net.clone(), at: *at, drill: plan.via_drill, diameter: plan.via_diameter, auto: false })?;
+        tx.set(id, Via { board, net: plan.net.clone(), at: *at, drill: plan.via_drill, diameter: plan.via_diameter, auto: false, spec: Default::default() })?;
         tx.add_dependency(board, id)?;
         vias.push(id);
     }
@@ -625,9 +625,9 @@ impl Command for RouteDrag {
 /// through copper of the same net, stopping at pads — "select connection".
 pub fn connection(v: &BoardView, seeds: &[StableId]) -> BTreeSet<StableId> {
     let nl = v.layers.len();
-    let all = ((1u16 << nl) - 1) as u8;
+    let all = ((1u64 << nl) - 1) as u32;
     // Pieces: (owner, shape, mask, net).
-    let mut pieces: Vec<(StableId, Shape, u8, Option<String>)> = Vec::new();
+    let mut pieces: Vec<(StableId, Shape, u32, Option<String>)> = Vec::new();
     for t in &v.tracks {
         let Some(k) = layer_index(&v.layers, &t.layer) else { continue };
         for w in t.points.windows(2) {
@@ -645,7 +645,7 @@ pub fn connection(v: &BoardView, seeds: &[StableId]) -> BTreeSet<StableId> {
         }
     }
     for p in v.pads.iter().filter(|p| seeds.contains(&p.component)) {
-        let mut mask = 0u8;
+        let mut mask = 0u32;
         for l in &p.layers {
             if let Some(k) = layer_index(&v.layers, l) {
                 mask |= 1 << k;
@@ -1197,7 +1197,7 @@ impl Command for Fanout {
                         tx.set(tid, Track { board: c.board, net: net.clone(), layer: v.layers[layer].clone(), width: class.track_width, points: stub, auto: false, reroute: false, bulges: vec![] })?;
                         tx.add_dependency(c.board, tid)?;
                         let vid = tx.create();
-                        tx.set(vid, Via { board: c.board, net: net.clone(), at: q, drill: class.via_drill, diameter: class.via_diameter, auto: false })?;
+                        tx.set(vid, Via { board: c.board, net: net.clone(), at: q, drill: class.via_drill, diameter: class.via_diameter, auto: false, spec: Default::default() })?;
                         tx.add_dependency(c.board, vid)?;
                         tracks.push(tid);
                         vias.push(vid);

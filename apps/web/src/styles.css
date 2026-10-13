@@ -15486,3 +15486,114 @@ a.button .icon {
     overflow: auto;
   }
 }
+
+/* PCB board setup: stackup, teardrops, custom rules, arranging, graphics */
+.pcb-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pcb-stack {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.pcb-stack td {
+  padding: 2px 4px;
+  border-bottom: 1px solid #f0edf4;
+  color: #2d2836;
+}
+.pcb-stack tr.pcb-stack-copper td:first-child {
+  font-weight: 600;
+  color: #b0532f;
+}
+.pcb-stack tr.pcb-stack-core,
+.pcb-stack tr.pcb-stack-prepreg {
+  background: #f7f6ef;
+}
+.pcb-stack input,
+.pcb-stack select {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  border: 1px solid #e6e3ec;
+  border-radius: 6px;
+  padding: 0 4px;
+  font-size: 11px;
+  background: white;
+}
+.pcb-row-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.pcb-row-actions.wrap {
+  flex-wrap: wrap;
+}
+.pcb-checks-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+}
+.pcb-rules {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  border: 1px solid #e6e3ec;
+  border-radius: 8px;
+  padding: 6px 8px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.pcb-refs {
+  flex: 1;
+  height: 28px;
+  border: 1px solid #e6e3ec;
+  border-radius: 8px;
+  padding: 0 8px;
+  font-size: 12px;
+  min-width: 0;
+}
+.pcb-refs.small {
+  flex: 0 0 96px;
+}
+.pcb-inline {
+  display: flex;
+  gap: 4px;
+}
+.pcb-inline input {
+  width: 60px;
+}
+.pcb-rule-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 11.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pcb-rule-list small {
+  color: var(--muted);
+}
+.pcb-rule-list button.tiny {
+  margin-left: 6px;
+  padding: 0 6px;
+  height: 18px;
+  font-size: 11px;
+}
+.pcb-bad {
+  color: #c2412d;
+  font-size: 11.5px;
+}
+/* Seven side tabs: let them scroll rather than crowd. */
+.pcb-tabs {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.pcb-tabs button {
+  flex: 1 0 auto;
+  padding: 0 7px;
+}

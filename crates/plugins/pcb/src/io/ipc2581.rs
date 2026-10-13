@@ -67,6 +67,22 @@ fn contour(w: &mut Writer, outer: &[P], holes: &[Vec<P>]) {
     w.close();
 }
 
+/// A board graphic as features: filled regions and polylines.
+fn graphic(w: &mut Writer, g: &crate::graphics::GraphicView) {
+    for island in g.fills.iter().filter(|i| !i.is_empty()) {
+        contour(w, &island[0], &island[1..]);
+    }
+    for s in g.strokes.iter().filter(|s| s.len() >= 2) {
+        w.open("Polyline", &[]);
+        w.empty("PolyBegin", &[("x", f(s[0][0])), ("y", f(s[0][1]))]);
+        for q in &s[1..] {
+            w.empty("PolyStepSegment", &[("x", f(q[0])), ("y", f(q[1]))]);
+        }
+        w.empty("LineDescRef", &[("id", line_id(g.width))]);
+        w.close();
+    }
+}
+
 fn line_id(width: f64) -> String {
     format!("LINE_{}", f(width))
 }
@@ -96,6 +112,11 @@ pub fn write(v: &BoardView, board: &Board) -> String {
     }
     let drill = format!("DRILL_{}-{}", copper[0], copper[copper.len() - 1]);
     layers.push((drill.clone(), "DRILL", "ALL"));
+    // Blind and buried via drill layers, one per layer pair.
+    let pairs: Vec<(String, [String; 2])> = crate::gerber::spans(v).into_iter().map(|(_, _, sp)| (format!("DRILL_{}-{}", layer_name(&sp[0]), layer_name(&sp[1])), sp)).collect();
+    for (n, _) in &pairs {
+        layers.push((n.clone(), "DRILL", "INTERNAL"));
+    }
     // Dictionaries.
     let mut prims: BTreeMap<String, (&'static str, Vec<(&'static str, String)>)> = BTreeMap::new();
     for p in &v.pads {
@@ -105,9 +126,11 @@ pub fn write(v: &BoardView, board: &Board) -> String {
         }
     }
     for x in &v.vias {
-        prims.entry(format!("CIRCLE_{}", f(x.diameter))).or_insert(("Circle", vec![("diameter", f(x.diameter))]));
+        for d in std::iter::once(x.diameter).chain(x.stack.values().copied().filter(|d| *d > 0.0)) {
+            prims.entry(format!("CIRCLE_{}", f(d))).or_insert(("Circle", vec![("diameter", f(d))]));
+        }
     }
-    let mut widths: Vec<f64> = v.tracks.iter().map(|t| t.width).chain([0.1, v.rules.silk_width]).collect();
+    let mut widths: Vec<f64> = v.tracks.iter().map(|t| t.width).chain(v.graphics.iter().map(|g| g.width)).chain([0.1, v.rules.silk_width]).collect();
     widths.sort_by(f64::total_cmp);
     widths.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
 
@@ -203,8 +226,12 @@ pub fn write(v: &BoardView, board: &Board) -> String {
     w.open("CadData", &[]);
     for (n, func, side) in &layers {
         if *func == "DRILL" {
-            w.open("Layer", &[("name", n.clone()), ("layerFunction", "DRILL".into()), ("side", "ALL".into()), ("polarity", "POSITIVE".into())]);
-            w.empty("Span", &[("fromLayer", copper[0].clone()), ("toLayer", copper[copper.len() - 1].clone())]);
+            let (from, to) = match pairs.iter().find(|(pn, _)| pn == n) {
+                Some((_, sp)) => (layer_name(&sp[0]), layer_name(&sp[1])),
+                None => (copper[0].clone(), copper[copper.len() - 1].clone()),
+            };
+            w.open("Layer", &[("name", n.clone()), ("layerFunction", "DRILL".into()), ("side", side.to_string()), ("polarity", "POSITIVE".into())]);
+            w.empty("Span", &[("fromLayer", from), ("toLayer", to)]);
             w.close();
         } else {
             w.empty("Layer", &[("name", n.clone()), ("layerFunction", func.to_string()), ("side", side.to_string()), ("polarity", "POSITIVE".into())]);
@@ -214,15 +241,16 @@ pub fn write(v: &BoardView, board: &Board) -> String {
     let cu = 0.035 * v.copper_oz;
     let inner = 0.035 * board.inner_copper_oz;
     let n = copper.len();
-    let diel = ((v.thickness - 2.0 * cu - (n - 2) as f64 * inner) / (n - 1) as f64).max(0.05);
+    let diel_of = |i: usize| v.stackup.dielectrics.get(i).map(|d| d.thickness).unwrap_or(((v.thickness - 2.0 * cu - (n - 2) as f64 * inner) / (n - 1) as f64).max(0.05));
     w.open("Stackup", &[("name", "Primary_Stackup".into()), ("overallThickness", f(v.thickness)), ("tolPlus", "0".into()), ("tolMinus", "0".into()), ("whereMeasured", "METAL".into())]);
     w.open("StackupGroup", &[("name", "GROUP_PRIMARY".into()), ("thickness", f(v.thickness)), ("tolPlus", "0".into()), ("tolMinus", "0".into())]);
     let mut seq = 1;
     for (i, c) in copper.iter().enumerate() {
-        w.empty("StackupLayer", &[("layerOrGroupRef", c.clone()), ("thickness", f(if i == 0 || i + 1 == n { cu } else { inner })), ("tolPlus", "0".into()), ("tolMinus", "0".into()), ("sequence", seq.to_string())]);
+        let t = v.stackup.copper_oz.get(i).map(|oz| oz * crate::stackup::OZ_MM).unwrap_or(if i == 0 || i + 1 == n { cu } else { inner });
+        w.empty("StackupLayer", &[("layerOrGroupRef", c.clone()), ("thickness", f(t)), ("tolPlus", "0".into()), ("tolMinus", "0".into()), ("sequence", seq.to_string())]);
         seq += 1;
         if i + 1 < n {
-            w.empty("StackupLayer", &[("layerOrGroupRef", format!("DIELECTRIC_{}", i + 1)), ("thickness", f(diel)), ("tolPlus", "0".into()), ("tolMinus", "0".into()), ("sequence", seq.to_string())]);
+            w.empty("StackupLayer", &[("layerOrGroupRef", format!("DIELECTRIC_{}", i + 1)), ("thickness", f(diel_of(i))), ("tolPlus", "0".into()), ("tolMinus", "0".into()), ("sequence", seq.to_string())]);
             seq += 1;
         }
     }
@@ -316,6 +344,7 @@ pub fn write(v: &BoardView, board: &Board) -> String {
             w.close();
         }
         for x in &v.vias {
+            let Some(dia) = crate::gerber::via_pad(v, x, l) else { continue };
             let mut a = vec![("padUsage", "VIA".to_string())];
             if let Some(nn) = &x.net {
                 a.insert(0, ("net", nn.clone()));
@@ -323,7 +352,7 @@ pub fn write(v: &BoardView, board: &Board) -> String {
             w.open("Set", &a);
             w.open("Pad", &[]);
             w.empty("Location", &[("x", f(x.at[0])), ("y", f(x.at[1]))]);
-            w.empty("StandardPrimitiveRef", &[("id", format!("CIRCLE_{}", f(x.diameter)))]);
+            w.empty("StandardPrimitiveRef", &[("id", format!("CIRCLE_{}", f(dia)))]);
             w.close();
             w.close();
         }
@@ -352,6 +381,22 @@ pub fn write(v: &BoardView, board: &Board) -> String {
                 w.close();
                 w.close();
             }
+        }
+        for t in v.teardrops.iter().filter(|t| t.layer == *l) {
+            let a = t.net.as_ref().map(|nn| vec![("net", nn.clone())]).unwrap_or_default();
+            w.open("Set", &a);
+            w.open("Features", &[]);
+            contour(&mut w, &t.polygon, &[]);
+            w.close();
+            w.close();
+        }
+        for g in v.graphics.iter().filter(|g| g.layer == *l) {
+            let a = g.net.as_ref().map(|nn| vec![("net", nn.clone())]).unwrap_or_default();
+            w.open("Set", &a);
+            w.open("Features", &[]);
+            graphic(&mut w, g);
+            w.close();
+            w.close();
         }
         w.close();
     }
@@ -401,13 +446,17 @@ pub fn write(v: &BoardView, board: &Board) -> String {
                 w.close();
             }
         }
+        for g in v.graphics.iter().filter(|g| g.layer == if side == Side::Top { "silk_top" } else { "silk_bottom" }) {
+            graphic(&mut w, g);
+        }
         w.close();
         w.close();
         w.close();
     }
-    // Holes.
-    w.open("LayerFeature", &[("layerRef", drill)]);
-    for (i, h) in v.holes.iter().enumerate() {
+    // Holes: through holes, then each blind/buried pair's.
+    for (layer_ref, span) in std::iter::once((drill, None)).chain(pairs.iter().map(|(n, sp)| (n.clone(), Some(sp.clone())))) {
+    w.open("LayerFeature", &[("layerRef", layer_ref)]);
+    for (i, h) in v.holes.iter().enumerate().filter(|(_, h)| h.span == span) {
         let net = if h.owner == "via" { v.vias.iter().find(|x| (x.at[0] - h.at[0]).abs() < 1e-6 && (x.at[1] - h.at[1]).abs() < 1e-6).and_then(|x| x.net.clone()) } else { v.pads.iter().find(|p| format!("{}.{}", p.reference, p.number) == h.owner).and_then(|p| p.net.clone()) };
         let mut a = vec![("geometry", if h.owner == "via" { "VIA" } else { "COMPONENT_HOLE" }.to_string())];
         if let Some(nn) = net {
@@ -427,6 +476,7 @@ pub fn write(v: &BoardView, board: &Board) -> String {
         w.close();
     }
     w.close();
+    }
     w.close(); // Step
     w.close(); // CadData
     w.close(); // Ecad
