@@ -68,6 +68,8 @@ async function load(texture: THREE.Texture, id: string) {
   } catch {
     return console.warn(`printed picture ${id}: could not be read`);
   }
+  // The placeholder's storage is one pixel and fixed in size: let it go, so the picture is uploaded whole.
+  texture.dispose();
   texture.image = img;
   texture.needsUpdate = true;
   pictureEvents.onLoaded?.();
