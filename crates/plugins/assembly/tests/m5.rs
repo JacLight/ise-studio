@@ -254,6 +254,12 @@ fn a_part_that_stretches_with_a_joint_is_swept_as_it_stretches() {
     let r = clash.range.unwrap();
     assert!((r[0] - 40.0).abs() < 1e-6 && (r[1] - 90.0).abs() < 1e-6, "it reaches the wall at 40° (10 + 40 = 50 mm): {r:?}");
     assert!(sw.notes.iter().any(|n| n.contains("Rod follows the joints")), "{:?}", sw.notes);
+    // Sweeping a joint the rod does not follow leaves it as it is: not evaluated again, and no pair with the wall.
+    let other = place(&mut p, arm, "Other arm", [0.0, -100.0, 0.0], [0.0; 3]);
+    let j2 = id(&run(&mut p, "assembly.joint.create", json!({ "type": "hinge", "name": "Other", "a": { "at": [0, -100, 0] }, "b": { "instance": other, "connector": "Pivot" }, "value": 0, "limits": [0, 90] })).unwrap());
+    let sw = de_assembly::motion::sweep(p.world(), j2, None, None, None, 9, &HashMap::new(), true).unwrap();
+    assert!(!sw.notes.iter().any(|n| n.contains("Rod")), "{:?}", sw.notes);
+    assert!(!sw.pairs.iter().any(|c| [c.a.as_str(), c.b.as_str()].contains(&"Rod") && [c.a.as_str(), c.b.as_str()].contains(&"Wall")), "{:?}", sw.pairs);
 }
 
 #[test]

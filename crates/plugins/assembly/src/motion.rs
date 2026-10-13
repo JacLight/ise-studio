@@ -131,6 +131,18 @@ fn follows_joints(world: &World, id: StableId) -> bool {
     })
 }
 
+/// Whether the instance's shapes come out differently across these joint
+/// values (a spring the swept joint stretches), not just read some joint.
+fn varies(world: &World, id: StableId, steps: &[&JointValues]) -> bool {
+    let Some(first) = steps.first() else { return false };
+    crate::occurrences(world, id).iter().any(|o| {
+        let Some(se) = entity(world, o.shape) else { return false };
+        let values = |j: &JointValues| program_given(world, se, o.config.as_deref(), j).ok().map(|p| p.params.iter().map(|q| q.value).collect::<Vec<f64>>());
+        let base = values(first);
+        steps[1..].iter().any(|j| values(j) != base)
+    })
+}
+
 /// One instance's solids, with its shapes' formulas reading these joint values if given.
 fn body_with(world: &World, id: StableId, joints: Option<&JointValues>) -> Result<Body, String> {
     let e = entity(world, id).ok_or("an instance is gone")?;
@@ -410,7 +422,8 @@ fn gaps(world: &World, ids: &[(StableId, String)], frames: &[Vec<Transform>], ou
     let every = frames.len().div_ceil(180).max(1);
     // Shapes that follow the joints (a spring stretching as an arm swings)
     // change at each step: evaluated again with that step's joint values.
-    let flex: Vec<bool> = ids.iter().map(|(id, _)| follows_joints(world, *id)).collect();
+    let used: Vec<&JointValues> = (0..frames.len()).step_by(every).map(|n| &out.frames[n].joints).collect();
+    let flex: Vec<bool> = ids.iter().map(|(id, _)| follows_joints(world, *id) && varies(world, *id, &used)).collect();
     let mut flexed: HashMap<(usize, usize), Body> = HashMap::new();
     for n in (0..frames.len()).step_by(every) {
         for (i, (id, name)) in ids.iter().enumerate().filter(|(i, _)| flex[*i]) {
