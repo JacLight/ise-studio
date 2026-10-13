@@ -6,6 +6,7 @@
 
 import * as THREE from "three";
 import { WebGLPathTracer } from "three-gpu-pathtracer";
+import { shown } from "./batchLayer";
 
 /** What the view shows: its part groups and its camera. */
 export type RenderSource = { objects: THREE.Object3D[]; camera: THREE.PerspectiveCamera };
@@ -40,16 +41,26 @@ function exposeFor(renderer: THREE.WebGLRenderer, backdrop: Backdrop) {
  * highlights. `softboxes` scales the softboxes (the live view uses them
  * dimmed, beside its own sun).
  */
-export function studioEnvironment(width = 1024, softboxes = 1): THREE.DataTexture {
+export function studioEnvironment(width = 1024, softboxes = 1, product = false): THREE.DataTexture {
   const height = width / 2;
   const data = new Float32Array(width * height * 4);
   // Softboxes: centre (azimuth, elevation in degrees), half sizes (degrees), intensity.
-  const boxes: [number, number, number, number, number][] = [
-    [-35, 42, 26, 15, 7.5], // key, front left, high
-    [62, 20, 16, 13, 2.6], // fill, front right
-    [0, 78, 70, 7, 4.5], // overhead strip
-    [175, 28, 30, 10, 5.5], // rim, behind
-  ];
+  const boxes: [number, number, number, number, number][] = product
+    ? [
+        // A product table: big soft sources either side of the camera and a
+        // rim behind, nothing straight above or behind the camera, so a face
+        // turned to the lens (a steel plate) reads as metal, not a mirror of a
+        // light, and stamped edges catch the side light.
+        [-55, 30, 30, 22, 4], // key, left of the camera
+        [60, 25, 26, 18, 2.2], // fill, right of the camera
+        [180, 40, 50, 18, 2.5], // rim, behind the model
+      ]
+    : [
+        [-35, 42, 26, 15, 7.5], // key, front left, high
+        [62, 20, 16, 13, 2.6], // fill, front right
+        [0, 78, 70, 7, 4.5], // overhead strip
+        [175, 28, 30, 10, 5.5], // rim, behind
+      ];
   for (let y = 0; y < height; y++) {
     const elevation = 90 - (y / (height - 1)) * 180;
     for (let x = 0; x < width; x++) {
@@ -57,7 +68,11 @@ export function studioEnvironment(width = 1024, softboxes = 1): THREE.DataTextur
       // Dome: a cool grey brightening upward; the floor below the horizon dimmer and warm.
       const up = Math.max(0, Math.sin(THREE.MathUtils.degToRad(elevation)));
       let r: number, g: number, b: number;
-      if (elevation >= 0) {
+      if (product) {
+        // An even, dimmer room: the sources do the shaping.
+        const k = elevation >= 0 ? 0.36 - 0.08 * up : 0.3;
+        [r, g, b] = [k, k, k];
+      } else if (elevation >= 0) {
         const k = 0.5 + 0.55 * Math.pow(up, 0.6);
         [r, g, b] = [0.92 * k, 0.95 * k, 1.0 * k];
       } else {
@@ -144,6 +159,39 @@ function physical(m: THREE.Material): THREE.Material {
   return out;
 }
 
+/** One group of a geometry as a geometry of its own (only the vertices it uses), made once. */
+const pieceCache = new WeakMap<THREE.BufferGeometry, THREE.BufferGeometry[]>();
+function piece(geometry: THREE.BufferGeometry, group: number): THREE.BufferGeometry {
+  let made = pieceCache.get(geometry);
+  if (!made) pieceCache.set(geometry, (made = []));
+  if (made[group]) return made[group];
+  const { start, count } = geometry.groups[group];
+  const index = geometry.index;
+  const used = new Map<number, number>();
+  const order: number[] = [];
+  const indices = new Uint32Array(count);
+  for (let k = 0; k < count; k++) {
+    const v = index ? index.getX(start + k) : start + k;
+    let at = used.get(v);
+    if (at === undefined) {
+      at = order.length;
+      used.set(v, at);
+      order.push(v);
+    }
+    indices[k] = at;
+  }
+  const out = new THREE.BufferGeometry();
+  for (const [name, attribute] of Object.entries(geometry.attributes)) {
+    const source = attribute as THREE.BufferAttribute;
+    const size = source.itemSize;
+    const array = new Float32Array(order.length * size);
+    for (let n = 0; n < order.length; n++) for (let c = 0; c < size; c++) array[n * size + c] = source.getComponent(order[n], c);
+    out.setAttribute(name, new THREE.BufferAttribute(array, size, source.normalized));
+  }
+  out.setIndex(new THREE.BufferAttribute(indices, 1));
+  return (made[group] = out);
+}
+
 /**
  * A scene to render: copies of every visible mesh where it sits in the view,
  * physical materials, the studio light, and a large matte floor under the
@@ -168,11 +216,24 @@ export function buildRenderScene(source: RenderSource, environment: THREE.Textur
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh || !visible(mesh) || (mesh as unknown as THREE.InstancedMesh).isInstancedMesh) return;
       const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      // Only shaded surfaces (no overlays, picking proxies or see-through ghosts of the view).
-      if (!mats.some((m) => m instanceof THREE.MeshStandardMaterial && !m.wireframe && m.visible)) return;
-      const copy = new THREE.Mesh(mesh.geometry, Array.isArray(mesh.material) ? mats.map(convert) : convert(mesh.material));
-      mesh.matrixWorld.decompose(copy.position, copy.quaternion, copy.scale);
-      scene.add(copy);
+      // Only shaded surfaces (no overlays, picking proxies or see-through ghosts of the view);
+      // instances of shared geometry count too, though the view draws them in batches.
+      if (!mats.some((m) => m instanceof THREE.MeshStandardMaterial && !m.wireframe && shown(m))) return;
+      // The path tracer merges every mesh into one and keeps one material per
+      // mesh: a part of several pieces (a black body, a blue insert, a steel
+      // plate) goes in as one mesh per piece, each with its own material; a
+      // hidden piece stays out.
+      const pieces = Array.isArray(mesh.material) && mesh.geometry.groups.length ? mesh.geometry.groups : null;
+      const copies = pieces
+        ? pieces.flatMap((g, i) => {
+            const m = mats[g.materialIndex ?? 0];
+            return m && shown(m) && g.count > 0 ? [new THREE.Mesh(piece(mesh.geometry, i), convert(m))] : [];
+          })
+        : [new THREE.Mesh(mesh.geometry, convert(mats[0]))];
+      for (const copy of copies) {
+        mesh.matrixWorld.decompose(copy.position, copy.quaternion, copy.scale);
+        scene.add(copy);
+      }
       if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
       bounds.union(mesh.geometry.boundingBox!.clone().applyMatrix4(mesh.matrixWorld));
     });
@@ -190,7 +251,10 @@ export function buildRenderScene(source: RenderSource, environment: THREE.Textur
         roughness: white ? 1 : 0.92,
         metalness: 0,
         emissive: white ? 0xffffff : 0x000000,
-        emissiveIntensity: white ? WHITE_SWEEP.glow : 0,
+        emissiveIntensity: white ? WHITE_SWEEP.far : 0,
+        // Near the model the sweep glows softly, so the model's shadow shows;
+        // away from it, brighter and brighter, so it melts into the backdrop with no horizon.
+        emissiveMap: white ? sweepGlow(WHITE_SWEEP.glow / WHITE_SWEEP.far) : null,
       }),
     );
     floor.position.set((bounds.min.x + bounds.max.x) / 2, (bounds.min.y + bounds.max.y) / 2, bounds.min.z - span * 1e-4);
@@ -199,7 +263,9 @@ export function buildRenderScene(source: RenderSource, environment: THREE.Textur
   scene.environment = environment;
   if (backdrop === "white") {
     // Seen past the model: paper white, past the tone curve's shoulder.
-    scene.background = new THREE.Color(1, 1, 1);
+    // (Not exactly 1, 1, 1: the path tracer takes its colour backdrop for
+    // already made when the colour equals its default, and draws it black.)
+    scene.background = new THREE.Color(0.999, 0.999, 0.999);
     scene.backgroundIntensity = WHITE_SWEEP.background;
     scene.environmentIntensity = WHITE_SWEEP.light;
   } else {
@@ -220,11 +286,54 @@ function cameraFor(source: RenderSource, aspect: number) {
   return c;
 }
 
-/** The white sweep's light: how bright the backdrop, the floor's own glow and the studio around it are. */
-const WHITE_SWEEP = { background: 4, glow: 0.55, light: 0.55 };
+/**
+ * The sweep's glow over the floor disc (its UVs: the centre at 0.5, 0.5, the
+ * rim at 0.5 away): `near` round the model (within 2 of the disc's 40 spans),
+ * rising to 1 by a quarter of the way out.
+ */
+function sweepGlow(near: number): THREE.DataTexture {
+  const n = 256;
+  const data = new Uint8Array(n * n * 4);
+  for (let y = 0; y < n; y++)
+    for (let x = 0; x < n; x++) {
+      const r = Math.hypot((x + 0.5) / n - 0.5, (y + 0.5) / n - 0.5);
+      const t = THREE.MathUtils.smoothstep(r, 0.06, 0.25);
+      const v = Math.round(255 * (near + (1 - near) * t));
+      data.set([v, v, v, 255], (y * n + x) * 4);
+    }
+  const tex = new THREE.DataTexture(data, n, n, THREE.RGBAFormat);
+  tex.colorSpace = THREE.LinearSRGBColorSpace;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearFilter;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/** The white sweep's light: how bright the backdrop, the floor's own glow (near the model, far away) and the studio around it are. */
+const WHITE_SWEEP = { background: 4, glow: 0.45, far: 2, light: 1 };
+/** Turns the product studio's azimuth 0 (between its key and fill) to the camera. */
+const LIGHTS_TURN = 0;
 
 let sharedEnvironment: THREE.DataTexture | null = null;
-const environment = () => (sharedEnvironment ??= studioEnvironment());
+let productEnvironment: THREE.DataTexture | null = null;
+const environment = (backdrop: Backdrop) =>
+  backdrop === "white" ? (productEnvironment ??= studioEnvironment(1024, 1, true)) : (sharedEnvironment ??= studioEnvironment());
+
+/**
+ * On the white sweep the lights stand where a photographer puts them, round
+ * the camera: the studio turns about the vertical with the camera's heading
+ * (for a camera looking straight down, the way the picture's top points).
+ */
+function followCamera(scene: THREE.Scene, camera: THREE.Camera, backdrop: Backdrop) {
+  if (backdrop !== "white") return;
+  camera.updateMatrixWorld();
+  const e = camera.matrixWorld.elements;
+  const forward = new THREE.Vector3(-e[8], -e[9], -e[10]);
+  const up = new THREE.Vector3(e[4], e[5], e[6]);
+  const heading = Math.hypot(forward.x, forward.y) > 0.25 ? forward : up;
+  const turn = Math.atan2(heading.y, heading.x) + LIGHTS_TURN;
+  scene.environmentRotation.set(-Math.PI / 2, 0, turn, "ZYX");
+}
 
 /**
  * Progressive render on a canvas: each frame adds samples, a camera move
@@ -238,6 +347,7 @@ export class LiveRender {
   private scene: THREE.Scene;
   private seen = new THREE.Matrix4();
   private seenAspect = 0;
+  private backdrop: Backdrop = "studio";
   private frame = 0;
   private stopped = false;
   ready = false;
@@ -248,7 +358,8 @@ export class LiveRender {
     exposeFor(this.renderer, backdrop);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    this.scene = buildRenderScene(source, environment(), backdrop).scene;
+    this.backdrop = backdrop;
+    this.scene = buildRenderScene(source, environment(backdrop), backdrop).scene;
     this.camera = cameraFor(source, 1);
     this.tracer = new WebGLPathTracer(this.renderer);
     this.tracer.tiles.set(2, 2);
@@ -287,6 +398,10 @@ export class LiveRender {
       this.camera.aspect = w / h;
       this.camera.updateProjectionMatrix();
       this.tracer.updateCamera();
+      if (this.backdrop === "white") {
+        followCamera(this.scene, this.camera, this.backdrop);
+        this.tracer.updateEnvironment();
+      }
     }
     this.tracer.renderSample();
   }
@@ -316,8 +431,9 @@ export async function renderImage(source: RenderSource, options: RenderOptions, 
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setPixelRatio(1);
   renderer.setSize(width, height, false);
-  const { scene } = buildRenderScene(source, environment(), backdrop);
+  const { scene } = buildRenderScene(source, environment(backdrop), backdrop);
   const camera = cameraFor(source, width / height);
+  followCamera(scene, camera, backdrop);
   const tracer = new WebGLPathTracer(renderer);
   // Big images in tiles, so each draw call stays short.
   const tiles = Math.max(1, Math.ceil(Math.max(width, height) / 1024));
