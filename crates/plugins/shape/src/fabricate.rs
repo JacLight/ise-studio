@@ -461,7 +461,8 @@ pub fn three_mf(name: &str, solid: &Manifold) -> Vec<u8> {
     ])
 }
 
-/// A plain (stored) zip archive.
+/// A zip archive, each file deflated where that makes it smaller (a 3MF's
+/// mesh XML shrinks to about a fifth), else stored.
 pub fn zip(files: &[(String, Vec<u8>)]) -> Vec<u8> {
     fn crc32(data: &[u8]) -> u32 {
         let mut table = [0u32; 256];
@@ -478,6 +479,8 @@ pub fn zip(files: &[(String, Vec<u8>)]) -> Vec<u8> {
     let mut central = Vec::new();
     for (path, data) in files {
         let crc = crc32(data);
+        let packed = miniz_oxide::deflate::compress_to_vec(data, 6);
+        let (method, body): (u16, &[u8]) = if packed.len() < data.len() { (8, &packed) } else { (0, data) };
         let offset = out.len() as u32;
         let name = path.as_bytes();
         let header = |sig: u32, central: bool| {
@@ -488,11 +491,11 @@ pub fn zip(files: &[(String, Vec<u8>)]) -> Vec<u8> {
             }
             h.extend_from_slice(&20u16.to_le_bytes()); // needed
             h.extend_from_slice(&0x0800u16.to_le_bytes()); // UTF-8 names
-            h.extend_from_slice(&0u16.to_le_bytes()); // stored
+            h.extend_from_slice(&method.to_le_bytes()); // 8 deflated, 0 stored
             h.extend_from_slice(&0u16.to_le_bytes()); // time
             h.extend_from_slice(&0x21u16.to_le_bytes()); // date: 1980-01-01
             h.extend_from_slice(&crc.to_le_bytes());
-            h.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            h.extend_from_slice(&(body.len() as u32).to_le_bytes());
             h.extend_from_slice(&(data.len() as u32).to_le_bytes());
             h.extend_from_slice(&(name.len() as u16).to_le_bytes());
             h.extend_from_slice(&0u16.to_le_bytes()); // extra
@@ -505,7 +508,7 @@ pub fn zip(files: &[(String, Vec<u8>)]) -> Vec<u8> {
             h
         };
         out.extend(header(0x0403_4b50, false));
-        out.extend_from_slice(data);
+        out.extend_from_slice(body);
         central.extend(header(0x0201_4b50, true));
     }
     let start = out.len() as u32;

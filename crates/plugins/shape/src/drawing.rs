@@ -1207,8 +1207,35 @@ fn layout_in(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], options
         Projection::Third => false, // the top view is above: dimension below instead
     };
     let (r0, r1) = box_of(&right, at_right);
-    let [want_x, want_y, want_z] = [!done.axes[0], !done.axes[1], !done.axes[2]];
     let size3 = [0, 1, 2].map(|k| brk.true_at(k, b[k + 3]) - brk.true_at(k, b[k]));
+    // An overall size is left out when the ordinates give it, when it is
+    // hidden by its key ("x:30") like any automatic dimension, or when the
+    // person's own dimensions already state it along that axis (a ⌀30 across
+    // a round part): a size is dimensioned once.
+    let own_gives = |k: usize, size: f64| {
+        options.dimensions.iter().filter(|d| d.detail.is_none()).any(|d| {
+            let axes = d.view.axes();
+            let along = |i: usize| (d.a[i] - d.b[i]).abs();
+            let (axis, value) = match d.kind {
+                DimKind::Horizontal => (axes[0], along(0)),
+                DimKind::Vertical => (axes[1], along(1)),
+                DimKind::Aligned if along(1) < 1e-6 => (axes[0], along(0)),
+                DimKind::Aligned if along(0) < 1e-6 => (axes[1], along(1)),
+                DimKind::Aligned => return false,
+            };
+            axis == k && same(value, size)
+        })
+    };
+    // Within what a drawing states (two decimals): a ⌀30 states a 29.99 across.
+    fn same(a: f64, b: f64) -> bool {
+        (a - b).abs() <= 0.02f64.max(1e-4 * b.abs())
+    }
+    let hidden_overall = |k: usize| {
+        let axis = ['x', 'y', 'z'][k];
+        options.auto.hide.iter().any(|h| h.split_once(':').is_some_and(|(a, v)| a.len() == 1 && a.starts_with(axis) && v.parse::<f64>().is_ok_and(|v| same(v, size3[k]))))
+    };
+    let overall_off = |k: usize| hidden_overall(k) || own_gives(k, size3[k]);
+    let [want_x, want_y, want_z] = [0, 1, 2].map(|k| !done.axes[k] && !overall_off(k));
     if has_f {
         if want_x {
             if above_front {
