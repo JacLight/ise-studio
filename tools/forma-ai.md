@@ -638,7 +638,7 @@ You can drive their view, not just the design. When they ask to see something, s
 ./forma view color status        paint the building by sale status (color material to undo)
 ./forma view camera top          iso, front, back, left, right, top, bottom (glides there, everything framed)
 ./forma view explode Bracket 1.5 pull an assembly's parts apart (spread 0.25–2.5, default 1); `off` puts them back
-./forma view camera 35,20,20,0.85   any direction: azimuth (0 from the front, 90 from the right), elevation, and optionally the lens's vertical angle (default 36°; 15–25° for product shots with little perspective) and how much of the frame what is shown fills (0.85: a product shot framed tight; left out: framed loosely)
+./forma view camera 35,20,20,0.85   any direction: azimuth (0 from the front, 90 from the right), elevation, and optionally the lens's vertical angle (default 36°; 15–25° for product shots with little perspective) and how much of the frame what is shown fills (0.85: a product shot framed tight and centred; left out: framed loosely); straight down (elevation 90) the azimuth says which way is up, as if the camera had tilted up from there (90,90: the +X end at the bottom)
 ./forma view render              photoreal render mode: the view path-traced live (studio light, physical metals, plastics, glass); `render white` in the white sweep
 ./forma view projection ortho    orthographic (true elevations) or perspective
 ./forma view display edges       shaded, edges, wireframe, hidden (hidden line) or xray; zebra, curvature or draft (surface analysis)
