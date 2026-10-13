@@ -173,6 +173,8 @@ impl Ai {
 
     fn record_with(&self, app: &App, role: &str, text: &str, user: Option<&str>, attachments: Vec<Attachment>) {
         let r = ChatRecord { role: role.into(), text: text.into(), user: user.map(str::to_owned), at: now_ms(), attachments };
+        // (The folder is made when a session starts, after the first message is kept.)
+        let _ = std::fs::create_dir_all(&self.folder);
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(self.folder.join("chat.jsonl")) {
             let _ = writeln!(f, "{}", serde_json::to_string(&r).unwrap());
         }
@@ -705,6 +707,18 @@ mod tests {
         std::fs::write(dir.join("demo.ai/chat.jsonl"), chat).unwrap();
         // The engine starts again: the person who spoke last.
         assert_eq!(Ai::new(config, "demo", &dir).audience().as_deref(), Some("user-bo"));
+    }
+
+    /// The first message of a conversation is kept (its folder made for it),
+    /// so who said it is known after a restart even if no session started.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_first_message_is_kept_even_when_no_session_starts() {
+        let dir = temp_dir();
+        let server = crate::tests::server_in(&dir);
+        let app = server.project(Some(&"fresh".to_string())).unwrap();
+        assert!(app.ai.ask(Arc::clone(&app), "user-cy", "hello", ViewContext::default(), &[]).await.is_err(), "no Claude Code here");
+        let config = Arc::new(AiConfig { repo: PathBuf::from("."), port: 0, claude: None, model: None });
+        assert_eq!(Ai::new(config, "fresh", &dir).audience().as_deref(), Some("user-cy"));
     }
 
     /// After a restart, the AI's view commands reach the view of the person
