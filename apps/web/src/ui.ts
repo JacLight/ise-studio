@@ -11,12 +11,18 @@ export type Point = { x: number; y: number };
 export type DockSide = "left" | "right" | "bottom";
 
 /** Docked panels: which tool panels dock (and to which edge), which of those are
- * open, where the BOM workbench sits, and each docked panel's size (px). */
+ * open, where the BOM workbench and the AI sit, sizes (px: each column's width
+ * as `col-left` / `col-right`, the bottom dock's height), and in a column the
+ * panels' order top to bottom, their shares of its height, and which are folded. */
 export type DockPrefs = {
   panels: Partial<Record<PanelKind, "left" | "right">>;
   open: PanelKind[];
   bench: DockSide | "float";
+  ai: "left" | "right";
   sizes: Record<string, number>;
+  order: string[];
+  weights: Record<string, number>;
+  collapsed: string[];
 };
 
 export type UiPrefs = {
@@ -40,7 +46,7 @@ const DEFAULTS: UiPrefs = {
   messages: [],
   draft: "",
   voice: false,
-  dock: { panels: {}, open: [], bench: "bottom", sizes: {} },
+  dock: { panels: {}, open: [], bench: "bottom", ai: "right", sizes: {}, order: [], weights: {}, collapsed: [] },
 };
 
 /** The AI conversation belongs to the project it was about. */
@@ -62,7 +68,11 @@ export function loadPrefs(): UiPrefs {
       panels: Object.fromEntries(Object.entries(dock.panels ?? {}).filter(([, s]) => s === "left" || s === "right")),
       open: Array.isArray(dock.open) ? dock.open.filter((k) => typeof k === "string") : [],
       bench: dock.bench === "float" || sides.includes(dock.bench as string) ? (dock.bench as DockPrefs["bench"]) : "bottom",
+      ai: dock.ai === "left" ? "left" : "right",
       sizes: Object.fromEntries(Object.entries(dock.sizes ?? {}).filter(([, n]) => typeof n === "number" && Number.isFinite(n))),
+      order: Array.isArray(dock.order) ? dock.order.filter((k) => typeof k === "string") : [],
+      weights: Object.fromEntries(Object.entries(dock.weights ?? {}).filter(([, n]) => typeof n === "number" && Number.isFinite(n) && n > 0)),
+      collapsed: Array.isArray(dock.collapsed) ? dock.collapsed.filter((k) => typeof k === "string") : [],
     };
     return prefs;
   } catch {

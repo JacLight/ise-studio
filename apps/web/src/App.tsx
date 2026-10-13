@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { usePersisted, usePersistedSet } from "./persist";
 import { AiPanel } from "./AiPanel";
 import { RenderView } from "./RenderView";
@@ -14,8 +14,8 @@ import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, sugg
 import { type Bench, Workbench } from "./Bom";
 import { ScanTools } from "./ScanTools";
 import type { ScanLayer } from "./scanLayer";
-import { canvasOf } from "./canvasLayer";
-import { CalibrateBar, CanvasInsertDialog, CanvasProperties, CanvasSection } from "./CanvasTools";
+import { type CanvasTool, canvasOf } from "./canvasLayer";
+import { CalibrateBar, CanvasInsertDialog, CanvasProperties, CanvasSection, CropBar, PerspectiveBar } from "./CanvasTools";
 import { RequirementsPanel } from "./RequirementsPanel";
 import { type Attachment, type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, type TeamCursor, mm, projectInfo, projectName, projectTitle, projectUrl } from "./engine";
 import { type ConfigRow, type EdgeFinish, type Frac, type LiveEdit, type Shape, assemblyParts, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
@@ -30,8 +30,8 @@ import { PlaneMenu, useSketchEditor } from "./SketchEditor";
 import { Icon } from "./icons";
 import { sketchOf } from "./sketchModel";
 import { ComponentTree, ComponentsBody, InstanceBody, ParameterSets, StackingPlan, parameterSet, stackingSubject } from "./Components";
-import { type AiMode, type Group, type PanelKind, type UiPrefs, loadPrefs, savePrefs } from "./ui";
-import { DOCK_MIN_WINDOW, type DockPlace, type DockSlot, Splitter, layoutDocks, useWindowSize } from "./Dock";
+import { type AiMode, type DockSide, type Group, type PanelKind, type UiPrefs, loadPrefs, savePrefs } from "./ui";
+import { DOCK_MIN_WINDOW, type DockPlace, type DockSlot, Splitter, StackSplitter, layoutDocks, useDockDrag, useWindowSize } from "./Dock";
 import { IMPORT_ACCEPT, IMPORT_FORMATS, type ImportReply, importSummary, importable } from "./fileFormats";
 import { ProjectsHome } from "./ProjectsHome";
 import { VersionsSection, openVersion } from "./Versions";
@@ -91,6 +91,18 @@ const DOCK_SIDE: Record<PanelKind, "left" | "right"> = {
   views: "right",
 };
 
+/** Short names of tool panels, for docking's tips. */
+const DOCK_NAMES: Record<PanelKind, string> = {
+  project: "Workspace",
+  components: "Components",
+  objects: "Project",
+  history: "History",
+  comments: "Comments",
+  properties: "Properties",
+  requirements: "Requirements",
+  views: "View",
+};
+
 /** Teammates' colours (cursor, name tag, selection outline): distinct from the app's own violet. */
 const MATE_COLORS = ["#e2553f", "#1f9d74", "#2f7de1", "#d4880f", "#c23d8f", "#0f9fb3"];
 
@@ -106,7 +118,10 @@ export function App({ engine }: { engine: Engine }) {
   const [scansOpen, setScansOpen] = usePersisted("scansOpen", false);
   // Reference pictures: placing them, and a canvas being calibrated (the points clicked on it so far).
   const [canvasInsert, setCanvasInsert] = useState(false);
-  const [calibrating, setCalibrating] = useState<{ id: string; points: [number, number][] } | null>(null);
+  // A canvas being worked on in the view: calibrated by two points, cropped by a dragged rectangle, or squared up by four corners.
+  const [calibrating, setCalibrating] = useState<{ id: string; points: [number, number][]; mode: CanvasTool; dragging?: boolean } | null>(null);
+  // Reference pictures stay in view while one item is shown alone, if asked.
+  const [canvasesWithIsolate, setCanvasesWithIsolate] = usePersisted("canvasesWithIsolate", false);
   const [scanLayer, setScanLayer] = useState<ScanLayer | null>(null);
   // More items picked with Shift: they move and delete together with the selected one.
   const [also, setAlso] = useState<string[]>([]);
@@ -1613,33 +1628,89 @@ export function App({ engine }: { engine: Engine }) {
   const docked = prefs.aiMode === "docked" && !focus;
   const context = `${projectTitle()} · ${selectedPart ? partName(selectedPart) : "No selection"}`;
 
-  // Docked panels, from each window edge in: the AI outermost on the right, then tool panels, then the BOM.
+  // Docked panels: those docked to one side stack in its column (in the order
+  // the viewer left them: new ones at the foot), the BOM at the bottom between the columns.
   const canDock = win.w > DOCK_MIN_WINDOW && !focus;
   const sized = (id: string, usual: number) => prefs.dock.sizes[id] ?? usual;
-  const slots: DockSlot[] = [];
-  if (canDock && docked) slots.push({ id: "ai", side: "right", size: sized("ai", 390), min: 300, max: 760, initial: 390 });
-  if (canDock) {
-    for (const k of dockedOpen) {
-      const usual = k === "properties" ? 340 : 300;
-      slots.push({ id: k, side: prefs.dock.panels[k]!, size: sized(k, usual), min: 220, max: 640, initial: usual });
-    }
-  }
+  const folded = new Set(prefs.dock.collapsed);
+  const stackSlot = (id: string, side: DockSide, sides: ("left" | "right")[], min: number, max: number, usual: number): DockSlot => ({
+    id,
+    side,
+    size: usual,
+    min,
+    max,
+    initial: usual,
+    weight: prefs.dock.weights[id],
+    collapsed: folded.has(id),
+    sides,
+  });
   const benchSide = prefs.dock.bench;
-  if (canDock && bench && benchSide !== "float") {
-    const id = `bench-${benchSide}`;
-    const usual = benchSide === "bottom" ? 360 : 640;
-    slots.push({ id, side: benchSide, size: sized(id, usual), min: benchSide === "bottom" ? 170 : 440, max: 1200, initial: usual });
+  const candidates: DockSlot[] = [];
+  if (canDock) {
+    for (const k of dockedOpen) candidates.push(stackSlot(k, prefs.dock.panels[k]!, ["left", "right"], 220, 640, k === "properties" ? 340 : 300));
+    if (docked) candidates.push(stackSlot("ai", prefs.dock.ai, ["left", "right"], 300, 760, 390));
+    if (bench && benchSide === "right") candidates.push(stackSlot("bench-right", "right", ["right"], 440, 1200, 640));
   }
-  const docks = layoutDocks(slots, win.w, win.h);
+  const rank = (id: string, i: number) => {
+    const at = prefs.dock.order.indexOf(id);
+    return at >= 0 ? at : 1000 + i;
+  };
+  const slots = candidates.map((s, i) => ({ s, r: rank(s.id, i) })).sort((a, b) => a.r - b.r).map((x) => x.s);
+  if (canDock && bench && benchSide === "bottom") slots.push({ id: "bench-bottom", side: "bottom", size: sized("bench-bottom", 360), min: 170, max: 1200, initial: 360 });
+  // A column is as wide as the viewer left it, or its widest panel's usual width.
+  const columnSize = (side: "left" | "right") => {
+    const usual = Math.max(300, ...slots.filter((s) => s.side === side).map((s) => s.initial));
+    return { size: sized(`col-${side}`, usual), initial: usual };
+  };
+  const docks = layoutDocks(slots, win.w, win.h, { left: columnSize("left"), right: columnSize("right") });
   const dockSize = (id: string) => (px: number) => setPrefs((p) => ({ ...p, dock: { ...p.dock, sizes: { ...p.dock.sizes, [id]: px } } }));
   const splitter = (id: string, label: string) => {
     const place = docks.places.get(id);
     return place ? <Splitter place={place} label={label} onSize={dockSize(id)} /> : null;
   };
+  const dockName = (id: string) => (id === "ai" ? "Forma AI" : id.startsWith("bench") ? "Bill of materials" : (DOCK_NAMES[id as PanelKind] ?? id));
+  // Between two open panels of a column: share their height (every open panel's share is kept as its height then).
+  const stackSplitter = (id: string) => {
+    const edge = docks.edges.find((e) => e.below.id === id);
+    if (!edge) return null;
+    return (
+      <StackSplitter
+        edge={edge}
+        label={`Share the height between ${dockName(edge.above.id)} and ${dockName(id)}`}
+        onSize={(above, below) =>
+          setPrefs((p) => {
+            const weights = { ...p.dock.weights };
+            for (const place of docks.stacks[edge.below.side as "left" | "right"]) if (!place.collapsed) weights[place.id] = place.height;
+            weights[edge.above.id] = above;
+            weights[id] = below;
+            return { ...p, dock: { ...p.dock, weights } };
+          })
+        }
+      />
+    );
+  };
+  const toggleFold = (id: string) => setPrefs((p) => ({ ...p, dock: { ...p.dock, collapsed: p.dock.collapsed.includes(id) ? p.dock.collapsed.filter((x) => x !== id) : [...p.dock.collapsed, id] } }));
+  // Dragging a stacked panel by its header: to another place in its column, or into the other column.
+  const dockDrag = useDockDrag(docks.stacks, win.w, (id) => slots.find((s) => s.id === id)?.sides ?? [], (id, side, index) =>
+    setPrefs((p) => {
+      const column = docks.stacks[side].map((x) => x.id).filter((x) => x !== id);
+      column.splice(index, 0, id);
+      const order = [...p.dock.order.filter((x) => !column.includes(x)), ...column];
+      const panels = { ...p.dock.panels };
+      if (id in DOCK_NAMES) panels[id as PanelKind] = side;
+      return { ...p, dock: { ...p.dock, order, panels, ai: id === "ai" ? side : p.dock.ai } };
+    }),
+  );
+  /** A panel's place, with what its header does when it sits in a column. */
+  const dockPlace = (id: string): DockPlace | null => {
+    const place = docks.places.get(id);
+    if (!place || place.side === "bottom") return place ?? null;
+    return { ...place, stack: { collapsed: place.collapsed, toggle: () => toggleFold(id), grab: dockDrag.grab(id), dragging: dockDrag.dragging === id, first: place.first } };
+  };
   // The floating tool panel, then the docked ones (floating too where the window is too small to dock).
   const shownPanels: { kind: PanelKind; place?: DockPlace | null }[] = [
     ...(panel && !prefs.dock.panels[panel] ? [{ kind: panel }] : []),
-    ...dockedOpen.map((kind) => ({ kind, place: docks.places.get(kind) ?? null })),
+    ...dockedOpen.map((kind) => ({ kind, place: dockPlace(kind) })),
   ];
 
   return (
@@ -1700,16 +1771,46 @@ export function App({ engine }: { engine: Engine }) {
           scan={scanLayer}
           onGeometryPick={geometryPick}
           canvasPick={calibrating}
-          onCanvasPick={(px) => setCalibrating((c) => (c && c.points.length < 2 ? { ...c, points: [...c.points, px] } : c))}
+          canvasesWithIsolate={canvasesWithIsolate}
+          onCanvasPick={(px, phase) =>
+            setCalibrating((c) => {
+              if (!c) return c;
+              // A crop is the rectangle from where the drag began to where it is.
+              if (c.mode === "crop") return phase === "down" ? { ...c, points: [px, px], dragging: true } : c.dragging ? { ...c, points: [c.points[0], px], dragging: phase !== "up" } : c;
+              const most = c.mode === "perspective" ? 4 : 2;
+              return phase === "down" && c.points.length < most ? { ...c, points: [...c.points, px] } : c;
+            })
+          }
           onTurnInstance={async (id, at, rotation) => (await run("assembly.instance.update", { target: id, at, rotation })) !== null}
         />
-        {calibrating && (
+        {calibrating?.mode === "calibrate" && (
           <CalibrateBar
             entity={state.entities.get(calibrating.id)}
             points={calibrating.points}
             run={run}
             onDone={() => setCalibrating(null)}
             onUndoPoint={() => setCalibrating((c) => (c ? { ...c, points: [] } : c))}
+          />
+        )}
+        {calibrating?.mode === "crop" && (
+          <CropBar
+            entity={state.entities.get(calibrating.id)}
+            points={calibrating.points}
+            dragging={!!calibrating.dragging}
+            run={run}
+            onDone={() => setCalibrating(null)}
+            onRedo={() => setCalibrating((c) => (c ? { ...c, points: [], dragging: false } : c))}
+          />
+        )}
+        {calibrating?.mode === "perspective" && (
+          <PerspectiveBar
+            entity={state.entities.get(calibrating.id)}
+            points={calibrating.points}
+            run={run}
+            notify={notify}
+            onDone={() => setCalibrating(null)}
+            onUndoPoint={() => setCalibrating((c) => (c ? { ...c, points: c.points.slice(0, -1) } : c))}
+            onRestart={() => setCalibrating((c) => (c ? { ...c, points: [] } : c))}
           />
         )}
         {rendering && <RenderView source={renderSource} name={projectTitle()} onClose={() => setRendering(false)} />}
@@ -1927,6 +2028,26 @@ export function App({ engine }: { engine: Engine }) {
         />
       )}
 
+      {/* Each docked column: its ground (shown under folded panels) and the splitter that sets its width. */}
+      {(["left", "right"] as const).map((side) => {
+        const col = docks.places.get(`col-${side}`);
+        if (!col) return null;
+        return (
+          <Fragment key={side}>
+            <div className={`dock-col dock-${side}`} style={col.style} aria-hidden />
+            <div className={`dock-col-edge dock-${side}`} style={col.style}>
+              <Splitter place={col} label={`Resize the ${side} panels`} onSize={dockSize(`col-${side}`)} />
+            </div>
+          </Fragment>
+        );
+      })}
+      {dockDrag.marker}
+      {dockDrag.dragging && dockDrag.at && (
+        <div className="dock-ghost" style={{ left: dockDrag.at.x + 14, top: dockDrag.at.y + 10 }} aria-hidden>
+          {dockName(dockDrag.dragging)}
+        </div>
+      )}
+
       {!focus && bench && (
         <Workbench
           tab={bench}
@@ -1949,12 +2070,12 @@ export function App({ engine }: { engine: Engine }) {
             }
           }}
           onHover={setBomHover}
-          dock={docks.places.get(`bench-${benchSide}`) ?? null}
+          dock={dockPlace(`bench-${benchSide}`)}
           dockSide={benchSide}
           onDock={(side) => {
             setPrefs((p) => ({ ...p, dock: { ...p.dock, bench: side } }));
           }}
-          splitter={splitter(`bench-${benchSide}`, "Resize the bill of materials")}
+          splitter={benchSide === "bottom" ? splitter("bench-bottom", "Resize the bill of materials") : stackSplitter("bench-right")}
         />
       )}
 
@@ -1967,7 +2088,7 @@ export function App({ engine }: { engine: Engine }) {
           dock={place ?? null}
           dockSide={prefs.dock.panels[kind] ?? DOCK_SIDE[kind]}
           onDock={(side) => dockPanel(kind, side)}
-          splitter={splitter(kind, `Resize ${kind}`)}
+          splitter={stackSplitter(kind)}
         >
           {kind === "project" && (
             <>
@@ -2003,7 +2124,7 @@ export function App({ engine }: { engine: Engine }) {
             <ComponentsBody
               query={componentQuery}
               onQuery={setComponentQuery}
-              empty={parts.length === 0}
+              empty={parts.length === 0 && ![...state.entities.values()].some((e) => canvasOf(e))}
               onAdd={addPart}
               onImport={importFile}
               onInsertFrom={() => setInsertOpen(true)}
@@ -2035,6 +2156,11 @@ export function App({ engine }: { engine: Engine }) {
                     }
                     onIsolate={setIsolated}
                     links={links.byItem}
+                    onCanvasVisible={(ids, visible) =>
+                      void (ids.length === 1 ? run("canvas.update", { target: ids[0], visible }) : run("core.batch", { steps: ids.map((target) => ({ operation: "canvas.update", parameters: { target, visible } })) }))
+                    }
+                    canvasesWithIsolate={canvasesWithIsolate}
+                    onCanvasesWithIsolate={setCanvasesWithIsolate}
                   />
                 );
                 if (!building) return tree;
@@ -2137,7 +2263,7 @@ export function App({ engine }: { engine: Engine }) {
               entity={selectedPart}
               run={run}
               notify={notify}
-              onCalibrate={(id) => setCalibrating({ id, points: [] })}
+              onTool={(id, mode) => setCalibrating({ id, points: [], mode })}
               onDeleted={() => setSelected(null)}
             />
           )}
@@ -2286,8 +2412,8 @@ export function App({ engine }: { engine: Engine }) {
             say("assistant", "Discarded. Nothing was changed.");
           }}
           onMoved={(aiPosition) => update({ aiPosition })}
-          dock={docks.places.get("ai") ?? null}
-          splitter={splitter("ai", "Resize Forma AI")}
+          dock={dockPlace("ai")}
+          splitter={stackSplitter("ai")}
         />
       )}
 

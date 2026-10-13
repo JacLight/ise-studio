@@ -44,6 +44,8 @@ const PATHS = {
   send: "M12 18V5 M7 10l5-5 5 5",
   paperclip: "M20 11.5 12 19.5a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7L9.7 17.2a1.6 1.6 0 0 1-2.3-2.3L15 7.3",
   image: "M3 5h18v14H3z M3 16l5-5 4 4 3-3 6 6 M15.5 9.5h.01",
+  crop: "M6 2v16h16 M2 6h16v16",
+  perspective: "M7 5h10l4 14H3z M12 5v14 M5 12h14",
   download: "M12 3v12 M7 10l5 5 5-5 M4 16v5h16v-5",
   grid: "M3 3h18v18H3z M3 9h18 M3 15h18 M9 3v18 M15 3v18",
   dots: "M5 12h.01 M12 12h.01 M19 12h.01",

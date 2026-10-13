@@ -5,7 +5,7 @@
 // engine's overlay and silhouette match).
 
 import { useEffect, useMemo, useState } from "react";
-import { type CanvasData, VIEW_LABEL, canvasOf, mmPerPx, sizeMm } from "./canvasLayer";
+import { type CanvasData, type CanvasTool, VIEW_LABEL, apply, canvasOf, cornerOrder, cropOf, mmPerPx, sizeMm, toPlane } from "./canvasLayer";
 import { Dialog } from "./Dialog";
 import { type EntityView, projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
@@ -80,7 +80,7 @@ type Match = {
 };
 
 /** A canvas's properties. */
-export function CanvasProperties(props: { entity: EntityView; run: Run; notify: (t: string) => void; onCalibrate: (id: string) => void; onDeleted: () => void }) {
+export function CanvasProperties(props: { entity: EntityView; run: Run; notify: (t: string) => void; onTool: (id: string, tool: CanvasTool) => void; onDeleted: () => void }) {
   const { entity, run } = props;
   const c = canvasOf(entity)!;
   const prefs = useDisplayPrefs();
@@ -150,7 +150,7 @@ export function CanvasProperties(props: { entity: EntityView; run: Run; notify: 
         </span>
       </p>
       <div className="canvas-actions">
-        <button type="button" className="btn primary" onClick={() => props.onCalibrate(entity.id)} title="Click two points on the picture a known distance apart, then type that distance">
+        <button type="button" className="btn primary" onClick={() => props.onTool(entity.id, "calibrate")} title="Click two points on the picture a known distance apart, then type that distance">
           <Icon name="ruler" /> Calibrate…
         </button>
         {c.calibration && (
@@ -206,15 +206,28 @@ export function CanvasProperties(props: { entity: EntityView; run: Run; notify: 
         Opacity <b>{Math.round(opacity * 100)}%</b>
         <input type="range" min={0} max={1} step={0.05} value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} onPointerUp={() => opacity !== c.opacity && void set({ opacity })} onKeyUp={() => opacity !== c.opacity && void set({ opacity })} />
       </label>
+      <h3 className="panel-section">Picture</h3>
+      <p className="small muted canvas-note">
+        {c.crop ? `Cropped to ${Math.round(c.crop[2] - c.crop[0])} × ${Math.round(c.crop[3] - c.crop[1])} px` : "The whole picture counts"}
+        {c.perspective ? ` · squared up from a ${fmt(c.perspective.width)} × ${fmt(c.perspective.height)} mm rectangle` : " · as taken"}
+      </p>
+      <div className="canvas-actions">
+        <button type="button" className="btn" onClick={() => props.onTool(entity.id, "crop")} title="Drag a rectangle over the picture in the view: only that part shows and counts (for tracing and matching)">
+          <Icon name="crop" /> {c.crop ? "Crop again…" : "Crop…"}
+        </button>
+        <button type="button" className="btn" onClick={() => props.onTool(entity.id, "perspective")} title="Click the four corners of something rectangular in the picture and type its true width and height: the photo is squared up and sized from it">
+          <Icon name="perspective" /> {c.perspective ? "Square up again…" : "Square up…"}
+        </button>
+      </div>
       {(c.crop || c.perspective) && (
         <div className="canvas-actions">
           {c.crop && (
-            <button type="button" className="btn" onClick={() => void set({ reset: ["crop"] })} title={`Cropped to pixels ${c.crop.map((v) => Math.round(v)).join(", ")}`}>
+            <button type="button" className="btn" onClick={() => void set({ reset: ["crop"] })} title={`Cropped to pixels ${c.crop.map((v) => Math.round(v)).join(", ")}: show and count the whole picture again`}>
               Show the whole picture
             </button>
           )}
           {c.perspective && (
-            <button type="button" className="btn" onClick={() => void set({ reset: ["perspective"] })}>
+            <button type="button" className="btn" onClick={() => void set({ reset: ["perspective"] })} title="Back to the photo as taken (sized by its scale)">
               Undo squaring up
             </button>
           )}
@@ -424,6 +437,144 @@ export function CalibrateBar(props: { entity: EntityView | undefined; points: V2
         </form>
       )}
       <IconButton icon="close" label="Cancel calibration" onClick={props.onDone} />
+    </div>
+  );
+}
+
+/** Esc leaves a canvas tool (before the view or a panel takes it). */
+function useEscape(onDone: () => void) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      onDone();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onDone]);
+}
+
+/** Cropping a canvas: drag a rectangle over the picture in the view, then keep it. */
+export function CropBar(props: { entity: EntityView | undefined; points: V2[]; dragging: boolean; run: Run; onDone: () => void; onRedo: () => void }) {
+  useEscape(props.onDone);
+  const [busy, setBusy] = useState(false);
+  const c = canvasOf(props.entity);
+  if (!c || !props.entity) return null;
+  const r = props.points.length >= 2 ? cropOf(c, props.points[0], props.points[1]) : null;
+  const ok = !!r && r[2] - r[0] >= 2 && r[3] - r[1] >= 2;
+  const keep = async () => {
+    if (!r || !ok || busy) return;
+    setBusy(true);
+    const done = await props.run("canvas.update", { target: props.entity!.id, crop: r });
+    setBusy(false);
+    if (done) props.onDone();
+  };
+  return (
+    <div className="calibrate-bar" role="dialog" aria-label={`Crop ${c.name}`}>
+      <Icon name="crop" />
+      {!ok || props.dragging ? (
+        <span>
+          <span>
+            Crop <b>{c.name}</b>: {r && props.dragging ? `${r[2] - r[0]} × ${r[3] - r[1]} px` : "drag a rectangle over the part to keep"}
+          </span>
+          <small>On the picture itself (shown whole while cropping) · Esc to cancel</small>
+        </span>
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void keep();
+          }}
+        >
+          <span>
+            <span>
+              Keep {r![2] - r![0]} × {r![3] - r![1]} px
+            </span>
+            <small>
+              of {c.pixels[0]} × {c.pixels[1]} · drag again to redraw
+            </small>
+          </span>
+          <button type="submit" className="btn primary" autoFocus disabled={busy} title="Crop the picture to this rectangle (Enter)">
+            {busy ? "Cropping…" : "Crop"}
+          </button>
+          <button type="button" className="btn" onClick={props.onRedo} title="Clear the rectangle and drag a new one">
+            Redraw
+          </button>
+        </form>
+      )}
+      <IconButton icon="close" label="Cancel cropping (Esc)" onClick={props.onDone} />
+    </div>
+  );
+}
+
+/** Squaring a canvas up: click four corners of a rectangle in the picture, then type its true size. */
+export function PerspectiveBar(props: { entity: EntityView | undefined; points: V2[]; run: Run; notify: (t: string) => void; onDone: () => void; onUndoPoint: () => void; onRestart: () => void }) {
+  useEscape(props.onDone);
+  const prefs = useDisplayPrefs();
+  const c = canvasOf(props.entity);
+  const [w, setW] = useState("");
+  const [h, setH] = useState("");
+  const [busy, setBusy] = useState(false);
+  const four = props.points.length >= 4;
+  useEffect(() => {
+    if (!four || !c) return;
+    // A first guess from the picture's present scale: the mean of each pair of opposite sides.
+    const m = toPlane(c);
+    const [a, b, cc, d] = cornerOrder(props.points.slice(0, 4)).map((p) => apply(m, p));
+    const len = (p: V2, q: V2) => Math.hypot(q[0] - p[0], q[1] - p[1]);
+    const show = (mm: number) => String(Number((mm / UNIT_MM[prefs.length]).toFixed(prefs.decimals)));
+    setW(show((len(a, b) + len(d, cc)) / 2));
+    setH(show((len(a, d) + len(b, cc)) / 2));
+  }, [four]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!c || !props.entity) return null;
+  const squareUp = async () => {
+    const [wm, hm] = [Number(w) * UNIT_MM[prefs.length], Number(h) * UNIT_MM[prefs.length]];
+    if (!(wm > 0 && hm > 0) || busy) return;
+    const points = cornerOrder(props.points.slice(0, 4)).map((p) => [Math.round(p[0] * 10) / 10, Math.round(p[1] * 10) / 10]);
+    setBusy(true);
+    const done = await props.run("canvas.update", { target: props.entity!.id, perspective: { points, width: wm, height: hm } });
+    setBusy(false);
+    if (done) {
+      props.notify(`${c.name} squared up from a ${showLength(wm, prefs)} × ${showLength(hm, prefs)} rectangle`);
+      props.onDone();
+    }
+  };
+  const corner = ["first", "second", "third", "fourth"][props.points.length] ?? "";
+  return (
+    <div className="calibrate-bar" role="dialog" aria-label={`Square up ${c.name}`}>
+      <Icon name="perspective" />
+      {!four ? (
+        <span>
+          <span>
+            Square up <b>{c.name}</b>: click the {corner} corner of something rectangular ({props.points.length}/4)
+          </span>
+          <small>A sheet, a panel, a box face, a ruler's frame: corners in any order · Esc to cancel</small>
+        </span>
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void squareUp();
+          }}
+        >
+          <span>
+            <span>That rectangle is really</span>
+            <small>width (top edge) × height</small>
+          </span>
+          <input autoFocus inputMode="decimal" value={w} onChange={(e) => setW(e.target.value)} aria-label="True width" title="The rectangle's true width, along its top edge" />
+          <span className="unit">×</span>
+          <input inputMode="decimal" value={h} onChange={(e) => setH(e.target.value)} aria-label="True height" title="The rectangle's true height, along its left edge" />
+          <span className="unit">{prefs.length}</span>
+          <button type="submit" className="btn primary" disabled={busy || !(Number(w) > 0 && Number(h) > 0)} title="Square the photo up so this rectangle is true, and size the picture from it">
+            {busy ? "Squaring up…" : "Square up"}
+          </button>
+          <button type="button" className="btn" onClick={props.onRestart} title="Clear the four corners and click them again">
+            Pick again
+          </button>
+        </form>
+      )}
+      {!four && props.points.length > 0 && <IconButton icon="undo" label="Take back the last corner" onClick={props.onUndoPoint} />}
+      <IconButton icon="close" label="Cancel squaring up (Esc)" onClick={props.onDone} />
     </div>
   );
 }

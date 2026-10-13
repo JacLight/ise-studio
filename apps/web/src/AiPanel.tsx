@@ -2,7 +2,7 @@
 // hidden. Changing presentation never clears the draft, messages or proposal.
 
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import type { DockPlace } from "./Dock";
+import { CollapseButton, type DockPlace, dockState, stackHeader } from "./Dock";
 import type { Proposal } from "./assistant";
 import { type Attachment, attachToAi, attachmentUrl } from "./engine";
 import { useDraggable } from "./drag";
@@ -161,7 +161,7 @@ export function AiPanel(props: {
   return (
     <section
       ref={ref}
-      className={`ai-panel ${docked ? `docked dock-${docked.side}` : "floating"} ai-${mode}${dragging ? " dropping" : ""}`}
+      className={`ai-panel ${docked ? `docked dock-${docked.side}${dockState(docked)}` : "floating"} ai-${mode}${dragging ? " dropping" : ""}`}
       style={docked?.style}
       aria-label="AI assistant"
       onDragOver={(e) => {
@@ -181,7 +181,8 @@ export function AiPanel(props: {
         attach([...e.dataTransfer.files]);
       }}
     >
-      <header className="panel-handle" tabIndex={mode === "floating" ? 0 : -1} aria-label="Move AI panel using arrow keys" {...(mode === "floating" ? handle : {})}>
+      <header className="panel-handle" tabIndex={mode === "floating" ? 0 : -1} aria-label="Move AI panel using arrow keys" {...(mode === "floating" ? handle : stackHeader(docked?.stack, "Forma AI"))}>
+        {docked?.stack && <CollapseButton stack={docked.stack} name="Forma AI" />}
         <div className="ai-identity">
           <Icon name="spark" />
           <strong>Forma AI</strong>

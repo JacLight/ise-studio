@@ -10,7 +10,7 @@ import { PROCESS_NAMES, assemblyDef, instance, materialLook, program } from "./m
 import { BuildingView } from "./Building";
 import { SourcingView } from "./Sourcing";
 import { type LineUse, type SceneIndex, definitionKeys, keysFor, lineMatches, sceneIndex, selectionUses } from "./bomLinks";
-import type { DockPlace } from "./Dock";
+import { CollapseButton, type DockPlace, dockState, stackHeader } from "./Dock";
 import type { DockSide } from "./ui";
 
 export type Estimate = { material?: number; process?: number; setup: number; hours?: number; basis: string[] };
@@ -208,8 +208,9 @@ export function Workbench(props: {
   }, [props, docked]);
   const where = props.dockSide ?? "float";
   return (
-    <section className={docked ? `bench docked dock-${docked.side}` : "bench floating"} style={docked?.style} aria-label="Bill of materials and sourcing">
-      <header className="bench-head">
+    <section className={docked ? `bench docked dock-${docked.side}${dockState(docked)}` : "bench floating"} style={docked?.style} aria-label="Bill of materials and sourcing">
+      <header className="bench-head" {...stackHeader(docked?.stack, "Bill of materials")}>
+        {docked?.stack && <CollapseButton stack={docked.stack} name="bill of materials" />}
         <div className="bench-tabs" role="tablist">
           <button type="button" role="tab" aria-selected={props.tab === "bom"} className={props.tab === "bom" ? "active" : ""} title="Bill of materials: every part to make and buy, with quantities and costs" onClick={() => props.onTab("bom")}>
             <Icon name="list" /> Bill of materials
