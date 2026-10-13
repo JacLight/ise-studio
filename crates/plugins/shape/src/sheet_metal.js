@@ -853,8 +853,12 @@ function __louvre(f, T) {
   const ang = (Math.atan2(f.u[1], f.u[0]) * 180) / Math.PI;
   const { length: L, width: W, height: H } = f;
   // Cross-section across the louvre (v, z): a slab rising from the hinge side to the open side.
-  const slab = polygon([[-W / 2, 0], [W / 2, H], [W / 2, H + T], [-W / 2, T]]);
-  const sideWall = polygon([[-W / 2, T], [W / 2, T], [W / 2, H + T]]);
+  // The slab and the end walls reach a little into the uncut sheet (a foot
+  // at the hinge, the walls' bottoms), so they fuse with it through a volume
+  // rather than along shared faces: an exact union along faces that only
+  // touch left free edges (open seams) in the 3D part and its STEP file.
+  const slab = polygon([[-W / 2 - T / 2, 0], [-W / 2, 0], [W / 2, H], [W / 2, H + T], [-W / 2, T], [-W / 2 - T / 2, T]]);
+  const sideWall = polygon([[-W / 2, T / 2], [W / 2, T / 2], [W / 2, H + T], [-W / 2, T]]);
   // Built with the length along X: the section in the YZ plane, extruded along X.
   const along = (p, from, len) => p.extrude(len).rotate(90, 0, 90).translate(from, 0, 0);
   let hood = along(slab, -L / 2, L).add(along(sideWall, -L / 2, T), along(sideWall, L / 2 - T, T));
