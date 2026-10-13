@@ -15090,6 +15090,10 @@ a.button .icon {
   box-shadow: 0 6px 18px #2d214a12;
 }
 
+.view-tools-bar[hidden] {
+  display: none;
+}
+
 .view-tools-cards {
   display: flex;
   flex-direction: column-reverse;

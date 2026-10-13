@@ -25,6 +25,22 @@ const DISPLAY_ICONS: Record<DisplayMode, string> = {
 export function ViewToolbar({ tools, selected, onFitAll }: { tools: ViewTools; selected: string | null; onFitAll: () => void }) {
   const s = useSyncExternalStore(tools.subscribe, tools.getState);
   const [sectionOpen, setSectionOpen] = useState(false);
+  // Folded away to one button; remembered on this computer.
+  const [folded, setFolded] = useState(() => {
+    try {
+      return localStorage.getItem("forma.viewTools.folded") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const fold = (on: boolean) => {
+    setFolded(on);
+    try {
+      localStorage.setItem("forma.viewTools.folded", on ? "1" : "0");
+    } catch {
+      /* private window */
+    }
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -60,7 +76,16 @@ export function ViewToolbar({ tools, selected, onFitAll }: { tools: ViewTools; s
 
   return (
     <div className="view-tools" onPointerDown={(e) => e.stopPropagation()}>
-      <div className="view-tools-bar" role="toolbar" aria-label="View tools">
+      {folded && (
+        <div className="view-tools-bar">
+          <button type="button" className="vt-btn vt-icon" onClick={() => fold(false)} title="Show the view tools (projection, display modes, section, measure)" aria-label="Show the view tools">
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden className="vt-mode-edges">
+              <path d={DISPLAY_ICONS.edges} />
+            </svg>
+          </button>
+        </div>
+      )}
+      <div className="view-tools-bar" role="toolbar" aria-label="View tools" hidden={folded}>
         <button type="button" className={`vt-btn vt-icon ${s.orthographic ? "is-on" : ""}`} onClick={() => tools.setOrthographic(!s.orthographic)} title={`${s.orthographic ? "Orthographic" : "Perspective"} (O to switch)`} aria-label={s.orthographic ? "Orthographic" : "Perspective"}>
           <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden>
             <path d={s.orthographic ? "M3.5 3.5h9v9h-9zM3.5 8h9M8 3.5v9" : "M5.5 3.5h5l3 9h-11zM4 8h8M8 3.5v9"} />
@@ -91,6 +116,12 @@ export function ViewToolbar({ tools, selected, onFitAll }: { tools: ViewTools; s
         <button type="button" className={`vt-btn vt-icon ${s.measuring ? "is-on" : ""}`} onClick={() => tools.setMeasuring(!s.measuring)} title="Measure (M)" aria-label="Measure" aria-pressed={s.measuring}>
           <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden>
             <path d="M2 10.5 10.5 2 14 5.5 5.5 14zM5 7.5l1.5 1.5M7 5.5l1 1M9 3.5l1.5 1.5M3 9.5l1 1" />
+          </svg>
+        </button>
+        <span className="vt-sep" />
+        <button type="button" className="vt-btn vt-icon" onClick={() => fold(true)} title="Hide the view tools (their keys still work)" aria-label="Hide the view tools">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden>
+            <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
           </svg>
         </button>
       </div>

@@ -21,6 +21,12 @@ export function Board3DBar(props: { snapshot: () => string | null; hidden: boole
   const [show, setShow] = useState<BoardShow>(() => pcbLooks.getShow());
   const [open, setOpen] = useState(false);
   useEffect(() => pcbLooks.subscribe(() => setDrawn(pcbLooks.drawn())), []);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
   if (props.hidden || drawn.length === 0) return null;
   const toggle = (k: keyof BoardShow) => {
     const now = pcbLooks.getShow();
@@ -54,8 +60,8 @@ export function Board3DBar(props: { snapshot: () => string | null; hidden: boole
   };
   return (
     <div className="b3d" role="toolbar" aria-label="Board in 3D">
-      <button type="button" className="chip on" onClick={() => setOpen(!open)} title="What the 3D view shows of the board">
-        <Icon name="chip" /> Board{open ? "" : " …"}
+      <button type="button" className="chip on" onClick={() => setOpen(!open)} title={open ? "Close the board display options (Esc)" : "Board display options: layers and part types in the 3D view"} aria-expanded={open}>
+        <Icon name="chip" /> Board <Icon name={open ? "close" : "chevron"} />
       </button>
       {open && (
         <>
@@ -75,6 +81,10 @@ export function Board3DBar(props: { snapshot: () => string | null; hidden: boole
           </button>
           <button type="button" className="chip" onClick={() => void gltf()} title="Save the board as drawn (glTF binary)">
             glTF
+          </button>
+          <span className="sep" />
+          <button type="button" className="chip" onClick={() => setOpen(false)} title="Close (Esc)" aria-label="Close the board display options">
+            <Icon name="close" />
           </button>
         </>
       )}
