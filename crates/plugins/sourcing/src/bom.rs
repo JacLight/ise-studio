@@ -22,6 +22,7 @@ use crate::{
     rates::{self, Estimate, PartFacts, Rates},
 };
 use de_assembly::{AssemblyDef, Instance};
+use de_shape::configs::Overrides;
 use de_core::{
     IdIndex, StableId,
     bevy_ecs::{entity::Entity, world::World},
@@ -402,6 +403,20 @@ pub fn shape_info(world: &World, id: StableId, config: Option<&str>) -> Result<S
     }
 }
 
+/// Shape `id` as an instance shows it: in `config`, with the values the
+/// instance gives of its own (`params`; none: as [`shape_info`]).
+pub fn shape_info_as(world: &World, id: StableId, config: Option<&str>, params: &Overrides) -> Result<ShapeInfo, String> {
+    if params.is_empty() {
+        return shape_info(world, id, config);
+    }
+    let e = entity(world, id).ok_or_else(|| format!("{id} does not exist"))?;
+    let shown = de_shape::configs::evaluate_variant(world, e, config, params)?;
+    let program = de_shape::configs::variant_program(world, e, config, params, &|_, _| None)?;
+    let masses = if shown.part_masses.is_empty() { vec![shown.mass.mass_kg] } else { shown.part_masses.clone() };
+    let config = config.map(str::to_string).or_else(|| world.get::<ShapeConfigurations>(e).and_then(|t| t.active.clone()));
+    Ok(ShapeInfo { name: shown.name.clone(), stats: shown.stats, masses, program, config })
+}
+
 /// A program standing in for a plain box part (for its files).
 pub fn box_program(name: &str, [w, d, h]: [f64; 3]) -> ShapeProgram {
     let mut p: ShapeProgram = serde_json::from_value(serde_json::json!({ "name": name, "source": format!("return box({w}, {d}, {h});"), "params": [] })).expect("a box program");
@@ -449,7 +464,7 @@ struct MakeAcc {
 struct Walker<'w> {
     world: &'w World,
     sources: &'w [&'w dyn BuySource],
-    memo: HashMap<(StableId, Option<String>), Rc<Result<ShapeInfo, String>>>,
+    memo: HashMap<(StableId, Option<String>, String), Rc<Result<ShapeInfo, String>>>,
     make: Vec<MakeAcc>,
     buy: Vec<BuyLine>,
     flags: Vec<Flag>,
@@ -465,12 +480,12 @@ fn note_use(used: &mut Vec<String>, path: &[String]) {
 }
 
 impl<'w> Walker<'w> {
-    fn info(&mut self, id: StableId, config: Option<&str>) -> Rc<Result<ShapeInfo, String>> {
-        let key = (id, config.map(str::to_string));
+    fn info(&mut self, id: StableId, config: Option<&str>, params: &Overrides) -> Rc<Result<ShapeInfo, String>> {
+        let key = (id, config.map(str::to_string), if params.is_empty() { String::new() } else { serde_json::to_string(params).unwrap_or_default() });
         if let Some(i) = self.memo.get(&key) {
             return i.clone();
         }
-        let i = Rc::new(shape_info(self.world, id, config));
+        let i = Rc::new(shape_info_as(self.world, id, config, params));
         self.memo.insert(key, i.clone());
         i
     }
@@ -620,7 +635,7 @@ impl<'w> Walker<'w> {
     /// The row for definition `id` (a shape, box, assembly or a source's
     /// own entity) shown in `config`, `per_parent` of them in their parent
     /// and `total` in one finished unit.
-    fn visit(&mut self, id: StableId, config: Option<String>, per_parent: u32, total: u32, path: &mut Vec<String>, depth: usize) -> Option<Node> {
+    fn visit(&mut self, id: StableId, config: Option<String>, params: Overrides, per_parent: u32, total: u32, path: &mut Vec<String>, depth: usize) -> Option<Node> {
         if depth > 32 {
             return None;
         }
@@ -631,25 +646,26 @@ impl<'w> Walker<'w> {
         if let Some(def) = world.get::<AssemblyDef>(e) {
             let mut n = node(def.name.clone(), "assembly");
             path.push(def.name.clone());
-            for (of, cfg, names) in group(de_assembly::children(world, id)) {
+            for (of, cfg, params, names) in group(de_assembly::children(world, id)) {
                 let count = names.len() as u32;
-                if let Some(mut child) = self.visit(of, cfg, count, total * count, path, depth + 1) {
+                if let Some(mut child) = self.visit(of, cfg, params, count, total * count, path, depth + 1) {
                     child.instances = names;
                     n.children.push(child);
                 }
             }
+            n.children = merge_alike(std::mem::take(&mut n.children));
             path.pop();
             return Some(n);
         }
 
         if let Some(inst) = world.get::<Instance>(e) {
-            let mut child = self.visit(inst.of, inst.config.clone(), per_parent, total, path, depth + 1)?;
+            let mut child = self.visit(inst.of, inst.config.clone(), inst.params.clone(), per_parent, total, path, depth + 1)?;
             child.instances = vec![inst.name.clone()];
             return Some(child);
         }
 
         if world.get::<ShapeProgram>(e).is_some() {
-            let info = self.info(id, config.as_deref());
+            let info = self.info(id, config.as_deref(), &params);
             let info = match &*info {
                 Ok(i) => i,
                 Err(m) => {
@@ -732,14 +748,35 @@ impl<'w> Walker<'w> {
     }
 }
 
-/// Instances grouped by what they show (definition and configuration), in
-/// the order first placed: (definition, configuration, instance names).
-fn group(children: Vec<(StableId, Instance)>) -> Vec<(StableId, Option<String>, Vec<String>)> {
-    let mut out: Vec<(StableId, Option<String>, Vec<String>)> = vec![];
+/// Instances grouped by what they show (definition, configuration and the
+/// values they give of their own), in the order first placed: (definition,
+/// configuration, own values, instance names).
+type Grouped = (StableId, Option<String>, Overrides, Vec<String>);
+
+fn group(children: Vec<(StableId, Instance)>) -> Vec<Grouped> {
+    let mut out: Vec<Grouped> = vec![];
     for (_, inst) in children {
-        match out.iter_mut().find(|(of, c, _)| *of == inst.of && *c == inst.config) {
-            Some(g) => g.2.push(inst.name),
-            None => out.push((inst.of, inst.config, vec![inst.name])),
+        match out.iter_mut().find(|(of, c, p, _)| *of == inst.of && *c == inst.config && *p == inst.params) {
+            Some(g) => g.3.push(inst.name),
+            None => out.push((inst.of, inst.config, inst.params, vec![inst.name])),
+        }
+    }
+    out
+}
+
+/// Rows of one parent that come out the same (a servo whose output follows
+/// one joint and one following another: the same bought servo) are one row.
+fn merge_alike(nodes: Vec<Node>) -> Vec<Node> {
+    let mut out: Vec<Node> = vec![];
+    for n in nodes {
+        let alike = |o: &Node| o.line.is_some() && o.line == n.line && o.name == n.name && o.kind == n.kind && o.id == n.id && o.config == n.config && o.children.is_empty() && n.children.is_empty();
+        match out.iter_mut().find(|o| alike(o)) {
+            Some(o) => {
+                o.qty += n.qty;
+                o.total += n.total;
+                o.instances.extend(n.instances);
+            }
+            None => out.push(n),
         }
     }
     out
@@ -756,7 +793,7 @@ pub fn compute(world: &World, scope: Scope, options: &Options, sources: &[&dyn B
             if config.is_some() && world.get::<ShapeProgram>(e).is_none() {
                 return Err("a configuration can be chosen for a shape; instances show their own".into());
             }
-            let node = w.visit(id, config.clone(), 1, 1, &mut vec![], 0).ok_or_else(|| format!("{id} has nothing to list: pick a shape, an instance or an assembly"))?;
+            let node = w.visit(id, config.clone(), Overrides::new(), 1, 1, &mut vec![], 0).ok_or_else(|| format!("{id} has nothing to list: pick a shape, an instance or an assembly"))?;
             let name = node.name.clone();
             tree.push(node);
             (name, Some(id), config)
@@ -773,21 +810,21 @@ pub fn compute(world: &World, scope: Scope, options: &Options, sources: &[&dyn B
                         top_instances.push((*id, inst.clone()));
                     }
                 } else if (world.get::<ShapeProgram>(e).is_some() && world.get::<Placement>(e).is_some()) || world.get::<BoxFeature>(e).is_some() {
-                    if let Some(n) = w.visit(*id, None, 1, 1, &mut vec![], 0) {
+                    if let Some(n) = w.visit(*id, None, Overrides::new(), 1, 1, &mut vec![], 0) {
                         tree.push(n);
                     }
                 }
             }
-            for (of, cfg, names) in group(top_instances) {
+            for (of, cfg, params, names) in group(top_instances) {
                 let count = names.len() as u32;
-                if let Some(mut n) = w.visit(of, cfg, count, count, &mut vec![], 0) {
+                if let Some(mut n) = w.visit(of, cfg, params, count, count, &mut vec![], 0) {
                     n.instances = names;
                     tree.push(n);
                 }
             }
             for s in sources {
                 for id in s.roots(world) {
-                    if let Some(n) = w.visit(id, None, 1, 1, &mut vec![], 0) {
+                    if let Some(n) = w.visit(id, None, Overrides::new(), 1, 1, &mut vec![], 0) {
                         tree.push(n);
                     }
                 }

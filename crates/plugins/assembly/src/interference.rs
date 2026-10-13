@@ -71,10 +71,7 @@ fn leaves_of(world: &World, o: &Occurrence) -> Result<Vec<Leaf>, String> {
     if !several {
         return Ok(leaf(world, o)?.into_iter().collect());
     }
-    let program = match &o.config {
-        Some(c) => de_shape::configs::configured_program(world, se, c)?,
-        None => de_shape::resolved_program(world, se).ok_or("not a shape")?,
-    };
+    let program = crate::occurrence_program(world, o)?;
     let ev = de_shape::evaluated_at(&program, program.display_tolerance())?;
     let mut out = vec![];
     for p in &ev.parts {
@@ -90,12 +87,12 @@ fn leaves_of(world: &World, o: &Occurrence) -> Result<Vec<Leaf>, String> {
 
 fn leaf(world: &World, o: &Occurrence) -> Result<Option<Leaf>, String> {
     let se = entity(world, o.shape).ok_or("a component is gone")?;
-    let solid = match &o.config {
-        Some(c) => {
-            let p = de_shape::configs::configured_program(world, se, c)?;
+    let solid = match o.varies() {
+        true => {
+            let p = crate::occurrence_program(world, o)?;
             de_shape::evaluated_at(&p, p.display_tolerance())?.solid.translate(0.0, 0.0, 0.0)
         }
-        None => match world.get::<ShapeSolid>(se) {
+        false => match world.get::<ShapeSolid>(se) {
             Some(s) => (*s.solid).clone(),
             None => return Err(format!("{} has no valid result", o.names.join(" › "))),
         },

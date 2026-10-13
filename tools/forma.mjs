@@ -22,7 +22,7 @@
 //   node tools/forma.mjs interference <assembly | instance | top> [clearance mm]   parts that overlap (volume, where), touch, or come close
 //   node tools/forma.mjs exploded <view>      a saved exploded view's steps and trails
 //   node tools/forma.mjs study <study> [fps] [--out frames.json]   play a motion study: what moves, clashes, binding; frames to a file
-//   node tools/forma.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]'] [--tool connector]
+//   node tools/forma.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]' | controller [json|arduino] [--out f]] [--tool connector]
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs render [--width 1920] [--height 1080] [--samples 256] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open)
 //   node tools/forma.mjs flat [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
@@ -2502,9 +2502,29 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
         console.log(`${r.clashes.length || r.binds_at != null || r.waypoints.some((w) => !w.reached) ? "✗" : "✓"} ${r.waypoints.length} waypoints in ${r.frames.at(-1).value} s (${r.frames.length} frames)`);
         r.waypoints.forEach((w, i) => console.log(`  ${i + 1}. ${w.reached ? "reached" : `missed by ${w.error_mm} mm`}: ${Object.entries(w.values).map(([k, v]) => `${k} ${v}`).join(", ")}`));
         for (const c of r.clashes) console.log(`  clash  ${c.a} ↔ ${c.b} from ${c.range?.[0] ?? c.at} s to ${c.range?.[1] ?? c.at} s`);
+        for (const n of r.notes ?? []) console.log(`  ! ${n}`);
         if (out) (await import("node:fs")).writeFileSync(out, JSON.stringify(r));
         failed = r.clashes.length > 0 || r.binds_at != null || r.waypoints.some((w) => !w.reached);
-      } else throw new Error("forma robot <tip> [fk '{json}' | ik x,y,z [--axis x,y,z] | reach [samples] | path '<waypoints json>'] [--tool connector]");
+      } else if (sub === "controller") {
+        // The arm's controller configuration: channels, limits, home, interlocks (JSON, or an Arduino/C header).
+        const format = flag("--format") ?? extra ?? (out?.endsWith(".h") ? "arduino" : "json");
+        const res = await fetch(`${http}/robot/${t}?${toolQ}controller=${encodeURIComponent(format)}&${q}`);
+        if (!res.ok) throw new Error(await res.text());
+        const text = await res.text();
+        const cfg = format === "json" ? JSON.parse(text) : null;
+        if (cfg) {
+          console.log(`✓ ${cfg.arm}: ${cfg.joints.length} channels, ${cfg.interlocks.length} interlock${cfg.interlocks.length === 1 ? "" : "s"}`);
+          for (const j of cfg.joints) console.log(`  ${String(j.channel).padStart(2)} ${j.symbol.padEnd(18)} ${j.min}…${j.max} ${j.unit}, home ${j.home}${j.chain ? "" : " (off the chain)"}`);
+          for (const il of cfg.interlocks) console.log(`  interlock ${il.name}: ${il.text.join("; ")}`);
+        }
+        if (out) {
+          const fs = await import("node:fs");
+          const path = await import("node:path");
+          fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
+          fs.writeFileSync(out, cfg ? JSON.stringify(cfg, null, 1) : text);
+          console.log(`  written to ${out}`);
+        } else if (!cfg) console.log(text);
+      } else throw new Error("forma robot <tip> [fk '{json}' | ik x,y,z [--axis x,y,z] | reach [samples] | path '<waypoints json>' | controller [json|arduino] [--out file]] [--tool connector]");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);

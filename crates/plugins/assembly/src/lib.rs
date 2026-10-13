@@ -22,6 +22,7 @@ use de_core::{
     bevy_ecs::{self, component::Component, entity::Entity, world::World},
     json, schemars,
 };
+use de_shape::configs::{Overrides, ParamOverride};
 use de_shape::{PartMaterials, ShapeConfigurations, ShapeProgram, ShapeSolid};
 use de_solid::{MassProperties, MaterialRef};
 use schemars::JsonSchema;
@@ -36,6 +37,7 @@ pub mod dof;
 pub mod fit;
 pub mod geometry;
 pub mod interference;
+pub mod interlocks;
 pub mod joints;
 pub mod mates;
 pub mod motion;
@@ -73,6 +75,11 @@ impl Plugin for AssemblyPlugin {
             .command::<couplings::CreateCoupling>()
             .command::<couplings::UpdateCoupling>()
             .command::<couplings::DeleteCoupling>()
+            .component::<interlocks::Interlock>()
+            .command::<interlocks::CreateInterlock>()
+            .command::<interlocks::UpdateInterlock>()
+            .command::<interlocks::DeleteInterlock>()
+            .guard(interlocks::guard)
             .component::<patterns::Pattern>()
             .command::<patterns::CreatePattern>()
             .command::<patterns::UpdatePattern>()
@@ -164,6 +171,12 @@ pub struct Instance {
     /// (`None` shows the definition as it is).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<String>,
+    /// This instance's own values for parameters of the shape it shows, in
+    /// place of the definition's (after its configuration's): a number, or a
+    /// formula that follows something (a servo's output spline following
+    /// its joint). It still shares the definition and every edit to it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: Overrides,
 }
 
 impl Persist for Instance {
@@ -201,8 +214,33 @@ pub struct Occurrence {
     pub names: Vec<String>,
     /// The configuration of the shape shown here, if its instance names one.
     pub config: Option<String>,
+    /// The values its instance gives the shape's parameters of its own.
+    pub params: Overrides,
     /// Placement of the shape's own coordinates in the root's coordinates.
     pub transform: Transform,
+}
+
+impl Occurrence {
+    /// Whether its instance shows the shape other than as the shape is: in
+    /// a configuration, or with values of its own.
+    pub fn varies(&self) -> bool {
+        self.config.is_some() || !self.params.is_empty()
+    }
+}
+
+/// The program an occurrence shows, ready to evaluate: the shape in its
+/// instance's configuration, with the instance's own values, formulas
+/// worked out.
+pub fn occurrence_program(world: &World, o: &Occurrence) -> Result<ShapeProgram, String> {
+    occurrence_program_given(world, o, &|_, _| None)
+}
+
+/// [`occurrence_program`], with some values read by its formulas given
+/// (joint → value at one step of a sweep: a spring stretching, a servo's
+/// output turning with its joint).
+pub fn occurrence_program_given(world: &World, o: &Occurrence, given: &dyn Fn(StableId, &str) -> Option<f64>) -> Result<ShapeProgram, String> {
+    let se = entity(world, o.shape).ok_or("a component is gone")?;
+    de_shape::configs::variant_program(world, se, o.config.as_deref(), &o.params, given)
 }
 
 fn entity(world: &World, id: StableId) -> Option<Entity> {
@@ -266,38 +304,46 @@ fn walk(world: &World, e: Entity, t: Transform, path: &mut Vec<StableId>, names:
         }
     } else if let Some(p) = world.get::<ShapeProgram>(e) {
         let Some(id) = id_of(world, e) else { return };
-        // The instance that placed this shape may show one of its configurations;
-        // a shape on its own shows its active one.
-        let config = match path.last().and_then(|i| entity(world, *i)).and_then(|i| world.get::<Instance>(i)) {
-            Some(inst) => inst.config.clone(),
-            None => None,
+        // The instance that placed this shape may show one of its configurations
+        // and give it values of its own; a shape on its own shows its active one.
+        let (config, params) = match path.last().and_then(|i| entity(world, *i)).and_then(|i| world.get::<Instance>(i)) {
+            Some(inst) => (inst.config.clone(), inst.params.clone()),
+            None => (None, Overrides::new()),
         };
         let shown = config.clone().or_else(|| world.get::<ShapeConfigurations>(e).and_then(|t| t.active.clone()));
         let mut n = names.clone();
         n.push(de_shape::configs::display_name(&p.name, shown.as_deref()));
-        out.push(Occurrence { shape: id, path: path.clone(), names: n, transform: t, config });
+        out.push(Occurrence { shape: id, path: path.clone(), names: n, transform: t, config, params });
     }
 }
 
 // ---- Derived: what an assembly or instance adds up to ----------------------
 
 /// Derived, on every instance: its shape evaluated in the configuration it
-/// names (`None` when it shows its definition as it is).
+/// names and with the values it gives of its own (`None` when it shows its
+/// definition as it is).
 #[derive(Component, Clone, Default)]
 pub struct InstanceConfigured(pub Option<Arc<de_shape::configs::Configured>>);
 
 fn configured(world: &World, e: Entity) -> Option<Result<InstanceConfigured, String>> {
     let inst = world.get::<Instance>(e)?;
-    let (Some(name), Some(def)) = (&inst.config, entity(world, inst.of)) else { return Some(Ok(InstanceConfigured(None))) };
+    let Some(def) = entity(world, inst.of).filter(|_| inst.config.is_some() || !inst.params.is_empty()) else { return Some(Ok(InstanceConfigured(None))) };
     if world.get::<ShapeProgram>(def).is_none() {
         return Some(Ok(InstanceConfigured(None)));
     }
-    Some(de_shape::configs::evaluate(world, def, name).map(|c| InstanceConfigured(Some(Arc::new(c)))))
+    let shown = match (&inst.config, inst.params.is_empty()) {
+        (Some(name), true) => de_shape::configs::evaluate(world, def, name),
+        (config, _) => de_shape::configs::evaluate_variant(world, def, config.as_deref(), &inst.params).map_err(|m| format!("{}: {m}", inst.name)),
+    };
+    Some(shown.map(|c| InstanceConfigured(Some(Arc::new(c)))))
 }
 
-/// The configured result an occurrence shows, when its instance names a configuration.
+/// The result an occurrence shows when its instance names a configuration or
+/// gives values of its own.
 pub fn configured_of<'w>(world: &'w World, o: &Occurrence) -> Option<&'w de_shape::configs::Configured> {
-    o.config.as_ref()?;
+    if !o.varies() {
+        return None;
+    }
     let e = entity(world, *o.path.last()?)?;
     world.get::<InstanceConfigured>(e)?.0.as_deref()
 }
@@ -330,10 +376,10 @@ fn stats(world: &World, e: Entity) -> Option<Result<AssemblyStats, String>> {
     for o in &occ {
         let Some(se) = entity(world, o.shape) else { continue };
         // An instance in a configuration counts as that configuration.
-        let (stats, kg) = match (configured_of(world, o), &o.config) {
+        let (stats, kg) = match (configured_of(world, o), o.varies()) {
             (Some(c), _) => (&c.stats, c.mass.mass_kg),
-            (None, Some(_)) => return Some(Err(format!("{} has no valid result", o.names.join(" › ")))),
-            (None, None) => match world.get::<ShapeSolid>(se) {
+            (None, true) => return Some(Err(format!("{} has no valid result", o.names.join(" › ")))),
+            (None, false) => match world.get::<ShapeSolid>(se) {
                 Some(solid) => (&solid.stats, world.get::<MassProperties>(se).and_then(|m| m.mass_kg)),
                 None => return Some(Err(format!("{} has no valid result", o.names.join(" › ")))),
             },
@@ -512,6 +558,74 @@ pub struct CreateInstance {
     pub properties: BTreeMap<String, String>,
     /// A configuration of the shape to show (see `shape.config.set_table`).
     pub config: Option<String>,
+    /// Values of its own for parameters of the shape (key → a number, or a
+    /// formula such as "=Shoulder.angle"), in place of the definition's.
+    #[serde(default)]
+    pub params: BTreeMap<String, ParamInput>,
+}
+
+/// A value an instance gives a parameter of its shape: a number, or a
+/// formula ("=Shoulder.angle", "=Elbow.angle / 2 + 10").
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ParamInput {
+    Value(f64),
+    Formula(String),
+}
+
+/// Whether `a` depends on `b`, directly or through others.
+fn depends_on(tx: &Tx, a: StableId, b: StableId, depth: usize) -> bool {
+    a == b || (depth < 64 && tx.get::<de_core::DependsOn>(a).is_some_and(|d| d.0.iter().any(|x| depends_on(tx, *x, b, depth + 1))))
+}
+
+/// Sets instance `id`'s own parameter values (`None` drops one: the
+/// definition's value shows again), checked against its shape, and keeps
+/// its dependencies on what their formulas read in step. Returns whether
+/// they changed.
+fn set_params(tx: &mut Tx, id: StableId, inst: &mut Instance, input: BTreeMap<String, Option<ParamInput>>) -> Result<bool, CommandError> {
+    if input.is_empty() {
+        return Ok(false);
+    }
+    let program = tx
+        .get::<ShapeProgram>(inst.of)
+        .cloned()
+        .ok_or_else(|| bad(ErrorCode::InvalidParameters, format!("{} shows an assembly: only a shape's instances take values of their own (give them to the instances inside it)", inst.name)))?;
+    let mut params = inst.params.clone();
+    for (key, v) in input {
+        match v {
+            None => {
+                params.remove(&key);
+            }
+            Some(ParamInput::Value(value)) => {
+                params.insert(key, ParamOverride { value, expr: None });
+            }
+            Some(ParamInput::Formula(f)) if f.trim().parse::<f64>().is_ok() => {
+                params.insert(key, ParamOverride { value: f.trim().parse().unwrap(), expr: None });
+            }
+            Some(ParamInput::Formula(f)) => {
+                let f = f.trim();
+                let src = if f.starts_with('=') { f.to_string() } else { format!("={f}") };
+                let value = program.params.iter().find(|p| p.key == key).map(|p| p.value).unwrap_or(0.0);
+                params.insert(key, ParamOverride { value, expr: Some(src) });
+            }
+        }
+    }
+    de_shape::configs::check_overrides(tx.world(), &program, &mut params)?;
+    let (before, after) = (de_shape::configs::override_references(&inst.params), de_shape::configs::override_references(&params));
+    for r in &after {
+        if depends_on(tx, *r, id, 0) {
+            return Err(bad(ErrorCode::InvalidParameters, format!("{}: these formulas would make a loop (something they read already depends on this instance)", inst.name)));
+        }
+    }
+    for r in before.iter().filter(|r| !after.contains(r) && **r != inst.of) {
+        tx.remove_dependency(id, *r)?;
+    }
+    for r in after.iter().filter(|r| !before.contains(r) && **r != inst.of) {
+        tx.add_dependency(id, *r)?;
+    }
+    let changed = params != inst.params;
+    inst.params = params;
+    Ok(changed)
 }
 
 /// Checks that `config` is a configuration of definition `of`.
@@ -549,7 +663,9 @@ impl Command for CreateInstance {
             check_config(tx, self.of, c)?;
         }
         let id = tx.create();
-        tx.set(id, Instance { name: self.name, of: self.of, parent: self.parent, at: self.at, rotation: self.rotation, properties: self.properties, config })?;
+        let mut inst = Instance { name: self.name, of: self.of, parent: self.parent, at: self.at, rotation: self.rotation, properties: self.properties, config, params: Overrides::new() };
+        set_params(tx, id, &mut inst, self.params.into_iter().map(|(k, v)| (k, Some(v))).collect())?;
+        tx.set(id, inst)?;
         tx.add_dependency(id, self.of)?;
         if let Some(parent) = self.parent {
             tx.add_dependency(parent, id)?;
@@ -572,6 +688,11 @@ pub struct UpdateInstance {
     pub config: Option<String>,
     #[serde(default)]
     pub properties: BTreeMap<String, String>,
+    /// Values of its own for parameters of its shape (key → a number, or a
+    /// formula such as "=Shoulder.angle"; null drops one, so the
+    /// definition's value shows again).
+    #[serde(default)]
+    pub params: BTreeMap<String, Option<ParamInput>>,
 }
 
 impl Command for UpdateInstance {
@@ -617,6 +738,17 @@ impl Command for UpdateInstance {
             if inst.config.as_ref().is_some_and(|c| check_config(tx, of, c).is_err()) {
                 inst.config = None;
             }
+            // And the instance's own values only for parameters it has.
+            let keys: Vec<String> = tx.get::<ShapeProgram>(of).map(|p| p.params.iter().map(|p| p.key.clone()).collect()).unwrap_or_default();
+            let gone: BTreeMap<String, Option<ParamInput>> = inst.params.keys().filter(|k| !keys.contains(k) && !self.params.contains_key(*k)).map(|k| (k.clone(), None)).collect();
+            if !gone.is_empty() {
+                let mut kept = inst.params.clone();
+                kept.retain(|k, _| !gone.contains_key(k));
+                for r in de_shape::configs::override_references(&inst.params).into_iter().filter(|r| !de_shape::configs::override_references(&kept).contains(r) && *r != of) {
+                    tx.remove_dependency(self.target, r)?;
+                }
+                inst.params = kept;
+            }
         }
         if let Some(c) = self.config {
             if c.is_empty() {
@@ -633,10 +765,11 @@ impl Command for UpdateInstance {
                 inst.properties.insert(k, v);
             }
         }
-        let (of_changed, config_changed) = (inst.of != before.of, inst.config != before.config);
+        set_params(tx, self.target, &mut inst, self.params)?;
+        let (of_changed, config_changed) = (inst.of != before.of, inst.config != before.config || inst.params != before.params);
         let parent = inst.parent;
         tx.set(self.target, inst)?;
-        // Its joints read its connectors: the instances they hold follow a new definition or configuration.
+        // Its joints read its connectors: the instances they hold follow a new definition, configuration or values.
         if of_changed {
             joints::rewire(tx, parent)?;
         }
@@ -646,7 +779,7 @@ impl Command for UpdateInstance {
         if mate_held {
             joints::remark(tx, parent)?;
         }
-        // Pattern copies follow their seed's definition and configuration.
+        // Pattern copies follow their seed's definition, configuration and values.
         if of_changed || config_changed {
             patterns::follow_seed(tx, self.target)?;
         }
@@ -696,6 +829,10 @@ fn copy_definition(tx: &mut Tx, def: StableId, name: Option<String>) -> Result<S
             child.parent = Some(id);
             let of = child.of;
             let c = tx.create();
+            // Its own values' formulas read the same things.
+            for r in de_shape::configs::override_references(&child.params).into_iter().filter(|r| *r != of) {
+                tx.add_dependency(c, r)?;
+            }
             tx.set(c, child)?;
             tx.add_dependency(c, of)?;
             tx.add_dependency(id, c)?;

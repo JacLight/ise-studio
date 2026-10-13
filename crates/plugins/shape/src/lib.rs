@@ -766,8 +766,9 @@ pub fn evaluated_at(program: &ShapeProgram, tolerance: f64) -> Result<Arc<runtim
     use std::sync::{Mutex, OnceLock};
     static CACHE: OnceLock<Mutex<Vec<(u64, Arc<runtime::Evaluated>)>>> = OnceLock::new();
     // Assemblies show many configured sizes (screws, inserts, bearings) at once;
-    // a small cache re-evaluates them on every sweep.
-    const CAPACITY: usize = 64;
+    // a small cache re-evaluates them on every sweep (and a spring that
+    // follows a joint is one entry per step swept).
+    const CAPACITY: usize = 128;
 
     let mut h = DefaultHasher::new();
     program.source.hash(&mut h);
@@ -779,8 +780,15 @@ pub fn evaluated_at(program: &ShapeProgram, tolerance: f64) -> Result<Arc<runtim
     program.inputs.hash(&mut h);
     let key = h.finish();
     let cache = CACHE.get_or_init(|| Mutex::new(Vec::new()));
-    if let Some((_, solid)) = cache.lock().unwrap().iter().find(|(k, _)| *k == key) {
-        return Ok(solid.clone());
+    {
+        // Least recently used goes first: what is read again moves to the back.
+        let mut entries = cache.lock().unwrap();
+        if let Some(i) = entries.iter().position(|(k, _)| *k == key) {
+            let hit = entries.remove(i);
+            let solid = hit.1.clone();
+            entries.push(hit);
+            return Ok(solid);
+        }
     }
     let solid = Arc::new(runtime::evaluate_in(&program.source, &program.values(), tolerance, &program.inputs)?);
     let mut entries = cache.lock().unwrap();
@@ -789,6 +797,31 @@ pub fn evaluated_at(program: &ShapeProgram, tolerance: f64) -> Result<Arc<runtim
     }
     entries.push((key, solid.clone()));
     Ok(solid)
+}
+
+/// What a program declares (connectors, stock, joints) at its display
+/// accuracy, kept by program long after its solid has left the cache: an
+/// assembly's joints read every configured screw's and insert's connectors
+/// at each step of a sweep, and they are small.
+pub fn declared_of(program: &ShapeProgram) -> Result<Arc<stock::Declared>, String> {
+    use std::collections::{HashMap, hash_map::DefaultHasher};
+    use std::hash::Hasher;
+    use std::sync::{Mutex, OnceLock};
+    static KEPT: OnceLock<Mutex<HashMap<u64, Arc<stock::Declared>>>> = OnceLock::new();
+    let mut h = DefaultHasher::new();
+    cache::program_key(program, &mut h);
+    let key = h.finish();
+    let kept = KEPT.get_or_init(Default::default);
+    if let Some(d) = kept.lock().unwrap().get(&key) {
+        return Ok(d.clone());
+    }
+    let d = Arc::new(evaluated_at(program, program.display_tolerance())?.declared.clone());
+    let mut k = kept.lock().unwrap();
+    if k.len() > 4096 {
+        k.clear();
+    }
+    k.insert(key, d.clone());
+    Ok(d)
 }
 
 /// The program's whole solid at a chosen accuracy (mm).

@@ -319,7 +319,10 @@ fn reconcile(tx: &mut Tx, id: StableId, mut p: Pattern) -> Result<Pattern, Comma
         let mut props = seed.properties.clone();
         props.remove("step");
         let m = tx.create();
-        tx.set(m, Instance { name: format!("{} {k}", seed.name), of: seed.of, parent: seed.parent, at: seed.at, rotation: seed.rotation, properties: props, config: seed.config.clone() })?;
+        tx.set(m, Instance { name: format!("{} {k}", seed.name), of: seed.of, parent: seed.parent, at: seed.at, rotation: seed.rotation, properties: props, config: seed.config.clone(), params: seed.params.clone() })?;
+        for r in de_shape::configs::override_references(&seed.params).into_iter().filter(|r| *r != seed.of) {
+            tx.add_dependency(m, r)?;
+        }
         tx.add_dependency(m, seed.of)?;
         if let Some(parent) = seed.parent {
             tx.add_dependency(parent, m)?;
@@ -541,6 +544,16 @@ pub(crate) fn follow_seed(tx: &mut Tx, seed: StableId) -> Result<(), CommandErro
                 inst.of = s.of;
             }
             inst.config = s.config.clone();
+            if inst.params != s.params {
+                let (before, after) = (de_shape::configs::override_references(&inst.params), de_shape::configs::override_references(&s.params));
+                for r in before.iter().filter(|r| !after.contains(r) && **r != s.of) {
+                    tx.remove_dependency(m, *r)?;
+                }
+                for r in after.iter().filter(|r| !before.contains(r) && **r != s.of) {
+                    tx.add_dependency(m, *r)?;
+                }
+                inst.params = s.params.clone();
+            }
             tx.set(m, inst)?;
         }
     }

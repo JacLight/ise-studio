@@ -54,6 +54,11 @@ pub struct Rig {
     fixed: HashMap<StableId, Transform>,
     guess: HashMap<StableId, Transform>,
     pub size: f64,
+    /// The scope's interlocks, the joints off the chain where they are, and
+    /// each value the interlocks name's index (judged without the world).
+    interlocks: Vec<(StableId, crate::interlocks::Interlock)>,
+    held: crate::interlocks::Values,
+    index: HashMap<(StableId, Option<String>), usize>,
 }
 
 /// Where the tool is: a connector on the tip, a point in its coordinates,
@@ -140,12 +145,30 @@ impl Rig {
             return Err(format!("nothing between the ground and {} moves: its joints are fixed or follow others", inst.name));
         }
         let tool = tool_frame(world, tip, tool, point)?;
-        Ok(Rig { scope, tip, tip_name: inst.name.clone(), tool, axes, joints: chain.iter().map(|i| links[*i].id).collect(), links, fixed, guess, size })
+        let interlocks = crate::interlocks::interlocks_in(world, scope);
+        let index = crate::interlocks::indices(world, &interlocks);
+        let held = if interlocks.is_empty() { HashMap::new() } else { crate::interlocks::values_now(world, scope) };
+        Ok(Rig { scope, tip, tip_name: inst.name.clone(), tool, axes, joints: chain.iter().map(|i| links[*i].id).collect(), links, fixed, guess, size, interlocks, held, index })
     }
 
     /// The chain's values as they are now.
     pub fn now(&self) -> Vec<f64> {
         self.axes.iter().map(|a| self.links[a.link].values[a.index]).collect()
+    }
+
+    /// Whether the interlocks allow the chain at `q` (the other joints where they are).
+    pub fn allows(&self, q: &[f64]) -> bool {
+        if self.interlocks.is_empty() {
+            return true;
+        }
+        let mut values = self.held.clone();
+        for (a, v) in self.axes.iter().zip(q) {
+            let e = values.entry(a.joint).or_insert_with(|| self.links[a.link].values.clone());
+            if e.len() > a.index {
+                e[a.index] = *v;
+            }
+        }
+        crate::interlocks::broken(&self.interlocks, &values, &|j, k| self.index.get(&(j, k.clone())).copied()).is_none()
     }
 
     fn with(&self, q: &[f64]) -> Vec<Link> {
@@ -204,6 +227,10 @@ impl Rig {
         for s in starts {
             let mut q = s;
             self.clamp(&mut q);
+            // Only from, and through, poses the interlocks allow.
+            if !self.allows(&q) {
+                continue;
+            }
             let Ok(mut e) = self.error(&q, target) else { continue };
             let mut lambda = 1.0;
             for _ in 0..150 {
@@ -239,7 +266,7 @@ impl Rig {
                     let mut q2: Vec<f64> = q.iter().zip(&d).map(|(a, b)| a + b).collect();
                     self.clamp(&mut q2);
                     match self.error(&q2, target) {
-                        Ok(e2) if norm(&e2) < norm(&e) => {
+                        Ok(e2) if norm(&e2) < norm(&e) && self.allows(&q2) => {
                             q = q2;
                             e = e2;
                             lambda = (lambda / 3.0).max(1e-6);
@@ -261,7 +288,7 @@ impl Rig {
                 break;
             }
         }
-        let (_, q) = best.ok_or("the chain could not be solved from any start")?;
+        let (_, q) = best.ok_or(if self.interlocks.is_empty() { "the chain could not be solved from any start" } else { "the chain could not be solved from any start the interlocks allow" })?;
         let t = self.fk(&q)?;
         let pos = tf::norm(tf::sub(t.at, target.at));
         let ang = target.axis.map(|a| tf::dot(t.turn([0.0, 0.0, 1.0]), crate::geometry::unit(a)).clamp(-1.0, 1.0).acos().to_degrees()).unwrap_or(0.0);
@@ -365,6 +392,10 @@ pub fn reach(rig: &Rig, samples: usize) -> Result<Reach, String> {
     let corners = if n <= 8 { 1usize << n } else { 0 };
     for s in 0..samples {
         let q: Vec<f64> = if s < corners { rig.axes.iter().enumerate().map(|(k, a)| if s >> k & 1 == 1 { a.max } else { a.min }).collect() } else { rig.axes.iter().map(|a| a.min + (a.max - a.min) * rand()).collect() };
+        // Where the interlocks forbid the arm to be is not reach.
+        if !rig.allows(&q) {
+            continue;
+        }
         let Ok(t) = rig.fk(&q) else { continue };
         let p = t.at;
         for k in 0..3 {
@@ -466,6 +497,13 @@ pub fn trajectory(world: &World, rig: &Rig, waypoints: &[Waypoint], fps: f64, ga
                 return Err(format!("waypoint {}: {} {:.2} is past its limits {}…{}", n + 1, a.name, v, a.min, a.max));
             }
         }
+        if !rig.allows(&goal) {
+            let mut values = crate::interlocks::values_now(world, rig.scope);
+            values.extend(rig.joint_values(&goal));
+            values.extend(goal_extra.clone());
+            let why = crate::interlocks::violation(world, rig.scope, &values).unwrap_or_else(|| "an interlock forbids it".into());
+            return Err(format!("waypoint {}: {why}", n + 1));
+        }
         let biggest = goal.iter().zip(&q).zip(&rig.axes).map(|((g, c), a)| (g - c).abs() / if a.unit == "deg" { 60.0 } else { 50.0 }).fold(0.0, f64::max);
         let duration = w.duration.unwrap_or(biggest.max(0.2)).max(1e-3);
         let steps = ((duration * fps).ceil() as usize).max(1);
@@ -514,6 +552,268 @@ pub fn trajectory(world: &World, rig: &Rig, waypoints: &[Waypoint], fps: f64, ga
         .collect();
     let played = crate::motion::play(world, rig.scope, &labelled, gaps, "s", "the trajectory")?;
     Ok(Trajectory { axes: rig.axes.clone(), waypoints: results, tool_path, played })
+}
+
+// ---- The controller's configuration ------------------------------------------------------
+
+/// One joint as the arm's controller drives it: a channel, its limits, where home is.
+#[derive(Clone, Debug, Serialize)]
+pub struct ControllerJoint {
+    /// Its index in the controller's arrays (base first).
+    pub channel: usize,
+    pub joint: StableId,
+    pub name: String,
+    /// A C identifier for it: `J_SHOULDER`.
+    pub symbol: String,
+    pub key: String,
+    /// "deg" or "mm".
+    pub unit: String,
+    pub min: f64,
+    pub max: f64,
+    pub home: f64,
+    /// On the chain from the base to the tip (else named by an interlock only).
+    pub chain: bool,
+}
+
+/// A range of one channel, as the controller tests it.
+#[derive(Clone, Debug, Serialize)]
+pub struct ChannelRange {
+    pub channel: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ControllerZone {
+    pub when: Vec<ChannelRange>,
+    pub then: Vec<ChannelRange>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ControllerTable {
+    pub by: usize,
+    pub channel: usize,
+    /// [by, min, max], linear between rows and held past the ends.
+    pub rows: Vec<[f64; 3]>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ControllerInterlock {
+    pub name: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// In words, as the model states it.
+    pub text: Vec<String>,
+    pub zones: Vec<ControllerZone>,
+    pub tables: Vec<ControllerTable>,
+}
+
+/// What the arm's controller firmware needs to keep it where the model says
+/// it may go: every joint's channel, limits and home, and the interlocks
+/// between them, by channel.
+#[derive(Clone, Debug, Serialize)]
+pub struct ControllerConfig {
+    pub arm: String,
+    pub tip: String,
+    pub joints: Vec<ControllerJoint>,
+    pub interlocks: Vec<ControllerInterlock>,
+}
+
+fn symbol(name: &str) -> String {
+    let mut s: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' }).collect();
+    while s.contains("__") {
+        s = s.replace("__", "_");
+    }
+    format!("J_{}", s.trim_matches('_'))
+}
+
+/// The controller's configuration for the chain `rig` moves.
+pub fn controller(world: &World, rig: &Rig) -> Result<ControllerConfig, String> {
+    let home = views::poses_in(world, rig.scope).into_iter().find(|(_, p)| p.name.eq_ignore_ascii_case("home")).map(|(_, p)| p.values);
+    let now = rig.now();
+    let mut joints: Vec<ControllerJoint> = rig
+        .axes
+        .iter()
+        .enumerate()
+        .map(|(k, a)| ControllerJoint {
+            channel: k,
+            joint: a.joint,
+            name: a.name.clone(),
+            symbol: symbol(&a.name),
+            key: a.key.clone(),
+            unit: a.unit.clone(),
+            min: a.min,
+            max: a.max,
+            home: home.as_ref().and_then(|h| h.get(&a.joint)).and_then(|v| v.get(a.index)).copied().unwrap_or(now[k]),
+            chain: true,
+        })
+        .collect();
+    // Joints an interlock names that are off the chain (a gripper) get channels too.
+    let index = crate::interlocks::indices(world, &rig.interlocks);
+    let mut keyed: Vec<(StableId, Option<String>)> = index.keys().cloned().collect();
+    keyed.sort();
+    for (j, key) in &keyed {
+        let i = index[&(*j, key.clone())];
+        if joints.iter().any(|c| c.joint == *j && rig.axes.iter().any(|a| a.joint == *j && a.index == i)) {
+            continue;
+        }
+        let e = entity(world, *j).ok_or("an interlock names a joint that is gone")?;
+        let (kind, set) = (world.get::<joints::Joint>(e).ok_or("not a joint")?.kind, world.get::<ParameterSet>(e).ok_or("a joint has no values")?);
+        let (k, _, unit) = kind.values()[i];
+        let p = set.params.iter().find(|p| p.key == k).ok_or("a joint has no value")?;
+        let v = de_shape::params::resolve(world, &set.params)?.get(k).copied().unwrap_or(p.value);
+        let name = if kind.values().len() > 1 { format!("{} {k}", set.name) } else { set.name.clone() };
+        joints.push(ControllerJoint {
+            channel: joints.len(),
+            joint: *j,
+            symbol: symbol(&name),
+            name,
+            key: k.to_string(),
+            unit: unit.to_string(),
+            min: p.min.unwrap_or(f64::NEG_INFINITY),
+            max: p.max.unwrap_or(f64::INFINITY),
+            home: home.as_ref().and_then(|h| h.get(j)).and_then(|x| x.get(i)).copied().unwrap_or(v),
+            chain: false,
+        });
+    }
+    let channel = |j: StableId, key: &Option<String>| -> Result<usize, String> {
+        let i = index.get(&(j, key.clone())).copied().ok_or("an interlock names a joint that is gone")?;
+        let name_key = entity(world, j).and_then(|e| world.get::<joints::Joint>(e)).map(|x| x.kind.values()[i].0).unwrap_or("");
+        joints.iter().find(|c| c.joint == j && c.key == name_key).map(|c| c.channel).ok_or_else(|| "an interlock names a joint with no channel".into())
+    };
+    let mut interlocks = vec![];
+    for (_, il) in &rig.interlocks {
+        let range = |r: &crate::interlocks::JointRange| -> Result<ChannelRange, String> { Ok(ChannelRange { channel: channel(r.joint, &r.key)?, min: r.min, max: r.max }) };
+        let mut zones = vec![];
+        let mut text = vec![];
+        let words = |r: &ChannelRange| {
+            let c = &joints[r.channel];
+            match (r.min, r.max) {
+                (Some(a), Some(b)) => format!("{} {a}…{b} {}", c.name, c.unit),
+                (Some(a), None) => format!("{} ≥ {a} {}", c.name, c.unit),
+                (None, Some(b)) => format!("{} ≤ {b} {}", c.name, c.unit),
+                (None, None) => c.name.clone(),
+            }
+        };
+        for z in &il.zones {
+            let when = z.when.iter().map(range).collect::<Result<Vec<_>, _>>()?;
+            let then = z.then.iter().map(range).collect::<Result<Vec<_>, _>>()?;
+            text.push(format!("when {}: {}", when.iter().map(words).collect::<Vec<_>>().join(" and "), then.iter().map(words).collect::<Vec<_>>().join(", ")));
+            zones.push(ControllerZone { when, then });
+        }
+        let mut tables = vec![];
+        for t in &il.tables {
+            let (by, ch) = (channel(t.by, &t.by_key)?, channel(t.joint, &t.key)?);
+            text.push(format!("{} follows {} through {} rows", joints[ch].name, joints[by].name, t.rows.len()));
+            tables.push(ControllerTable { by, channel: ch, rows: t.rows.clone() });
+        }
+        interlocks.push(ControllerInterlock { name: il.name.clone(), description: il.description.clone(), text, zones, tables });
+    }
+    let arm = match rig.scope {
+        Some(a) => entity(world, a).and_then(|e| world.get::<crate::AssemblyDef>(e)).map(|d| d.name.clone()).unwrap_or_default(),
+        None => "Project".into(),
+    };
+    Ok(ControllerConfig { arm, tip: rig.tip_name.clone(), joints, interlocks })
+}
+
+/// The configuration as a C header for an Arduino (or any C/C++) controller:
+/// the channels, limits and home pose as arrays, `arm_allowed(q)` (whether a
+/// pose is inside every limit and interlock) and `arm_clamp(q)` (a commanded
+/// pose pulled back inside them: limits first, then each interlock's held
+/// joints into their allowed range).
+pub fn arduino_header(cfg: &ControllerConfig) -> String {
+    use std::fmt::Write as _;
+    let n = cfg.joints.len();
+    let num = |v: f64| if v.is_finite() { format!("{v:.3}f") } else if v > 0.0 { "INFINITY".into() } else { "-INFINITY".into() };
+    let list = |f: &dyn Fn(&ControllerJoint) -> f64| cfg.joints.iter().map(|j| num(f(j))).collect::<Vec<_>>().join(", ");
+    let mut h = String::new();
+    let _ = writeln!(h, "// {} — joint limits and interlocks for the arm's controller.", cfg.arm);
+    let _ = writeln!(h, "// Generated by Forma from the model (GET /robot/{}?controller=arduino); regenerate when", cfg.tip);
+    let _ = writeln!(h, "// the joints or interlocks change. Angles in degrees, slides in mm, as the model's joints.");
+    let _ = writeln!(h, "#pragma once\n#include <math.h>\n#include <stdbool.h>\n");
+    let _ = writeln!(h, "#define ARM_JOINTS {n}");
+    let _ = writeln!(h, "enum ArmJoint {{ {} }};", cfg.joints.iter().map(|j| format!("{} = {}", j.symbol, j.channel)).collect::<Vec<_>>().join(", "));
+    let _ = writeln!(h, "static const char *const ARM_NAMES[ARM_JOINTS] = {{ {} }};", cfg.joints.iter().map(|j| format!("{:?}", j.name)).collect::<Vec<_>>().join(", "));
+    let _ = writeln!(h, "static const float ARM_MIN[ARM_JOINTS] = {{ {} }};", list(&|j| j.min));
+    let _ = writeln!(h, "static const float ARM_MAX[ARM_JOINTS] = {{ {} }};", list(&|j| j.max));
+    let _ = writeln!(h, "static const float ARM_HOME[ARM_JOINTS] = {{ {} }};\n", list(&|j| j.home));
+    // Tables as arrays.
+    let mut t_id = 0;
+    for il in &cfg.interlocks {
+        for t in &il.tables {
+            let _ = writeln!(h, "// {}: {} limits by {}.", il.name, cfg.joints[t.channel].name, cfg.joints[t.by].name);
+            let _ = writeln!(h, "static const float ARM_TABLE_{t_id}[{}][3] = {{ {} }};", t.rows.len(), t.rows.iter().map(|r| format!("{{ {}, {}, {} }}", num(r[0]), num(r[1]), num(r[2]))).collect::<Vec<_>>().join(", "));
+            t_id += 1;
+        }
+    }
+    let _ = writeln!(h, "\n/* A table's [min, max] at x: linear between rows, held past the ends. */");
+    let _ = writeln!(h, "static inline void arm_table_at(const float (*rows)[3], int n, float x, float *lo, float *hi) {{");
+    let _ = writeln!(h, "  if (x <= rows[0][0]) {{ *lo = rows[0][1]; *hi = rows[0][2]; return; }}");
+    let _ = writeln!(h, "  for (int i = 1; i < n; i++) {{");
+    let _ = writeln!(h, "    if (x <= rows[i][0]) {{");
+    let _ = writeln!(h, "      float t = rows[i][0] > rows[i - 1][0] ? (x - rows[i - 1][0]) / (rows[i][0] - rows[i - 1][0]) : 1.0f;");
+    let _ = writeln!(h, "      *lo = rows[i - 1][1] + (rows[i][1] - rows[i - 1][1]) * t; *hi = rows[i - 1][2] + (rows[i][2] - rows[i - 1][2]) * t; return;");
+    let _ = writeln!(h, "    }}\n  }}\n  *lo = rows[n - 1][1]; *hi = rows[n - 1][2];\n}}\n");
+    let cond = |r: &ChannelRange| -> String {
+        let s = &cfg.joints[r.channel].symbol;
+        match (r.min, r.max) {
+            (Some(a), Some(b)) => format!("(q[{s}] >= {} && q[{s}] <= {})", num(a), num(b)),
+            (Some(a), None) => format!("q[{s}] >= {}", num(a)),
+            (None, Some(b)) => format!("q[{s}] <= {}", num(b)),
+            (None, None) => "true".into(),
+        }
+    };
+    // arm_allowed
+    let _ = writeln!(h, "/* Whether pose q is inside every joint's limits and every interlock. */");
+    let _ = writeln!(h, "static inline bool arm_allowed(const float q[ARM_JOINTS]) {{");
+    let _ = writeln!(h, "  for (int i = 0; i < ARM_JOINTS; i++) if (q[i] < ARM_MIN[i] || q[i] > ARM_MAX[i]) return false;");
+    let mut t_id = 0;
+    for il in &cfg.interlocks {
+        let _ = writeln!(h, "  /* {}: {} */", il.name, il.text.join("; "));
+        for z in &il.zones {
+            let when = z.when.iter().map(cond).collect::<Vec<_>>().join(" && ");
+            let then = z.then.iter().map(cond).collect::<Vec<_>>().join(" && ");
+            let _ = writeln!(h, "  if ({when} && !({then})) return false;");
+        }
+        for t in &il.tables {
+            let (by, ch) = (&cfg.joints[t.by].symbol, &cfg.joints[t.channel].symbol);
+            let _ = writeln!(h, "  {{ float lo, hi; arm_table_at(ARM_TABLE_{t_id}, {}, q[{by}], &lo, &hi); if (q[{ch}] < lo || q[{ch}] > hi) return false; }}", t.rows.len());
+            t_id += 1;
+        }
+    }
+    let _ = writeln!(h, "  return true;\n}}\n");
+    // arm_clamp
+    let _ = writeln!(h, "/* Pulls a commanded pose back inside: each joint into its limits, then each");
+    let _ = writeln!(h, "   interlock's held joints into the range it allows where the others stand. */");
+    let _ = writeln!(h, "static inline void arm_clamp(float q[ARM_JOINTS]) {{");
+    let _ = writeln!(h, "  for (int i = 0; i < ARM_JOINTS; i++) q[i] = fminf(fmaxf(q[i], ARM_MIN[i]), ARM_MAX[i]);");
+    let mut t_id = 0;
+    for il in &cfg.interlocks {
+        let _ = writeln!(h, "  /* {} */", il.name);
+        for z in &il.zones {
+            let when = z.when.iter().map(cond).collect::<Vec<_>>().join(" && ");
+            let _ = writeln!(h, "  if ({when}) {{");
+            for r in &z.then {
+                let s = &cfg.joints[r.channel].symbol;
+                if let Some(a) = r.min {
+                    let _ = writeln!(h, "    q[{s}] = fmaxf(q[{s}], {});", num(a));
+                }
+                if let Some(b) = r.max {
+                    let _ = writeln!(h, "    q[{s}] = fminf(q[{s}], {});", num(b));
+                }
+            }
+            let _ = writeln!(h, "  }}");
+        }
+        for t in &il.tables {
+            let (by, ch) = (&cfg.joints[t.by].symbol, &cfg.joints[t.channel].symbol);
+            let _ = writeln!(h, "  {{ float lo, hi; arm_table_at(ARM_TABLE_{t_id}, {}, q[{by}], &lo, &hi); q[{ch}] = fminf(fmaxf(q[{ch}], lo), hi); }}", t.rows.len());
+            t_id += 1;
+        }
+    }
+    let _ = writeln!(h, "}}");
+    h
 }
 
 // ---- Command -------------------------------------------------------------------------------

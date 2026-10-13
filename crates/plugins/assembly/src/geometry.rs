@@ -343,13 +343,13 @@ fn face(world: &World, instance: StableId, at: V3, n: V3) -> Result<Elem, String
     for o in crate::occurrences(world, instance) {
         let se = entity(world, o.shape).ok_or("a component is gone")?;
         let program = world.get::<ShapeProgram>(se).ok_or("not a component")?;
-        let key = match &o.config {
-            Some(c) => {
-                let p = de_shape::configs::configured_program(world, se, c)?;
+        let key = match o.varies() {
+            true => {
+                let p = crate::occurrence_program(world, &o)?;
                 let ev = de_shape::evaluated_at(&p, p.display_tolerance())?;
                 (Arc::as_ptr(&ev) as usize, Some(ev))
             }
-            None => {
+            false => {
                 let solid = world.get::<ShapeSolid>(se).ok_or_else(|| format!("{} has no valid result", program.name))?;
                 (Arc::as_ptr(&solid.solid) as usize, None)
             }

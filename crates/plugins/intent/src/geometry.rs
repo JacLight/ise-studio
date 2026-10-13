@@ -179,14 +179,15 @@ fn compound(world: &World, id: StableId, entity: de_core::bevy_ecs::entity::Enti
         let se = world.resource::<IdIndex>().get(o.shape).ok_or_else(|| format!("{} does not exist", o.names.join(" › ")))?;
         // An instance showing a configuration is checked in that configuration
         // (an M2×16 screw is not its definition's default M3×12).
-        let (display, program, bounds, mass_kg) = match &o.config {
-            Some(config) => {
-                let program = de_shape::configs::configured_program(world, se, config).map_err(|e| format!("{}: {e}", o.names.join(" › ")))?;
-                let configured = de_shape::configs::evaluate(world, se, config).map_err(|e| format!("{}: {e}", o.names.join(" › ")))?;
+        // So is one giving its shape values of its own (a servo's output turned).
+        let (display, program, bounds, mass_kg) = match o.varies() {
+            true => {
+                let program = de_assembly::occurrence_program(world, &o).map_err(|e| format!("{}: {e}", o.names.join(" › ")))?;
+                let configured = de_shape::configs::evaluate_variant(world, se, o.config.as_deref(), &o.params).map_err(|e| format!("{}: {e}", o.names.join(" › ")))?;
                 let ev = de_shape::evaluated_at(&program, program.display_tolerance()).map_err(|e| format!("{}: {e}", o.names.join(" › ")))?;
                 (Arc::new(ev.solid.translate(0.0, 0.0, 0.0)), program, (configured.stats.bounds_min, configured.stats.bounds_max), configured.mass.mass_kg)
             }
-            None => {
+            false => {
                 let program = de_shape::resolved_program(world, se).ok_or("not a shape")?;
                 let solid = world.get::<ShapeSolid>(se).ok_or_else(|| format!("{} has not been evaluated", o.names.join(" › ")))?;
                 (solid.solid.clone(), program, (solid.stats.bounds_min, solid.stats.bounds_max), world.get::<MassProperties>(se).and_then(|m| m.mass_kg))

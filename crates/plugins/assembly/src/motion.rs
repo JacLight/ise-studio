@@ -2,15 +2,29 @@
 //! step, and the closest approach of every pair of instances that move
 //! relative to each other, with the clashes (as GET /motion does for the
 //! parts of one program, here across separately built components).
+//!
+//! Measuring is the slow part (thousands of closest-approach measurements),
+//! so it is kept twice over: a whole sweep by everything it was worked out
+//! from (read back when nothing changed: a requirement re-checked, the
+//! project opened again), and each pair's measurement by exactly what it
+//! depends on — the two parts' geometry and how one moves against the other
+//! through the steps. A change elsewhere (a screw renamed, a part far away
+//! resized, a joint posed so only the far end of the arm moves differently)
+//! measures again only the pairs it changed.
+//!
+//! The joints' interlocks (see `interlocks`) are respected: a sweep covers
+//! only the values they allow with the other joints where they are, and a
+//! played motion stops where it would enter a region they forbid.
 
 use crate::joints::{self, Joint, JointKind};
 use crate::transform::Transform;
-use crate::{Instance, placement};
+use crate::{Instance, Occurrence, placement};
 use de_core::{IdIndex, StableId, bevy_ecs::world::World};
 use de_shape::{ShapeSolid, params::ParameterSet};
 use manifold_csg::Manifold;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -30,6 +44,25 @@ pub struct SweepFrame {
     pub poses: Vec<([f64; 3], [f64; 4])>,
     /// Every joint's values at this step.
     pub joints: BTreeMap<StableId, Vec<f64>>,
+}
+
+/// A shape whose parameters follow the joints (a spring stretched by the arm
+/// it pulls on, a servo's output spline turning with its joint): its values
+/// at every frame, so a player can show it changing (evaluate the shape with
+/// them, or blend between a few evaluated steps).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FlexShape {
+    /// The instance of the swept assembly it is in (what `poses` places).
+    pub instance: StableId,
+    /// Instances from that one down to the shape (outermost first).
+    pub path: Vec<StableId>,
+    pub shape: StableId,
+    /// The configuration it is evaluated in, if its instance shows one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
+    /// For each frame: the parameters (key → value) that differ from the
+    /// shape as it is (in that configuration).
+    pub values: Vec<BTreeMap<String, f64>>,
 }
 
 /// Two instances' closest approach through the sweep.
@@ -78,6 +111,13 @@ pub struct AssemblySweep {
     /// The distance searched for near misses (mm).
     pub search: f64,
     pub notes: Vec<String>,
+    /// Shapes that change as the joints move, with their values at each frame.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flex: Vec<FlexShape>,
+    /// The values of the swept joint the interlocks allow here, when they
+    /// leave out some of its range ([from, to] pieces, in order).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<[f64; 2]>,
 }
 
 /// One instance's solids, in its own coordinates.
@@ -100,44 +140,44 @@ pub(crate) fn body(world: &World, id: StableId) -> Result<Body, String> {
 /// Joint values to read formulas with (joint → its values, in its kind's order).
 type JointValues = BTreeMap<StableId, Vec<f64>>;
 
-/// A shape's program ready to evaluate with these joint values read by its
-/// formulas (a spring whose stretched length follows the shoulder's angle).
-fn program_given(world: &World, se: de_core::bevy_ecs::entity::Entity, config: Option<&str>, joints: &JointValues) -> Result<de_shape::ShapeProgram, String> {
-    let mut program = match config {
-        Some(c) => de_shape::configs::configured_program(world, se, c)?,
-        None => de_shape::params::resolved_program(world, se).ok_or("not a shape")?,
-    };
-    let given = |id: StableId, key: &str| -> Option<f64> {
+/// A joint's value `key` among these values.
+fn given_in<'a>(world: &'a World, joints: &'a JointValues) -> impl Fn(StableId, &str) -> Option<f64> + 'a {
+    move |id: StableId, key: &str| -> Option<f64> {
         let v = joints.get(&id)?;
         let kind = entity(world, id).and_then(|e| world.get::<Joint>(e))?.kind;
         kind.values().iter().position(|(k, _, _)| *k == key).and_then(|i| v.get(i).copied())
-    };
-    let values = de_shape::params::resolve_with(world, &program.params, &given).map_err(|m| format!("{}: {m}", program.name))?;
-    for p in &mut program.params {
-        if let Some(v) = values.get(&p.key) {
-            p.value = *v;
-        }
     }
-    Ok(program)
 }
 
-/// Whether some shape the instance shows has a formula reading a joint's
-/// value: its geometry changes as the joints move, so a sweep evaluates it
-/// again at each step.
+/// An occurrence's program ready to evaluate with these joint values read by
+/// its formulas (a spring whose stretched length follows the shoulder's
+/// angle; a servo whose output spline follows its joint).
+fn program_given(world: &World, o: &Occurrence, joints: &JointValues) -> Result<de_shape::ShapeProgram, String> {
+    let given = given_in(world, joints);
+    crate::occurrence_program_given(world, o, &given).map_err(|m| format!("{}: {m}", o.names.join(" › ")))
+}
+
+/// Whether an occurrence has a formula (its shape's, or one its instance
+/// gives of its own) reading a joint's value: its geometry changes as the
+/// joints move.
+fn reads_joints(world: &World, o: &Occurrence) -> bool {
+    let joint = |r: &StableId| entity(world, *r).is_some_and(|e| world.get::<Joint>(e).is_some());
+    let program = entity(world, o.shape).and_then(|e| world.get::<de_shape::ShapeProgram>(e));
+    program.is_some_and(|p| de_shape::params::references(&p.params).iter().any(joint)) || de_shape::configs::override_references(&o.params).iter().any(joint)
+}
+
+/// Whether some shape the instance shows follows a joint's value: a sweep
+/// evaluates it again at each step.
 fn follows_joints(world: &World, id: StableId) -> bool {
-    crate::occurrences(world, id).iter().any(|o| {
-        let Some(program) = entity(world, o.shape).and_then(|e| world.get::<de_shape::ShapeProgram>(e)) else { return false };
-        de_shape::params::references(&program.params).iter().any(|r| entity(world, *r).is_some_and(|e| world.get::<Joint>(e).is_some()))
-    })
+    crate::occurrences(world, id).iter().any(|o| reads_joints(world, o))
 }
 
 /// Whether the instance's shapes come out differently across these joint
 /// values (a spring the swept joint stretches), not just read some joint.
 fn varies(world: &World, id: StableId, steps: &[&JointValues]) -> bool {
     let Some(first) = steps.first() else { return false };
-    crate::occurrences(world, id).iter().any(|o| {
-        let Some(se) = entity(world, o.shape) else { return false };
-        let values = |j: &JointValues| program_given(world, se, o.config.as_deref(), j).ok().map(|p| p.params.iter().map(|q| q.value).collect::<Vec<f64>>());
+    crate::occurrences(world, id).iter().filter(|o| reads_joints(world, o)).any(|o| {
+        let values = |j: &JointValues| program_given(world, o, j).ok().map(|p| p.params.iter().map(|q| q.value).collect::<Vec<f64>>());
         let base = values(first);
         steps[1..].iter().any(|j| values(j) != base)
     })
@@ -152,16 +192,16 @@ fn body_with(world: &World, id: StableId, joints: Option<&JointValues>) -> Resul
     let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
     for o in crate::occurrences(world, id) {
         let se = entity(world, o.shape).ok_or("a component is gone")?;
-        let solid = match (&o.config, joints) {
-            (config, Some(j)) => {
-                let p = program_given(world, se, config.as_deref(), j)?;
+        let solid = match joints {
+            Some(j) => {
+                let p = program_given(world, &o, j)?;
                 Arc::new(de_shape::evaluated_at(&p, p.display_tolerance())?.solid.translate(0.0, 0.0, 0.0))
             }
-            (Some(c), None) => {
-                let p = de_shape::configs::configured_program(world, se, c)?;
+            None if o.varies() => {
+                let p = crate::occurrence_program(world, &o)?;
                 Arc::new(de_shape::evaluated_at(&p, p.display_tolerance())?.solid.translate(0.0, 0.0, 0.0))
             }
-            (None, None) => world.get::<ShapeSolid>(se).ok_or_else(|| format!("{} has no valid result", o.names.join(" › ")))?.solid.clone(),
+            None => world.get::<ShapeSolid>(se).ok_or_else(|| format!("{} has no valid result", o.names.join(" › ")))?.solid.clone(),
         };
         let inner = own.then(&o.transform);
         let (a, b) = match solid.bounding_box() {
@@ -178,6 +218,36 @@ fn body_with(world: &World, id: StableId, joints: Option<&JointValues>) -> Resul
     Ok(Body { leaves, boxes, lo, hi })
 }
 
+/// What an instance's solids are made from, hashed: each shape's program as
+/// the instance shows it (with these joint values, for one that follows
+/// them) and where it sits in the instance. Two equal keys are the same solids.
+fn body_key(world: &World, id: StableId, joints: Option<&JointValues>) -> Option<u64> {
+    let e = entity(world, id)?;
+    let own = placement(world, e).unwrap_or(Transform::IDENTITY).inverse();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for o in crate::occurrences(world, id) {
+        let program = match joints {
+            Some(j) => program_given(world, &o, j).ok()?,
+            None => crate::occurrence_program(world, &o).ok()?,
+        };
+        de_shape::cache::program_key(&program, &mut h);
+        hash_transform(&own.then(&o.transform), &mut h);
+    }
+    Some(h.finish())
+}
+
+/// A placement, rounded below what a measurement can tell apart (a solver's
+/// last bits differ between runs that land on the same pose).
+fn hash_transform(t: &Transform, h: &mut impl Hasher) {
+    let mut q = |v: f64, k: f64| ((v * k).round() as i64).hash(h);
+    for v in t.at {
+        q(v, 1e6);
+    }
+    for v in t.rot.iter().flatten() {
+        q(*v, 1e9);
+    }
+}
+
 /// The values a joint sweeps between by default: its limits, else a full
 /// turn from where it is for an angle.
 fn default_range(kind: JointKind, key: &str, set: &ParameterSet, value: f64) -> Result<(f64, f64), String> {
@@ -192,9 +262,6 @@ fn default_range(kind: JointKind, key: &str, set: &ParameterSet, value: f64) -> 
     Err(format!("give “{}” limits, or say how far to slide it (from, to)", set.name))
 }
 
-/// Sweeps joint `joint`'s value `key` (default its main one) from `from` to
-/// `to` (default its limits) in `steps` steps, other joints held at their
-/// values or at `set` (joint id → values) when given.
 /// Sweeps joint `joint`'s value `key` (default its main one) from `from` to
 /// `to` (default its limits) in `steps` steps, other joints held at their
 /// values or at `set` (joint id → values) when given.
@@ -225,22 +292,22 @@ pub fn sweep(world: &World, joint: StableId, key: Option<&str>, from: Option<f64
 
 fn remember(recent: &std::sync::Mutex<Vec<(u64, Arc<AssemblySweep>)>>, key: u64, s: &AssemblySweep) {
     let mut r = recent.lock().unwrap();
-    if r.len() >= 16 {
+    if r.len() >= 32 {
         r.remove(0);
     }
     r.push((key, Arc::new(s.clone())));
 }
 
 /// Everything a sweep is worked out from, hashed: its arguments, every joint
-/// of the assembly with its values, and every instance in it with where it
-/// is and the programs (sizes, finishes) of every shape it holds. None when
-/// something is missing (the sweep then reports it).
+/// of the assembly with its values, its couplings and interlocks, and every
+/// instance in it with what it shows, where it is and the programs (sizes,
+/// finishes) of every shape it holds. None when something is missing (the
+/// sweep then reports it).
 #[allow(clippy::too_many_arguments)]
 fn sweep_key(world: &World, joint: StableId, key: Option<&str>, from: Option<f64>, to: Option<f64>, steps: usize, set: &HashMap<StableId, Vec<f64>>, gaps_too: bool) -> Option<u64> {
-    use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     let bits = |v: Option<f64>| v.map(f64::to_bits);
-    (joint, key, bits(from), bits(to), steps, gaps_too).hash(&mut h);
+    (2u8, joint, key, bits(from), bits(to), steps, gaps_too).hash(&mut h);
     let mut set: Vec<_> = set.iter().map(|(k, v)| (*k, v.iter().map(|x| x.to_bits()).collect::<Vec<_>>())).collect();
     set.sort();
     set.hash(&mut h);
@@ -248,9 +315,20 @@ fn sweep_key(world: &World, joint: StableId, key: Option<&str>, from: Option<f64
     let scope = world.get::<Joint>(je)?.assembly;
     for (id, j) in joints::joints_in(world, scope) {
         let e = entity(world, id)?;
-        (id, serde_json::to_string(&j).ok()?, serde_json::to_string(world.get::<ParameterSet>(e)?).ok()?).hash(&mut h);
-        // Values may follow other parameters through formulas.
-        format!("{:?}", joints::link(world, id, None).ok().map(|l| l.values)).hash(&mut h);
+        let ps = world.get::<ParameterSet>(e)?;
+        (id, serde_json::to_string(&j).ok()?).hash(&mut h);
+        // Values (formulas worked out), limits and names (notes and pairs name them).
+        ps.name.hash(&mut h);
+        let resolved = de_shape::params::resolve(world, &ps.params).ok()?;
+        for p in &ps.params {
+            (&p.key, resolved.get(&p.key).map(|v| v.to_bits()), bits(p.min), bits(p.max)).hash(&mut h);
+        }
+    }
+    for (id, c) in crate::couplings::couplings_in(world, scope) {
+        (id, serde_json::to_string(&c).ok()?).hash(&mut h);
+    }
+    for (id, i) in crate::interlocks::interlocks_in(world, scope) {
+        (id, serde_json::to_string(&i).ok()?).hash(&mut h);
     }
     let mut ids: Vec<StableId> = world.resource::<IdIndex>().iter().filter_map(|(id, e)| world.get::<Instance>(e).filter(|i| i.parent == scope).map(|_| id)).collect();
     ids.sort();
@@ -261,16 +339,41 @@ fn sweep_key(world: &World, joint: StableId, key: Option<&str>, from: Option<f64
         let t = placement(world, e).unwrap_or(Transform::IDENTITY);
         format!("{:?}", (t.at, t.rot)).hash(&mut h);
         for o in crate::occurrences(world, id) {
-            let se = entity(world, o.shape)?;
-            let program = match &o.config {
-                Some(c) => de_shape::configs::configured_program(world, se, c).ok()?,
-                None => de_shape::resolved_program(world, se)?,
-            };
+            let program = crate::occurrence_program(world, &o).ok()?;
             de_shape::cache::program_key(&program, &mut h);
             format!("{:?}", (o.transform.at, o.transform.rot, &o.path)).hash(&mut h);
         }
     }
     Some(h.finish())
+}
+
+/// The values a sweep of `joint`'s value `index` steps through: `steps`
+/// even steps from `from` to `to`, keeping only those the interlocks allow
+/// with the other joints at `base`, plus the ends of each allowed piece (so
+/// the sweep reaches exactly to an interlock's boundary). Also returns the
+/// allowed pieces when the interlocks leave some of the range out.
+fn steps_allowed(world: &World, scope: Option<StableId>, joint: StableId, index: usize, base: &HashMap<StableId, Vec<f64>>, from: f64, to: f64, steps: usize) -> (Vec<f64>, Vec<[f64; 2]>) {
+    let grid: Vec<f64> = (0..=steps).map(|k| from + (to - from) * k as f64 / steps as f64).collect();
+    let pieces = crate::interlocks::allowed(world, scope, joint, index, base, from, to);
+    let (lo, hi) = (from.min(to), from.max(to));
+    if pieces.len() == 1 && (pieces[0].0 - lo).abs() < 1e-9 && (pieces[0].1 - hi).abs() < 1e-9 {
+        return (grid, vec![]);
+    }
+    let inside = |v: f64| pieces.iter().any(|(a, b)| v >= a - 1e-9 && v <= b + 1e-9);
+    let mut values: Vec<f64> = grid.into_iter().filter(|v| inside(*v)).collect();
+    for (a, b) in &pieces {
+        for v in [*a, *b] {
+            if !values.iter().any(|x| (x - v).abs() < 1e-9) {
+                values.push(v);
+            }
+        }
+    }
+    if to >= from {
+        values.sort_by(f64::total_cmp);
+    } else {
+        values.sort_by(|a, b| b.total_cmp(a));
+    }
+    (values, pieces.iter().map(|(a, b)| [*a, *b]).collect())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -295,17 +398,33 @@ fn sweep_now(world: &World, joint: StableId, key: Option<&str>, from: Option<f64
     }
     let steps = steps.clamp(2, 3600);
     let unit = if j.kind.values()[index].2 == "deg" { "°" } else { "mm" };
-    let frames: Vec<(f64, HashMap<StableId, Vec<f64>>)> = (0..=steps)
-        .map(|k| {
-            let v = from + (to - from) * k as f64 / steps as f64;
+    // The other joints where they are (or as set), for the interlocks.
+    let mut held = crate::interlocks::values_now(world, j.assembly);
+    for (k, v) in set {
+        held.insert(*k, v.clone());
+    }
+    held.insert(joint, base.clone());
+    let (values, allowed) = steps_allowed(world, j.assembly, joint, index, &held, from, to, steps);
+    if values.is_empty() {
+        let why = crate::interlocks::violation(world, j.assembly, &held).unwrap_or_else(|| "the interlocks allow none of it with the other joints where they are".into());
+        return Err(format!("{} cannot move here: {why}", params.name));
+    }
+    let frames: Vec<(f64, HashMap<StableId, Vec<f64>>)> = values
+        .iter()
+        .map(|v| {
             let mut values = set.clone();
             let mut mine = base.clone();
-            mine[index] = v;
+            mine[index] = *v;
             values.insert(joint, mine);
-            (v, values)
+            (*v, values)
         })
         .collect();
-    let p = play(world, j.assembly, &frames, gaps_too, unit, &params.name)?;
+    let mut p = play(world, j.assembly, &frames, gaps_too, unit, &params.name)?;
+    if !allowed.is_empty() {
+        let r = |v: f64| format!("{}{}", (v * 100.0).round() / 100.0, if unit == "°" { "°" } else { " mm" });
+        let pieces: Vec<String> = allowed.iter().map(|[a, b]| if a == b { r(*a) } else { format!("{}…{}", r(*a), r(*b)) }).collect();
+        p.notes.insert(0, format!("Interlocks keep {} within {} here (of {}…{}), with the other joints where they are: only that is swept.", params.name, pieces.join(" and "), r(from), r(to)));
+    }
     Ok(AssemblySweep {
         assembly: j.assembly,
         joint,
@@ -322,6 +441,8 @@ fn sweep_now(world: &World, joint: StableId, key: Option<&str>, from: Option<f64
         clashes: p.clashes,
         search: p.search,
         notes: p.notes,
+        flex: p.flex,
+        allowed,
     })
 }
 
@@ -340,11 +461,15 @@ pub struct Played {
     pub clashes: Vec<PairGap>,
     pub search: f64,
     pub notes: Vec<String>,
+    /// Shapes that change as the joints move, with their values at each frame.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub flex: Vec<FlexShape>,
 }
 
 /// Plays the assembly (or the top) through `frames`: each a label and the
 /// joint values to hold (others keep theirs). `unit` words where it binds;
-/// `what` names what drives it in notes.
+/// `what` names what drives it in notes. It stops where the joints cannot
+/// follow, or where an interlock forbids the joints' values.
 pub fn play(world: &World, scope: Option<StableId>, frames: &[(f64, HashMap<StableId, Vec<f64>>)], gaps_too: bool, unit: &str, what: &str) -> Result<Played, String> {
     // Every instance of the assembly (or the top), in a stable order.
     let mut ids: Vec<(StableId, String)> = world
@@ -353,11 +478,19 @@ pub fn play(world: &World, scope: Option<StableId>, frames: &[(f64, HashMap<Stab
         .filter_map(|(id, e)| world.get::<Instance>(e).filter(|i| i.parent == scope).map(|i| (id, i.name.clone())))
         .collect();
     ids.sort_by_key(|(id, _)| *id);
-    let mut out = Played { assembly: scope, instances: vec![], frames: vec![], binds_at: None, pairs: vec![], clashes: vec![], search: 0.0, notes: vec![] };
+    let mut out = Played { assembly: scope, instances: vec![], frames: vec![], binds_at: None, pairs: vec![], clashes: vec![], search: 0.0, notes: vec![], flex: vec![] };
+    let interlocks = crate::interlocks::interlocks_in(world, scope);
     let mut guess: HashMap<StableId, Transform> = HashMap::new();
     let mut poses_per_frame: Vec<Vec<Transform>> = vec![];
     for (v, values) in frames {
-        match joints::solve_scope(world, scope, values, &guess) {
+        let solved = joints::solve_scope(world, scope, values, &guess).and_then(|sol| {
+            // A pose an interlock forbids is as far as the motion may go.
+            match crate::interlocks::violation_in(world, &interlocks, &sol.values) {
+                Some(why) => Err(why),
+                None => Ok(sol),
+            }
+        });
+        match solved {
             Ok(sol) => {
                 // Pattern copies follow their seeds.
                 let mut posed = sol.poses.clone();
@@ -390,7 +523,8 @@ pub fn play(world: &World, scope: Option<StableId>, frames: &[(f64, HashMap<Stab
     }
     let moved = |i: usize| poses_per_frame.iter().any(|f| f[i].distance(&poses_per_frame[0][i], 100.0) > 1e-7);
     out.instances = ids.iter().enumerate().map(|(i, (id, name))| SweptInstance { id: *id, name: name.clone(), moves: moved(i) }).collect();
-    if !out.instances.iter().any(|i| i.moves) {
+    out.flex = flexing(world, &ids, &out.frames);
+    if !out.instances.iter().any(|i| i.moves) && out.flex.is_empty() {
         out.notes.push(format!("Nothing moves when {what} turns or slides: no instance hangs from it."));
         return Ok(out);
     }
@@ -400,13 +534,71 @@ pub fn play(world: &World, scope: Option<StableId>, frames: &[(f64, HashMap<Stab
     Ok(out)
 }
 
+/// The shapes that change through these frames, with their values at each.
+fn flexing(world: &World, ids: &[(StableId, String)], frames: &[SweepFrame]) -> Vec<FlexShape> {
+    let mut out = vec![];
+    if frames.len() < 2 {
+        return out;
+    }
+    for (id, _) in ids {
+        for o in crate::occurrences(world, *id).iter().filter(|o| reads_joints(world, o)) {
+            let Some(se) = entity(world, o.shape) else { continue };
+            // What a player starts from: the shape as it is, in the configuration shown.
+            let base = match &o.config {
+                Some(c) => de_shape::configs::configured_program(world, se, c).ok(),
+                None => de_shape::resolved_program(world, se),
+            };
+            let Some(base) = base else { continue };
+            let mut values = vec![];
+            for f in frames {
+                let Ok(p) = program_given(world, o, &f.joints) else { break };
+                let diff: BTreeMap<String, f64> = p
+                    .params
+                    .iter()
+                    .filter(|q| base.params.iter().find(|b| b.key == q.key).is_none_or(|b| (b.value - q.value).abs() > 1e-12))
+                    .map(|q| (q.key.clone(), round(q.value, 1e9)))
+                    .collect();
+                values.push(diff);
+            }
+            if values.len() == frames.len() && values.iter().any(|v| v != &values[0]) {
+                out.push(FlexShape { instance: *id, path: o.path.clone(), shape: o.shape, config: o.config.clone(), values });
+            }
+        }
+    }
+    out
+}
+
 fn round(v: f64, k: f64) -> f64 {
     (v * k).round() / k
 }
 
-/// Instance `i`'s body at step `n`: its own, or the one evaluated for that step when it follows the joints.
-fn pick<'a>(flex: &[bool], flexed: &'a HashMap<(usize, usize), Body>, bodies: &'a [Body], n: usize, i: usize) -> &'a Body {
-    if flex[i] { &flexed[&(n, i)] } else { &bodies[i] }
+/// What one pair's measurement through a sweep came to, by step index.
+#[derive(Clone, Copy, Debug)]
+struct PairOutcome {
+    /// Smallest gap, and the step where it is.
+    best: f64,
+    best_at: usize,
+    /// The first and last steps where they touch or overlap.
+    range: Option<[usize; 2]>,
+    /// The largest gap measured (within the search): a pair touching at
+    /// every step turns in contact.
+    most: f64,
+}
+
+/// Pairs measured before, by what their measurement depends on (see [`gaps`]).
+fn pair_cache() -> &'static std::sync::Mutex<HashMap<u64, PairOutcome>> {
+    static PAIRS: std::sync::OnceLock<std::sync::Mutex<HashMap<u64, PairOutcome>>> = std::sync::OnceLock::new();
+    PAIRS.get_or_init(Default::default)
+}
+
+/// Pairs read back from the cache and pairs measured by sweeps on this
+/// thread so far (for tests and timing).
+pub fn pair_counts() -> (usize, usize) {
+    PAIR_COUNTS.with(|c| c.get())
+}
+
+thread_local! {
+    static PAIR_COUNTS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 /// Closest approach of every pair whose relative placement changes.
@@ -420,22 +612,16 @@ fn gaps(world: &World, ids: &[(StableId, String)], frames: &[Vec<Transform>], ou
         .filter_map(|(_, j)| Some((j.a.instance()?, j.b.instance()?)))
         .collect();
     let every = frames.len().div_ceil(180).max(1);
+    let sampled: Vec<usize> = (0..frames.len()).step_by(every).collect();
     // Shapes that follow the joints (a spring stretching as an arm swings)
-    // change at each step: evaluated again with that step's joint values.
-    let used: Vec<&JointValues> = (0..frames.len()).step_by(every).map(|n| &out.frames[n].joints).collect();
+    // change at each step: evaluated again with that step's joint values
+    // (only for pairs that are measured).
+    let used: Vec<&JointValues> = sampled.iter().map(|n| &out.frames[*n].joints).collect();
     let flex: Vec<bool> = ids.iter().map(|(id, _)| follows_joints(world, *id) && varies(world, *id, &used)).collect();
-    let mut flexed: HashMap<(usize, usize), Body> = HashMap::new();
-    for n in (0..frames.len()).step_by(every) {
-        for (i, (id, name)) in ids.iter().enumerate().filter(|(i, _)| flex[*i]) {
-            let b = body_with(world, *id, Some(&out.frames[n].joints)).map_err(|m| format!("{name} at {}: {m}", out.frames[n].value))?;
-            flexed.insert((n, i), b);
-        }
-    }
     if flex.iter().any(|f| *f) {
         let names: Vec<&str> = ids.iter().zip(&flex).filter(|(_, f)| **f).map(|((_, n), _)| n.as_str()).collect();
         out.notes.push(format!("{} follow{} the joints: evaluated again at each step.", names.join(", "), if names.len() == 1 { "s" } else { "" }));
     }
-    let bod = |n: usize, i: usize| pick(&flex, &flexed, &bodies, n, i);
     let mut pairs = vec![];
     for i in 0..bodies.len() {
         for k in i + 1..bodies.len() {
@@ -446,76 +632,79 @@ fn gaps(world: &World, ids: &[(StableId, String)], frames: &[Vec<Transform>], ou
             }
         }
     }
-    let mut best = vec![(f64::INFINITY, 0.0, None::<[f64; 2]>); pairs.len()];
-    let mut most = vec![0.0f64; pairs.len()];
-    // Leaves are placed only when a pair comes near enough to measure: an
-    // instance that holds still is placed once for the whole sweep, a moving
-    // one once per step (placing a mesh rebuilds its collision tree).
-    let still: Vec<bool> = (0..bodies.len()).map(|i| !flex[i] && frames.iter().all(|f| f[i].distance(&frames[0][i], size.max(1.0)) <= 1e-9)).collect();
-    let mut placed_still: HashMap<(usize, usize), Manifold> = HashMap::new();
-    let apart = |(la, ha): ([f64; 3], [f64; 3]), (lb, hb): ([f64; 3], [f64; 3])| (0..3).map(|k| (lb[k] - ha[k]).max(la[k] - hb[k]).max(0.0).powi(2)).sum::<f64>().sqrt();
-    for (n, f) in frames.iter().enumerate().step_by(every) {
-        let value = out.frames[n].value;
-        let mut placed_now: HashMap<(usize, usize), Manifold> = HashMap::new();
-        for (p, (a, b)) in pairs.iter().enumerate() {
-            // Each step only asks whether the pair comes closer than it has so
-            // far: a pair in contact is then checked within a micron, not the
-            // whole search (measuring is per triangle pair within reach).
-            let reach = best[p].0.clamp(1e-3, search);
-            // Placed boxes farther apart than that: no closer look needed.
-            let (ba, bb) = (bod(n, *a), bod(n, *b));
-            let g = if apart(f[*a].bounds(ba.lo, ba.hi), f[*b].bounds(bb.lo, bb.hi)) >= reach {
-                reach
-            } else {
-                let mut g = reach;
-                for (x, bx) in ba.boxes.iter().enumerate() {
-                    let wx = f[*a].bounds(bx.0, bx.1);
-                    for (y, by) in bb.boxes.iter().enumerate() {
-                        if apart(wx, f[*b].bounds(by.0, by.1)) >= g {
-                            continue;
-                        }
-                        for (i, l) in [(*a, x), (*b, y)] {
-                            let cache = if still[i] { &mut placed_still } else { &mut placed_now };
-                            cache.entry((i, l)).or_insert_with(|| {
-                                let (s, inner) = &bod(n, i).leaves[l];
-                                f[i].then(inner).solid(s)
-                            });
-                        }
-                        let get = |i: usize, l: usize| if still[i] { &placed_still[&(i, l)] } else { &placed_now[&(i, l)] };
-                        g = g.min(get(*a, x).min_gap(get(*b, y), g));
-                    }
+    // What each pair's measurement depends on: both bodies (each step's, for
+    // one that follows the joints) and how one sits against the other at
+    // every step measured, with the search distance and the steps measured.
+    let mut keys: HashMap<usize, Vec<Option<u64>>> = HashMap::new();
+    let mut key_of = |i: usize| -> Vec<Option<u64>> {
+        keys.entry(i)
+            .or_insert_with(|| {
+                if flex[i] {
+                    sampled.iter().map(|n| body_key(world, ids[i].0, Some(&out.frames[*n].joints))).collect()
+                } else {
+                    vec![body_key(world, ids[i].0, None)]
                 }
-                g
-            };
-            most[p] = most[p].max(g);
-            if g < best[p].0 {
-                best[p].0 = g;
-                best[p].1 = value;
+            })
+            .clone()
+    };
+    let pair_keys: Vec<Option<u64>> = pairs
+        .iter()
+        .map(|(a, b)| {
+            let (ka, kb) = (key_of(*a), key_of(*b));
+            if ka.iter().chain(&kb).any(Option::is_none) {
+                return None;
             }
-            if g < 1e-4 {
-                let r = best[p].2.get_or_insert([value, value]);
-                r[0] = r[0].min(value);
-                r[1] = r[1].max(value);
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (1u8, search.to_bits(), every, frames.len(), &ka, &kb).hash(&mut h);
+            for n in &sampled {
+                hash_transform(&frames[*n][*a].inverse().then(&frames[*n][*b]), &mut h);
             }
+            Some(h.finish())
+        })
+        .collect();
+    let mut results: Vec<Option<PairOutcome>> = {
+        let cache = pair_cache().lock().unwrap();
+        pair_keys.iter().map(|k| k.and_then(|k| cache.get(&k).copied())).collect()
+    };
+    let todo: Vec<usize> = (0..pairs.len()).filter(|p| results[*p].is_none()).collect();
+    PAIR_COUNTS.with(|c| {
+        let (hit, measured) = c.get();
+        c.set((hit + pairs.len() - todo.len(), measured + todo.len()));
+    });
+    if !todo.is_empty() {
+        let measured = measure(world, ids, frames, &bodies, &flex, &keys, &pairs, &todo, &sampled, search, size, out)?;
+        let mut cache = pair_cache().lock().unwrap();
+        if cache.len() > 400_000 {
+            cache.clear();
+        }
+        for (p, r) in todo.iter().zip(measured) {
+            if let Some(k) = pair_keys[*p] {
+                cache.insert(k, r);
+            }
+            results[*p] = Some(r);
         }
     }
+    let value = |n: usize| out.frames[n].value;
     let mut list: Vec<PairGap> = pairs
         .iter()
-        .zip(&best)
-        .zip(&most)
-        .filter(|((_, (g, _, _)), _)| *g < search)
-        .map(|(((a, b), (g, at, range)), most)| {
+        .zip(&results)
+        .filter_map(|((a, b), r)| r.map(|r| (a, b, r)))
+        .filter(|(_, _, r)| r.best < search)
+        .map(|(a, b, r)| {
             let (ia, ib) = (ids[*a].0, ids[*b].0);
-            let turning = *most < 1e-4;
+            let turning = r.most < 1e-4;
             let joined = turning || joined.iter().any(|(x, y)| (*x == ia && *y == ib) || (*x == ib && *y == ia));
             PairGap {
                 a: ids[*a].1.clone(),
                 b: ids[*b].1.clone(),
                 a_id: ia,
                 b_id: ib,
-                gap: round(g.max(0.0), 1e4),
-                at: *at,
-                range: *range,
+                gap: round(r.best.max(0.0), 1e4),
+                at: value(r.best_at),
+                range: r.range.map(|[s, e]| {
+                    let (x, y) = (value(s), value(e));
+                    [x.min(y), x.max(y)]
+                }),
                 joined,
                 turning,
             }
@@ -528,6 +717,106 @@ fn gaps(world: &World, ids: &[(StableId, String)], frames: &[Vec<Transform>], ou
         out.notes.push(format!("Gaps checked at {} of the {} steps.", frames.len().div_ceil(every), frames.len()));
     }
     Ok(())
+}
+
+/// Bodies of shapes that follow the joints, by what they are made from
+/// (see [`body_key`]): a spring or a servo's turning spline at each step of
+/// a sweep is evaluated once, not again for every sweep that holds it so.
+fn flexed_body(world: &World, id: StableId, key: Option<u64>, joints: &JointValues) -> Result<Arc<Body>, String> {
+    use std::sync::{Mutex, OnceLock};
+    static KEPT: OnceLock<Mutex<Vec<(u64, Arc<Body>)>>> = OnceLock::new();
+    const CAPACITY: usize = 320;
+    let kept = KEPT.get_or_init(Default::default);
+    if let Some(k) = key {
+        let mut list = kept.lock().unwrap();
+        if let Some(i) = list.iter().position(|(x, _)| *x == k) {
+            let hit = list.remove(i);
+            let b = hit.1.clone();
+            list.push(hit);
+            return Ok(b);
+        }
+    }
+    let b = Arc::new(body_with(world, id, Some(joints))?);
+    if let Some(k) = key {
+        let mut list = kept.lock().unwrap();
+        if list.len() >= CAPACITY {
+            list.remove(0);
+        }
+        list.push((k, b.clone()));
+    }
+    Ok(b)
+}
+
+/// Measures pairs `todo` (indices into `pairs`) through the sampled steps.
+#[allow(clippy::too_many_arguments)]
+fn measure(world: &World, ids: &[(StableId, String)], frames: &[Vec<Transform>], bodies: &[Body], flex: &[bool], flex_keys: &HashMap<usize, Vec<Option<u64>>>, pairs: &[(usize, usize)], todo: &[usize], sampled: &[usize], search: f64, size: f64, out: &Played) -> Result<Vec<PairOutcome>, String> {
+    // Bodies of the shapes that follow the joints, at each step measured
+    // (only those some pair to measure needs).
+    let mut flexed: HashMap<(usize, usize), Arc<Body>> = HashMap::new();
+    let needed: Vec<usize> = (0..ids.len()).filter(|i| flex[*i] && todo.iter().any(|p| pairs[*p].0 == *i || pairs[*p].1 == *i)).collect();
+    for (s, n) in sampled.iter().enumerate() {
+        for i in &needed {
+            let key = flex_keys.get(i).and_then(|k| k.get(s).copied().flatten());
+            let b = flexed_body(world, ids[*i].0, key, &out.frames[*n].joints).map_err(|m| format!("{} at {}: {m}", ids[*i].1, out.frames[*n].value))?;
+            flexed.insert((*n, *i), b);
+        }
+    }
+    let bod = |n: usize, i: usize| -> &Body { if flex[i] { &flexed[&(n, i)] } else { &bodies[i] } };
+    let mut best = vec![(f64::INFINITY, 0usize, None::<[usize; 2]>); todo.len()];
+    let mut most = vec![0.0f64; todo.len()];
+    // Leaves are placed only when a pair comes near enough to measure: an
+    // instance that holds still is placed once for the whole sweep, a moving
+    // one once per step (placing a mesh rebuilds its collision tree).
+    let still: Vec<bool> = (0..bodies.len()).map(|i| !flex[i] && frames.iter().all(|f| f[i].distance(&frames[0][i], size.max(1.0)) <= 1e-9)).collect();
+    let mut placed_still: HashMap<(usize, usize), Manifold> = HashMap::new();
+    let apart = |(la, ha): ([f64; 3], [f64; 3]), (lb, hb): ([f64; 3], [f64; 3])| (0..3).map(|k| (lb[k] - ha[k]).max(la[k] - hb[k]).max(0.0).powi(2)).sum::<f64>().sqrt();
+    for &n in sampled {
+        let f = &frames[n];
+        let mut placed_now: HashMap<(usize, usize), Manifold> = HashMap::new();
+        for (t, p) in todo.iter().enumerate() {
+            let (a, b) = pairs[*p];
+            // Each step only asks whether the pair comes closer than it has so
+            // far: a pair in contact is then checked within a micron, not the
+            // whole search (measuring is per triangle pair within reach).
+            let reach = best[t].0.clamp(1e-3, search);
+            // Placed boxes farther apart than that: no closer look needed.
+            let (ba, bb) = (bod(n, a), bod(n, b));
+            let g = if apart(f[a].bounds(ba.lo, ba.hi), f[b].bounds(bb.lo, bb.hi)) >= reach {
+                reach
+            } else {
+                let mut g = reach;
+                for (x, bx) in ba.boxes.iter().enumerate() {
+                    let wx = f[a].bounds(bx.0, bx.1);
+                    for (y, by) in bb.boxes.iter().enumerate() {
+                        if apart(wx, f[b].bounds(by.0, by.1)) >= g {
+                            continue;
+                        }
+                        for (i, l) in [(a, x), (b, y)] {
+                            let cache = if still[i] { &mut placed_still } else { &mut placed_now };
+                            cache.entry((i, l)).or_insert_with(|| {
+                                let (s, inner) = &bod(n, i).leaves[l];
+                                f[i].then(inner).solid(s)
+                            });
+                        }
+                        let get = |i: usize, l: usize| if still[i] { &placed_still[&(i, l)] } else { &placed_now[&(i, l)] };
+                        g = g.min(get(a, x).min_gap(get(b, y), g));
+                    }
+                }
+                g
+            };
+            most[t] = most[t].max(g);
+            if g < best[t].0 {
+                best[t].0 = g;
+                best[t].1 = n;
+            }
+            if g < 1e-4 {
+                let r = best[t].2.get_or_insert([n, n]);
+                r[0] = r[0].min(n);
+                r[1] = r[1].max(n);
+            }
+        }
+    }
+    Ok(best.into_iter().zip(most).map(|((best, best_at, range), most)| PairOutcome { best, best_at, range, most }).collect())
 }
 
 #[cfg(test)]
@@ -555,6 +844,8 @@ mod tests {
             clashes: vec![],
             search: 2.0,
             notes: vec![],
+            flex: vec![FlexShape { instance: b, path: vec![b], shape: a, config: None, values: vec![BTreeMap::from([("length".to_string(), 42.5)])] }],
+            allowed: vec![[0.0, 60.0]],
         };
         let back: AssemblySweep = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(serde_json::to_value(&back).unwrap(), serde_json::to_value(&s).unwrap());
