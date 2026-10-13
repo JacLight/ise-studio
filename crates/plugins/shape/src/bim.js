@@ -147,7 +147,7 @@ function level(name, elevation, { height } = {}) {
 // ---- Placing in a wall's frame ----------------------------------------------------
 
 const __deg = (r) => (r * 180) / Math.PI;
-const __v2 = (p, where) => {
+const __bimPoint = (p, where) => {
   if (!Array.isArray(p) || p.length < 2 || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) throw new TypeError(`${where}: a point is [x, y]`);
   return [p[0], p[1]];
 };
@@ -331,7 +331,7 @@ function __wallPart(name, o, a, b, quad, lv) {
   let gross;
   if (o.profile) {
     // Its elevation: [along, up] points, extruded through the thickness.
-    const prof = polygon(o.profile.map((p) => __v2(p, where)));
+    const prof = polygon(o.profile.map((p) => __bimPoint(p, where)));
     gross = prof.area;
     solid = f.place(prof.extrude(t).rotate(90, 0, 0).translate(0, y1, 0));
   } else {
@@ -397,7 +397,7 @@ function __wallPart(name, o, a, b, quad, lv) {
  */
 function wall(name, o = {}) {
   const lv = __level(o.level);
-  const a = __v2(o.from, `wall ${name}: from`), b = __v2(o.to, `wall ${name}: to`);
+  const a = __bimPoint(o.from, `wall ${name}: from`), b = __bimPoint(o.to, `wall ${name}: to`);
   const [e0, e1] = o.extend ?? [0, 0];
   const f = __frame(a, b, 0);
   const a2 = [a[0] - f.u[0] * e0, a[1] - f.u[1] * e0], b2 = [b[0] + f.u[0] * e1, b[1] + f.u[1] * e1];
@@ -412,7 +412,7 @@ function wall(name, o = {}) {
  * Segment i runs from points[i] to points[i + 1]; its name is "<name> <i + 1>" (or names[i]).
  */
 function walls(name, o = {}) {
-  const pts = (o.points ?? []).map((p, i) => __v2(p, `walls ${name}: points[${i}]`));
+  const pts = (o.points ?? []).map((p, i) => __bimPoint(p, `walls ${name}: points[${i}]`));
   const closed = !!o.closed;
   const n = pts.length;
   if (n < 2) throw new Error(`walls ${name}: needs at least two points`);
@@ -470,7 +470,7 @@ function walls(name, o = {}) {
 const __outline = (where, o) => {
   if (o instanceof Profile) return { profile: o, points: null };
   if (Array.isArray(o) && o.length >= 3 && Array.isArray(o[0]) && typeof o[0][0] === "number") {
-    const pts = o.map((p, i) => __v2(p, `${where}[${i}]`));
+    const pts = o.map((p, i) => __bimPoint(p, `${where}[${i}]`));
     return { profile: polygon(pts), points: pts };
   }
   throw new TypeError(`${where}: an outline is a Profile or a list of [x, y] points`);
@@ -611,7 +611,7 @@ function section(spec) {
 function column(name, o = {}) {
   const where = `column ${name}`;
   const lv = __level(o.level);
-  const at = __v2(o.at, `${where}: at`);
+  const at = __bimPoint(o.at, `${where}: at`);
   const h = o.height ?? lv.height ?? 3000;
   let prof, type = o.type;
   if (o.section) {
@@ -682,7 +682,7 @@ function beam(name, o = {}) {
 function stair(name, o = {}) {
   const where = `stair ${name}`;
   const lv = __level(o.level);
-  const at = __v2(o.at, `${where}: at`);
+  const at = __bimPoint(o.at, `${where}: at`);
   const rise = o.rise ?? lv.height;
   if (!(rise > 0)) throw new TypeError(`${where}: rise (the floor-to-floor height, mm) is needed`);
   const n = Math.ceil(rise / (o.maxRiser ?? 180) - 1e-9);
@@ -739,7 +739,7 @@ function stair(name, o = {}) {
 function ramp(name, o = {}) {
   const where = `ramp ${name}`;
   const lv = __level(o.level);
-  const at = __v2(o.at, `${where}: at`);
+  const at = __bimPoint(o.at, `${where}: at`);
   const L = o.length, W = o.width ?? 1200, R = o.rise;
   if (!(L > 0 && R > 0)) throw new TypeError(`${where}: length and rise are mm`);
   const pts = o.thickness ? [[0, 0], [L, R], [L, R - o.thickness], [o.thickness * L / R, 0]] : [[0, 0], [L, 0], [L, R]];
@@ -802,7 +802,7 @@ function railing(name, o = {}) {
 function curtainWall(name, o = {}) {
   const where = `curtain wall ${name}`;
   const lv = __level(o.level);
-  const a = __v2(o.from, `${where}: from`), b = __v2(o.to, `${where}: to`);
+  const a = __bimPoint(o.from, `${where}: from`), b = __bimPoint(o.to, `${where}: to`);
   const z0 = lv.elevation + (o.base ?? 0);
   const f = __frame(a, b, z0);
   const H = o.height ?? lv.height ?? 3000;
@@ -873,8 +873,8 @@ function rebar(name, o = {}) {
 // ---- Spaces, zones, grids ------------------------------------------------------------
 
 const __loops = (where, o) => {
-  if (Array.isArray(o) && o.length && Array.isArray(o[0]) && typeof o[0][0] === "number") return [o.map((p, i) => __v2(p, `${where}[${i}]`))];
-  if (Array.isArray(o) && o.length && Array.isArray(o[0]) && Array.isArray(o[0][0])) return o.map((l, j) => l.map((p, i) => __v2(p, `${where}[${j}][${i}]`)));
+  if (Array.isArray(o) && o.length && Array.isArray(o[0]) && typeof o[0][0] === "number") return [o.map((p, i) => __bimPoint(p, `${where}[${i}]`))];
+  if (Array.isArray(o) && o.length && Array.isArray(o[0]) && Array.isArray(o[0][0])) return o.map((l, j) => l.map((p, i) => __bimPoint(p, `${where}[${j}][${i}]`)));
   throw new TypeError(`${where}: an outline is a list of [x, y] points (or a list of loops: outer, then holes)`);
 };
 
