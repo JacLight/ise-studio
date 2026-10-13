@@ -472,6 +472,7 @@ const LOOKS: Record<string, Look> = {
   steel: { color: "#a2a9ae", metalness: 0.62, roughness: 0.36 },
   aluminium: { color: "#c8d2da", metalness: 0.75, roughness: 0.28 },
   "abs plastic": { color: "#e7e2d8", metalness: 0, roughness: 0.6 },
+  plastic: { color: "#d8d6d0", metalness: 0, roughness: 0.55 },
   oak: { color: "#c69c6d", metalness: 0, roughness: 0.75 },
   brass: { color: "#c9a85c", metalness: 0.8, roughness: 0.3 },
   copper: { color: "#c27c56", metalness: 0.8, roughness: 0.3 },
@@ -532,6 +533,22 @@ export function pictureIn(name: string): string | undefined {
   return name.match(/\b[0-9a-f]{8,64}\b/gi)?.find((t) => /[0-9]/.test(t) && /[a-f]/i.test(t));
 }
 
+/** Surface finishes a material name may carry, as roughness. */
+const FINISH_WORDS: Record<string, number> = {
+  mirror: 0.03,
+  polished: 0.08,
+  glossy: 0.15,
+  gloss: 0.15,
+  satin: 0.3,
+  brushed: 0.32,
+  "bead blasted": 0.5,
+  "bead-blasted": 0.5,
+  "sand blasted": 0.55,
+  textured: 0.6,
+  matte: 0.62,
+  matt: 0.62,
+};
+
 /** How a material renders; unknown materials get a neutral look. A colour in the name wins over the family's own. */
 export function materialLook(name: string | undefined): Look {
   if (!name) return UNASSIGNED_LOOK;
@@ -546,7 +563,9 @@ export function materialLook(name: string | undefined): Look {
   const plastic = /\b(abs|pc|polycarbonate|polymer|plastic|polyamide|pa6|pa12|pom|tpu|tpe|pp|polypropylene|pe|hdpe|pvc|pmma|pbt|pet|elastomer|ink|print)\b/.test(plain);
   let look = family ? LOOKS[family] : plastic ? { color: "#c4c9d4", metalness: 0, roughness: 0.55 } : { color: "#c4c9d4", metalness: 0.2, roughness: 0.5 };
   // Finish words: "matte black", "satin", "gloss", "textured", "translucent green".
-  const finish = /\btextured\b/.test(key) ? 0.85 : /\bmatte?\b|\bflat\b/.test(key) ? 0.75 : /\bsatin\b/.test(key) ? 0.42 : /\bgloss(y)?\b|\bpolished\b/.test(key) ? 0.15 : null;
+  // A finish word from the table first ("brushed", "bead blasted", "polished"), then the general ones.
+  const finishWord = Object.keys(FINISH_WORDS).find((w) => new RegExp(`\\b${w}\\b`).test(key));
+  const finish = finishWord ? FINISH_WORDS[finishWord] : /\btextured\b/.test(key) ? 0.85 : /\bmatte?\b|\bflat\b/.test(key) ? 0.75 : /\bsatin\b/.test(key) ? 0.42 : /\bgloss(y)?\b|\bpolished\b/.test(key) ? 0.15 : null;
   if (finish !== null) look = { ...look, roughness: look.metalness >= 0.5 ? Math.min(look.roughness, finish) : finish };
   if (look.opacity === undefined && /\b(translucent|transparent|see-through)\b/.test(key)) look = { ...look, opacity: 0.6, roughness: Math.min(look.roughness, 0.2) };
   const hex = key.match(/#[0-9a-f]{6}\b/)?.[0];

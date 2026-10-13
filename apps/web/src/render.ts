@@ -48,7 +48,11 @@ export function studioEnvironment(width = 1024, softboxes = 1, white = false): T
       // Dome: a cool grey brightening upward; the floor below the horizon dimmer and warm.
       const up = Math.max(0, Math.sin(THREE.MathUtils.degToRad(elevation)));
       let r: number, g: number, b: number;
-      if (white) [r, g, b] = [1, 1, 1];
+      // The white sweep: white walls all round under a dimmer ceiling, as in a
+      // product studio. A face turned up (a steel plate seen from the front)
+      // mirrors the ceiling and reads as metal, not as a white mirror; a
+      // stamped letter's sloped sides mirror the bright walls, so stamping reads.
+      if (white) [r, g, b] = Array(3).fill(0.35 + 0.65 * Math.pow(1 - up, 2)) as [number, number, number];
       else if (elevation >= 0) {
         const k = 0.5 + 0.55 * Math.pow(up, 0.6);
         [r, g, b] = [0.92 * k, 0.95 * k, 1.0 * k];
@@ -63,7 +67,8 @@ export function studioEnvironment(width = 1024, softboxes = 1, white = false): T
         // Soft edges: full inside, falling off over two degrees.
         const fa = THREE.MathUtils.clamp((ha - da) / 2 + 0.5, 0, 1);
         const fe = THREE.MathUtils.clamp((he - de) / 2 + 0.5, 0, 1);
-        const f = fa * fe * intensity * softboxes;
+        // (The overhead strip stays out of the white sweep: it would sit in every top-down reflection.)
+        const f = white && el > 70 ? 0 : fa * fe * intensity * softboxes;
         r += f;
         g += f;
         b += f * 0.97;
