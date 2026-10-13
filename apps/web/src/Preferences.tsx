@@ -1,5 +1,5 @@
-// Preferences (per viewer): the unit lengths show and are typed in, and
-// decimals. Plus the project file: the whole project as one .forma file to
+// Preferences (per viewer): the unit lengths show and are typed in,
+// decimals, and how a trackpad moves the view. Plus the project file: the whole project as one .forma file to
 // hand to someone outside the team, and opening one as a new project.
 
 import { useEffect, useRef, useState } from "react";
@@ -39,6 +39,31 @@ export function PreferencesDialog(props: { onClose: () => void }) {
         <p className="muted small">
           Fields, dimensions and measurements show lengths this way, and a bare number you type is in this unit (others still work: 25mm, 1in, 0.3m). The model is
           kept in millimetres, so teammates can each choose their own. Example: 25.4 mm shows as <b>{showLength(25.4, prefs)}</b>.
+        </p>
+        <h3 className="panel-section">Moving the view</h3>
+        <label className="field-check" title="On a Mac trackpad: two fingers slide the view and a pinch zooms. Off: two fingers zoom, like a mouse wheel">
+          <input
+            type="checkbox"
+            defaultChecked={(() => {
+              try {
+                return localStorage.getItem("forma.trackpadPan") === "1";
+              } catch {
+                return false;
+              }
+            })()}
+            onChange={(e) => {
+              try {
+                localStorage.setItem("forma.trackpadPan", e.target.checked ? "1" : "0");
+              } catch {
+                /* private window */
+              }
+            }}
+          />{" "}
+          Trackpad: two fingers pan, pinch zooms
+        </label>
+        <p className="muted small">
+          Turn: left drag. Pan: <kbd>Space</kbd> + drag, middle-button drag, right drag{" "}
+          (or two fingers, above). Zoom: wheel or pinch, towards the pointer.
         </p>
         <h3 className="panel-section">Keys</h3>
         <p className="muted small prefs-keys">

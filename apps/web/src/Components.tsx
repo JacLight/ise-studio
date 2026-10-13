@@ -3,6 +3,7 @@
 // plan: every floor of a building with its use, sale status and owner.
 
 import { useMemo, useState } from "react";
+import { usePersistedSet } from "./persist";
 import { type EntityView, projectUrl } from "./engine";
 import { Icon } from "./icons";
 import {
@@ -94,7 +95,8 @@ export function ComponentTree(props: {
   onHover?: (key: string | null) => void;
 }) {
   const top = useMemo(() => [...props.entities.values()].filter(isPart), [props.entities]);
-  const [open, setOpen] = useState<Set<string>>(() => new Set());
+  // Open rows are remembered across refreshes.
+  const [open, setOpen] = usePersistedSet("treeOpen");
   const q = (props.query ?? "").trim().toLowerCase();
   const hit = (name: string) => !q || name.toLowerCase().includes(q);
   // Open the way down to the selection, so picking in the view reveals it here.

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { usePersisted, usePersistedSet } from "./persist";
 import { AiPanel } from "./AiPanel";
 import { RenderView } from "./RenderView";
 import { renderImage } from "./render";
@@ -80,10 +81,10 @@ const MATE_COLORS = ["#e2553f", "#1f9d74", "#2f7de1", "#d4880f", "#c23d8f", "#0f
 export function App({ engine }: { engine: Engine }) {
   const state = useSyncExternalStore(engine.subscribe, engine.getState);
   const [prefs, setPrefs] = useState<UiPrefs>(loadPrefs);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = usePersisted<string | null>("selected", null);
   const [stockOpen, setStockOpen] = useState(false);
-  const [pcbOpen, setPcbOpen] = useState(false);
-  const [scansOpen, setScansOpen] = useState(false);
+  const [pcbOpen, setPcbOpen] = usePersisted("pcbOpen", false);
+  const [scansOpen, setScansOpen] = usePersisted("scansOpen", false);
   const [scanLayer, setScanLayer] = useState<ScanLayer | null>(null);
   // More items picked with Shift: they move and delete together with the selected one.
   const [also, setAlso] = useState<string[]>([]);
@@ -92,11 +93,11 @@ export function App({ engine }: { engine: Engine }) {
   // Picked part inside the selected assembly (by name); cleared with the selection.
   const [selectedPartName, setSelectedPartName] = useState<string | null>(null);
   // What the view shows: hidden items, an isolated one, and paint by material or sale status.
-  const [hiddenItems, setHiddenItems] = useState<ReadonlySet<string>>(() => new Set());
-  const [isolated, setIsolated] = useState<string | null>(null);
+  const [hiddenItems, setHiddenItems] = usePersistedSet("hidden");
+  const [isolated, setIsolated] = usePersisted<string | null>("isolated", null);
   const [colorBy, setColorBy] = useState<"material" | "status">("material");
-  const [objectsTab, setObjectsTab] = useState<"tree" | "stacking">("tree");
-  const [componentQuery, setComponentQuery] = useState("");
+  const [objectsTab, setObjectsTab] = usePersisted<"tree" | "stacking">("objectsTab", "tree");
+  const [componentQuery, setComponentQuery] = usePersisted("componentQuery", "");
   const [treeHover, setTreeHover] = useState<string | null>(null);
   // A new selection starts with no piece picked, unless the tree picked one with it.
   const pendingPiece = useRef<string | null>(null);
@@ -104,13 +105,13 @@ export function App({ engine }: { engine: Engine }) {
     setSelectedPartName(pendingPiece.current);
     pendingPiece.current = null;
   }, [selected]);
-  const [panel, setPanel] = useState<PanelKind | null>(null);
-  const [bench, setBench] = useState<Bench | null>(null);
+  const [panel, setPanel] = usePersisted<PanelKind | null>("panel", null);
+  const [bench, setBench] = usePersisted<Bench | null>("bench", null);
   const [dialog, setDialog] = useState<"share" | "storage" | null>(null);
-  const [consoleOpen, setConsoleOpen] = useState(false);
-  const [dataOpen, setDataOpen] = useState(false);
+  const [consoleOpen, setConsoleOpen] = usePersisted("consoleOpen", false);
+  const [dataOpen, setDataOpen] = usePersisted("dataOpen", false);
   const [prefsOpen, setPrefsOpen] = useState(false);
-  const [focus, setFocus] = useState(false);
+  const [focus, setFocus] = usePersisted("focus", false);
   const [view, setView] = useState<ViewName>("perspective");
   const [wireframe, setWireframe] = useState(false);
   const [turntable, setTurntable] = useState(false);

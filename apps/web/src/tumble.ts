@@ -1,4 +1,6 @@
-// Free tumble for the model view.
+// Free tumble for the model view, and panning without the right button:
+// Space + drag, the middle button, or (when chosen in Preferences) two fingers
+// on a trackpad with a pinch to zoom.
 //
 // OrbitControls stops the camera at the poles, so dragging up or down hits a
 // wall at the top and the bottom. Here a left drag turns the view about the
@@ -36,11 +38,65 @@ export function tumble(camera: THREE.Camera, target: THREE.Vector3, dx: number, 
   camera.lookAt(target);
 }
 
+/** Slides the view (camera and target together) by a drag of (dx, dy) pixels. */
+export function pan(camera: THREE.PerspectiveCamera, target: THREE.Vector3, dx: number, dy: number, height: number) {
+  const distance = camera.position.distanceTo(target);
+  const perPixel = (2 * distance * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / Math.max(height, 1);
+  camera.updateMatrixWorld();
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+  const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+  const move = right.multiplyScalar(-dx * perPixel).add(up.multiplyScalar(dy * perPixel));
+  camera.position.add(move);
+  target.add(move);
+}
+
+/** Whether two-finger trackpad scrolling pans (and a pinch zooms), from Preferences. */
+export const trackpadPans = () => {
+  try {
+    return localStorage.getItem("forma.trackpadPan") === "1";
+  } catch {
+    return false;
+  }
+};
+
 /** Left-drag (or one finger) tumbles the view; OrbitControls' own rotation is switched off. */
-export function attachTumble(dom: HTMLElement, camera: THREE.Camera, controls: OrbitControls): Tumble {
+export function attachTumble(dom: HTMLElement, camera: THREE.PerspectiveCamera, controls: OrbitControls): Tumble {
   controls.enableRotate = false;
+  // The middle button pans, as in most CAD tools (the wheel still zooms).
+  controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
+  // Space held: a left drag pans instead of turning.
+  let space = false;
+  // Not while typing, or when Space would press a focused button.
+  const typing = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON|A|SUMMARY)$/.test(t.tagName) || !!t.closest("[role=button],[role=tab],[role=menuitem],dialog[open]"));
+  const keyDown = (e: KeyboardEvent) => {
+    if (e.code !== "Space" || typing(e.target) || e.repeat) return;
+    space = true;
+    dom.classList.add("is-panning");
+    e.preventDefault();
+  };
+  const keyUp = (e: KeyboardEvent) => {
+    if (e.code !== "Space") return;
+    space = false;
+    dom.classList.remove("is-panning");
+  };
+  const blur = () => {
+    space = false;
+    dom.classList.remove("is-panning");
+  };
+  window.addEventListener("keydown", keyDown);
+  window.addEventListener("keyup", keyUp);
+  window.addEventListener("blur", blur);
+  // Two fingers on a trackpad pan when chosen; a pinch (ctrl + wheel) zooms as before.
+  const wheel = (e: WheelEvent) => {
+    if (!state.enabled || !controls.enabled || e.ctrlKey || !trackpadPans()) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    pan(camera, controls.target, -e.deltaX, -e.deltaY, dom.clientHeight);
+    controls.dispatchEvent({ type: "change" });
+  };
+  dom.addEventListener("wheel", wheel, { capture: true, passive: false });
   const state: Tumble = { enabled: true, dispose: () => {} };
-  let drag: { id: number; x: number; y: number; moving: boolean } | null = null;
+  let drag: { id: number; x: number; y: number; moving: boolean; pan: boolean } | null = null;
   const touches = new Set<number>();
 
   const down = (e: PointerEvent) => {
@@ -49,7 +105,9 @@ export function attachTumble(dom: HTMLElement, camera: THREE.Camera, controls: O
       drag = null; // a second finger pinches and pans instead
       return;
     }
-    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moving: false };
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moving: false, pan: space };
+    // Panning takes the press from whatever else would use it (picking, moving a part).
+    if (space) e.stopImmediatePropagation();
   };
   const move = (e: PointerEvent) => {
     if (!drag || e.pointerId !== drag.id) return;
@@ -64,7 +122,8 @@ export function attachTumble(dom: HTMLElement, camera: THREE.Camera, controls: O
     }
     drag.x = e.clientX;
     drag.y = e.clientY;
-    tumble(camera, controls.target, dx, dy, dom.clientHeight, controls.rotateSpeed);
+    if (drag.pan) pan(camera, controls.target, dx, dy, dom.clientHeight);
+    else tumble(camera, controls.target, dx, dy, dom.clientHeight, controls.rotateSpeed);
     controls.dispatchEvent({ type: "change" });
   };
   const up = (e: PointerEvent) => {
@@ -83,6 +142,10 @@ export function attachTumble(dom: HTMLElement, camera: THREE.Camera, controls: O
     dom.removeEventListener("pointermove", move);
     dom.removeEventListener("pointerup", up);
     dom.removeEventListener("pointercancel", up);
+    dom.removeEventListener("wheel", wheel, { capture: true });
+    window.removeEventListener("keydown", keyDown);
+    window.removeEventListener("keyup", keyUp);
+    window.removeEventListener("blur", blur);
   };
   return state;
 }
