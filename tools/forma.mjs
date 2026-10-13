@@ -45,7 +45,7 @@
 //   node tools/forma.mjs image add <file> …   store pictures (PNG, JPEG) or fonts (TTF, OTF) for programs; prints each id
 //   node tools/forma.mjs image list           the pictures and fonts in the project
 //   node tools/forma.mjs image profile <file|id> --height mm   a photo's object measured: its outline as a profile to revolve
-//   node tools/forma.mjs look [what] [--view iso|front|top|…|az,el] [--size 1000x750] [--out file.png]
+//   node tools/forma.mjs look [what] [--view iso|front|top|…|az,el] [--size 1000x750] [--box x0,y0,z0,x1,y1,z1] [--out file.png]
 //        a picture of the model (or one thing in it) drawn by the engine, saved to look/…png
 //   node tools/forma.mjs ops [filter]         the commands the engine accepts, with schemas
 //   node tools/forma.mjs view <action> [what] show something in the person's view (not saved):
@@ -1226,6 +1226,8 @@ if (command === "run") {
   };
   const viewName = flag("--view") ?? "iso";
   const size = flag("--size");
+  // --box x0,y0,z0,x1,y1,z1: frame only that region (mm), to read a detail.
+  const box = flag("--box");
   const out = flag("--out");
   const what = args.slice(1).join(" ").trim();
   let id = null;
@@ -1245,7 +1247,7 @@ if (command === "run") {
     } else id = pick[0].id;
   }
   if (!failed) {
-    const q = new URLSearchParams({ ...(project ? { project } : {}), ...(id ? { id } : {}), view: viewName, ...(size ? { size } : {}) });
+    const q = new URLSearchParams({ ...(project ? { project } : {}), ...(id ? { id } : {}), view: viewName, ...(size ? { size } : {}), ...(box ? { box } : {}) });
     const res = await fetch(`${http}/look?${q}`);
     if (!res.ok) {
       console.error(`✗ ${await res.text()}`);

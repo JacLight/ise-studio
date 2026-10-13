@@ -53,7 +53,7 @@ Run it from your working folder. It acts on the open project. It is your only wa
 ./forma image add <file> …           store a picture (PNG, JPEG) or font (TTF, OTF) for programs; prints its id
 ./forma image list                   the project's pictures and fonts
 ./forma image profile <file|id> --height mm [--rows 40]   the object a photo shows (a vase, a bottle, a knob): its outline row by row, as a [radius, z] profile in mm to revolve
-./forma look [what] [--view iso|front|top|…|az,el] [--size 1000x750]   the engine draws the model (or one thing); Read the saved PNG to see it
+./forma look [what] [--view iso|front|top|…|az,el] [--size 1000x750] [--box x0,y0,z0,x1,y1,z1]   the engine draws the model (or one thing, a component too); --box frames just that region (mm) to read a detail; Read the saved PNG to see it
 ```
 
 The person has the same commands in the app's console (` key), plus JavaScript with a `forma` object (`forma.entities`, `forma.commit(op, params)`, `forma.run(steps)`, `forma.view(...)`) — tell them so when they want to script something themselves.

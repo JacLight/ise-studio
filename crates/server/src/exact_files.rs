@@ -99,7 +99,7 @@ pub fn to_step(lower: &str, body: &[u8]) -> Result<Vec<u8>, String> {
 /// What a check looks at: a placed part or assembly as exports take it, or a
 /// shape definition (a component placed only through instances) as it is,
 /// so a sheet-metal part or a bought component can be checked by its own id.
-fn checked(project: &de_core::Project, id: StableId) -> Option<Source> {
+pub(crate) fn checked(project: &de_core::Project, id: StableId) -> Option<Source> {
     source(project, id).or_else(|| {
         let material = |mid: StableId| project.get::<de_solid::Material>(mid).map(|m| (m.name.clone(), m.density.canonical()));
         crate::shape_source(project, id, None, &material)

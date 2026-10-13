@@ -264,7 +264,9 @@ pub async fn look(State(server): State<Arc<Server>>, Query(query): Query<HashMap
                 })
                 .collect(),
         };
-        ids.into_iter().filter_map(|id| crate::source(&project, id)).collect::<Vec<_>>()
+        // One thing asked for by id may be a component (a definition placed only through instances): drawn as it is.
+        let one = query.get("id").is_some_and(|s| !s.is_empty());
+        ids.into_iter().filter_map(|id| if one { crate::exact_files::checked(&project, id) } else { crate::source(&project, id) }).collect::<Vec<_>>()
     };
     if sources.is_empty() {
         return fail(StatusCode::NOT_FOUND, "nothing placed to look at".into());
@@ -312,12 +314,23 @@ pub async fn look(State(server): State<Arc<Server>>, Query(query): Query<HashMap
             Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
         };
     }
+    // `box=x0,y0,z0,x1,y1,z1`: frame only that region (mm), a close look at a detail.
+    let frame = match query.get("box") {
+        Some(b) => {
+            let v: Vec<f64> = b.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+            if v.len() != 6 || v.iter().any(|x| !x.is_finite()) {
+                return fail(StatusCode::BAD_REQUEST, "box is x0,y0,z0,x1,y1,z1 in mm".into());
+            }
+            Some([v[0].min(v[3]), v[1].min(v[4]), v[2].min(v[5]), v[0].max(v[3]), v[1].max(v[4]), v[2].max(v[5])])
+        }
+        None => None,
+    };
     let drawn = tokio::task::spawn_blocking(move || -> Result<de_shape::render::Picture, String> {
         let mut meshes = Vec::new();
         for s in &sources {
             s.meshes(&mut meshes)?;
         }
-        de_shape::render::render(&meshes, view, w, h)
+        de_shape::render::render_framed(&meshes, view, w, h, frame)
     })
     .await
     .unwrap_or_else(|e| Err(e.to_string()));
