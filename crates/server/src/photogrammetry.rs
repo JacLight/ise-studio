@@ -16,10 +16,11 @@
 //! Engines (no commercial SDKs): Apple Object Capture through a small Swift
 //! helper built on first use (`tools/photogrammetry/ObjectCapture.swift`),
 //! and COLMAP (BSD) through its command line: structure from motion, then
-//! multi-view stereo where COLMAP has CUDA, else its sparse points. The
-//! result is sized and levelled from the marker sheet when the photos show
-//! it (see `de_scan::photo`), cleaned (floor cut away, largest piece, holes
-//! filled), and kept as scans whose entry carries the provenance: engine,
+//! multi-view stereo where COLMAP has CUDA, else Forma's own on the CPU
+//! (`de_scan::mvs`). The result is sized and levelled from the marker sheet
+//! when the photos show it (see `de_scan::photo`), cleaned (floor cut away,
+//! what stands in the field kept whole, holes filled; scenes walked through
+//! are kept whole), and kept as scans whose entry carries the provenance: engine,
 //! photos used and rejected, camera poses, scale method and its uncertainty,
 //! reprojection error and coverage gaps.
 
@@ -290,7 +291,7 @@ fn colmap_info() -> EngineInfo {
     EngineInfo {
         name: "colmap".into(),
         available: true,
-        detail: if cuda { "COLMAP: structure from motion, then dense multi-view stereo (CUDA) and a Poisson mesh".into() } else { "COLMAP: structure from motion; this build has no CUDA, so the result is its sparse points (dense stereo needs an NVIDIA GPU), meshed by Forma".into() },
+        detail: if cuda { "COLMAP: structure from motion, then dense multi-view stereo (CUDA) and a Poisson mesh".into() } else { "COLMAP: structure from motion; this build has no CUDA, so Forma's own dense matching runs on the CPU (slower than CUDA), then a Poisson mesh".into() },
         version: line,
         dense: Some(cuda),
     }
@@ -717,9 +718,80 @@ fn image_size(path: &FsPath) -> Option<(u32, u32)> {
     let bytes = std::fs::read(path).ok()?;
     match image_kind(&bytes)? {
         "png" => Some((u32::from_be_bytes(bytes.get(16..20)?.try_into().ok()?), u32::from_be_bytes(bytes.get(20..24)?.try_into().ok()?))),
-        "jpg" => de_shape::image::decode(&bytes).ok().map(|p| (p.width as u32, p.height as u32)),
+        "jpg" => jpeg_size(&bytes),
         _ => None,
     }
+}
+
+/// A photo's name as the person gave it (without the size folder COLMAP may see it in).
+fn shown(name: &str) -> &str {
+    name.rsplit('/').next().unwrap_or(name)
+}
+
+/// A JPEG's pixel size from its frame header (no decoding), as stored
+/// (before any EXIF turn, which COLMAP and Forma both ignore).
+pub fn jpeg_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    let mut i = 2;
+    while i + 9 < bytes.len() {
+        if bytes[i] != 0xFF {
+            return None;
+        }
+        let marker = bytes[i + 1];
+        if marker == 0xFF {
+            i += 1;
+            continue;
+        }
+        let len = u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]) as usize;
+        // Start of frame: baseline, progressive and the rest (not DHT C4, JPG C8, DAC CC).
+        if (0xC0..=0xCF).contains(&marker) && ![0xC4, 0xC8, 0xCC].contains(&marker) {
+            let h = u16::from_be_bytes([bytes[i + 5], bytes[i + 6]]) as u32;
+            let w = u16::from_be_bytes([bytes[i + 7], bytes[i + 8]]) as u32;
+            return Some((w, h));
+        }
+        i += 2 + len;
+    }
+    None
+}
+
+/// Photos of more than one size (two phones, portrait and landscape shots)
+/// moved into a folder per size, so COLMAP gives each size its own lens
+/// instead of dropping the odd ones ("single camera, but images have
+/// different dimensions"). Returns whether it did.
+fn group_by_size(images: &FsPath) -> Result<bool, String> {
+    let mut sizes: Vec<(String, (u32, u32))> = Vec::new();
+    for e in std::fs::read_dir(images).map_err(|e| e.to_string())?.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if let Some(s) = image_size(&e.path()) {
+            sizes.push((name, s));
+        }
+    }
+    let first = sizes.first().map(|s| s.1);
+    if sizes.iter().all(|s| Some(s.1) == first) {
+        return Ok(false);
+    }
+    for (name, (w, h)) in &sizes {
+        let dir = images.join(format!("{w}x{h}"));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        std::fs::rename(images.join(name), dir.join(name)).map_err(|e| e.to_string())?;
+    }
+    Ok(true)
+}
+
+/// The photos in the images folder (and its size folders), as COLMAP names them.
+fn photo_names(images: &FsPath) -> Vec<String> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(images).into_iter().flatten().flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if e.path().is_dir() {
+            for f in std::fs::read_dir(e.path()).into_iter().flatten().flatten() {
+                out.push(format!("{name}/{}", f.file_name().to_string_lossy()));
+            }
+        } else {
+            out.push(name);
+        }
+    }
+    out.sort();
+    out
 }
 
 fn run_colmap(server: &Server, id: &str, job: &Job, images: &FsPath, work: &FsPath, flag: &AtomicBool) -> Result<Raw, String> {
@@ -728,6 +800,7 @@ fn run_colmap(server: &Server, id: &str, job: &Job, images: &FsPath, work: &FsPa
     let v4 = info.version.as_deref().is_some_and(|v| v.trim_start_matches("COLMAP ").split('.').next().and_then(|m| m.parse::<u32>().ok()).unwrap_or(3) >= 4);
     let (fe, fm) = if v4 { ("FeatureExtraction", "FeatureMatching") } else { ("SiftExtraction", "SiftMatching") };
     let gpu = if info.dense == Some(true) { "1" } else { "0" };
+    let per_size = group_by_size(images)?;
     let threads = (std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) / 2).clamp(2, 8).to_string();
     let db = work.join("database.db");
     let sparse = work.join("sparse");
@@ -755,16 +828,22 @@ fn run_colmap(server: &Server, id: &str, job: &Job, images: &FsPath, work: &FsPa
     };
     let s = |v: &str| v.to_string();
     let p = |v: &FsPath| v.to_string_lossy().to_string();
+    // Without CUDA, Forma's own dense matching follows the camera solve.
+    let cpu_dense = info.dense != Some(true);
+    let (matching, solving, solved) = if cpu_dense { (0.12, 0.3, 0.5) } else { (0.2, 0.45, 0.8) };
     step(
         "COLMAP: finding features",
         0.02,
-        0.2,
-        vec![s("feature_extractor"), s("--database_path"), p(&db), s("--image_path"), p(images), s("--ImageReader.single_camera"), s("1"), s("--ImageReader.camera_model"), s("SIMPLE_RADIAL"), format!("--{fe}.use_gpu"), s(gpu), format!("--{fe}.num_threads"), threads.clone(), format!("--{fe}.max_image_size"), s(max_size)],
+        matching,
+        // One lens for all (or per size of photo); OPENCV's two radial and two tangential terms, which wide phone lenses need
+        // (on ETH3D's wide-angle photos the cameras came out 4–7× closer to the truth than with one radial term).
+        vec![s("feature_extractor"), s("--database_path"), p(&db), s("--image_path"), p(images), s(if per_size { "--ImageReader.single_camera_per_folder" } else { "--ImageReader.single_camera" }), s("1"), s("--ImageReader.camera_model"), s("OPENCV"), format!("--{fe}.use_gpu"), s(gpu), format!("--{fe}.num_threads"), threads.clone(), format!("--{fe}.max_image_size"), s(max_size)],
     )?;
-    step("COLMAP: matching photos", 0.2, 0.45, vec![s("exhaustive_matcher"), s("--database_path"), p(&db), format!("--{fm}.use_gpu"), s(gpu), format!("--{fm}.num_threads"), threads.clone()])?;
-    step("COLMAP: solving cameras", 0.45, 0.8, vec![s("mapper"), s("--database_path"), p(&db), s("--image_path"), p(images), s("--output_path"), p(&sparse), s("--Mapper.num_threads"), threads.clone()])?;
+    step("COLMAP: matching photos", matching, solving, vec![s("exhaustive_matcher"), s("--database_path"), p(&db), format!("--{fm}.use_gpu"), s(gpu), format!("--{fm}.num_threads"), threads.clone()])?;
+    step("COLMAP: solving cameras", solving, solved, vec![s("mapper"), s("--database_path"), p(&db), s("--image_path"), p(images), s("--output_path"), p(&sparse), s("--Mapper.num_threads"), threads.clone()])?;
     // The largest model it built.
     let mut best: Option<photo::ColmapModel> = None;
+    let mut best_dir = sparse.join("0");
     for k in 0..10 {
         let m = sparse.join(k.to_string());
         if !m.is_dir() {
@@ -779,19 +858,22 @@ fn run_colmap(server: &Server, id: &str, job: &Job, images: &FsPath, work: &FsPa
         let model = photo::read_colmap(&read("cameras.txt"), &read("images.txt"), &read("points3D.txt"))?;
         if best.as_ref().is_none_or(|b| model.cameras.len() > b.cameras.len()) {
             best = Some(model);
+            best_dir = m.clone();
         }
     }
     let model = best.ok_or("COLMAP could not join the photos into a model: too little overlap or texture (see the capture guide)")?;
     let mean_error = model.errors.iter().sum::<f64>() / model.errors.len().max(1) as f64;
     let used: std::collections::HashSet<&str> = model.cameras.iter().map(|c| c.name.as_str()).collect();
     let mut rejected = Vec::new();
-    for e in std::fs::read_dir(images).map_err(|e| e.to_string())?.flatten() {
-        let name = e.file_name().to_string_lossy().to_string();
+    for name in photo_names(images) {
         if !used.contains(name.as_str()) {
-            rejected.push(json!({ "image": name, "reason": "not registered (too few matches with the others)" }));
+            rejected.push(json!({ "image": shown(&name), "reason": "not registered (too few matches with the others)" }));
         }
     }
     let mut notes = Vec::new();
+    if per_size {
+        notes.push("photos of different sizes: each size solved with its own lens".into());
+    }
     let mesh: Option<Mesh> = None;
     let mut cloud = Cloud::default();
     if info.dense == Some(true) {
@@ -822,6 +904,19 @@ fn run_colmap(server: &Server, id: &str, job: &Job, images: &FsPath, work: &FsPa
             }
         }
     }
+    if cloud.is_empty() && cpu_dense {
+        match cpu_dense_cloud(server, id, job, &bin, images, &best_dir, work, flag) {
+            Ok((c, r)) => {
+                notes.push(format!("dense matching (Forma, on the CPU): {} points from {} of {} photos in {:.0} s", r.points, r.matched, r.photos, r.seconds));
+                if !r.skipped.is_empty() {
+                    notes.push(format!("not matched: {}", r.skipped.join("; ")));
+                }
+                cloud = c;
+            }
+            Err(e) if flag.load(Ordering::Relaxed) => return Err(e),
+            Err(e) => notes.push(format!("dense matching failed ({e}); the sparse points are used")),
+        }
+    }
     if cloud.is_empty() {
         // The sparse points seen well: three or more photos, under 2 px.
         for i in 0..model.points.len() {
@@ -836,6 +931,48 @@ fn run_colmap(server: &Server, id: &str, job: &Job, images: &FsPath, work: &FsPa
         return Err(format!("COLMAP solved {} cameras but only {} good points: the surface needs more texture (see the capture guide)", model.cameras.len(), cloud.len()));
     }
     Ok(Raw { mesh, cloud, cameras: model.cameras, rejected, reprojection: Some(mean_error), depth: 0, version: info.version.unwrap_or_default(), notes })
+}
+
+/// Photo sizes Forma's dense matching works at, by detail.
+fn dense_size(detail: &str) -> usize {
+    match detail {
+        "preview" => 640,
+        "reduced" => 900,
+        "medium" => 1200,
+        _ => 1600,
+    }
+}
+
+/// Forma's dense matching (`de_scan::mvs`) on COLMAP's solved cameras, for
+/// COLMAP builds without CUDA: COLMAP undistorts the photos (on the CPU),
+/// Forma matches them; an oriented, coloured cloud.
+#[allow(clippy::too_many_arguments)]
+fn cpu_dense_cloud(server: &Server, id: &str, job: &Job, bin: &FsPath, images: &FsPath, model_dir: &FsPath, work: &FsPath, flag: &AtomicBool) -> Result<(Cloud, de_scan::mvs::Report), String> {
+    let size = dense_size(&job.detail);
+    let dense = work.join("dense");
+    update(server, id, |j| j.advance("dense matching: undistorting the photos", 0.5, 0.52, 0.0));
+    let mut cmd = Command::new(bin);
+    cmd.arg("image_undistorter").arg("--image_path").arg(images).arg("--input_path").arg(model_dir).arg("--output_path").arg(&dense).args(["--output_type", "COLMAP", "--max_image_size", &size.to_string()]);
+    run_program(cmd, flag, |_| {})?;
+    let txt = dense.join("txt");
+    std::fs::create_dir_all(&txt).map_err(|e| e.to_string())?;
+    let mut cmd = Command::new(bin);
+    cmd.args(["model_converter", "--input_path"]).arg(dense.join("sparse")).arg("--output_path").arg(&txt).args(["--output_type", "TXT"]);
+    run_program(cmd, flag, |_| {})?;
+    let read = |f: &str| std::fs::read_to_string(txt.join(f)).unwrap_or_default();
+    let model = photo::read_colmap(&read("cameras.txt"), &read("images.txt"), &read("points3D.txt"))?;
+    let (mut cameras, mut photos) = (Vec::new(), Vec::new());
+    for (k, c) in model.cameras.iter().enumerate() {
+        update(server, id, |j| j.advance("dense matching: reading the photos", 0.52, 0.54, k as f64 / model.cameras.len().max(1) as f64));
+        let bytes = std::fs::read(dense.join("images").join(&c.name)).map_err(|e| format!("{}: {e}", c.name))?;
+        let pic = de_shape::image::decode(&bytes).map_err(|e| format!("{}: {e}", c.name))?;
+        let [r, g, b] = [de_shape::image::Channel::Red, de_shape::image::Channel::Green, de_shape::image::Channel::Blue].map(|ch| pic.channel(ch));
+        let rgb = (0..pic.width * pic.height).map(|i| [r[i], g[i], b[i]].map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)).collect();
+        photos.push(de_scan::mvs::Photo::new(pic.width, pic.height, rgb, size));
+        cameras.push(c.clone());
+    }
+    let sparse: Vec<V3> = (0..model.points.len()).filter(|&i| model.track[i] >= 3 && model.errors[i] < 2.0).map(|i| model.points[i]).collect();
+    de_scan::mvs::densify(&cameras, &photos, &sparse, &de_scan::mvs::Options::default(), &|p| update(server, id, |j| j.advance("dense matching (Forma, on the CPU)", 0.54, 0.88, p)), &|| flag.load(Ordering::Relaxed))
 }
 
 fn transform_camera(c: &Camera, s: &Similarity) -> Camera {
@@ -869,23 +1006,29 @@ fn finish(server: &Server, id: &str, job: &Job, set: &PhotoSet, images: &FsPath,
         de_scan::linalg::dist(lo, hi)
     };
     let mut marker_report = Value::Null;
+    let mut floor_found = false;
     let scaling: Scaling = match photo::marker_scaling(&raw.cameras, &detections, &sheet) {
         Ok((s, report)) => {
             marker_report = report;
             s
         }
         Err(why) => {
-            let floor = photo::floor(&raw.cloud.positions, size * 0.004);
+            // The floor is under the cameras; a plane they stand on both sides of (a wall, ground walked across) is not one.
+            let eyes: Vec<V3> = raw.cameras.iter().map(Camera::centre).collect();
+            let floor = photo::floor(&raw.cloud.positions, size * 0.004).and_then(|f| photo::face_cameras(f, &eyes));
+            floor_found = floor.is_some();
             let levelled = floor.as_ref().map(|f| photo::level(&raw.cloud.positions, f, size * 0.004)).unwrap_or_else(Similarity::identity);
+            let on_floor = if floor.is_some() { "; levelled on the floor plane" } else { "" };
             if raw.depth > 0 {
-                Scaling { method: "depth".into(), transform: levelled, uncertainty: 0.01, detail: format!("{} photos carried depth: Object Capture's size is metric (about ±1 %); levelled on the floor plane", raw.depth) }
+                Scaling { method: "depth".into(), transform: levelled, uncertainty: 0.01, detail: format!("{} photos carried depth: Object Capture's size is metric (about ±1 %){on_floor}", raw.depth) }
             } else {
-                let note = if photos_with_markers > 0 { format!(" ({why})") } else { String::new() };
+                // Marker-like patterns turn up in ordinary photos; say so only when they did.
+                let note = if photos_with_markers > 0 { format!(" ({photos_with_markers} photo(s) showed marker-like patterns, but {why})") } else { String::new() };
                 Scaling {
                     method: "none".into(),
                     transform: levelled,
                     uncertainty: f64::NAN,
-                    detail: format!("no scale: the photos had no marker sheet{note} and no depth. Give it one: ./forma scan scale <scan> --from x,y,z --to x,y,z --distance mm (two points whose distance you measured){}", if floor.is_some() { "; levelled on the floor plane" } else { "" }),
+                    detail: format!("no scale: no marker sheet was found{note} and the photos carry no depth. Give it one: ./forma scan scale <scan> --from x,y,z --to x,y,z --distance mm (two points whose distance you measured){on_floor}"),
                 }
             }
         }
@@ -894,7 +1037,10 @@ fn finish(server: &Server, id: &str, job: &Job, set: &PhotoSet, images: &FsPath,
     for p in raw.cloud.positions.iter_mut() {
         *p = t.apply(*p);
     }
-    raw.cloud.normals.clear();
+    // Normals (from dense matching) turn with the cloud.
+    for n in raw.cloud.normals.iter_mut() {
+        *n = de_scan::linalg::mat_vec(&t.rotation, *n);
+    }
     if let Some(m) = raw.mesh.as_mut() {
         for p in m.positions.iter_mut() {
             *p = t.apply(*p);
@@ -903,12 +1049,18 @@ fn finish(server: &Server, id: &str, job: &Job, set: &PhotoSet, images: &FsPath,
     let cameras: Vec<Camera> = raw.cameras.iter().map(|c| transform_camera(c, &t)).collect();
     // Quality.
     update(server, id, |j| j.advance("checking the result", 0.93, 0.95, 0.0));
-    let levelled = scaling.method == "markers" || photo::floor(&raw.cloud.positions, size * 0.004).is_some();
+    let levelled = scaling.method == "markers" || floor_found;
     let above: Vec<V3> = raw.cloud.positions.iter().filter(|p| !levelled || p[2] > 0.5).copied().collect();
     let target = if above.is_empty() { [0.0; 3] } else { de_scan::linalg::scale(above.iter().fold([0.0; 3], |s, p| de_scan::linalg::add(s, *p)), 1.0 / above.len() as f64) };
     let centres: Vec<V3> = cameras.iter().map(Camera::centre).collect();
     let coverage = photo::coverage(&centres, target, [0.0, 0.0, 1.0]);
-    let mut advice: Vec<String> = coverage.gaps.clone();
+    // A room, a street, a façade: the photos walk through it rather than round one object.
+    let scene = scaling.method != "markers" && photo::is_scene(&cameras);
+    let mut advice: Vec<String> = if scene {
+        vec!["the photos walk through a scene (a room, a street, a façade) rather than round one object: the scan is kept whole, not cut down to an object; cut out what you want with ./forma scan crop <scan> --box x0,y0,z0,x1,y1,z1".into()]
+    } else {
+        coverage.gaps.clone()
+    };
     let used = cameras.len();
     if used < 20 {
         advice.push(format!("only {used} photos were used: take 30–80, overlapping by two thirds"));
@@ -920,7 +1072,7 @@ fn finish(server: &Server, id: &str, job: &Job, set: &PhotoSet, images: &FsPath,
         advice.push(format!("{} photo(s) could not be used (too little overlap with the others, or blurred)", raw.rejected.len()));
     }
     if scaling.method == "none" {
-        advice.push("print the marker sheet (./forma scan markers) and stand the object on it for true size".into());
+        advice.push(if scene { "for true size, measure one distance in the scene (a door, a tile, a table) and give it with ./forma scan scale" } else { "print the marker sheet (./forma scan markers) and stand the object on it for true size" }.into());
     }
     let mut provenance = json!({
         "engine": job.engine,
@@ -937,7 +1089,7 @@ fn finish(server: &Server, id: &str, job: &Job, set: &PhotoSet, images: &FsPath,
         "advice": advice,
         "notes": raw.notes,
         "seconds": t0.elapsed().as_secs_f64().round(),
-        "cameras": cameras.iter().map(|c| json!({ "image": c.name, "centre": c.centre(), "rotation": c.rotation, "focal": c.fx, "size": [c.width, c.height] })).collect::<Vec<_>>(),
+        "cameras": cameras.iter().map(|c| json!({ "image": shown(&c.name), "centre": c.centre(), "rotation": c.rotation, "focal": c.fx, "size": [c.width, c.height] })).collect::<Vec<_>>(),
     });
     // Kept as a scan, then cleaned.
     update(server, id, |j| j.advance("saving the scan", 0.95, 0.97, 0.0));
@@ -951,7 +1103,9 @@ fn finish(server: &Server, id: &str, job: &Job, set: &PhotoSet, images: &FsPath,
         None => crate::scans::add_with(server, &job.project, &de_scan::points::write_ply(&raw.cloud), "ply", &name, &job.engine, None, Some(provenance.clone()))?,
     };
     let mut out = json!({ "scan": raw_entry, "quality": { "images": set.photos.len(), "used": used, "rejected": provenance["rejected"], "reprojectionPx": provenance["reprojectionPx"], "coverage": provenance["coverage"], "holes": provenance["holes"], "advice": provenance["advice"] }, "scale": provenance["scale"] });
-    if job.clean {
+    if job.clean && scene {
+        out["cleanSkipped"] = json!("a scene, not one object: kept whole");
+    } else if job.clean {
         update(server, id, |j| j.advance("cleaning: floor, pieces, holes", 0.97, 0.995, 0.0));
         // With the marker sheet the object stands inside its field (the markers' inner edges).
         let marker_field = (scaling.method == "markers").then(|| {
@@ -985,7 +1139,7 @@ fn finish(server: &Server, id: &str, job: &Job, set: &PhotoSet, images: &FsPath,
         let k = if metric || object_size <= 0.0 { 1.0 } else { 100.0 / object_size };
         let nominal = |raw: &Raw| Raw {
             mesh: raw.mesh.as_ref().map(|m| Mesh::new(m.positions.iter().map(|p| p.map(|v| v * k)).collect(), m.triangles.clone())),
-            cloud: Cloud { positions: raw.cloud.positions.iter().map(|p| p.map(|v| v * k)).collect(), normals: vec![], colors: raw.cloud.colors.clone() },
+            cloud: Cloud { positions: raw.cloud.positions.iter().map(|p| p.map(|v| v * k)).collect(), normals: raw.cloud.normals.clone(), colors: raw.cloud.colors.clone() },
             cameras: vec![],
             rejected: vec![],
             reprojection: None,
@@ -1013,14 +1167,22 @@ fn finish(server: &Server, id: &str, job: &Job, set: &PhotoSet, images: &FsPath,
     Ok(out)
 }
 
-/// The object alone, closed: what lies outside the marker field and the
-/// floor itself cut away (when levelled), the largest piece kept, holes
-/// filled, lightened to at most 200 000 triangles. Points are thinned of
-/// outliers and meshed (Poisson) first.
+/// The object alone, closed: the floor cut away (when levelled), only what
+/// stands in the field kept (the marker sheet's, or where the cameras look)
+/// but whole, even where it reaches past the field; holes filled, lightened
+/// to at most 200 000 triangles. Points are thinned of outliers, the things
+/// standing in the field picked out, and meshed (Poisson) first.
 fn clean(raw: &Raw, levelled: bool, field: Option<[f64; 4]>, metric: bool, size: f64) -> Result<(Mesh, Vec<Value>), String> {
     use de_shape::scans::{cloud_op, mesh_op, reconstruct};
     let mut steps = Vec::new();
-    let inside = |p: &V3| field.is_none_or(|f| p[0] > f[0] && p[1] > f[1] && p[0] < f[2] && p[1] < f[3]);
+    let within = |f: &[f64; 4], p: &V3| p[0] > f[0] && p[1] > f[1] && p[0] < f[2] && p[1] < f[3];
+    // The field only seeds the object: the crop round it is half its size wider each way, so an object longer than the field is not cut at its edge.
+    let region = field.map(|f| {
+        let m = (f[2] - f[0]).max(f[3] - f[1]) * 0.5;
+        [f[0] - m, f[1] - m, f[2] + m, f[3] + m]
+    });
+    let inside = |p: &V3| field.is_none_or(|f| within(&f, p));
+    let in_region = |p: &V3| region.is_none_or(|f| within(&f, p));
     // Cut just above the floor: a few times its own roughness (median, so the object's foot does not count).
     let cut = if levelled {
         let mut near: Vec<f64> = raw.cloud.positions.iter().filter(|p| inside(p) && p[2].abs() < (size * 0.01).max(if metric { 1.0 } else { 0.0 })).map(|p| p[2].abs()).collect();
@@ -1033,24 +1195,41 @@ fn clean(raw: &Raw, levelled: bool, field: Option<[f64; 4]>, metric: bool, size:
     let mesh = match &raw.mesh {
         Some(m) => {
             let mut m = m.clone();
-            if field.is_some() {
-                m.triangles.retain(|t| t.iter().all(|&i| inside(&m.positions[i as usize])));
+            if region.is_some() {
+                m.triangles.retain(|t| t.iter().all(|&i| in_region(&m.positions[i as usize])));
                 m.compact();
-                steps.push(json!({ "operation": if metric { "keep the marker sheet's field" } else { "keep where the cameras look" }, "triangles": m.triangles.len() }));
+                steps.push(json!({ "operation": if metric { "keep round the marker sheet" } else { "keep round where the cameras look" }, "triangles": m.triangles.len() }));
             }
             m
         }
         None => {
-            let mut c = raw.cloud.clone();
-            let keep: Vec<usize> = (0..c.len()).filter(|&i| inside(&c.positions[i]) && (!levelled || c.positions[i][2] > cut)).collect();
-            c = Cloud { positions: keep.iter().map(|&i| c.positions[i]).collect(), normals: vec![], colors: keep.iter().filter_map(|&i| c.colors.get(i).copied()).collect() };
+            let keep: Vec<u32> = (0..raw.cloud.len() as u32).filter(|&i| in_region(&raw.cloud.positions[i as usize]) && (!levelled || raw.cloud.positions[i as usize][2] > cut)).collect();
+            let c = raw.cloud.select(&keep);
             steps.push(json!({ "operation": "cut the floor and background", "points": c.len() }));
             if c.len() < 30 {
                 return Err(format!("only {} points stand above the floor: too few to mesh", c.len()));
             }
-            let (c, r) = cloud_op(&c, "outliers", &json!({ "neighbours": 12, "sigma": 2.0 }))?;
+            let (mut c, r) = cloud_op(&c, "outliers", &json!({ "neighbours": 12, "sigma": 2.0 }))?;
             steps.push(r);
-            let (m, r) = reconstruct(&c, &json!({ "depth": 7, "trim": 6 }))?;
+            // Separate things (the object, things beside it): those standing in the field.
+            let groups = de_scan::points::clusters(&c, c.spacing() * 4.0);
+            let stands = |g: &Vec<u32>| g.iter().any(|&i| inside(&c.positions[i as usize]));
+            let biggest = groups.iter().filter(|g| stands(g)).map(Vec::len).max().unwrap_or(0);
+            let chosen: Vec<&Vec<u32>> = groups.iter().filter(|g| stands(g) && g.len() * 50 >= biggest).collect();
+            if !chosen.is_empty() && chosen.len() < groups.len() {
+                let keep: Vec<u32> = chosen.iter().flat_map(|g| g.iter().copied()).collect();
+                steps.push(json!({ "operation": "keep what stands in the field", "clusters": [chosen.len(), groups.len()], "points": keep.len() }));
+                c = c.select(&keep);
+            }
+            // Dense points (with their normals) carry finer detail than sparse ones.
+            let depth = if c.len() > 100_000 {
+                8
+            } else if c.len() > 3000 {
+                7
+            } else {
+                6
+            };
+            let (m, r) = reconstruct(&c, &json!({ "depth": depth, "trim": 6 }))?;
             steps.push(r);
             m
         }
@@ -1063,7 +1242,7 @@ fn clean(raw: &Raw, levelled: bool, field: Option<[f64; 4]>, metric: bool, size:
             steps.push(r);
         }
     }
-    let (t, r) = mesh_op(&m, "largest", &json!({}))?;
+    let (t, r) = standing(m, |p| inside(p) && (!levelled || p[2] > cut));
     m = t;
     steps.push(r);
     let (t, r) = mesh_op(&m, "fillHoles", &json!({ "fair": false }))?;
@@ -1076,6 +1255,32 @@ fn clean(raw: &Raw, levelled: bool, field: Option<[f64; 4]>, metric: bool, size:
     }
     steps.push(json!({ "operation": "floor cut", "at": cut }));
     Ok((m, steps))
+}
+
+/// The pieces of a mesh standing in the field (`seed` true at one of their
+/// vertices), each at least 2 % of the biggest such piece: the object, whole,
+/// and its loose parts, without the things round it. The largest piece when
+/// none stands there.
+fn standing(m: Mesh, seed: impl Fn(&V3) -> bool) -> (Mesh, Value) {
+    let pieces = m.split_components();
+    let total = pieces.len();
+    let stands: Vec<bool> = pieces.iter().map(|p| p.positions.iter().any(&seed)).collect();
+    let biggest = pieces.iter().zip(&stands).filter(|(_, s)| **s).map(|(p, _)| p.triangles.len()).max().unwrap_or(0);
+    let mut out = Mesh::default();
+    let mut kept = 0;
+    for (p, s) in pieces.iter().zip(&stands) {
+        if *s && p.triangles.len() * 50 >= biggest {
+            out.merge(p);
+            kept += 1;
+        }
+    }
+    if out.triangles.is_empty() {
+        let largest = pieces.into_iter().next().unwrap_or_default();
+        let n = largest.triangles.len();
+        return (largest, json!({ "operation": "largest", "pieces": [1.min(total), total], "triangles": n }));
+    }
+    let n = out.triangles.len();
+    (out, json!({ "operation": "keep what stands in the field", "pieces": [kept, total], "triangles": n }))
 }
 
 #[cfg(test)]
@@ -1182,6 +1387,75 @@ mod tests {
         let out = unzip(&zip).unwrap();
         assert_eq!(out.len(), 2);
         assert_eq!((out[1].0.as_str(), out[1].1.as_slice()), ("dir/b.png", files[1].1.as_slice()));
+    }
+
+    /// A JPEG's first bytes: SOI, an APP0 segment, then a baseline frame header of w × h.
+    fn jpeg_header(w: u16, h: u16) -> Vec<u8> {
+        let mut b = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+        b.extend_from_slice(b"JFIF\0\x01\x01\0\0\x01\0\x01\0\0");
+        b.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x11, 0x08]);
+        b.extend_from_slice(&h.to_be_bytes());
+        b.extend_from_slice(&w.to_be_bytes());
+        b.extend_from_slice(&[0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01]);
+        b
+    }
+
+    #[test]
+    fn a_jpegs_size_is_read_from_its_header() {
+        assert_eq!(jpeg_size(&jpeg_header(6048, 4032)), Some((6048, 4032)));
+        // Progressive (SOF2) too; a DHT segment (C4) before it is skipped.
+        let mut p = jpeg_header(1200, 1600);
+        p.splice(20..20, [0xFF, 0xC4, 0x00, 0x04, 0x00, 0x00]);
+        let at = p.iter().position(|&b| b == 0xC0).unwrap();
+        p[at] = 0xC2;
+        assert_eq!(jpeg_size(&p), Some((1200, 1600)));
+        assert_eq!(jpeg_size(b"\xff\xd8\xff"), None);
+    }
+
+    #[test]
+    fn photos_of_two_sizes_get_a_lens_each() {
+        let dir = std::env::temp_dir().join(format!("forma-sizes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, w, h) in [("a.jpg", 2400, 1600), ("b.jpg", 2400, 1600)] {
+            std::fs::write(dir.join(name), jpeg_header(w, h)).unwrap();
+        }
+        // One size: left as it is.
+        assert!(!group_by_size(&dir).unwrap());
+        assert_eq!(photo_names(&dir), ["a.jpg", "b.jpg"]);
+        // A portrait shot from another phone: a folder per size.
+        std::fs::write(dir.join("c.jpg"), jpeg_header(1200, 1600)).unwrap();
+        assert!(group_by_size(&dir).unwrap());
+        assert_eq!(photo_names(&dir), ["1200x1600/c.jpg", "2400x1600/a.jpg", "2400x1600/b.jpg"]);
+        assert_eq!(shown("1200x1600/c.jpg"), "c.jpg");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_object_is_kept_whole_and_what_stands_beside_it_dropped() {
+        // A block `len` long and `s` wide and high, centred on (x, y), its bottom at z.
+        let cube = |x: f64, y: f64, z: f64, s: f64, len: f64| {
+            let mut m = de_scan::mesh::cube(len, s, s);
+            for p in m.positions.iter_mut() {
+                *p = [p[0] + x - len / 2.0, p[1] + y - s / 2.0, p[2] + z];
+            }
+            m
+        };
+        // An object 200 mm long (a stretched ball) standing in a 190 mm field, a loose part over it, and a box beside it.
+        let mut m = de_scan::mesh::uv_sphere(1.0, 12, 24);
+        for p in m.positions.iter_mut() {
+            *p = [p[0] * 100.0, p[1] * 20.0, p[2] * 20.0 + 20.0];
+        }
+        m.merge(&cube(0.0, 0.0, 60.0, 10.0, 10.0));
+        m.merge(&cube(260.0, 0.0, 0.0, 50.0, 50.0));
+        let field = [-95.0, -55.0, 95.0, 55.0];
+        let (kept, r) = standing(m, |p| p[0] > field[0] && p[1] > field[1] && p[0] < field[2] && p[1] < field[3]);
+        let (lo, hi) = kept.bounds();
+        assert_eq!(r["pieces"], json!([2, 3]), "{r}");
+        assert!(hi[0] - lo[0] > 199.0 && hi[0] < 150.0, "{lo:?} {hi:?}");
+        // Nothing standing in the field: the largest piece.
+        let (largest, r) = standing(cube(400.0, 0.0, 0.0, 10.0, 10.0), |_| false);
+        assert_eq!((largest.triangles.len(), r["operation"].as_str()), (12, Some("largest")));
     }
 
     #[test]

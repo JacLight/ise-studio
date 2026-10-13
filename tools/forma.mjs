@@ -2066,6 +2066,7 @@ if (command === "run") {
         console.log(`✓ ${sayScan(r.scan)}`);
         if (r.clean) console.log(`✓ cleaned: ${sayScan(r.clean)}`);
         else if (r.cleanError) console.log(`  cleaning failed: ${r.cleanError}`);
+        else if (r.cleanSkipped) console.log(`  not cleaned: ${r.cleanSkipped}`);
         console.log(`  photos: ${qa.used} of ${qa.images} used${qa.rejected.length ? `; rejected: ${qa.rejected.map((x) => x.image ?? `#${x.sample}`).join(", ")}` : ""}${qa.reprojectionPx != null ? `; reprojection error ${qa.reprojectionPx.toFixed(2)} px` : ""}`);
         console.log(`  scale: ${sc.method}${sc.uncertainty != null ? ` (±${(sc.uncertainty * 100).toFixed(2)} %)` : ""} — ${sc.detail}`);
         console.log(`  coverage by 30° sector: ${qa.coverage.sectors.join(" ")}; elevations ${Math.round(qa.coverage.lowest_elevation)}°…${Math.round(qa.coverage.highest_elevation)}°${qa.holes != null ? `; ${qa.holes} open hole(s) in the raw surface` : ""}`);
