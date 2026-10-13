@@ -646,4 +646,28 @@ mod tests {
         assert!((m("h") - 40.0).abs() < 0.4, "{}", m("h"));
         assert!((m("u") - 37.0).abs() < 1e-6);
     }
+
+    #[test]
+    fn lofted_views_round_the_sections_and_keep_both_outlines() {
+        // Side: 40 wide (x) × 40 high (z); end: 20 wide (y) × 40 high. Ellipse
+        // sections (roundness 2) stacked up z: an elliptic cylinder, semi-axes 20 and 10.
+        let side_px = stored(200, 200, |x, y| if (50.0..150.0).contains(&x) && (50.0..150.0).contains(&y) { [20, 20, 20, 255] } else { [255, 255, 255, 255] });
+        let end_px = stored(200, 200, |x, y| if (75.0..125.0).contains(&x) && (50.0..150.0).contains(&y) { [20, 20, 20, 255] } else { [255, 255, 255, 255] });
+        let side = canvas("Side", &side_px, "front", [200, 200], 0.4, [100.0, 100.0]);
+        let end = canvas("End", &end_px, "left", [200, 200], 0.4, [100.0, 100.0]);
+        let id = de_core::StableId::new();
+        let inputs = serde_json::json!({ "canvases": { "Side": side.view_json(id), "End": end.view_json(id) } }).to_string();
+        let src = r#"return loftViews([canvas("Side"), canvas("End")], { along: "z", roundness: 2, segments: 96 });"#;
+        let e = crate::runtime::evaluate_in(src, &[], 0.05, &inputs).unwrap();
+        let height = e.bounds_max[2] - e.bounds_min[2];
+        let (a, b) = ((e.bounds_max[0] - e.bounds_min[0]) / 2.0, (e.bounds_max[1] - e.bounds_min[1]) / 2.0);
+        let expected = std::f64::consts::PI * a * b * height;
+        assert!((height - 40.0).abs() < 0.8, "{height}");
+        assert!((e.volume - expected).abs() / expected < 0.02, "{} vs {expected}", e.volume);
+        assert!((e.bounds_max[0] - e.bounds_min[0] - 40.0).abs() < 0.5 && (e.bounds_max[1] - e.bounds_min[1] - 20.0).abs() < 0.5, "{:?} {:?}", e.bounds_min, e.bounds_max);
+        // Roundness 8 is nearly the box.
+        let src = r#"return loftViews([canvas("Side"), canvas("End")], { along: "z", roundness: 8, segments: 96 });"#;
+        let b = crate::runtime::evaluate_in(src, &[], 0.05, &inputs).unwrap();
+        assert!(b.volume > 0.9 * 40.0 * 20.0 * height && b.volume < 40.0 * 20.0 * height, "{}", b.volume);
+    }
 }

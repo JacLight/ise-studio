@@ -1226,6 +1226,126 @@ function fromViews(views, { silhouette = {} } = {}) {
   return body;
 }
 
+/**
+ * A rounded body from two views: sections square to `along` ("x", "y" or
+ * "z"), each a superellipse filling the extent the two views show at that
+ * station (one view gives its width, the other its depth), stacked every
+ * `step` mm and skinned. Where fromViews leaves square sections, this gives
+ * the rounded ones a grip, a handle, a housing or a nose really has, and
+ * keeps both views' outlines (finger grooves, tapers) exactly.
+ *   loftViews([canvas("Side"), canvas("End")], { along: "z", roundness: 2.5, profiles: { Side: grip } })
+ * Views are canvases (their silhouette) or { profile, plane }; each view's
+ * plane must contain the `along` axis. Options: roundness (2 an ellipse,
+ * 4 a soft box, 10 nearly square; or [u, v] per side pair), step (mm),
+ * segments (points round each section, 64), from / to (the stretch along
+ * the axis to build, default where both views have the object), profiles
+ * (by view name or index: a profile to use instead of the canvas's
+ * silhouette, e.g. only the dark grip traced by colour). A mesh (exact in
+ * the view, a fine mesh in STEP); trim or cut it like any solid.
+ */
+function loftViews(views, { along = "x", roundness = 2.5, step, segments = 64, from, to, profiles = {} } = {}) {
+  const axes = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+  const k = { x: 0, y: 1, z: 2 }[along];
+  if (k === undefined) throw new Error('loftViews: along is "x", "y" or "z"');
+  // U × V = A, right-handed.
+  const [iu, iv] = [[1, 2], [2, 0], [0, 1]][k];
+  const list = (Array.isArray(views) ? views : Object.values(views)).map((v, n) => {
+    const name = v instanceof CanvasRef ? v.name : `view ${n + 1}`;
+    const prof = profiles[name] ?? profiles[n] ?? (v instanceof CanvasRef ? v.silhouette() : asProfile(v.profile));
+    const plane = v instanceof CanvasRef ? v.plane : v.plane;
+    if (!plane || !plane.x) throw new Error(`loftViews: ${name} needs its plane`);
+    // Which plane axis runs along A, and which world axis the other one gives.
+    const ax = Math.abs(plane.x[k]) > 0.999 ? "x" : Math.abs(plane.y[k]) > 0.999 ? "y" : null;
+    if (!ax) throw new Error(`loftViews: ${name}'s plane does not contain the ${along} axis`);
+    const other = ax === "x" ? plane.y : plane.x;
+    const w = [0, 1, 2].find((i) => Math.abs(other[i]) > 0.999);
+    if (w === undefined || w === k) throw new Error(`loftViews: ${name} is not square to the axes`);
+    const sA = ax === "x" ? plane.x[k] : plane.y[k];
+    return { name, prof, plane, ax, w, sW: other[w], sA };
+  });
+  if (list.length !== 2) throw new Error("loftViews: give two views (one showing the width, one the depth along the sections)");
+  if (list[0].w === list[1].w) throw new Error("loftViews: the two views show the same direction; give two views at right angles");
+  // The extent each view shows at station t (world coordinate along A), outermost span.
+  const extent = (v, t) => {
+    const local = (t - v.plane.origin[k]) * v.sA; // plane coordinate along A
+    const sp = profileSpans(v.prof, v.ax === "x" ? { x: local } : { y: local });
+    if (!sp.length) return null;
+    const lo = sp[0][0], hi = sp[sp.length - 1][1];
+    const a = v.plane.origin[v.w] + v.sW * lo, b = v.plane.origin[v.w] + v.sW * hi;
+    return [Math.min(a, b), Math.max(a, b)];
+  };
+  // Where both views have the object.
+  const range = (v) => {
+    const b = v.prof.bounds;
+    const [lo, hi] = v.ax === "x" ? [b.min[0], b.max[0]] : [b.min[1], b.max[1]];
+    const p = [v.plane.origin[k] + lo / v.sA, v.plane.origin[k] + hi / v.sA];
+    return [Math.min(...p), Math.max(...p)];
+  };
+  const [r0, r1] = [range(list[0]), range(list[1])];
+  const start = from ?? Math.max(r0[0], r1[0]);
+  const end = to ?? Math.min(r0[1], r1[1]);
+  if (!(end > start)) throw new Error("loftViews: the views do not overlap along the axis (check the canvases' registration)");
+  const dt = step ?? Math.max(tolerance * 4, (end - start) / 120);
+  const [nu, nv] = Array.isArray(roundness) ? roundness : [roundness, roundness];
+  const rings = [];
+  const eps = Math.min(dt * 0.25, (end - start) * 1e-3);
+  for (let t = start + eps; t <= end - eps + 1e-9; t += dt) rings.push(t);
+  if (rings[rings.length - 1] < end - eps - 1e-9) rings.push(end - eps);
+  const positions = [];
+  const triangles = [];
+  let made = 0;
+  const pieces = [];
+  let run = [];
+  for (const t of rings) {
+    const e0 = extent(list[0], t), e1 = extent(list[1], t);
+    if (!e0 || !e1) {
+      if (run.length > 1) pieces.push(run);
+      run = [];
+      continue;
+    }
+    const eu = list[0].w === iu ? e0 : e1;
+    const ev = list[0].w === iu ? e1 : e0;
+    run.push({ t, eu, ev });
+  }
+  if (run.length > 1) pieces.push(run);
+  if (!pieces.length) throw new Error("loftViews: no station has both views' extents");
+  const sgnPow = (c, e) => Math.sign(c) * Math.abs(c) ** e;
+  for (const piece of pieces) {
+    const base = positions.length;
+    for (const { t, eu, ev } of piece) {
+      const cu = (eu[0] + eu[1]) / 2, cv = (ev[0] + ev[1]) / 2, a = (eu[1] - eu[0]) / 2, b = (ev[1] - ev[0]) / 2;
+      for (let j = 0; j < segments; j++) {
+        const th = (2 * Math.PI * j) / segments;
+        const p = [0, 0, 0];
+        p[k] = t;
+        p[iu] = cu + a * sgnPow(Math.cos(th), 2 / nu);
+        p[iv] = cv + b * sgnPow(Math.sin(th), 2 / nv);
+        positions.push(p);
+      }
+    }
+    const n = piece.length;
+    const at = (i, j) => base + i * segments + (j % segments);
+    for (let i = 0; i + 1 < n; i++) {
+      for (let j = 0; j < segments; j++) {
+        triangles.push([at(i, j), at(i, j + 1), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i + 1, j)]);
+      }
+    }
+    // Flat end caps round each end's centre.
+    for (const [i, dir] of [[0, -1], [n - 1, 1]]) {
+      const c = positions.length;
+      const { t, eu, ev } = piece[i];
+      const p = [0, 0, 0];
+      p[k] = t;
+      p[iu] = (eu[0] + eu[1]) / 2;
+      p[iv] = (ev[0] + ev[1]) / 2;
+      positions.push(p);
+      for (let j = 0; j < segments; j++) triangles.push(dir < 0 ? [c, at(i, j + 1), at(i, j)] : [c, at(i, j), at(i, j + 1)]);
+    }
+    made++;
+  }
+  return fromMesh(positions, triangles);
+}
+
 // ---- Profiles ----------------------------------------------------------------
 
 function circle(radius, { segments = segmentsFor(radius) } = {}) {
