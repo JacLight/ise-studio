@@ -342,8 +342,11 @@ pub fn compare(c: &Canvas, meshes: &[Mesh], o: &Options) -> Result<Comparison, S
         (rx0, ry0, rx1, ry1)
     };
     let (x0, y0, x1, y1) = if x1 - x0 < 4.0 || y1 - y0 < 4.0 { (rx0, ry0, rx1, ry1) } else { (x0, y0, x1, y1) };
+    // Whole picture pixels per working pixel, starting on a pixel edge, so
+    // every working pixel averages whole picture pixels.
+    let (x0, y0, x1, y1) = (x0.floor(), y0.floor(), x1.ceil(), y1.ceil());
     let long = (x1 - x0).max(y1 - y0);
-    let k = (long / o.max_edge as f64).max(1.0);
+    let k = (long / o.max_edge as f64).ceil().max(1.0);
     let g = Grid { w: (((x1 - x0) / k).floor() as usize).max(2), h: (((y1 - y0) / k).floor() as usize).max(2), x0, y0, k };
     let photo = photo_mask(&ink, &g);
     if photo.iter().filter(|v| **v).count() < 16 {
@@ -516,4 +519,131 @@ pub fn mesh_of(m: &manifold_csg::Manifold, color: [f32; 3]) -> Mesh {
     let n = n.max(3);
     let positions: Vec<f32> = props.chunks_exact(n).flat_map(|v| [v[0] as f32, v[1] as f32, v[2] as f32]).collect();
     Mesh { positions, normals: Vec::new(), indices: idx.iter().map(|i| *i as u32).collect(), color, metal: false }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::canvas::view_plane;
+    use crate::decor::tests::stored;
+    use manifold_csg::Manifold;
+
+    /// A canvas of a stored picture on a named view, `scale` mm per pixel,
+    /// pixel (0, 0) at the origin unless anchored elsewhere.
+    fn canvas(name: &str, image: &str, view: &str, px: [u32; 2], scale: f64, anchor: [f64; 2]) -> Canvas {
+        let (plane, view) = view_plane(view).unwrap();
+        Canvas {
+            name: name.into(),
+            image: image.into(),
+            pixels: px,
+            plane,
+            view: Some(view),
+            scale,
+            aspect: 1.0,
+            anchor,
+            rotation: 0.0,
+            flip: false,
+            perspective: None,
+            calibration: None,
+            crop: None,
+            opacity: 0.5,
+            visible: true,
+            through: false,
+            background: None,
+            threshold: None,
+            sized: true,
+            matrix: None,
+        }
+    }
+
+    fn block(min: [f64; 3], max: [f64; 3]) -> Mesh {
+        let m = Manifold::cube(max[0] - min[0], max[1] - min[1], max[2] - min[2], false).translate(min[0], min[1], min[2]);
+        mesh_of(&m, [0.6, 0.6, 0.6])
+    }
+
+    /// A dark 200 × 100 px rectangle on white, its corners at (100, 100) and (300, 200).
+    fn rectangle_photo() -> String {
+        stored(400, 300, |x, y| if (100.0..300.0).contains(&x) && (100.0..200.0).contains(&y) { [30, 30, 30, 255] } else { [250, 250, 250, 255] })
+    }
+
+    #[test]
+    fn the_distance_transform_is_exact() {
+        let (w, h) = (37, 23);
+        let mut f = vec![false; w * h];
+        for (i, p) in [(3, 4), (30, 2), (17, 20), (0, 22), (36, 11)].iter().enumerate() {
+            let _ = i;
+            f[p.1 * w + p.0] = true;
+        }
+        let d = distance_squared(&f, w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let brute = (0..w * h).filter(|q| f[*q]).map(|q| ((q % w) as f64 - x as f64).powi(2) + ((q / w) as f64 - y as f64).powi(2)).fold(f64::MAX, f64::min);
+                assert_eq!(d[y * w + x], brute, "at {x},{y}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_model_on_its_photo_matches_and_a_moved_one_shows_where() {
+        let image = rectangle_photo();
+        // 0.5 mm per pixel; the rectangle's top-left pixel corner at the origin:
+        // it spans x 0…100, z −50…0 on the front plane.
+        let c = canvas("Side", &image, "front", [400, 300], 0.5, [100.0, 100.0]);
+        let o = Options { picture: true, ..Default::default() };
+        let good = compare(&c, &[block([0.0, -10.0, -50.0], [100.0, 10.0, 0.0])], &o).unwrap();
+        assert!(good.iou > 0.985, "{}", good.iou);
+        assert!(good.regions.is_empty(), "{:?}", good.regions);
+        assert!((good.photo_size_mm[0] - 100.0).abs() < 1.0 && (good.photo_size_mm[1] - 50.0).abs() < 1.0, "{:?}", good.photo_size_mm);
+        assert!(good.png.starts_with(b"\x89PNG"));
+        // 6 mm too long at the right end and 4 mm short at the bottom.
+        let off = compare(&c, &[block([0.0, -10.0, -46.0], [106.0, 10.0, 0.0])], &o).unwrap();
+        let expected = (100.0 * 46.0) / (100.0 * 50.0 + 6.0 * 46.0);
+        assert!((off.iou - expected).abs() < 0.015, "{} vs {expected}", off.iou);
+        let extra = off.regions.iter().find(|r| r.kind == "extra").expect("extra material");
+        let missing = off.regions.iter().find(|r| r.kind == "missing").expect("missing material");
+        assert!((extra.depth_mm - 6.0).abs() < 1.2 && extra.at[0] > 100.0 && (extra.area_mm2 - 276.0).abs() < 30.0, "{extra:?}");
+        assert!((missing.depth_mm - 4.0).abs() < 1.2 && missing.at[2] < -45.0 && (missing.area_mm2 - 400.0).abs() < 40.0, "{missing:?}");
+        assert!((off.worst_mm - 6.0).abs() < 1.2, "{}", off.worst_mm);
+    }
+
+    #[test]
+    fn the_other_side_and_the_top_look_the_right_way() {
+        let image = rectangle_photo();
+        // From the back the picture's right is −X: the same rectangle spans x −100…0.
+        let back = canvas("Back", &image, "back", [400, 300], 0.5, [100.0, 100.0]);
+        let o = Options { picture: false, ..Default::default() };
+        assert!(compare(&back, &[block([-100.0, -10.0, -50.0], [0.0, 10.0, 0.0])], &o).unwrap().iou > 0.985);
+        assert!(compare(&back, &[block([0.0, -10.0, -50.0], [100.0, 10.0, 0.0])], &o).unwrap().iou < 0.05);
+        // From the top the picture's up is +Y.
+        let top = canvas("Top", &image, "top", [400, 300], 0.5, [100.0, 100.0]);
+        assert!(compare(&top, &[block([0.0, -50.0, -5.0], [100.0, 0.0, 5.0])], &o).unwrap().iou > 0.985);
+    }
+
+    #[test]
+    fn views_make_a_body_and_canvases_trace_in_millimetres() {
+        // A side view: a 40 mm square; a top view: a 40 mm disc. Their
+        // visual hull is a cylinder standing on Z, r 20, 40 high.
+        let square = stored(200, 200, |x, y| if (50.0..150.0).contains(&x) && (50.0..150.0).contains(&y) { [20, 20, 20, 255] } else { [255, 255, 255, 255] });
+        let disc = stored(200, 200, |x, y| if ((x - 100.0).powi(2) + (y - 100.0).powi(2)).sqrt() < 50.0 { [240, 200, 0, 255] } else { [255, 255, 255, 255] });
+        let side = canvas("Side", &square, "front", [200, 200], 0.4, [100.0, 100.0]);
+        let top = canvas("Top", &disc, "top", [200, 200], 0.4, [100.0, 100.0]);
+        let id = de_core::StableId::new();
+        let inputs = serde_json::json!({ "canvases": { "Side": side.view_json(id), "Top": top.view_json(id) } }).to_string();
+        let src = r#"
+            const s = canvas("Side");
+            const b = s.silhouette().bounds;
+            metric("w", b.max[0] - b.min[0]);
+            metric("h", s.spans({ x: 0 })[0][1] - s.spans({ x: 0 })[0][0]);
+            metric("u", s.toPixel(s.toPlane([37, 141]))[0]);
+            return fromViews([s, canvas("Top")]);
+        "#;
+        let e = crate::runtime::evaluate_in(src, &[], 0.05, &inputs).unwrap();
+        let expected = std::f64::consts::PI * 20.0 * 20.0 * 40.0;
+        assert!((e.volume - expected).abs() / expected < 0.02, "{} vs {expected}", e.volume);
+        assert!((e.bounds_max[2] - 20.0).abs() < 0.3 && (e.bounds_min[2] + 20.0).abs() < 0.3, "{:?} {:?}", e.bounds_min, e.bounds_max);
+        let m = |k: &str| e.metrics[k].value;
+        assert!((m("w") - 40.0).abs() < 0.4, "{}", m("w"));
+        assert!((m("h") - 40.0).abs() < 0.4, "{}", m("h"));
+        assert!((m("u") - 37.0).abs() < 1e-6);
+    }
 }
