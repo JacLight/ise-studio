@@ -522,6 +522,22 @@ const COLOUR_WORDS: Record<string, string> = {
   brown: "#7a5236",
 };
 
+/** Surface finishes a material name may carry, as roughness. */
+const FINISH_WORDS: Record<string, number> = {
+  mirror: 0.03,
+  polished: 0.08,
+  glossy: 0.15,
+  gloss: 0.15,
+  satin: 0.3,
+  brushed: 0.32,
+  "bead blasted": 0.5,
+  "bead-blasted": 0.5,
+  "sand blasted": 0.55,
+  textured: 0.6,
+  matte: 0.62,
+  matt: 0.62,
+};
+
 /** How a material renders; unknown materials get a neutral look. A colour in the name wins over the family's own. */
 export function materialLook(name: string | undefined): Look {
   if (!name) return UNASSIGNED_LOOK;
@@ -536,7 +552,10 @@ export function materialLook(name: string | undefined): Look {
     .sort((a, b) => b.length - a.length) // "dark grey" before "grey"
     .find((w) => new RegExp(`\\b${w}\\b`).test(key));
   const color = hex ?? (word ? COLOUR_WORDS[word] : undefined);
-  return color ? { ...look, color } : look;
+  // A finish in the name sets how glossy it is: "Stainless steel 304 brushed", "Aluminium bead blasted".
+  const finish = Object.keys(FINISH_WORDS).find((w) => new RegExp(`\\b${w}\\b`).test(key));
+  const shaped = finish ? { ...look, roughness: FINISH_WORDS[finish] } : look;
+  return color ? { ...shaped, color } : shaped;
 }
 
 /** A part's size and position in millimeters, as edited live in the UI. */

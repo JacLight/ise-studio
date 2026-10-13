@@ -69,8 +69,10 @@ export function studioEnvironment(width = 1024, softboxes = 1, product = false):
       const up = Math.max(0, Math.sin(THREE.MathUtils.degToRad(elevation)));
       let r: number, g: number, b: number;
       if (product) {
-        // An even, dimmer room: the sources do the shaping.
-        const k = elevation >= 0 ? 0.36 - 0.08 * up : 0.3;
+        // A dim room, brighter round the horizon (the white sweep's walls):
+        // a face turned up mirrors the dark ceiling, a stamped letter's sloped
+        // sides mirror the bright walls, so stamping reads as a light outline.
+        const k = elevation >= 0 ? 0.2 + 0.55 * Math.pow(1 - up, 3) : 0.3;
         [r, g, b] = [k, k, k];
       } else if (elevation >= 0) {
         const k = 0.5 + 0.55 * Math.pow(up, 0.6);
