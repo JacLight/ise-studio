@@ -59,10 +59,13 @@ pub fn write(v: &BoardView, board: &Board) -> String {
             "bottom" => "B.Cu".to_string(),
             x => format!("In{}.Cu", x.trim_start_matches("in")),
         };
-        let t = if i == 0 || i + 1 == n { cu } else { inner };
+        let t = v.stackup.copper_oz.get(i).map(|oz| oz * crate::stackup::OZ_MM).unwrap_or(if i == 0 || i + 1 == n { cu } else { inner });
         stack.push(json!({ "Type": "Copper", "Thickness": (t * 1e4).round() / 1e4, "Name": name }));
         if i + 1 < n {
-            stack.push(json!({ "Type": "Dielectric", "Thickness": (dielectric * 1e4).round() / 1e4, "Material": "FR4", "Name": format!("Dielectric {}", i + 1), "Notes": format!("{} between copper layers {} and {}", if i == 0 || i + 2 == n { "Core/prepreg" } else { "Core" }, i + 1, i + 2) }));
+            match v.stackup.dielectrics.get(i) {
+                Some(d) => stack.push(json!({ "Type": "Dielectric", "Thickness": (d.thickness * 1e4).round() / 1e4, "Material": d.material, "DielectricConstant": d.epsilon_r.unwrap_or(4.5), "LossTangent": d.loss_tangent.unwrap_or(0.02), "Name": format!("Dielectric {}", i + 1), "Notes": format!("{} between copper layers {} and {}", if d.kind == crate::stackup::DielectricKind::Core { "Core" } else { "Prepreg" }, i + 1, i + 2) })),
+                None => stack.push(json!({ "Type": "Dielectric", "Thickness": (dielectric * 1e4).round() / 1e4, "Material": "FR4", "Name": format!("Dielectric {}", i + 1) })),
+            }
         }
     }
     stack.push(json!({ "Type": "SolderMask", "Color": mask, "Thickness": 0.01, "Name": "Bottom Solder Mask" }));

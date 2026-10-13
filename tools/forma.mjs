@@ -32,6 +32,9 @@
 //   node tools/forma.mjs pcb exports <id> | export <id> <file name | kicad_sch | ipc2581 | odb | d356 | …> [--out path]   files for other EDA tools
 //   node tools/forma.mjs sch export <schematic> netlist|bom|svg|pdf [--format kicad|orcad|cadstar|spice] [--out f]   schematic files; sch find|erc|buses|sheets <schematic>
 //   node tools/forma.mjs pcb lib|logo|assign|variant|block …   project/global libraries, wizards, logos, footprint assignment, variants, design blocks
+//   node tools/forma.mjs pcb drc|setup|stackup|rules|teardrops <board> …   checks, stackup (2–32 layers), custom rules (.kicad_dru), teardrops
+//   node tools/forma.mjs pcb text|draw|image|keepout|stitch|fence <board> …   board graphics, keepouts, via stitching and fences
+//   node tools/forma.mjs pcb align|distribute|move|array|flip|swap <items…> [--board id] · pcb channel <board> --source … --to …   placement, multichannel
 //   node tools/forma.mjs simulate <schematic> [--tran 30ms] [--expect "min(V(3V3), burst) > 3.0"] [--save name]   ngspice on a schematic
 //   node tools/forma.mjs list                 every entity, one line each
 //   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
@@ -75,6 +78,7 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { request as httpRequest } from "node:http";
 import { pcbLib } from "./forma-pcblib.mjs";
+import { pcbBoard, BOARD_SUBS } from "./forma-pcbboard.mjs";
 
 const args = process.argv.slice(2);
 const urlFlag = args.indexOf("--url");
@@ -763,6 +767,8 @@ if (command === "run") {
       } else console.log(`✓ ${JSON.stringify(o)} (rev ${r.value.revision})`);
     } else if (["lib", "logo", "assign", "variant", "block"].includes(sub)) {
       failed = await pcbLib(sub, args, { engine, get, http, q });
+    } else if (BOARD_SUBS.includes(sub)) {
+      failed = await pcbBoard(sub, args, { engine, get, q });
     } else {
       throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | import <file> [--format f] | exports <id> | export <id> <name|kind> [--out path] | calc [name key=value…] | panel <board> [key=value…] [--out panel.zip] | gerbview <files…>|--board <id> [--compare old] [--pdf out.pdf] [--to-board steps.json] | glb <board> [--out f.glb] | library [update] | lib … | logo <image> | assign <schematic> | variant <schematic> … | block … | route <board> <from> <to> [--mode shove] | drag <board> <item> <x,y> | cleanup <board> | optimize <board>");
     }

@@ -237,7 +237,7 @@ impl Command for CreateRoute {
         for (i, r) in self.runs.iter().enumerate() {
             if i > 0 {
                 let id = tx.create();
-                tx.set(id, Via { board: self.board, net: net.clone(), at: r.points[0], drill, diameter, auto: false })?;
+                tx.set(id, Via { board: self.board, net: net.clone(), at: r.points[0], drill, diameter, auto: false, spec: Default::default() })?;
                 tx.add_dependency(self.board, id)?;
                 vias.push(id);
             }

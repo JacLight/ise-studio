@@ -50,14 +50,16 @@ pub fn check(board: &Board, v: &mut BoardView, cu: &[Cu]) {
             Owner::Pad(i) => (format!("{}.{}", v.pads[*i].reference, v.pads[*i].number), v.pads[*i].component),
             Owner::Track(id, _) => (format!("track on {}", c.net.as_deref().unwrap_or("no net")), *id),
             Owner::Via(id) => (format!("via on {}", c.net.as_deref().unwrap_or("no net")), *id),
+            Owner::Graphic(id) => (format!("copper graphic on {}", c.net.as_deref().unwrap_or("no net")), *id),
         }
     };
-    let layer_name = |mask: u8| (0..v.layers.len()).find(|k| mask & (1 << k) != 0).map(|k| v.layers[k].clone());
+    let custom = crate::drc_extra::Custom::new(board, v, cu);
+    let layer_name = |mask: u32| (0..v.layers.len()).find(|k| mask & (1 << k) != 0).map(|k| v.layers[k].clone());
 
     // Clearance between nets.
     let mut order: Vec<usize> = (0..cu.len()).collect();
     order.sort_by(|a, b| cu[*a].bbox[0].total_cmp(&cu[*b].bbox[0]));
-    let reach = board.net_classes.iter().map(|c| c.clearance).fold(rules.min_space.max(0.2), f64::max);
+    let reach = board.net_classes.iter().map(|c| c.clearance).fold(rules.min_space.max(0.2), f64::max).max(custom.max_clearance());
     let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
     let mut smallest: Option<f64> = None;
     for (oi, &i) in order.iter().enumerate() {
@@ -85,7 +87,11 @@ pub fn check(board: &Board, v: &mut BoardView, cu: &[Cu]) {
                 continue; // a short, reported by connectivity
             }
             smallest = Some(smallest.map_or(g, |s: f64| s.min(g)));
-            let need = board.class_of(a.net.as_deref()).clearance.max(board.class_of(b.net.as_deref()).clearance).max(rules.min_space);
+            let builtin = board.class_of(a.net.as_deref()).clearance.max(board.class_of(b.net.as_deref()).clearance).max(rules.min_space);
+            let (need, rule) = match custom.clearance(i, j, layer_name(a.layers & b.layers).as_deref()) {
+                Some((min, name)) => (min.max(rules.min_space), Some(name)),
+                None => (builtin, None),
+            };
             if g + 1e-6 < need {
                 let (na, oa) = name(a);
                 let (nb, ob) = name(b);
@@ -96,7 +102,7 @@ pub fn check(board: &Board, v: &mut BoardView, cu: &[Cu]) {
                 out.push(Violation {
                     code: "clearance",
                     severity: "error",
-                    message: format!("{na} is {g:.3} mm from {nb}; needs {need:.3} mm"),
+                    message: format!("{na} is {g:.3} mm from {nb}; needs {need:.3} mm{}", rule.map(|r| format!(" (rule “{r}”)")).unwrap_or_default()),
                     at: gap_point(&a.prim, &b.prim),
                     layer: layer_name(a.layers & b.layers),
                     objects: vec![oa, ob],
@@ -133,6 +139,9 @@ pub fn check(board: &Board, v: &mut BoardView, cu: &[Cu]) {
     }
     for via in &v.vias {
         let label = format!("via on {}", via.net.as_deref().unwrap_or("no net"));
+        if via.kind == "micro" {
+            continue; // held to the micro via limits (drc_extra)
+        }
         if via.drill + 1e-9 < rules.min_drill {
             out.push(Violation { code: "drill", severity: "error", message: format!("{label}: drill ø{:.2} mm is below the minimum ø{:.2} mm", via.drill, rules.min_drill), at: via.at, layer: None, objects: vec![via.id], refs: vec![label.clone()] });
         }
@@ -220,6 +229,8 @@ pub fn check(board: &Board, v: &mut BoardView, cu: &[Cu]) {
             out.push(Violation { code: "thermal_relief", severity: "warning", message, at: r.at, layer: Some(z.layer.clone()), objects: vec![r.component, z.id], refs: vec![r.pad.clone()] });
         }
     }
+
+    crate::drc_extra::check(board, v, cu, &custom, &mut out);
 
     if rules.silk_height < 0.8 {
         out.push(Violation { code: "silk_text", severity: "warning", message: format!("Silkscreen text {:.2} mm tall is below what most fabs print legibly (0.8–1.0 mm)", rules.silk_height), at: [v.bounds[0], v.bounds[1]], layer: None, objects: vec![], refs: vec![] });

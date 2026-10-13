@@ -56,7 +56,15 @@ type Comp = {
   known: boolean;
 };
 type Track = { id: string; net: string | null; layer: string; width: number; points: P[]; auto: boolean; reroute?: boolean; vertices?: P[]; bulges?: number[] };
-type Via = { id: string; net: string | null; at: P; drill: number; diameter: number };
+type Via = { id: string; net: string | null; at: P; drill: number; diameter: number; kind?: "through" | "blind" | "buried" | "micro"; from?: string; to?: string; stack?: Record<string, number>; group?: string };
+type GraphicV = { id: string; layer: string; kind: string; net: string | null; width: number; strokes: P[][]; fills: P[][][]; bbox: [number, number, number, number]; text?: string; value?: number; locked?: boolean };
+type AreaV = { id: string; name: string; outline: P[]; layers: string[]; no_tracks: boolean; no_vias: boolean; no_pads: boolean; no_pours: boolean; no_footprints: boolean; placement?: string[] };
+type TeardropV = { track: string; net: string | null; layer: string; polygon: P[]; on: string };
+type Dielectric = { kind: "core" | "prepreg"; thickness: number; material: string; epsilon_r?: number; loss_tangent?: number };
+type StackRow = { kind: string; name: string; thickness: number; material?: string; epsilon_r?: number; copper_oz?: number };
+type StackupV = { rows: StackRow[]; dielectrics: Dielectric[]; copper_oz: number[]; total: number; custom: boolean; finish: string };
+type RuleV = { name: string; layer?: string; condition?: string; constraints: { kind: string; min?: number; max?: number; disallow?: string[]; unchecked?: boolean }[]; severity: string };
+type TeardropSettings = { vias: boolean; pads: boolean; smd: boolean; length_ratio: number; max_length: number; width_ratio: number; max_width: number; curved: boolean; max_track_ratio: number };
 type Zone = { id: string; net: string; layer: string; outline: P[]; fill: P[][][]; priority: number; area: number };
 type Hole = { at: P; size: P; rotation: number; plated: boolean; owner: string };
 type Net = { name: string; pins: string[]; class: string; islands: number; routed: boolean; length: number };
@@ -106,6 +114,13 @@ type BoardView = {
   ratsnest: { net: string; a: P; b: P }[];
   violations: Violation[];
   stats: Stats;
+  graphics: GraphicV[];
+  areas: AreaV[];
+  teardrops: TeardropV[];
+  stackup: StackupV;
+  custom_rules: RuleV[];
+  drc_rules?: string;
+  teardrop_settings: TeardropSettings | null;
 };
 type Fab = { id: string; name: string; country: string; site: string; quote: string; capabilities_source: string; files: string; assembly: string; notes: string };
 type FabReport = { fab: Fab; can_make: boolean; checks: { what: string; ok: boolean; board: string; fab: string }[]; estimate: { amount: number; currency: string; working: string; source: string } | null };
@@ -130,9 +145,9 @@ type BomLine = {
 type Detail = { board: BoardView; size: P; errors: number; fabs: FabReport[]; bom: BomLine[]; totals: Record<string, number>; unpriced: number; files: string[] };
 type BoardEntry = { id: string; name: string; layers: number; model: string | null; errors: number | null; components: number | null };
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
-type Tab = "parts" | "nets" | "checks" | "fab" | "bom" | "sim" | "tools";
+type Tab = "parts" | "nets" | "checks" | "setup" | "fab" | "bom" | "sim" | "tools";
 type Selection = { kind: "component" | "track" | "via" | "zone"; id: string } | null;
-type LayerKey = "top" | "bottom" | "inner" | "silk" | "courtyard" | "ratsnest" | "zones" | "drc";
+type LayerKey = "top" | "bottom" | "inner" | "silk" | "courtyard" | "ratsnest" | "zones" | "drc" | "drawings" | "areas";
 // The interactive router (engine: POST /pcb/<id>/router, pcb.route.interactive / pcb.route.drag).
 type RouterMode = "walkaround" | "shove" | "highlight";
 type AngleMode = "45" | "90" | "free";
@@ -164,6 +179,10 @@ const LAYER_NAME = (l: string) => (l === "top" ? "Top" : l === "bottom" ? "Botto
 
 const MASKS: Record<string, string> = { green: "#1d4a33", black: "#16181c", blue: "#173a63", red: "#6b1f22", white: "#d9dad6", purple: "#3f2463", yellow: "#8a7a1c" };
 const COPPER: Record<string, string> = { top: "#e0614f", bottom: "#4f8fe6", in1: "#d6a43a", in2: "#5cc78a" };
+// Inner layers 3–30 cycle through distinct hues.
+for (let i = 3; i <= 30; i++) COPPER[`in${i}`] = `hsl(${(i * 47 + 20) % 360} 55% 58%)`;
+const VIA_COLOR: Record<string, string> = { blind: "#b9a3e6", buried: "#7fcdbf", micro: "#ef9fc8" };
+const DRAWING_LAYERS = ["fab_top", "fab_bottom", "user", "comments"];
 const FMT = (v: number, d = 2) => (Math.abs(v) < 1e-9 ? "0" : v.toFixed(d).replace(/\.?0+$/, ""));
 const money = (v: number, cur: string) => new Intl.NumberFormat(undefined, { style: "currency", currency: cur, maximumFractionDigits: v < 1 ? 4 : 2 }).format(v);
 
@@ -243,6 +262,19 @@ function HoleShape({ h }: { h: Hole }) {
   return <line x1={h.at[0] - d[0]} y1={h.at[1] - d[1]} x2={h.at[0] + d[0]} y2={h.at[1] + d[1]} className="pcb-drill-slot" strokeWidth={Math.min(w, l)} />;
 }
 
+/** A board graphic: its filled regions and its strokes. */
+function GraphicShape(props: { g: GraphicV; color: string; opacity: number }) {
+  const { g } = props;
+  return (
+    <g opacity={props.opacity} className={`pcb-gfx pcb-gfx-${g.kind}`}>
+      {g.fills.length > 0 && <path d={g.fills.map((island) => contourPath(island)).join("")} fill={props.color} fillRule="evenodd" stroke="none" />}
+      {g.strokes.map((st, i) => (
+        <polyline key={i} points={pts(st)} fill="none" stroke={props.color} strokeWidth={g.width} strokeLinecap="round" strokeLinejoin="round" />
+      ))}
+    </g>
+  );
+}
+
 export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: string) => void; onClose: () => void; onShow3D: (model: string) => void; canEdit: boolean }) {
   const { run, notify } = props;
   const [boards, setBoards] = useState<BoardEntry[] | null>(null);
@@ -250,7 +282,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("parts");
-  const [layers, setLayers] = useState<Record<LayerKey, boolean>>({ top: true, bottom: true, inner: true, silk: true, courtyard: false, ratsnest: true, zones: true, drc: true });
+  const [layers, setLayers] = useState<Record<LayerKey, boolean>>({ top: true, bottom: true, inner: true, silk: true, courtyard: false, ratsnest: true, zones: true, drc: true, drawings: true, areas: true });
   const [fromBelow, setFromBelow] = useState(false);
   const [active, setActive] = useState<string>("top");
   // Tracks and vias picked together ("select connection", U).
@@ -462,6 +494,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
                   ["parts", "Parts", b.components.length],
                   ["nets", "Nets", b.nets.length],
                   ["checks", "Checks", detail!.errors || null],
+                  ["setup", "Setup", null],
                   ["fab", "Fab", null],
                   ["bom", "BOM", null],
                   ["sim", "Simulate", null],
@@ -493,6 +526,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
                   canEdit={props.canEdit}
                 />
               )}
+              {tab === "setup" && <SetupTab b={b} commit={commit} canEdit={props.canEdit} />}
               {tab === "fab" && <FabTab d={detail!} commit={commit} boardId={b.id} revision={props.revision} />}
               {tab === "bom" && <ShopTab d={detail!} commit={commit} />}
               {tab === "sim" && <SimulateTab boardId={b.id} revision={props.revision} />}
@@ -782,8 +816,11 @@ function NewBoard(props: { run: (op: string, p: Record<string, unknown>, done?: 
           <label>
             Layers
             <select value={layers} onChange={(e) => setLayers(+e.target.value)}>
-              <option value={2}>2</option>
-              <option value={4}>4</option>
+              {[2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 32].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
             </select>
           </label>
           <button type="submit" className="primary" disabled={!props.canEdit}>
@@ -1297,6 +1334,9 @@ function BoardCanvas(props: {
             <pattern id="pcb-grid" width={10} height={10} patternUnits="userSpaceOnUse">
               <path d="M10 0H0V10" fill="none" stroke="#ffffff08" strokeWidth={0.06} />
             </pattern>
+            <pattern id="pcb-keepout" width={1.2} height={1.2} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <line x1={0} y1={0} x2={0} y2={1.2} stroke="#ff6b6b" strokeWidth={0.12} strokeOpacity={0.45} />
+            </pattern>
           </defs>
           <g transform={`translate(${view.tx} ${view.ty}) scale(${sx * view.s} ${-view.s})`}>
             <rect x={b.bounds[0] - 200} y={b.bounds[1] - 200} width={b.bounds[2] - b.bounds[0] + 400} height={b.bounds[3] - b.bounds[1] + 400} fill="url(#pcb-grid)" />
@@ -1345,6 +1385,16 @@ function BoardCanvas(props: {
                         onPointerDown={(e) => onTrackDown(e, t)}
                       />
                     ))}
+                  {(b.teardrops ?? [])
+                    .filter((t) => t.layer === l)
+                    .map((t, i) => (
+                      <polygon key={`td${i}`} points={pts(t.polygon)} fill={color} opacity={dimmed && !lit(t.net) ? 0.18 : 1} className="pcb-teardrop" />
+                    ))}
+                  {(b.graphics ?? [])
+                    .filter((g) => g.layer === l)
+                    .map((g) => (
+                      <GraphicShape key={g.id} g={g} color={color} opacity={dimmed && !lit(g.net) ? 0.2 : 1} />
+                    ))}
                   {b.pads
                     .filter((p) => p.kind === "smd" && p.layers.includes(l))
                     .map((p, i) => (
@@ -1371,10 +1421,15 @@ function BoardCanvas(props: {
                     cx={(movedVias.get(v.id) ?? v.at)[0]}
                     cy={(movedVias.get(v.id) ?? v.at)[1]}
                     r={v.diameter / 2}
-                    fill={lit(v.net) ? "#fff2b0" : "#c9c4b4"}
+                    fill={lit(v.net) ? "#fff2b0" : (v.kind && VIA_COLOR[v.kind]) || "#c9c4b4"}
+                    stroke={v.kind && v.kind !== "through" ? "#1d1d1d" : undefined}
+                    strokeWidth={v.kind && v.kind !== "through" ? v.diameter * 0.12 : undefined}
+                    strokeDasharray={v.kind === "blind" || v.kind === "micro" ? `${v.diameter * 0.25} ${v.diameter * 0.15}` : undefined}
                     opacity={dimmed && !lit(v.net) ? 0.3 : 1}
                     onPointerDown={(e) => onViaDown(e, v)}
-                  />
+                  >
+                    {v.kind && v.kind !== "through" && <title>{`${v.kind} via ${v.from} → ${v.to}`}</title>}
+                  </circle>
                 ))}
                 {b.holes.map((h, i) => {
                   const p = b.pads.find((q) => `${q.reference}.${q.number}` === h.owner || q.reference === h.owner);
@@ -1402,6 +1457,34 @@ function BoardCanvas(props: {
                     )}
                   </g>
                 ))}
+            {/* Board graphics on the silkscreen facing us, drawings, keepouts */}
+            {layers.silk && (
+              <g className="pcb-silk-gfx">
+                {(b.graphics ?? [])
+                  .filter((g) => g.layer === `silk_${silkSide}`)
+                  .map((g) => (
+                    <GraphicShape key={g.id} g={g} color={b.silk.toLowerCase() === "black" ? "#111" : "#f4f2ea"} opacity={1} />
+                  ))}
+              </g>
+            )}
+            {layers.drawings && (
+              <g className="pcb-drawings">
+                {(b.graphics ?? [])
+                  .filter((g) => DRAWING_LAYERS.includes(g.layer))
+                  .map((g) => (
+                    <GraphicShape key={g.id} g={g} color={g.layer === "comments" ? "#8fc7ff" : g.layer === "user" ? "#c8c8c8" : "#d8c37a"} opacity={0.85} />
+                  ))}
+              </g>
+            )}
+            {layers.areas &&
+              (b.areas ?? []).map((a) => (
+                <g key={a.id} className="pcb-area">
+                  <polygon points={pts(a.outline)} fill={a.no_tracks || a.no_vias || a.no_pours ? "url(#pcb-keepout)" : "none"} stroke={a.placement?.length ? "#7fb8ff" : "#ff6b6b"} strokeWidth={0.12} strokeDasharray="0.6 0.3" />
+                  <text transform={`translate(${a.outline[0][0] + 0.4} ${a.outline[0][1] + 0.4}) scale(${sx} -1)`} fontSize={1} fill={a.placement?.length ? "#7fb8ff" : "#ff6b6b"} dominantBaseline="hanging">
+                    {a.name}
+                  </text>
+                </g>
+              ))}
             {/* Courtyards and hit areas */}
             {b.components.map((c) => {
               const chosen = sel?.kind === "component" && sel.id === c.id;
@@ -1530,6 +1613,8 @@ function BoardCanvas(props: {
             ...(b.layers.length > 2 ? [["inner", "Inner"]] : []),
             ["zones", "Pours"],
             ["silk", "Silk"],
+            ...(b.graphics?.some((g) => DRAWING_LAYERS.includes(g.layer)) ? [["drawings", "Drawings"]] : []),
+            ...(b.areas?.length ? [["areas", "Keepouts"]] : []),
             ["courtyard", "Courtyards"],
             ["ratsnest", "Ratsnest"],
             ["drc", "DRC"],
@@ -1884,6 +1969,287 @@ function ChecksTab(props: { b: BoardView; focus: number | null; onFocus: (i: num
   );
 }
 
+const GRAPHIC_LAYERS = ["silk_top", "silk_bottom", "fab_top", "fab_bottom", "user", "comments", "mask_top", "mask_bottom"];
+const LAYER_COUNTS = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32];
+
+/** Board setup: stackup, teardrops, the custom rules, arranging parts and adding graphics and keepouts. */
+function SetupTab(props: { b: BoardView; commit: (op: string, p: Record<string, unknown>, done?: string) => Promise<unknown>; canEdit: boolean }) {
+  const { b, commit, canEdit } = props;
+  const st = b.stackup;
+  const [diel, setDiel] = useState<Dielectric[]>(st.dielectrics);
+  const stKey = JSON.stringify(st.dielectrics);
+  useEffect(() => setDiel(st.dielectrics), [stKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [rules, setRules] = useState(b.drc_rules ?? "");
+  useEffect(() => setRules(b.drc_rules ?? ""), [b.id, b.drc_rules]);
+  const [refs, setRefs] = useState("");
+  const [grid, setGrid] = useState("2,1,5,0");
+  const cx = (b.bounds[0] + b.bounds[2]) / 2;
+  const [text, setText] = useState({ text: "", layer: "silk_top", at: `${FMT(cx)},${FMT(b.bounds[1] + 2)}`, size: 1.5, font: "stroke", knockout: false });
+  const [keepout, setKeepout] = useState({ name: "Keepout", rect: "" });
+  const td = b.teardrop_settings;
+  const ruleHits = b.violations.filter((v) => v.code === "rules_syntax" || /rule “/.test(v.message));
+  const syntax = b.violations.find((v) => v.code === "rules_syntax");
+  const targets = () =>
+    refs
+      .split(/[\s,]+/)
+      .filter(Boolean)
+      .map((r) => b.components.find((c) => c.reference.toLowerCase() === r.toLowerCase())?.id ?? r)
+      .filter((x) => !!x);
+  const arrange = async (op: string, params: Record<string, unknown>, done: string) => {
+    const t = targets();
+    if (!t.length) return;
+    await commit(op, { targets: t, ...params }, done);
+  };
+  const num = (s: string) => s.split(",").map((x) => +x.trim());
+  const thick = (_d: Dielectric, i: number, patch: Partial<Dielectric>) => setDiel((all) => all.map((x, k) => (k === i ? { ...x, ...patch } : x)));
+  const off = Math.abs(st.total - b.thickness) > Math.max(0.1, b.thickness * 0.1);
+  let di = -1;
+  return (
+    <div className="pcb-setup">
+      <h4 className="pcb-h">Stackup</h4>
+      <div className="pcb-specs-grid">
+        <label className="pcb-spec">
+          <span>Copper layers</span>
+          <select value={b.layers.length} disabled={!canEdit} onChange={(e) => commit("pcb.stackup.set", { board: b.id, layers: +e.target.value }, `${e.target.value} copper layers`)}>
+            {LAYER_COUNTS.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="pcb-spec">
+          <span>Adds up to</span>
+          <b className={off ? "pcb-bad" : ""}>
+            {FMT(st.total, 3)} mm {off ? `(board ${FMT(b.thickness)} mm)` : ""}
+          </b>
+        </div>
+      </div>
+      <table className="pcb-stack">
+        <tbody>
+          {st.rows
+            .filter((r) => r.kind !== "silk")
+            .map((r, i) => {
+              if (r.kind === "core" || r.kind === "prepreg") di += 1;
+              const k = di;
+              const d = diel[k];
+              return (
+                <tr key={i} className={`pcb-stack-${r.kind}`}>
+                  <td>{r.kind === "copper" ? LAYER_NAME(r.name) : r.name}</td>
+                  {(r.kind === "core" || r.kind === "prepreg") && d ? (
+                    <>
+                      <td>
+                        <select value={d.kind} disabled={!canEdit} onChange={(e) => thick(d, k, { kind: e.target.value as Dielectric["kind"] })}>
+                          <option value="core">core</option>
+                          <option value="prepreg">prepreg</option>
+                        </select>
+                      </td>
+                      <td>
+                        <input type="number" step={0.01} min={0.01} value={d.thickness} disabled={!canEdit} onChange={(e) => thick(d, k, { thickness: +e.target.value })} aria-label="Thickness mm" />
+                      </td>
+                      <td>
+                        <input value={d.material} disabled={!canEdit} onChange={(e) => thick(d, k, { material: e.target.value })} aria-label="Material" />
+                      </td>
+                      <td>
+                        <input type="number" step={0.1} min={1} value={d.epsilon_r ?? 4.5} disabled={!canEdit} onChange={(e) => thick(d, k, { epsilon_r: +e.target.value })} aria-label="εr" title="εr" />
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td>{r.kind === "copper" ? `${FMT(r.copper_oz ?? 1)} oz` : r.kind}</td>
+                      <td>{FMT(r.thickness, 4)}</td>
+                      <td colSpan={2}>{r.material}</td>
+                    </>
+                  )}
+                </tr>
+              );
+            })}
+        </tbody>
+      </table>
+      <div className="pcb-row-actions">
+        <button type="button" className="small primary" disabled={!canEdit || JSON.stringify(diel) === stKey} onClick={() => commit("pcb.stackup.set", { board: b.id, dielectrics: diel }, "Stackup set")}>
+          Apply
+        </button>
+        <button type="button" className="small" disabled={!canEdit} onClick={() => commit("pcb.stackup.set", { board: b.id, fit_thickness: true }, "Thickness fitted to the stackup")}>
+          Fit thickness
+        </button>
+        <button type="button" className="small" disabled={!canEdit || !st.custom} onClick={() => commit("pcb.stackup.set", { board: b.id, standard: true }, "Standard stackup")}>
+          Standard
+        </button>
+      </div>
+
+      <h4 className="pcb-h">Teardrops</h4>
+      <div className="pcb-checks-row">
+        <label>
+          <input type="checkbox" checked={!!td} disabled={!canEdit} onChange={(e) => commit("pcb.teardrops.set", { board: b.id, enabled: e.target.checked })} /> On
+        </label>
+        {td && (
+          <>
+            {(["vias", "pads", "smd", "curved"] as const).map((k) => (
+              <label key={k}>
+                <input type="checkbox" checked={td[k]} disabled={!canEdit} onChange={(e) => commit("pcb.teardrops.set", { board: b.id, [k]: e.target.checked })} /> {k === "smd" ? "SMD pads" : k === "pads" ? "THT pads" : k}
+              </label>
+            ))}
+            <span className="pcb-note">{b.teardrops.length} on the board</span>
+          </>
+        )}
+      </div>
+
+      <h4 className="pcb-h">Custom rules</h4>
+      <p className="pcb-note">KiCad rules language: (rule "name" (condition "A.NetClass == 'HV'") (constraint clearance (min 1.5mm))).</p>
+      <textarea className="pcb-rules" value={rules} spellCheck={false} disabled={!canEdit} onChange={(e) => setRules(e.target.value)} rows={7} placeholder={'(version 1)\n(rule "HV"\n  (condition "A.NetClass == \'HV\' && B.NetClass != \'HV\'")\n  (constraint clearance (min 1.5mm)))'} />
+      <div className="pcb-row-actions">
+        <button type="button" className="small primary" disabled={!canEdit || rules === (b.drc_rules ?? "")} onClick={() => commit("pcb.rules.set", { board: b.id, text: rules }, "Rules set")}>
+          Apply rules
+        </button>
+        <span className="pcb-note">
+          {b.custom_rules.length} rule{b.custom_rules.length === 1 ? "" : "s"} · {ruleHits.length} violation{ruleHits.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      {syntax && <p className="pcb-bad">{syntax.message}</p>}
+      {b.custom_rules.length > 0 && (
+        <ul className="pcb-rule-list">
+          {b.custom_rules.map((r) => (
+            <li key={r.name}>
+              <b>{r.name}</b> {r.constraints.map((c) => `${c.kind}${c.min != null ? ` ≥ ${FMT(c.min, 3)}` : ""}${c.max != null ? ` ≤ ${FMT(c.max, 3)}` : ""}${c.disallow?.length ? ` ${c.disallow.join(" ")}` : ""}${c.unchecked ? " (not checked)" : ""}`).join(", ")}
+              {r.condition && <small> when {r.condition}</small>}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <h4 className="pcb-h">Arrange</h4>
+      <input className="pcb-refs" value={refs} onChange={(e) => setRefs(e.target.value)} placeholder="R1 R2 R3 (references)" aria-label="Parts to arrange" />
+      <div className="pcb-row-actions wrap">
+        {(
+          [
+            ["left", "Left"],
+            ["right", "Right"],
+            ["top", "Top"],
+            ["bottom", "Bottom"],
+            ["center_x", "Centre X"],
+            ["center_y", "Centre Y"],
+          ] as [string, string][]
+        ).map(([k, label]) => (
+          <button key={k} type="button" className="small" disabled={!canEdit} onClick={() => arrange("pcb.align", { to: k }, `Aligned ${label.toLowerCase()}`)}>
+            {label}
+          </button>
+        ))}
+        <button type="button" className="small" disabled={!canEdit} onClick={() => arrange("pcb.distribute", { axis: "x" }, "Distributed along x")}>
+          Distribute X
+        </button>
+        <button type="button" className="small" disabled={!canEdit} onClick={() => arrange("pcb.distribute", { axis: "y" }, "Distributed along y")}>
+          Distribute Y
+        </button>
+        <button type="button" className="small" disabled={!canEdit} onClick={() => arrange("pcb.flip", {}, "Flipped to the other side")}>
+          Flip
+        </button>
+      </div>
+      <div className="pcb-row-actions">
+        <input className="pcb-refs small" value={grid} onChange={(e) => setGrid(e.target.value)} aria-label="Array nx,ny,dx,dy" title="nx,ny,dx,dy" />
+        <button
+          type="button"
+          className="small"
+          disabled={!canEdit}
+          onClick={() => {
+            const [nx, ny, dx, dy] = num(grid);
+            arrange("pcb.array", { grid: { nx, ny, dx, dy } }, "Array made");
+          }}
+        >
+          Array
+        </button>
+      </div>
+
+      <h4 className="pcb-h">Add text</h4>
+      <div className="pcb-specs-grid">
+        <label className="pcb-spec">
+          <span>Text</span>
+          <input value={text.text} onChange={(e) => setText({ ...text, text: e.target.value })} placeholder="REV A" />
+        </label>
+        <label className="pcb-spec">
+          <span>Layer</span>
+          <select value={text.layer} onChange={(e) => setText({ ...text, layer: e.target.value })}>
+            {[...GRAPHIC_LAYERS, ...b.layers].map((l) => (
+              <option key={l} value={l}>
+                {l}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="pcb-spec">
+          <span>At x,y</span>
+          <input value={text.at} onChange={(e) => setText({ ...text, at: e.target.value })} />
+        </label>
+        <label className="pcb-spec">
+          <span>Size / font</span>
+          <span className="pcb-inline">
+            <input type="number" step={0.1} min={0.3} value={text.size} onChange={(e) => setText({ ...text, size: +e.target.value })} />
+            <select value={text.font} onChange={(e) => setText({ ...text, font: e.target.value })}>
+              <option value="stroke">Stroke</option>
+              <option value="Inter">Inter</option>
+            </select>
+          </span>
+        </label>
+      </div>
+      <div className="pcb-row-actions">
+        <label>
+          <input type="checkbox" checked={text.knockout} onChange={(e) => setText({ ...text, knockout: e.target.checked })} /> Knockout
+        </label>
+        <button
+          type="button"
+          className="small primary"
+          disabled={!canEdit || !text.text.trim()}
+          onClick={() => commit("pcb.graphic.create", { board: b.id, layer: text.layer, kind: "text", text: text.text, at: num(text.at), size: text.size, ...(text.font !== "stroke" ? { font: text.font } : {}), knockout: text.knockout }, "Text added")}
+        >
+          Add text
+        </button>
+      </div>
+
+      <h4 className="pcb-h">Add keepout</h4>
+      <div className="pcb-row-actions">
+        <input className="pcb-refs small" value={keepout.name} onChange={(e) => setKeepout({ ...keepout, name: e.target.value })} aria-label="Keepout name" />
+        <input className="pcb-refs" value={keepout.rect} onChange={(e) => setKeepout({ ...keepout, rect: e.target.value })} placeholder="x0,y0,x1,y1" aria-label="Keepout rectangle" />
+        <button
+          type="button"
+          className="small primary"
+          disabled={!canEdit || num(keepout.rect).length !== 4 || num(keepout.rect).some((v) => !Number.isFinite(v))}
+          onClick={() => {
+            const [x0, y0, x1, y1] = num(keepout.rect);
+            commit("pcb.area.create", { board: b.id, name: keepout.name, outline: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]] }, `Keepout ${keepout.name}`);
+          }}
+        >
+          Add
+        </button>
+      </div>
+
+      {(b.graphics.length > 0 || b.areas.length > 0) && (
+        <>
+          <h4 className="pcb-h">Graphics and areas</h4>
+          <ul className="pcb-rule-list">
+            {b.graphics.map((g) => (
+              <li key={g.id}>
+                <b>{g.kind}</b> {g.text ? `“${g.text}” ` : ""}on {g.layer}
+                {g.value != null ? ` · ${FMT(g.value, 3)} mm` : ""}
+                <button type="button" className="tiny" disabled={!canEdit} onClick={() => commit("pcb.delete", { targets: [g.id] })} aria-label="Delete">
+                  ×
+                </button>
+              </li>
+            ))}
+            {b.areas.map((a) => (
+              <li key={a.id}>
+                <b>{a.placement?.length ? "placement" : "keepout"}</b> {a.name} · no {[a.no_tracks && "tracks", a.no_vias && "vias", a.no_pads && "pads", a.no_pours && "pours", a.no_footprints && "footprints"].filter(Boolean).join(", ") || "—"}
+                <button type="button" className="tiny" disabled={!canEdit} onClick={() => commit("pcb.delete", { targets: [a.id] })} aria-label="Delete">
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
 function FabTab(props: { d: Detail; commit: (op: string, p: Record<string, unknown>, done?: string) => Promise<unknown>; boardId: string; revision: number }) {
   const { d } = props;
   const b = d.board;
@@ -1904,7 +2270,7 @@ function FabTab(props: { d: Detail; commit: (op: string, p: Record<string, unkno
   return (
     <>
       <div className="pcb-specs-grid">
-        {sel("Layers", b.layers.length, [2, 4], "layers", true)}
+        {sel("Layers", b.layers.length, [2, 4, 6, 8, 10, 12, 16, 20, 24, 32], "layers", true)}
         {sel("Thickness", b.thickness, [0.8, 1.0, 1.2, 1.6, 2.0], "thickness", true)}
         {sel("Finish", b.finish, ["HASL lead-free", "HASL", "ENIG", "OSP"], "finish")}
         {sel("Mask", b.mask, ["green", "black", "blue", "red", "white", "purple", "yellow"], "mask")}
