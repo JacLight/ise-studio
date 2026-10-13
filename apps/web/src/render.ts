@@ -99,25 +99,31 @@ export function studioEnvironment(width = 1024, softboxes = 1, white = false): T
 /** A view material made physical for the path tracer. */
 function physical(m: THREE.Material): THREE.Material {
   if (!(m instanceof THREE.MeshStandardMaterial)) return m;
-  const look = (m.userData.look ?? {}) as { opacity?: number };
+  // A part's material as designed (its look), not as the view paints it at
+  // the moment: a picked piece leaves the rest see-through (they rendered as
+  // glass), x-ray lights what is hovered. None of that is the product.
+  const look = m.userData.look as { color?: string; roughness?: number; metalness?: number; opacity?: number } | undefined;
+  const color = look?.color ? new THREE.Color(look.color) : m.color.clone();
+  const rough = look?.roughness ?? m.roughness;
+  const metal = look?.metalness ?? m.metalness;
   const out = new THREE.MeshPhysicalMaterial({
-    color: m.color.clone(),
+    color,
     map: m.map,
-    roughness: m.roughness,
-    metalness: m.metalness,
+    roughness: rough,
+    metalness: metal,
     roughnessMap: m.roughnessMap,
     metalnessMap: m.metalnessMap,
     normalMap: m.normalMap,
     // A part's look has no glow of its own: what glows in the view is its
     // selection or hover highlight, which a render leaves out.
-    emissive: m.userData.look ? 0x000000 : m.emissive.clone(),
-    emissiveMap: m.userData.look ? null : m.emissiveMap,
-    emissiveIntensity: m.userData.look ? 0 : m.emissiveIntensity,
+    emissive: look ? 0x000000 : m.emissive.clone(),
+    emissiveMap: look ? null : m.emissiveMap,
+    emissiveIntensity: look ? 0 : m.emissiveIntensity,
     side: THREE.DoubleSide,
   });
   const hsl = { h: 0, s: 0, l: 0 };
-  m.color.getHSL(hsl);
-  const seeThrough = (look.opacity ?? m.opacity) < 0.999;
+  color.getHSL(hsl);
+  const seeThrough = (look ? (look.opacity ?? 1) : m.opacity) < 0.999;
   if (seeThrough) {
     // Glass, acrylic, LED epoxy, water: transmissive, tinted by the colour.
     out.transmission = 1;
@@ -125,25 +131,39 @@ function physical(m: THREE.Material): THREE.Material {
     out.transparent = false;
     out.ior = 1.5;
     out.thickness = 2;
-    out.roughness = Math.min(m.roughness, 0.08);
+    out.roughness = Math.min(rough, 0.08);
     out.metalness = 0;
-    out.attenuationColor = m.color.clone();
+    out.attenuationColor = color.clone();
     out.attenuationDistance = 40;
-  } else if (m.metalness >= 0.5) {
+    // Light reaches what lies under clear plastic or glass (a shipping cover
+    // over a cartridge, a window over a display) instead of leaving it in a
+    // shadow only rare refracted paths would lighten.
+    (out as THREE.MeshPhysicalMaterial & { castShadow: boolean }).castShadow = false;
+    // Strongly coloured, judged as the eye sees it (sRGB): a glass's or acrylic's faint tint is not.
+    const shown = color.clone().convertLinearToSRGB();
+    if (Math.max(shown.r, shown.g, shown.b) - Math.min(shown.r, shown.g, shown.b) > 0.3) {
+      // A coloured translucent plastic (green blast doors, a red lens) glows its
+      // colour, dyed through and partly scattering, rather than showing what is behind it darkly.
+      out.transmission = 0.45;
+      (out as THREE.MeshPhysicalMaterial & { castShadow: boolean }).castShadow = true;
+      out.attenuationDistance = 3;
+      out.roughness = Math.max(0.15, Math.min(rough, 0.3));
+    }
+  } else if (metal >= 0.5) {
     // Machined and sheet metal: a fine brushed sheen, never a mirror; a
     // saturated colour reads as anodised (a clear layer over the dye).
-    out.roughness = THREE.MathUtils.clamp(m.roughness * 0.85, 0.16, 0.5);
+    out.roughness = THREE.MathUtils.clamp(rough * 0.85, 0.16, 0.5);
     out.metalness = 1;
     if (hsl.s > 0.25 || hsl.l < 0.2) {
       out.clearcoat = 0.6;
       out.clearcoatRoughness = 0.25;
       out.metalness = 0.85;
     }
-  } else if (m.metalness < 0.2) {
+  } else if (metal < 0.2) {
     // Plastics, masks, wood, paint: a dielectric with a faint satin coat.
     out.metalness = 0;
     out.specularIntensity = 0.6;
-    out.clearcoat = m.roughness < 0.5 ? 0.25 : 0.05;
+    out.clearcoat = rough < 0.5 ? 0.25 : 0.05;
     out.clearcoatRoughness = 0.4;
   }
   return out;
@@ -371,6 +391,18 @@ export class LiveRender {
   }
 }
 
+/** Yields to the page once (a message round trip, which hidden tabs do not throttle as they do timers). */
+function breathe(): Promise<void> {
+  return new Promise((done) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      done();
+    };
+    channel.port2.postMessage(null);
+  });
+}
+
 /**
  * One image at a chosen size, rendered off screen until `samples` samples
  * have landed, as a PNG. `onProgress` hears the samples so far.
@@ -405,8 +437,10 @@ export async function renderImage(source: RenderSource, options: RenderOptions, 
       tracer.renderSample();
       const now = Math.floor(tracer.samples);
       if (now !== last) onProgress?.((last = now));
-      // Let the page (and the GPU) breathe between draws.
-      await new Promise((r) => setTimeout(r, 0));
+      // Let the page (and the GPU) breathe between draws. A message, not a
+      // timer: a render asked for by ./forma often runs in a tab nobody is
+      // looking at, where timers wait a second or more each (it never finished).
+      await breathe();
     }
     const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/png"));
     if (!blob) throw new Error("the image could not be encoded");

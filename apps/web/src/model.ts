@@ -527,8 +527,17 @@ export function materialLook(name: string | undefined): Look {
   const key = name.toLowerCase();
   if (LOOKS[key]) return LOOKS[key];
   // "Tempered glass", "Stainless steel", "6061 aluminium": match the family.
-  const family = Object.keys(LOOKS).find((k) => key.includes(k));
-  const look = family ? LOOKS[family] : { color: "#c4c9d4", metalness: 0.2, roughness: 0.5 };
+  // Glass-filled nylon is a nylon, not glass.
+  const plain = key.replace(/glass[- ]?(filled|fibre|fiber|reinforced)/g, "");
+  // Whole words: "zinc plated steel" is steel, not PLA.
+  const family = Object.keys(LOOKS).find((k) => new RegExp(`\\b${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(plain));
+  // An engineering plastic not in the table ("PC/ABS", "polycarbonate", "TPU") is a plastic, not a half metal.
+  const plastic = /\b(abs|pc|polycarbonate|polymer|plastic|polyamide|pa6|pa12|pom|tpu|tpe|pp|polypropylene|pe|hdpe|pvc|pmma|pbt|pet|elastomer|ink|print)\b/.test(plain);
+  let look = family ? LOOKS[family] : plastic ? { color: "#c4c9d4", metalness: 0, roughness: 0.55 } : { color: "#c4c9d4", metalness: 0.2, roughness: 0.5 };
+  // Finish words: "matte black", "satin", "gloss", "textured", "translucent green".
+  const finish = /\btextured\b/.test(key) ? 0.85 : /\bmatte?\b|\bflat\b/.test(key) ? 0.75 : /\bsatin\b/.test(key) ? 0.42 : /\bgloss(y)?\b|\bpolished\b/.test(key) ? 0.15 : null;
+  if (finish !== null) look = { ...look, roughness: look.metalness >= 0.5 ? Math.min(look.roughness, finish) : finish };
+  if (look.opacity === undefined && /\b(translucent|transparent|see-through)\b/.test(key)) look = { ...look, opacity: 0.6, roughness: Math.min(look.roughness, 0.2) };
   const hex = key.match(/#[0-9a-f]{6}\b/)?.[0];
   const word = Object.keys(COLOUR_WORDS)
     .sort((a, b) => b.length - a.length) // "dark grey" before "grey"
