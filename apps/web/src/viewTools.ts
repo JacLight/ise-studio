@@ -234,7 +234,9 @@ export class ViewTools {
     const camera = this.camera();
     camera.updateMatrixWorld();
     this.display.clipping = this.section.active ? this.section.clipping : null;
-    this.display.apply(bodies, this.host.materialsOf, camera);
+    this.display.apply(bodies, this.host.materialsOf, camera, this.host.canvas.clientHeight || 800);
+    // Detail still being found on a big model: another frame finishes it.
+    if (this.display.detail.pending) requestAnimationFrame(() => this.host.invalidate());
     this.section.clip(bodies, this.host.materialsOf);
     return camera;
   }

@@ -17,7 +17,8 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { attachTumble, attachWalk, type Tumble } from "./tumble";
 import { pcbLooks } from "./pcb3d";
-import type { RenderSource } from "./render";
+import { type RenderSource, studioEnvironment } from "./render";
+import { fitSunShadow } from "./sunShadow";
 import { type DisplayMode, type SectionPlane, type ViewName, ViewTools } from "./viewTools";
 import { ViewToolbar } from "./ViewToolbar";
 import type { EntityView, MeshData } from "./engine";
@@ -544,12 +545,16 @@ type Scene = {
   grid: THREE.GridHelper;
   /** Grid cell (mm) the ground was last sized for. */
   gridCell: number;
+  /** The grid the ground draws (seen from above): its cell and half-size, mm. */
+  groundGrid: { gridCell: { value: number }; gridExtent: { value: number } };
   wireframe: boolean;
   invalidate: () => void;
   /** A camera move in progress (see `glideTo`). */
   flight: Flight | null;
   /** Everything placed, as a sphere: zoom walks on and fog starts by its size. */
   extent: THREE.Sphere;
+  /** Everything placed, as a box: the sun's shadow is fitted to it each frame. */
+  bounds: THREE.Box3;
 };
 
 type View3 = { position: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3 };
@@ -813,6 +818,51 @@ function buildPart(e: EntityView, entities: ReadonlyMap<string, EntityView>, wir
 
 const bodyMaterials = (body: THREE.Mesh) => (Array.isArray(body.material) ? body.material : [body.material]) as THREE.MeshStandardMaterial[];
 
+/** The grid seen from below the ground (which is one-sided and vanishes): 300 cells across `size`. */
+function groundGrid(size: number) {
+  const grid = new THREE.GridHelper(size, 300, 0xc7cbd6, 0xd9dce4);
+  grid.rotation.x = Math.PI / 2;
+  (grid.material as THREE.Material).transparent = true;
+  (grid.material as THREE.Material).opacity = 0.38;
+  return grid;
+}
+
+/**
+ * The grid seen from above, drawn by the ground itself: its lines darken the
+ * ground by a few percent wherever it shows, lit or in a shadow, and they are
+ * hidden wherever the ground is, so a face lying on z = 0 (a ground slab's
+ * top) never has the grid showing through it. Lines are a pixel wide at any
+ * distance and fade out where the cells get too small to tell apart.
+ */
+function drawGridOnGround(material: THREE.MeshStandardMaterial) {
+  const uniforms = { gridCell: { value: 20 }, gridExtent: { value: 3000 } };
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec2 vGridXY;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvGridXY = (modelMatrix * vec4(transformed, 1.0)).xy;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying vec2 vGridXY;\nuniform float gridCell;\nuniform float gridExtent;")
+      .replace(
+        "#include <colorspace_fragment>",
+        `#include <colorspace_fragment>
+        {
+          vec2 q = vGridXY / gridCell;
+          vec2 w = max(fwidth(q), vec2(1e-6));
+          vec2 a = abs(fract(q - 0.5) - 0.5) / w;
+          float minor = 1.0 - min(min(a.x, a.y), 1.0);
+          vec2 b = abs(vGridXY) / max(fwidth(vGridXY), vec2(1e-6));
+          float axis = 1.0 - min(min(b.x, b.y), 1.0);
+          float fade = 1.0 - smoothstep(0.12, 0.3, max(w.x, w.y));
+          float inside = step(max(abs(vGridXY.x), abs(vGridXY.y)), gridExtent);
+          gl_FragColor.rgb *= 1.0 - max(minor * 0.05, axis * 0.08) * fade * inside;
+        }`,
+      );
+  };
+  material.customProgramCacheKey = () => "ground-grid";
+  return uniforms;
+}
+
 /**
  * Sizes the ground, grid and far plane to the scene: a bolt gets a 20 mm
  * grid, a 150 m tower a 10 m one. The grid is rebuilt only when its cell changes.
@@ -825,17 +875,16 @@ function fitGround(t: Scene, bounds: THREE.Box3) {
   const cell = Math.max(20, [1, 2, 5, 10].map((m) => m * magnitude).find((c) => c >= raw)!);
   if (cell !== t.gridCell) {
     const old = t.grid;
-    const grid = new THREE.GridHelper(cell * 300, 300, 0xc7cbd6, 0xd9dce4);
-    grid.rotation.x = Math.PI / 2;
+    const grid = groundGrid(cell * 300);
     grid.position.z = old.position.z;
-    (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.38;
     t.scene.remove(old);
     old.geometry.dispose();
     (old.material as THREE.Material).dispose();
     t.scene.add(grid);
     t.grid = grid;
     t.gridCell = cell;
+    t.groundGrid.gridCell.value = cell;
+    t.groundGrid.gridExtent.value = cell * 150;
   }
   // The ground reaches past where the fog closes in, so its edge never shows.
   const scale = Math.max(1, (extent * 60) / 40000);
@@ -1063,9 +1112,13 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     renderer.setClearColor(0x000000, 0);
     renderer.shadowMap.enabled = true;
     renderer.localClippingEnabled = true; // section planes cut the parts, not the ground
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.45;
+    // Filtered (soft-edged) depth comparisons; the shadow's radius and fit are set each frame (sunShadow).
+    renderer.shadowMap.type = THREE.PCFShadowMap;
+    // Neutral tone mapping shows a material's colour as it is (ACES pushed every
+    // light colour to white and washed the rest out): brick reads red-brown,
+    // black stays black, yellow ABS stays yellow.
+    renderer.toneMapping = THREE.NeutralToneMapping;
+    renderer.toneMappingExposure = 1;
     renderer.domElement.className = "model-canvas";
     el.prepend(renderer.domElement);
 
@@ -1077,37 +1130,51 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     camera.up.set(0, 0, 1);
     camera.position.set(330, -420, 260);
 
+    // Lit as a studio: the photoreal render's own studio (softboxes over a soft
+    // dome) as the ambient light, so metals have something to mirror and read
+    // as metal; a sun for shape and shadows; a little fill, rim and bounce.
+    // Balanced so a face turned to the light shows its material's own colour.
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const studio = studioEnvironment(512, 0.4);
+    const environment = pmrem.fromEquirectangular(studio).texture;
+    studio.dispose();
+    pmrem.dispose();
+    scene.environment = environment;
+    scene.environmentIntensity = 0.5;
+    scene.environmentRotation.set(-Math.PI / 2, 0, 0); // the studio is made Y up; the model is Z up
     // Sky color comes from +Z (Z is up).
-    const hemi = new THREE.HemisphereLight(0xe1f2ee, 0x4a5c62, 2.7);
+    const hemi = new THREE.HemisphereLight(0xeef4f6, 0x8a8f94, 0.55);
     hemi.position.set(0, 0, 1);
     scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xfff4df, 4.2);
+    const sun = new THREE.DirectionalLight(0xfff6e8, 2.2);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.bias = -0.0008;
-    sun.shadow.normalBias = 0.6;
+    const shadowSize = Math.min(4096, renderer.capabilities.maxTextureSize);
+    sun.shadow.mapSize.set(shadowSize, shadowSize);
+    sun.position.set(-450, -650, 1000); // until the model arrives and it is placed off its centre
     scene.add(sun, sun.target);
-    const rim = new THREE.DirectionalLight(0xc4d5ff, 1.5);
+    const rim = new THREE.DirectionalLight(0xdfe8ff, 0.45);
     rim.position.set(900, 800, 500);
-    const fill = new THREE.DirectionalLight(0xb9cfff, 1.3);
+    const fill = new THREE.DirectionalLight(0xdbe6ff, 0.5);
     fill.position.set(-900, 900, 300);
     // Light bounced up off the ground, so undersides read when the camera looks from below.
-    const bounce = new THREE.DirectionalLight(0xe4ebf2, 1.6);
+    const bounce = new THREE.DirectionalLight(0xeef1f4, 0.35);
     bounce.position.set(300, -500, -900);
     scene.add(rim, fill, bounce);
 
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(40000, 40000),
-      new THREE.MeshStandardMaterial({ color: 0xf2f3f5, roughness: 0.95, metalness: 0.08 }),
-    );
+    // The ground: a light studio floor, taking less of the studio's light than
+    // the parts do so the sun's shadows read on it; pushed back in depth
+    // further than the parts are (they are, for their outlines); drawing the
+    // grid seen from above.
+    const groundMaterial = new THREE.MeshStandardMaterial({ color: 0xf2f3f5, roughness: 0.95, metalness: 0, envMap: environment, envMapIntensity: 0.38, polygonOffset: true, polygonOffsetFactor: 4, polygonOffsetUnits: 4 });
+    groundMaterial.envMapRotation.copy(scene.environmentRotation);
+    const groundGridUniforms = drawGridOnGround(groundMaterial);
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(40000, 40000), groundMaterial);
     ground.position.z = -0.6;
     ground.receiveShadow = true;
     scene.add(ground);
-    const grid = new THREE.GridHelper(6000, 300, 0xc7cbd6, 0xd9dce4);
-    grid.rotation.x = Math.PI / 2;
+    const grid = groundGrid(6000);
     grid.position.z = -0.4;
-    (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.38;
+    grid.visible = false;
     scene.add(grid);
 
     const overlayRoot = new THREE.Group();
@@ -1633,6 +1700,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       const fog = scene.fog as THREE.Fog;
       fog.near = Math.max(distance * 2.2, beyond);
       fog.far = Math.max(distance * 6, beyond * 2.5);
+      // From below, the ground vanishes and the line grid stays as a reference.
+      if (three.current) three.current.grid.visible = camera.position.z < ground.position.z;
       layoutOverlays();
       sketchLayer.layout(toScreen);
       draftLayer.layout(toScreen);
@@ -1646,6 +1715,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       for (const m of aside.materials) m.visible = false;
       const t1 = performance.now();
       const view = tools.beforeRender();
+      if (three.current) fitSunShadow(sun, three.current.bounds, ground.position.z, view);
       // Instances of shared geometry go to the GPU as instances, culled and simplified by size.
       const t2 = performance.now();
       batch.update(instanceMeshes(), view, renderer.domElement.clientHeight || 800, three.current?.wireframe ?? false);
@@ -1667,6 +1737,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       const px = new Uint8Array(4);
       (window as unknown as { formaPerf: unknown }).formaPerf = {
         renderer,
+        scene,
         camera,
         controls,
         parts: () => three.current?.parts.size ?? 0,
@@ -2569,7 +2640,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     renderer.domElement.addEventListener("pointerdown", onCanvasDown);
     renderer.domElement.addEventListener("pointerup", onCanvasUp);
 
-    three.current = { renderer, scene, camera, controls, tumble: tumbler, sun, parts: new Map(), gizmo, push, overlayRoot, overlayLabels: [], ground, grid, gridCell: 20, wireframe: false, invalidate, flight: null, extent: new THREE.Sphere(new THREE.Vector3(), 100) };
+    three.current = { renderer, scene, camera, controls, tumble: tumbler, sun, parts: new Map(), gizmo, push, overlayRoot, overlayLabels: [], ground, grid, gridCell: 20, groundGrid: groundGridUniforms, wireframe: false, invalidate, flight: null, extent: new THREE.Sphere(new THREE.Vector3(), 100), bounds: new THREE.Box3() };
     scene.add(sketchLayer.root, draftLayer.root, edgeLayer.root, faceLayer.root, pickedLayer.root, connectorLayer.root, canvasLayer.root);
     canvasLayer.onLoaded = invalidate;
     if (sketchLabels.current) sketchLayer.setHost(sketchLabels.current);
@@ -2596,6 +2667,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
           (o.material as THREE.Material).dispose();
         }
       });
+      environment.dispose();
       renderer.dispose();
       renderer.domElement.remove();
       three.current = null;
@@ -2738,17 +2810,13 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         framed.current = true;
         fitView(t);
       }
+      // The sun stands off the model's centre; its shadow is fitted to the model and the view each frame.
       const c = bounds.getCenter(new THREE.Vector3());
       const radius = Math.max(bounds.getBoundingSphere(new THREE.Sphere()).radius, 50) * 1.6;
       t.sun.position.copy(c).add(new THREE.Vector3(-0.45, -0.65, 1).multiplyScalar(radius * 2));
       t.sun.target.position.copy(c);
-      const cam = t.sun.shadow.camera;
-      cam.left = cam.bottom = -radius;
-      cam.right = cam.top = radius;
-      cam.near = 1;
-      cam.far = radius * 5;
-      cam.updateProjectionMatrix();
     }
+    t.bounds.copy(bounds);
     t.invalidate();
   }, [entities, selected, live, props.also, props.pivotMode, props.pivotLive, props.selectedPart, props.hidden, props.isolated, props.colorBy, props.teammates, props.tints, hovers, props.hoverXray]);
 

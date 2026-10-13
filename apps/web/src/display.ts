@@ -14,6 +14,7 @@
 // of square: needs draft).
 
 import * as THREE from "three";
+import { DetailLines } from "./detailLines";
 
 export type DisplayMode = "shaded" | "edges" | "wireframe" | "hidden" | "xray" | "zebra" | "curvature" | "draft";
 
@@ -221,10 +222,13 @@ export class Display {
   private outlines = new Map<THREE.Mesh, THREE.LineSegments>();
   private lineMaterial = new THREE.LineBasicMaterial({ color: "#2a2f3a", toneMapped: false, fog: false });
   private xrayLineMaterial = new THREE.LineBasicMaterial({ color: "#3d4a63", transparent: true, opacity: 0.55, depthTest: false, toneMapped: false, fog: false });
+  /** Fine detail (engraving, graduations) drawn as lines in the shaded view. */
+  readonly detail = new DetailLines();
 
-  /** Brings every body (and its edges) to the mode; call before each draw. */
-  apply(bodies: THREE.Mesh[], materialsOf: (m: THREE.Mesh) => THREE.MeshStandardMaterial[], camera: THREE.Camera) {
+  /** Brings every body (and its edges) to the mode; call before each draw (`heightPx`: the view's height). */
+  apply(bodies: THREE.Mesh[], materialsOf: (m: THREE.Mesh) => THREE.MeshStandardMaterial[], camera: THREE.Camera, heightPx = 800) {
     const mode = this.mode;
+    this.detail.apply(mode === "shaded" ? bodies : [], materialsOf, camera, heightPx, this.clipping);
     const analysis = ANALYSIS.has(mode);
     const edges = mode !== "shaded" && !analysis;
     // Edge lines: one per body, sharing the body's geometry's edges.

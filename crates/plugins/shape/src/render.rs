@@ -213,9 +213,11 @@ pub fn render_framed(meshes: &[Mesh], view: View, width: u32, height: u32, frame
             }
         }
     }
-    // Shade: a raking key light from the upper left (it brings out reliefs and
-    // engraving), a fill from the right, sky ambient.
-    let key = unit([-0.62 * right[0] + 0.66 * up[0] - 0.42 * d[0], -0.62 * right[1] + 0.66 * up[1] - 0.42 * d[1], -0.62 * right[2] + 0.66 * up[2] - 0.42 * d[2]]);
+    // Shade: a key light from the upper left (raking enough to bring out
+    // reliefs), a fill from the right, sky ambient; balanced, as the view's
+    // lights are, so a face turned to the camera shows its material's own
+    // colour and the sides step down from it.
+    let key = unit([-0.55 * right[0] + 0.6 * up[0] - 0.6 * d[0], -0.55 * right[1] + 0.6 * up[1] - 0.6 * d[1], -0.55 * right[2] + 0.6 * up[2] - 0.6 * d[2]]);
     let fill = unit([0.6 * right[0] - 0.2 * up[0] - 0.75 * d[0], 0.6 * right[1] - 0.2 * up[1] - 0.75 * d[1], 0.6 * right[2] - 0.2 * up[2] - 0.75 * d[2]]);
     let half = unit([key[0] - d[0], key[1] - d[1], key[2] - d[2]]);
     let lin = |c: f32| c.powf(2.2);
@@ -236,7 +238,7 @@ pub fn render_framed(meshes: &[Mesh], view: View, width: u32, height: u32, frame
             let m = &meshes[part[k] as usize];
             let n = normal[k];
             let n = [n[0] as f64, n[1] as f64, n[2] as f64];
-            let diffuse = 0.78 * dot(n, key).max(0.0) + 0.2 * dot(n, fill).max(0.0) + 0.14 + 0.06 * dot(n, [0.0, 0.0, 1.0]).max(0.0);
+            let diffuse = 0.85 * dot(n, key).max(0.0) + 0.25 * dot(n, fill).max(0.0) + 0.2 + 0.06 * dot(n, [0.0, 0.0, 1.0]).max(0.0);
             let spec = dot(n, half).max(0.0).powf(if m.metal { 24.0 } else { 48.0 }) * if m.metal { 0.45 } else { 0.12 };
             let base = m.color.map(lin);
             rgb[k] = [0, 1, 2].map(|i| base[i] * diffuse as f32 + spec as f32);
@@ -244,6 +246,18 @@ pub fn render_framed(meshes: &[Mesh], view: View, width: u32, height: u32, frame
         }
     }
     // Outlines: where the depth jumps, the surface folds, or parts meet.
+    // Fine detail (an engraving 0.1 mm deep, a scale's graduations, embossed
+    // lettering) is a step too shallow for the jump and leaves the normals as
+    // they were, and seen square on its walls take no pixels: it shows as a
+    // kink in the depth along a surface the normals say is one plane (the
+    // depth's second difference, zero across any plane in a parallel view).
+    let px = 1.0 / scale as f32; // mm per pixel
+    let step = 0.3 * px;
+    let level = |k: usize, j: usize| {
+        let (a, b) = (normal[k], normal[j]);
+        part[k] == part[j] && a[0] * b[0] + a[1] * b[1] + a[2] * b[2] > 0.995
+    };
+    let kink = |k: usize, a: usize, b: usize| level(k, a) && level(k, b) && (depth[a] - 2.0 * depth[k] + depth[b]).abs() > step;
     let edge = |k: usize, j: usize| -> bool {
         if part[k] != part[j] {
             return true;
@@ -258,11 +272,16 @@ pub fn render_framed(meshes: &[Mesh], view: View, width: u32, height: u32, frame
         a[0] * b[0] + a[1] * b[1] + a[2] * b[2] < 0.82
     };
     let mut lines = vec![0.0f32; w * h];
+    // Detail on a dark part is drawn light (dark ink would not show on black).
+    let mut light = vec![false; w * h];
     for y in 0..h - 1 {
         for x in 0..w - 1 {
             let k = y * w + x;
             if edge(k, k + 1) || edge(k, k + w) {
                 lines[k] = 1.0;
+            } else if part[k] != u32::MAX && x > 0 && y > 0 && (kink(k, k - 1, k + 1) || kink(k, k - w, k + w)) {
+                lines[k] = 0.7;
+                light[k] = 0.2126 * rgb[k][0] + 0.7152 * rgb[k][1] + 0.0722 * rgb[k][2] < 0.3;
             }
         }
     }
@@ -272,6 +291,7 @@ pub fn render_framed(meshes: &[Mesh], view: View, width: u32, height: u32, frame
         for x in 0..width as usize {
             let mut c = [0.0f32; 3];
             let mut ink = 0.0;
+            let mut line = [0.0f32; 3];
             for sy in 0..SS {
                 for sx in 0..SS {
                     let k = (y * SS + sy) * w + x * SS + sx;
@@ -279,11 +299,15 @@ pub fn render_framed(meshes: &[Mesh], view: View, width: u32, height: u32, frame
                         c[i] += rgb[k][i];
                     }
                     ink += lines[k];
+                    let tone = if light[k] { [0.62f32, 0.63, 0.66] } else { [0.16, 0.17, 0.19] };
+                    for i in 0..3 {
+                        line[i] += tone[i] * lines[k];
+                    }
                 }
             }
             let n = (SS * SS) as f32;
             let a = (ink / n * 0.85).min(0.85);
-            let line = [0.16f32, 0.17, 0.19];
+            let line = if ink > 0.0 { line.map(|v| v / ink) } else { line };
             for i in 0..3 {
                 let v = c[i] / n * (1.0 - a) + line[i] * a;
                 out.push((v.clamp(0.0, 1.0) * 255.0).round() as u8);
@@ -533,7 +557,7 @@ pub fn material_color(name: Option<&str>) -> ([f32; 3], bool) {
         ("stainless steel", 0xd0d5d9, true),
         ("galvanised steel", 0xb8c0c6, true),
         ("painted steel", 0x34373d, false),
-        ("steel", 0xa9b6bf, true),
+        ("steel", 0xa2a9ae, true),
         ("aluminium", 0xc8d2da, true),
         ("aluminum", 0xc8d2da, true),
         ("brass", 0xc9a85c, true),
@@ -550,9 +574,21 @@ pub fn material_color(name: Option<&str>) -> ([f32; 3], bool) {
         ("walnut", 0x6f4a2f, false),
         ("oak", 0xc69c6d, false),
         ("mdf", 0xb99b77, false),
-        ("concrete", 0xc3bfb6, false),
+        ("concrete", 0xb3afa6, false),
         ("glass", 0x8fb9cc, false),
         ("fr4", 0x2f7a4a, false),
+        ("gypsum", 0xf4f3ef, false),
+        ("brick", 0x985a45, false),
+        ("roof tile", 0xa4523a, false),
+        ("clay tile", 0xa4523a, false),
+        ("timber", 0xc19467, false),
+        ("stone", 0xb5aa95, false),
+        ("granite", 0x8e8a86, false),
+        ("marble", 0xe9e6e0, false),
+        ("slate", 0x50565d, false),
+        ("plaster", 0xebe6dc, false),
+        ("asphalt", 0x3e3f42, false),
+        ("block", 0xb2afa7, false),
     ];
     const WORDS: &[(&str, u32)] = &[
         ("dark grey", 0x4a4d52),
@@ -607,6 +643,35 @@ mod tests {
         assert!(b[0] > 0.85 && b[150 * 400 + 200] < 0.8, "{} {}", b[0], b[150 * 400 + 200]);
         assert!((p.bounds[3] - 20.0).abs() < 1e-6 && p.mm_per_px > 0.0);
         assert!(View::parse("30,20").is_ok() && View::parse("sideways").is_err());
+    }
+
+    #[test]
+    fn a_shallow_engraving_shows_square_on() {
+        // A 40 × 20 plate with a groove 0.1 mm deep, seen straight down: the shading alone does not show it.
+        let plate = manifold_csg::Manifold::cube(40.0, 20.0, 3.0, false).difference(&manifold_csg::Manifold::cube(1.0, 10.0, 1.0, false).translate(19.5, 5.0, 2.9));
+        let (positions, normals, indices) = crate::runtime::mesh_with_normals(&plate);
+        let m = Mesh { positions, normals, indices, color: [0.8, 0.8, 0.8], metal: false };
+        let p = render(&[m], View::parse("top").unwrap(), 400, 200).unwrap();
+        let img = crate::image::decode(&p.png).unwrap();
+        let b = img.channel(crate::image::Channel::Brightness);
+        let at = |x: f64, y: f64| {
+            // World mm to picture pixels (the plate is centred, mm_per_px per pixel).
+            let px = (200.0 + (x - 20.0) / p.mm_per_px).round() as usize;
+            let py = (100.0 - (y - 10.0) / p.mm_per_px).round() as usize;
+            (py.saturating_sub(1)..=py + 1).flat_map(|yy| (px.saturating_sub(1)..=px + 1).map(move |xx| (xx, yy))).map(|(xx, yy)| b[yy * 400 + xx]).fold(f32::MAX, f32::min)
+        };
+        let plain = at(10.0, 10.0);
+        // The groove's long sides draw lines; the face beside them does not.
+        assert!(at(19.5, 10.0) < plain - 0.15 && at(20.5, 10.0) < plain - 0.15, "groove sides {} {} vs face {plain}", at(19.5, 10.0), at(20.5, 10.0));
+        assert!((at(30.0, 10.0) - plain).abs() < 0.02);
+        // On a black part the same groove is drawn light.
+        let (positions, normals, indices) = crate::runtime::mesh_with_normals(&plate);
+        let m = Mesh { positions, normals, indices, color: [0.12, 0.12, 0.13], metal: false };
+        let p = render(&[m], View::parse("top").unwrap(), 400, 200).unwrap();
+        let b = crate::image::decode(&p.png).unwrap().channel(crate::image::Channel::Brightness);
+        let px = |x: f64| (100 * 400) + (200.0 + (x - 20.0) / p.mm_per_px).round() as usize;
+        let brightest = |x: f64| (px(x) - 1..=px(x) + 1).map(|k| b[k]).fold(0.0f32, f32::max);
+        assert!(brightest(19.5) > b[px(10.0)] + 0.15, "{} vs {}", brightest(19.5), b[px(10.0)]);
     }
 
     #[test]
