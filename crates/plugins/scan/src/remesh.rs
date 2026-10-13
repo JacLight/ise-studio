@@ -51,7 +51,8 @@ fn fixed_vertices(m: &Mesh) -> (Vec<bool>, HashSet<(u32, u32)>) {
     (b, sharp)
 }
 
-fn split_long(m: &mut Mesh, hi: f64) {
+/// Splits every edge longer than `hi` (repeatedly) at its middle.
+pub fn split_long(m: &mut Mesh, hi: f64) {
     for _ in 0..12 {
         let ef = m.edge_faces();
         let mut long: Vec<((u32, u32), f64)> = ef

@@ -24,6 +24,7 @@ mod peers;
 mod pictures;
 mod share;
 mod render;
+mod scans;
 mod sheet_metal;
 mod simulate;
 mod sourcing;
@@ -2374,6 +2375,17 @@ fn router(server: Arc<Server>, web: &std::path::Path) -> Router {
         .route("/pcb/{id}/exports", get(pcb::exports))
         .route("/pcb/schematic/{id}/file/{name}", get(pcb::schematic_file))
         .route("/import/{file}", axum::routing::post(formats::import).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
+        .route("/scans", get(scans::list))
+        .route("/scans/{file}", axum::routing::post(scans::upload).layer(axum::extract::DefaultBodyLimit::max(1024 * 1024 * 1024)))
+        .route("/scans/{id}/view", get(scans::view))
+        .route("/scans/{id}/file", get(scans::file))
+        .route("/scans/{id}/query/{op}", axum::routing::post(scans::query_op))
+        .route("/scans/{id}/inspect", axum::routing::post(scans::inspect))
+        .route("/scans/{id}/shape", axum::routing::post(scans::to_shape))
+        .route("/scans/{id}/unwrap", axum::routing::post(scans::unwrap))
+        .route("/scans/{id}/remove", axum::routing::post(scans::remove))
+        .route("/scans/{id}/{what}/{op}", axum::routing::post(scans::derive))
+        .route("/mesh-from/{id}", axum::routing::post(scans::mesh_from))
         .route("/images", get(pictures::list))
         .route("/images/{file}", get(pictures::get).post(pictures::add).layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)))
         .route("/ai/attachments/{file}", get(pictures::attachment).post(pictures::attach).layer(axum::extract::DefaultBodyLimit::max(40 * 1024 * 1024)))
