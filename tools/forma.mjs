@@ -79,7 +79,9 @@
 //   node tools/forma.mjs bundle [file.forma]   the whole project (history, assets) as one file
 //   node tools/forma.mjs insert --from <project> [ids or names…] [--all] [--copy] [--auto] [--at x,y,z | --origin] [--list] [--dry-run]
 //        items of another project (parts, assemblies, sub-assemblies, boards… or --all), linked to follow it unless --copy
-//   node tools/forma.mjs links [update [id] | break <id> | auto <id> on|off]   this project's links: up to date or not; take, cut, automate
+//   node tools/forma.mjs links [update [id] | break <id> | auto <id> on|off | local <id> on|off]   this project's links: up to date or not;
+//        take, cut, automate; local: edit the linked items here (else they are read-only, as their source made them)
+//   node tools/forma.mjs files ls [path] | rm <path…> [-r] | mv <from> <to> [-f]   files in your folder (the Forma AI's own), never outside it
 //   node tools/forma.mjs scan add <file> [--source colmap] | list | info | fit <scan> [kind] [--near x,y,z --within r] | detect
 //        | downsample | outliers | normals | reconstruct [--depth 7] | surface [--poles 8] | shape | export | remove
 //                                            point clouds (XYZ/PLY/PCD/E57) and meshes: add, thin, fit primitives, rebuild surfaces
@@ -184,6 +186,18 @@ function resolveRefs(value, outputs, base) {
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, resolveRefs(v, outputs, base)]));
   }
   return value;
+}
+
+// Files in the folder (the Forma AI's own): no engine needed.
+if (command === "files") {
+  const { files } = await import("./forma-files.mjs");
+  try {
+    for (const line of files(args.slice(1))) console.log(line.startsWith("removed") || line.startsWith("moved") ? `✓ ${line}` : line);
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    process.exit(1);
+  }
+  process.exit(0);
 }
 
 const engine = await connect();
@@ -1188,7 +1202,7 @@ if (command === "run") {
         }
       }
     } else {
-      // forma links | links update [id] | links break <id> | links auto <id> on|off
+      // forma links | links update [id] | links break <id> | links auto <id> on|off | links local <id> on|off
       const sub = args[1] ?? "list";
       const id = args[2];
       if (sub === "list") {
@@ -1196,7 +1210,7 @@ if (command === "run") {
         if (!links.length) console.log("no links: insert with `forma insert --from <project> …` (linked unless --copy)");
         for (const l of links) {
           console.log(`${l.id}  from ${l.project} (“${l.title}”) · ${l.whole ? "the whole project" : l.names.join(", ") || "items"} · ${l.items} items · at its revision ${l.revision}${l.source_revision != null ? ` (source at ${l.source_revision})` : ""}`);
-          console.log(`  ${state(l)}${l.auto_update ? " · updates by itself" : ""}`);
+          console.log(`  ${state(l)}${l.auto_update ? " · updates by itself" : ""}${l.local_edits ? " · edited locally (updates merge)" : " · read-only here (forma links local <id> on to edit)"}`);
         }
       } else if (sub === "update") {
         const out = await call("POST", `/links/update${q()}`, id ? { link: id } : {});
@@ -1223,7 +1237,12 @@ if (command === "run") {
         if (!id || !["on", "off"].includes(on)) throw new Error("forma links auto <id> on|off");
         await call("POST", `/links/settings${q()}`, { link: id, auto_update: on === "on" });
         console.log(`✓ ${on === "on" ? "updates by itself when its source changes" : "updates when asked (forma links update)"}`);
-      } else throw new Error("forma links [list] | update [id] | break <id> | auto <id> on|off");
+      } else if (sub === "local") {
+        const on = args[3];
+        if (!id || !["on", "off"].includes(on)) throw new Error("forma links local <id> on|off");
+        await call("POST", `/links/settings${q()}`, { link: id, local_edits: on === "on" });
+        console.log(`✓ ${on === "on" ? "its items can be edited here; updates merge the source's changes with yours (the source's wins where both changed the same thing)" : "its items are read-only here again, as the source makes them (where they are placed stays yours)"}`);
+      } else throw new Error("forma links [list] | update [id] | break <id> | auto <id> on|off | local <id> on|off");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
