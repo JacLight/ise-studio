@@ -37,6 +37,15 @@ const planeIds = new WeakMap<THREE.Plane[], number>();
 let nextPlanes = 1;
 
 const NO_COLOR = { r: -1, g: -1, b: -1 };
+/** Pictures (printed labels) by number, so meshes printing different ones never share a draw call. */
+const mapIds = new WeakMap<THREE.Texture, number>();
+let nextMap = 1;
+const mapId = (t: THREE.Texture | null | undefined) => {
+  if (!t) return 0;
+  let n = mapIds.get(t);
+  if (n === undefined) mapIds.set(t, (n = nextMap++));
+  return n;
+};
 
 /** Writes the look into `out`; true when it differs from what `out` held. */
 function lookValues(m: THREE.Material, out: number[]): boolean {
@@ -44,7 +53,7 @@ function lookValues(m: THREE.Material, out: number[]): boolean {
   const c = s.color ?? NO_COLOR;
   const e = s.emissive ?? NO_COLOR;
   const flags = +s.transparent | (+s.depthWrite << 1) | (+s.colorWrite << 2) | (+(s.wireframe ?? false) << 3) | (+s.depthTest << 4) | (s.side << 5);
-  const now = [c.r, c.g, c.b, e.r, e.g, e.b, s.emissiveIntensity ?? 0, s.roughness ?? 0, s.metalness ?? 0, s.opacity, flags];
+  const now = [c.r, c.g, c.b, e.r, e.g, e.b, s.emissiveIntensity ?? 0, s.roughness ?? 0, s.metalness ?? 0, s.opacity, flags, mapId(s.map)];
   let changed = out.length !== now.length;
   for (let i = 0; i < now.length; i++) {
     if (out[i] !== now[i]) {

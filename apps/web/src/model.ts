@@ -415,7 +415,7 @@ export const describeOperation = (op: string) => {
   return verb.charAt(0).toUpperCase() + verb.slice(1) + what;
 };
 
-export type Look = { color: string; metalness: number; roughness: number; opacity?: number };
+export type Look = { color: string; metalness: number; roughness: number; opacity?: number; picture?: string };
 
 const LOOKS: Record<string, Look> = {
   // Printed circuit boards (the PCB workspace's 3D part): exact names, matched before any family.
@@ -521,6 +521,11 @@ const COLOUR_WORDS: Record<string, string> = {
   brown: "#7a5236",
 };
 
+/** A picture a material prints (see pictures.ts): a stored picture's file name or id in its name. */
+export function pictureIn(name: string): string | undefined {
+  return name.match(/[\w.-]+\.(?:png|jpe?g)\b/i)?.[0] ?? name.match(/\b[0-9a-f]{32,64}\b/i)?.[0];
+}
+
 /** How a material renders; unknown materials get a neutral look. A colour in the name wins over the family's own. */
 export function materialLook(name: string | undefined): Look {
   if (!name) return UNASSIGNED_LOOK;
@@ -534,6 +539,9 @@ export function materialLook(name: string | undefined): Look {
     .sort((a, b) => b.length - a.length) // "dark grey" before "grey"
     .find((w) => new RegExp(`\\b${w}\\b`).test(key));
   const color = hex ?? (word ? COLOUR_WORDS[word] : undefined);
+  // A printed picture ("Label print battery-label.png"): its own colours on a satin print.
+  const picture = pictureIn(name);
+  if (picture) return { color: "#ffffff", metalness: 0, roughness: family ? look.roughness : 0.45, picture };
   return color ? { ...look, color } : look;
 }
 
