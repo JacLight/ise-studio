@@ -457,19 +457,21 @@ const MM = 1000; // engine meters -> scene millimeters
 /** Most points kept in one markup stroke, and the screen distance (px) between them. */
 const STROKE_POINTS = 400;
 const STROKE_STEP = 3;
-// Clicks pass through what is not drawn: a piece switched off in the components
-// tree (its material hidden) is not hit, so the part behind it is picked.
+// Clicks pass through a piece switched off in the components tree (its
+// material is marked `hiddenPiece`), so the part behind it is picked. Other
+// switched-off materials stay pickable: instances drawn by the batch layer
+// keep their own meshes, not drawn but picked.
 const meshRaycast = THREE.Mesh.prototype.raycast;
 THREE.Mesh.prototype.raycast = function (raycaster, intersects) {
   const before = intersects.length;
   meshRaycast.call(this, raycaster, intersects);
   const mat = this.material;
-  if (Array.isArray(mat) ? !mat.some((m) => m.visible === false) : mat.visible !== false) return;
+  const off = (m: THREE.Material | undefined) => !!m?.userData.hiddenPiece;
+  if (Array.isArray(mat) ? !mat.some(off) : !off(mat)) return;
   let w = before;
   for (let i = before; i < intersects.length; i++) {
     const hit = intersects[i];
-    const m = Array.isArray(mat) ? mat[hit.face?.materialIndex ?? 0] : mat;
-    if (m && m.visible !== false) intersects[w++] = hit;
+    if (!off(Array.isArray(mat) ? mat[hit.face?.materialIndex ?? 0] : mat)) intersects[w++] = hit;
   }
   intersects.length = w;
 };
@@ -2615,6 +2617,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         // A piece switched off in the tree (or not the one shown alone) is not drawn.
         const piece = pieces[i]?.name;
         m.visible = !piece || (!props.hidden.has(subPartKey(id, piece)) && (!isoPiece || isoPiece === piece));
+        m.userData.hiddenPiece = !m.visible;
         m.needsUpdate = true;
       });
       part.body.castShadow = !(id === selected && props.selectedPart);
