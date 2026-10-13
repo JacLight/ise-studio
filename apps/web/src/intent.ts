@@ -20,10 +20,10 @@ export const requirement = (e: EntityView) => e.components["intent.requirement"]
 
 export const targetsOf = (rule: Rule): string[] => {
   if (rule.kind === "clearance") return [rule.a, rule.b];
-  // Rules the client does not model (studies, scans, motion) name their part one way or another.
+  // Rules the client does not model (studies, scans, motion, boards, parameters) name their part one way or another.
   const r = rule as unknown as Record<string, unknown>;
   if (Array.isArray(r.parts)) return r.parts as string[];
-  return [r.part, r.shape, r.assembly, r.joint].filter((v): v is string => typeof v === "string");
+  return [r.part, r.shape, r.assembly, r.joint, r.board, r.target].filter((v): v is string => typeof v === "string");
 };
 
 const toMm = (q: Q) => q.value * 1000; // engine stores meters

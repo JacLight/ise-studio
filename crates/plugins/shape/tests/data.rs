@@ -31,6 +31,38 @@ fn shown(p: &Project, sheet: StableId, at: &str) -> String {
     p.get::<SheetValues>(sheet).unwrap().cells[at].shown.clone()
 }
 
+/// What a formula's result is in follows what it does with what it reads: a
+/// lever's length times the sine of a joint's angle is a plain number, not
+/// an angle (the robot arm's torque sheet showed "79.4°" for a length).
+#[test]
+fn a_formula_result_takes_its_unit_from_what_it_does() {
+    let mut p = project();
+    run(&mut p, "parameters.create", json!({ "name": "Arm", "params": [
+        { "key": "angle", "label": "Angle", "value": 30, "unit": "deg" },
+        { "key": "reach", "label": "Reach", "value": 200, "unit": "mm" }
+    ] }))
+    .unwrap();
+    let s = run(&mut p, "sheet.create", json!({ "name": "Check", "cells": {
+        "A1": "=Arm.angle", "B1": "=75 * sin(A1)", "C1": "=Arm.reach / 4", "D1": "=Arm.reach / Arm.reach",
+        "E1": "=atan2(1, 1)", "F1": "=sqrt(Arm.reach^2 + 75^2 - 2 * Arm.reach * 75 * cos(A1))", "G1": "=Arm.reach * cos(A1)",
+        "A2": "=0.25", "B2": "=A1", "C2": "40"
+    }, "units": { "A2": "%", "B2": "number", "C2": "%" } }))
+    .unwrap();
+    assert!(s["errors"].as_object().unwrap().is_empty(), "{s}");
+    let sheet = id(&s);
+    assert_eq!(shown(&p, sheet, "A1"), "30°");
+    assert_eq!(shown(&p, sheet, "B1"), "37.5", "a sine is a plain number");
+    assert_eq!(shown(&p, sheet, "C1"), "50 mm", "a length over a number");
+    assert_eq!(shown(&p, sheet, "D1"), "1", "a length over a length");
+    assert_eq!(shown(&p, sheet, "E1"), "45°");
+    assert_eq!(shown(&p, sheet, "F1"), "140.157903", "the law of cosines on numbers");
+    assert_eq!(shown(&p, sheet, "G1"), "173.205081 mm", "a length times a cosine is still a length");
+    assert_eq!(shown(&p, sheet, "A2"), "25 %");
+    assert_eq!(shown(&p, sheet, "B2"), "30", "a cell can say it holds a plain number");
+    assert_eq!(shown(&p, sheet, "C2"), "40 %", "a bare number in a % cell is a percentage");
+    assert!((p.get::<ResolvedParams>(sheet).unwrap().0["C2"] - 0.4).abs() < 1e-12);
+}
+
 #[test]
 fn a_sheet_calculates_and_drives_shapes_through_links() {
     let mut p = project();

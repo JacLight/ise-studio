@@ -46,6 +46,26 @@ fn scope_of(id: &str) -> Result<Scope, String> {
     serde_json::from_value::<StableId>(json!(id)).map(Scope::Entity).map_err(|_| format!("“{id}” is not an id (or “project”)"))
 }
 
+/// What a BOM is of, by name when not by id: an assembly, else an instance,
+/// else a shape called that (`./forma bom "Robot arm"`).
+fn named_scope(project: &Project, name: &str) -> Result<Scope, String> {
+    let ids = project.entity_ids();
+    let kinds: [&dyn Fn(StableId) -> bool; 3] = [
+        &|e| project.get::<de_assembly::AssemblyDef>(e).is_some_and(|d| d.name == name),
+        &|e| project.get::<de_assembly::Instance>(e).is_some_and(|i| i.name == name),
+        &|e| project.get::<de_shape::ShapeProgram>(e).is_some_and(|p| p.name == name),
+    ];
+    for is in kinds {
+        let found: Vec<StableId> = ids.iter().copied().filter(|e| is(*e)).collect();
+        match found.as_slice() {
+            [] => continue,
+            [one] => return Ok(Scope::Entity(*one)),
+            many => return Err(format!("{} things are called “{name}”: use an id ({})", many.len(), many.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(", "))),
+        }
+    }
+    Err(format!("“{name}” is not an id, “project”, or the name of an assembly, instance or shape"))
+}
+
 fn options(q: &HashMap<String, String>) -> Result<bom::Options, String> {
     let mut o = bom::Options { config: q.get("config").filter(|c| !c.is_empty()).cloned(), ..Default::default() };
     if let Some(n) = q.get("qty").filter(|n| !n.is_empty()) {
@@ -78,14 +98,15 @@ pub async fn bom(State(server): State<Arc<Server>>, Path(id): Path<String>, Quer
         Ok(x) => x,
         Err(r) => return r,
     };
-    let (scope, options) = match (scope_of(&id), options(&q)) {
-        (Ok(s), Ok(o)) => (s, o),
-        (Err(e), _) | (_, Err(e)) => return fail(StatusCode::BAD_REQUEST, e),
+    let options = match options(&q) {
+        Ok(o) => o,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
     };
     let format = q.get("format").cloned().unwrap_or_else(|| "json".into());
     let view = q.get("view").cloned().unwrap_or_else(|| "flat".into());
     let result = tokio::task::spawn_blocking(move || {
         let project = app.project.lock().unwrap();
+        let scope = scope_of(&id).or_else(|_| named_scope(&project, &id))?;
         let b = compute(&project, scope, &options)?;
         let rates = de_sourcing::rates::rates_of(project.world());
         Ok::<_, String>((b, rates))

@@ -152,6 +152,19 @@ pub enum Rule {
     /// Nets of a board (names, patterns like `D?`, or pair names) are each
     /// `target` ± `tolerance` long, or between `min` and `max`, and within
     /// `max_skew` of each other (mm, copper length with vias and pad-to-die).
+    /// A parameter (a value of a shape, sketch or parameter set, or a
+    /// formula's result: a torque margin worked out from a joint's angle and
+    /// a servo's stall torque, a spring's longest stretch) stays at least
+    /// `min` and/or at most `max`. Re-checked whenever it, or anything its
+    /// formula reads, changes.
+    ParameterRange {
+        target: StableId,
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max: Option<f64>,
+    },
     PcbLength {
         board: StableId,
         nets: Vec<String>,
@@ -186,6 +199,7 @@ impl Rule {
             Rule::MinSafetyFactor { shape, .. } | Rule::MaxDeflection { shape, .. } | Rule::MinFirstFrequency { shape, .. } | Rule::MinBucklingFactor { shape, .. } => vec![*shape],
             Rule::ScanDeviation { part, .. } => vec![*part],
             Rule::PcbConstraints { board, .. } | Rule::PcbLength { board, .. } => vec![*board],
+            Rule::ParameterRange { target, .. } => vec![*target],
         }
     }
 
@@ -204,6 +218,12 @@ impl Rule {
             Rule::MinBucklingFactor { min, .. } => format!("Buckling factor at least {}", fmt(*min)),
             Rule::ScanDeviation { tolerance, .. } => format!("Matches its scan within ±{} mm", mm(tolerance)),
             Rule::PcbConstraints { codes, .. } => if codes.is_empty() { "Board meets its routing constraints".into() } else { format!("Board clean of {}", codes.join(", ")) },
+            Rule::ParameterRange { key, min, max, .. } => match (min, max) {
+                (Some(a), Some(b)) => format!("{key} between {} and {}", fmt(*a), fmt(*b)),
+                (Some(a), None) => format!("{key} at least {}", fmt(*a)),
+                (None, Some(b)) => format!("{key} at most {}", fmt(*b)),
+                (None, None) => key.clone(),
+            },
             Rule::PcbLength { nets, target, tolerance, max_skew, .. } => match (target, max_skew) {
                 (Some(t), _) => format!("{} {} ± {} mm long", nets.join(", "), fmt(*t), fmt(tolerance.unwrap_or(t * 0.01))),
                 (None, Some(s)) => format!("{} matched within {} mm", nets.join(", "), fmt(*s)),
@@ -302,6 +322,60 @@ fn evaluate(world: &World, entity: Entity) -> Option<Result<RequirementResult, S
         Rule::MinBucklingFactor { shape, part, min } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Buckling, *min, false, ""),
         Rule::PcbConstraints { board, codes } => pcb_constraints(world, *board, codes),
         Rule::PcbLength { board, nets, target, tolerance, min, max, max_skew } => pcb_length(world, *board, nets, *target, *tolerance, *min, *max, *max_skew),
+        Rule::ParameterRange { target, key, min, max } => parameter_range(world, *target, key, *min, *max),
+    })
+}
+
+/// A parameter's value now (a formula worked out) and its label and unit.
+fn parameter_now(world: &World, id: StableId, key: &str) -> Result<(f64, String, String, String), String> {
+    let e = world.resource::<de_core::IdIndex>().get(id).ok_or_else(|| format!("{id} does not exist"))?;
+    // A spreadsheet: a cell by address or alias.
+    if let Some(sheet) = world.get::<de_shape::sheet::Sheet>(e) {
+        let found = sheet.cells.iter().find(|(a, c)| a.as_str() == key || c.alias.as_deref() == Some(key));
+        let Some((address, cell)) = found.filter(|(_, c)| !c.input.is_empty()) else {
+            return Err(format!("{} has no cell or alias “{key}”", sheet.name));
+        };
+        let value = match world.get::<de_shape::ResolvedParams>(e).and_then(|r| r.0.get(key).copied()) {
+            Some(v) => v,
+            None => *de_shape::sheet::evaluate(world, sheet).numbers().get(key).ok_or_else(|| format!("{} › {key} is not a number", sheet.name))?,
+        };
+        let label = if address == key { key.to_string() } else { format!("{key} ({address})") };
+        return Ok((value, sheet.name.clone(), label, cell.unit.clone().unwrap_or_default()));
+    }
+    let (name, params) = de_shape::params::params_of(world, e).ok_or_else(|| format!("{id} has no parameters"))?;
+    let p = params.iter().find(|p| p.key == key).ok_or_else(|| {
+        let keys: Vec<&str> = params.iter().map(|p| p.key.as_str()).collect();
+        format!("{name} has no parameter “{key}” (it has {})", keys.join(", "))
+    })?;
+    let value = match world.get::<de_shape::ResolvedParams>(e).and_then(|r| r.0.get(key).copied()) {
+        Some(v) => v,
+        None => *de_shape::params::resolve(world, params)?.get(key).ok_or_else(|| format!("{name}: “{key}” has no value"))?,
+    };
+    Ok((value, name.to_string(), if p.label.is_empty() { key.to_string() } else { p.label.clone() }, p.unit.clone()))
+}
+
+fn parameter_range(world: &World, id: StableId, key: &str, min: Option<f64>, max: Option<f64>) -> Result<RequirementResult, String> {
+    let (v, name, label, unit) = parameter_now(world, id, key)?;
+    let low = min.is_some_and(|m| v < m - 1e-9);
+    let high = max.is_some_and(|m| v > m + 1e-9);
+    let passed = !low && !high;
+    let u = if unit.is_empty() { String::new() } else { format!(" {unit}") };
+    let bound = match (min, max) {
+        (Some(a), Some(b)) => format!("between {}{u} and {}{u}", fmt(a), fmt(b)),
+        (Some(a), None) => format!("at least {}{u}", fmt(a)),
+        (None, Some(b)) => format!("at most {}{u}", fmt(b)),
+        (None, None) => String::new(),
+    };
+    Ok(RequirementResult {
+        passed,
+        measured: v,
+        limit: if high || min.is_none() { max.unwrap_or(v) } else { min.unwrap_or(v) },
+        unit,
+        upper_bound: high || min.is_none(),
+        summary: format!("{name} › {label} is {}{u}, {bound}", fmt(v)),
+        violations: if passed { vec![] } else { vec![Violation { parts: vec![id], names: vec![name], region: None }] },
+        fix: None,
+        accuracy_mm: None,
     })
 }
 
@@ -707,7 +781,7 @@ fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
             return Err(CommandError::new(ErrorCode::InvalidParameters, "steps must be 2 to 720"));
         }
     }
-    let joint_of = |id: StableId| matches!(rule, Rule::NoClashesInMotion { joint, .. } if *joint == id);
+    let joint_of = |id: StableId| matches!(rule, Rule::NoClashesInMotion { joint, .. } if *joint == id) || matches!(rule, Rule::ParameterRange { .. });
     for id in rule.targets().into_iter().filter(|id| !joint_of(*id)) {
         if tx.get::<BoxFeature>(id).is_none()
             && tx.get::<de_shape::ShapeProgram>(id).is_none()
@@ -765,6 +839,17 @@ fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
                 return Err(CommandError::new(ErrorCode::InvalidParameters, format!("{shape} is not a shape: studies are on shapes")));
             }
             positive(max, "the deflection limit")?;
+        }
+        Rule::ParameterRange { target, key, min, max } => {
+            if min.is_none() && max.is_none() {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, "give a min, a max or both"));
+            }
+            if let (Some(a), Some(b)) = (min, max)
+                && a > b
+            {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, "min is above max"));
+            }
+            parameter_now(tx.world(), *target, key).map_err(|m| CommandError::new(ErrorCode::UnresolvedReference, m))?;
         }
         Rule::PcbConstraints { board, .. } | Rule::PcbLength { board, .. } => {
             if tx.get::<de_pcb::Board>(*board).is_none() {

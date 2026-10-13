@@ -94,6 +94,57 @@ fn entity(world: &World, id: StableId) -> Option<de_core::bevy_ecs::entity::Enti
 }
 
 pub(crate) fn body(world: &World, id: StableId) -> Result<Body, String> {
+    body_with(world, id, None)
+}
+
+/// Joint values to read formulas with (joint → its values, in its kind's order).
+type JointValues = BTreeMap<StableId, Vec<f64>>;
+
+/// A shape's program ready to evaluate with these joint values read by its
+/// formulas (a spring whose stretched length follows the shoulder's angle).
+fn program_given(world: &World, se: de_core::bevy_ecs::entity::Entity, config: Option<&str>, joints: &JointValues) -> Result<de_shape::ShapeProgram, String> {
+    let mut program = match config {
+        Some(c) => de_shape::configs::configured_program(world, se, c)?,
+        None => de_shape::params::resolved_program(world, se).ok_or("not a shape")?,
+    };
+    let given = |id: StableId, key: &str| -> Option<f64> {
+        let v = joints.get(&id)?;
+        let kind = entity(world, id).and_then(|e| world.get::<Joint>(e))?.kind;
+        kind.values().iter().position(|(k, _, _)| *k == key).and_then(|i| v.get(i).copied())
+    };
+    let values = de_shape::params::resolve_with(world, &program.params, &given).map_err(|m| format!("{}: {m}", program.name))?;
+    for p in &mut program.params {
+        if let Some(v) = values.get(&p.key) {
+            p.value = *v;
+        }
+    }
+    Ok(program)
+}
+
+/// Whether some shape the instance shows has a formula reading a joint's
+/// value: its geometry changes as the joints move, so a sweep evaluates it
+/// again at each step.
+fn follows_joints(world: &World, id: StableId) -> bool {
+    crate::occurrences(world, id).iter().any(|o| {
+        let Some(program) = entity(world, o.shape).and_then(|e| world.get::<de_shape::ShapeProgram>(e)) else { return false };
+        de_shape::params::references(&program.params).iter().any(|r| entity(world, *r).is_some_and(|e| world.get::<Joint>(e).is_some()))
+    })
+}
+
+/// Whether the instance's shapes come out differently across these joint
+/// values (a spring the swept joint stretches), not just read some joint.
+fn varies(world: &World, id: StableId, steps: &[&JointValues]) -> bool {
+    let Some(first) = steps.first() else { return false };
+    crate::occurrences(world, id).iter().any(|o| {
+        let Some(se) = entity(world, o.shape) else { return false };
+        let values = |j: &JointValues| program_given(world, se, o.config.as_deref(), j).ok().map(|p| p.params.iter().map(|q| q.value).collect::<Vec<f64>>());
+        let base = values(first);
+        steps[1..].iter().any(|j| values(j) != base)
+    })
+}
+
+/// One instance's solids, with its shapes' formulas reading these joint values if given.
+fn body_with(world: &World, id: StableId, joints: Option<&JointValues>) -> Result<Body, String> {
     let e = entity(world, id).ok_or("an instance is gone")?;
     let own = placement(world, e).unwrap_or(Transform::IDENTITY).inverse();
     let mut leaves = vec![];
@@ -101,12 +152,16 @@ pub(crate) fn body(world: &World, id: StableId) -> Result<Body, String> {
     let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
     for o in crate::occurrences(world, id) {
         let se = entity(world, o.shape).ok_or("a component is gone")?;
-        let solid = match &o.config {
-            Some(c) => {
+        let solid = match (&o.config, joints) {
+            (config, Some(j)) => {
+                let p = program_given(world, se, config.as_deref(), j)?;
+                Arc::new(de_shape::evaluated_at(&p, p.display_tolerance())?.solid.translate(0.0, 0.0, 0.0))
+            }
+            (Some(c), None) => {
                 let p = de_shape::configs::configured_program(world, se, c)?;
                 Arc::new(de_shape::evaluated_at(&p, p.display_tolerance())?.solid.translate(0.0, 0.0, 0.0))
             }
-            None => world.get::<ShapeSolid>(se).ok_or_else(|| format!("{} has no valid result", o.names.join(" › ")))?.solid.clone(),
+            (None, None) => world.get::<ShapeSolid>(se).ok_or_else(|| format!("{} has no valid result", o.names.join(" › ")))?.solid.clone(),
         };
         let inner = own.then(&o.transform);
         let (a, b) = match solid.bounding_box() {
@@ -349,6 +404,11 @@ fn round(v: f64, k: f64) -> f64 {
     (v * k).round() / k
 }
 
+/// Instance `i`'s body at step `n`: its own, or the one evaluated for that step when it follows the joints.
+fn pick<'a>(flex: &[bool], flexed: &'a HashMap<(usize, usize), Body>, bodies: &'a [Body], n: usize, i: usize) -> &'a Body {
+    if flex[i] { &flexed[&(n, i)] } else { &bodies[i] }
+}
+
 /// Closest approach of every pair whose relative placement changes.
 fn gaps(world: &World, ids: &[(StableId, String)], frames: &[Vec<Transform>], out: &mut Played) -> Result<(), String> {
     let bodies: Vec<Body> = ids.iter().map(|(id, _)| body(world, *id)).collect::<Result<_, _>>()?;
@@ -359,23 +419,39 @@ fn gaps(world: &World, ids: &[(StableId, String)], frames: &[Vec<Transform>], ou
         .iter()
         .filter_map(|(_, j)| Some((j.a.instance()?, j.b.instance()?)))
         .collect();
+    let every = frames.len().div_ceil(180).max(1);
+    // Shapes that follow the joints (a spring stretching as an arm swings)
+    // change at each step: evaluated again with that step's joint values.
+    let used: Vec<&JointValues> = (0..frames.len()).step_by(every).map(|n| &out.frames[n].joints).collect();
+    let flex: Vec<bool> = ids.iter().map(|(id, _)| follows_joints(world, *id) && varies(world, *id, &used)).collect();
+    let mut flexed: HashMap<(usize, usize), Body> = HashMap::new();
+    for n in (0..frames.len()).step_by(every) {
+        for (i, (id, name)) in ids.iter().enumerate().filter(|(i, _)| flex[*i]) {
+            let b = body_with(world, *id, Some(&out.frames[n].joints)).map_err(|m| format!("{name} at {}: {m}", out.frames[n].value))?;
+            flexed.insert((n, i), b);
+        }
+    }
+    if flex.iter().any(|f| *f) {
+        let names: Vec<&str> = ids.iter().zip(&flex).filter(|(_, f)| **f).map(|((_, n), _)| n.as_str()).collect();
+        out.notes.push(format!("{} follow{} the joints: evaluated again at each step.", names.join(", "), if names.len() == 1 { "s" } else { "" }));
+    }
+    let bod = |n: usize, i: usize| pick(&flex, &flexed, &bodies, n, i);
     let mut pairs = vec![];
     for i in 0..bodies.len() {
         for k in i + 1..bodies.len() {
             let rel = |f: &Vec<Transform>| f[i].inverse().then(&f[k]);
             let r0 = rel(&frames[0]);
-            if frames.iter().any(|f| rel(f).distance(&r0, size.max(1.0)) > 1e-6) && !bodies[i].leaves.is_empty() && !bodies[k].leaves.is_empty() {
+            if (flex[i] || flex[k] || frames.iter().any(|f| rel(f).distance(&r0, size.max(1.0)) > 1e-6)) && !bodies[i].leaves.is_empty() && !bodies[k].leaves.is_empty() {
                 pairs.push((i, k));
             }
         }
     }
-    let every = frames.len().div_ceil(180).max(1);
     let mut best = vec![(f64::INFINITY, 0.0, None::<[f64; 2]>); pairs.len()];
     let mut most = vec![0.0f64; pairs.len()];
     // Leaves are placed only when a pair comes near enough to measure: an
     // instance that holds still is placed once for the whole sweep, a moving
     // one once per step (placing a mesh rebuilds its collision tree).
-    let still: Vec<bool> = (0..bodies.len()).map(|i| frames.iter().all(|f| f[i].distance(&frames[0][i], size.max(1.0)) <= 1e-9)).collect();
+    let still: Vec<bool> = (0..bodies.len()).map(|i| !flex[i] && frames.iter().all(|f| f[i].distance(&frames[0][i], size.max(1.0)) <= 1e-9)).collect();
     let mut placed_still: HashMap<(usize, usize), Manifold> = HashMap::new();
     let apart = |(la, ha): ([f64; 3], [f64; 3]), (lb, hb): ([f64; 3], [f64; 3])| (0..3).map(|k| (lb[k] - ha[k]).max(la[k] - hb[k]).max(0.0).powi(2)).sum::<f64>().sqrt();
     for (n, f) in frames.iter().enumerate().step_by(every) {
@@ -387,20 +463,21 @@ fn gaps(world: &World, ids: &[(StableId, String)], frames: &[Vec<Transform>], ou
             // whole search (measuring is per triangle pair within reach).
             let reach = best[p].0.clamp(1e-3, search);
             // Placed boxes farther apart than that: no closer look needed.
-            let g = if apart(f[*a].bounds(bodies[*a].lo, bodies[*a].hi), f[*b].bounds(bodies[*b].lo, bodies[*b].hi)) >= reach {
+            let (ba, bb) = (bod(n, *a), bod(n, *b));
+            let g = if apart(f[*a].bounds(ba.lo, ba.hi), f[*b].bounds(bb.lo, bb.hi)) >= reach {
                 reach
             } else {
                 let mut g = reach;
-                for (x, bx) in bodies[*a].boxes.iter().enumerate() {
+                for (x, bx) in ba.boxes.iter().enumerate() {
                     let wx = f[*a].bounds(bx.0, bx.1);
-                    for (y, by) in bodies[*b].boxes.iter().enumerate() {
+                    for (y, by) in bb.boxes.iter().enumerate() {
                         if apart(wx, f[*b].bounds(by.0, by.1)) >= g {
                             continue;
                         }
                         for (i, l) in [(*a, x), (*b, y)] {
                             let cache = if still[i] { &mut placed_still } else { &mut placed_now };
                             cache.entry((i, l)).or_insert_with(|| {
-                                let (s, inner) = &bodies[i].leaves[l];
+                                let (s, inner) = &bod(n, i).leaves[l];
                                 f[i].then(inner).solid(s)
                             });
                         }

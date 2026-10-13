@@ -374,7 +374,15 @@ pub(crate) fn resolve_external(world: &World, name: &str) -> Result<(Option<Stab
     // "Entity name.key": the name may itself contain dots, so try every split.
     for (i, _) in name.match_indices('.').rev() {
         let (ent, key) = (&name[..i], &name[i + 1..]);
-        let found = find_by_name(world, ent.trim());
+        let mut found = find_by_name(world, ent.trim());
+        // A part and a joint may share a name (the printed “Wrist” and the
+        // “Wrist” joint): the one with the key asked for is meant.
+        if found.len() > 1 {
+            let has = |id: &StableId| world.resource::<IdIndex>().get(*id).and_then(|e| keys_of(world, e)).is_some_and(|(_, keys)| keys.iter().any(|k| k == key.trim()));
+            if found.iter().filter(|id| has(id)).count() == 1 {
+                found.retain(has);
+            }
+        }
         match found.as_slice() {
             [] => continue,
             [id] => {
@@ -389,7 +397,7 @@ pub(crate) fn resolve_external(world: &World, name: &str) -> Result<(Option<Stab
                 };
                 return Ok((Some(*id), key));
             }
-            _ => return Err(format!("more than one thing is called “{ent}”; rename one")),
+            _ => return Err(format!("more than one thing called “{ent}” has a parameter “{}”; rename one", key.trim())),
         }
     }
     Err(format!("“{name}” is not a parameter here or Name.parameter of anything in the project"))

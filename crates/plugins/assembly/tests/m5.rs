@@ -184,6 +184,84 @@ fn a_hinge_chain_moves_one_way_per_hinge() {
     assert_eq!((fore.free, fore.mobility), (0, 2));
 }
 
+/// A gripper: a pinion on a hinge drives two fingers on sliders. Fingers geared
+/// to the pinion (by formula, as the robot arm's are, or by couplings) move with
+/// it: one way to move, not three.
+#[test]
+fn geared_fingers_count_once() {
+    for linked_by in ["none", "formula", "coupling"] {
+        let mut p = project();
+        let body = component(&mut p, "Body", r#"connector("Pinion", { at: [0, 0, 10], axis: [0, 0, 1] }); connector("A", { at: [0, 10, 5], axis: [1, 0, 0] }); connector("B", { at: [0, -10, 5], axis: [-1, 0, 0] }); return box(60, 40, 10).translate(-30, -20, 0);"#);
+        let pinion = component(&mut p, "Pinion", r#"connector("Bore", { at: [0, 0, 0], axis: [0, 0, -1] }); return cylinder(5, 8);"#);
+        let finger = component(&mut p, "Finger", r#"connector("Slide", { at: [0, 0, 0], axis: [1, 0, 0] }); return box(20, 4, 4).translate(0, -2, -2);"#);
+        let b = place(&mut p, body, "Body", [0.0; 3], [0.0; 3]);
+        let pi = place(&mut p, pinion, "Pinion", [0.0, 0.0, 10.0], [0.0; 3]);
+        let fa = place(&mut p, finger, "Finger A", [0.0, 10.0, 5.0], [0.0; 3]);
+        let fb = place(&mut p, finger, "Finger B", [0.0, -10.0, 5.0], [0.0; 3]);
+        run(&mut p, "assembly.joint.create", json!({ "type": "hinge", "name": "Gripper", "a": { "instance": b, "connector": "Pinion" }, "b": { "instance": pi, "connector": "Bore" }, "value": 30, "limits": [0, 85] })).unwrap();
+        let value = |v: &str| if linked_by == "formula" { json!(v) } else { json!(0) };
+        run(&mut p, "assembly.joint.create", json!({ "type": "slider", "name": "Finger A", "aligned": true, "a": { "instance": b, "connector": "A" }, "b": { "instance": fa, "connector": "Slide" }, "value": value("=Gripper.angle * 0.174533"), "limits": [0, 15] })).unwrap();
+        run(&mut p, "assembly.joint.create", json!({ "type": "slider", "name": "Finger B", "aligned": true, "a": { "instance": b, "connector": "B" }, "b": { "instance": fb, "connector": "Slide" }, "value": value("=Gripper.angle * 0.174533"), "limits": [0, 15] })).unwrap();
+        if linked_by == "coupling" {
+            for f in ["Finger A", "Finger B"] {
+                run(&mut p, "assembly.coupling.create", json!({ "type": "rack_pinion", "driver": "Gripper", "follower": f, "radius": 10 })).unwrap();
+            }
+        }
+        let d = de_assembly::dof::report(p.world(), None).unwrap();
+        let g = &d.groups[0];
+        assert_eq!(g.free, 0, "{linked_by}: {}", g.summary);
+        if linked_by == "none" {
+            assert_eq!(g.mobility, 3, "unlinked, each finger is one more way to move: {}", g.summary);
+            assert!(g.following.is_empty());
+            continue;
+        }
+        assert_eq!(g.mobility, 1, "{linked_by}: the fingers follow the pinion: {}", g.summary);
+        let names: Vec<&str> = g.following.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["Finger A", "Finger B"], "{linked_by}");
+        assert!(g.following.iter().all(|f| f.drivers == ["Gripper"]), "{linked_by}: {:?}", g.following);
+        assert!(g.summary.contains("Finger A with Gripper"), "{}", g.summary);
+        for f in [fa, fb] {
+            assert_eq!(g.instances.iter().find(|i| i.id == f).unwrap().mobility, 1, "{linked_by}: a finger moves one way, with the pinion");
+        }
+        // At the closed end (0 mm, its lower limit) a finger still follows: the slope is taken one-sided.
+        let gripper = de_assembly::joints::joints_in(p.world(), None).into_iter().map(|(j, _)| j).find(|j| de_assembly::joints::joint_name(p.world(), *j) == "Gripper").unwrap();
+        run(&mut p, "parameters.set", json!({ "target": gripper, "values": { "angle": 0 } })).unwrap();
+        let d = de_assembly::dof::report(p.world(), None).unwrap();
+        assert_eq!(d.mobility, 1, "{linked_by} closed: {}", d.summary);
+    }
+}
+
+/// A part whose shape follows a joint (a spring whose stretched length is a
+/// formula of an arm's angle) is evaluated again at each step of a sweep, so
+/// its clashes are found where they happen, not only where it stands now.
+#[test]
+fn a_part_that_stretches_with_a_joint_is_swept_as_it_stretches() {
+    let mut p = project();
+    // The arm's shape shares its name with the joint (as the robot arm's printed
+    // Wrist and its Wrist joint do): `Swing.angle` still means the joint's angle.
+    let arm = component(&mut p, "Swing", r#"connector("Pivot", { at: [0, 0, 0], axis: [0, 0, -1] }); return box(40, 4, 4).translate(0, -2, 0);"#);
+    let a = place(&mut p, arm, "Arm", [0.0; 3], [0.0; 3]);
+    run(&mut p, "assembly.joint.create", json!({ "type": "hinge", "name": "Swing", "a": { "at": [0, 0, 0] }, "b": { "instance": a, "connector": "Pivot" }, "value": 0, "limits": [0, 90] })).unwrap();
+    // A rod standing apart from the arm, 10 mm long plus a millimetre per degree of the swing.
+    let rod = id(&run(&mut p, "shape.create", json!({ "name": "Rod", "source": "return box(p.len, 2, 2);", "params": [{ "key": "len", "label": "Length", "value": 10, "unit": "mm" }], "definition": true })).unwrap());
+    run(&mut p, "shape.link_param", json!({ "target": rod, "key": "len", "expr": "=Swing.angle + 10" })).unwrap();
+    place(&mut p, rod, "Rod", [0.0, 100.0, 0.0], [0.0; 3]);
+    let wall = component(&mut p, "Wall", "return box(5, 5, 5);");
+    place(&mut p, wall, "Wall", [50.0, 99.0, -1.0], [0.0; 3]);
+    let joint = de_assembly::joints::joints_in(p.world(), None)[0].0;
+    let sw = de_assembly::motion::sweep(p.world(), joint, None, None, None, 18, &HashMap::new(), true).unwrap();
+    let clash = sw.clashes.iter().find(|c| [c.a.as_str(), c.b.as_str()].contains(&"Rod") && [c.a.as_str(), c.b.as_str()].contains(&"Wall")).unwrap_or_else(|| panic!("the rod grows into the wall: {:?} {:?}", sw.pairs, sw.notes));
+    let r = clash.range.unwrap();
+    assert!((r[0] - 40.0).abs() < 1e-6 && (r[1] - 90.0).abs() < 1e-6, "it reaches the wall at 40° (10 + 40 = 50 mm): {r:?}");
+    assert!(sw.notes.iter().any(|n| n.contains("Rod follows the joints")), "{:?}", sw.notes);
+    // Sweeping a joint the rod does not follow leaves it as it is: not evaluated again, and no pair with the wall.
+    let other = place(&mut p, arm, "Other arm", [0.0, -100.0, 0.0], [0.0; 3]);
+    let j2 = id(&run(&mut p, "assembly.joint.create", json!({ "type": "hinge", "name": "Other", "a": { "at": [0, -100, 0] }, "b": { "instance": other, "connector": "Pivot" }, "value": 0, "limits": [0, 90] })).unwrap());
+    let sw = de_assembly::motion::sweep(p.world(), j2, None, None, None, 9, &HashMap::new(), true).unwrap();
+    assert!(!sw.notes.iter().any(|n| n.contains("Rod")), "{:?}", sw.notes);
+    assert!(!sw.pairs.iter().any(|c| [c.a.as_str(), c.b.as_str()].contains(&"Rod") && [c.a.as_str(), c.b.as_str()].contains(&"Wall")), "{:?}", sw.pairs);
+}
+
 #[test]
 fn gears_and_racks_turn_together_either_way_round() {
     let mut p = project();

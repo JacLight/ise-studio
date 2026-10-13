@@ -160,7 +160,34 @@
   "DS3218": {
    "massG": 60,
    "partNumber": "DS3218",
+   "metrics": {
+    "Spline teeth": 25,
+    "Hole spacing": 49.5,
+    "Hole spacing across": 10,
+    "Tab underside": 24.5,
+    "Case width": 20
+   },
    "connector_at": {
+    "Hole 1": [
+     -14.75,
+     -5,
+     27.7
+    ],
+    "Hole 2": [
+     -14.75,
+     5,
+     27.7
+    ],
+    "Hole 3": [
+     34.75,
+     -5,
+     27.7
+    ],
+    "Hole 4": [
+     34.75,
+     5,
+     27.7
+    ],
     "Output shaft": [
      0,
      0,

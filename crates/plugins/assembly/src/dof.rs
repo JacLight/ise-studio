@@ -11,7 +11,10 @@
 //!   part held only by a face-to-face mate still slides and turns on it.
 //!   Zero for a fully defined assembly.
 //! - `mobility`: freedoms with the joints' values let go — how the mechanism
-//!   can move (6 for a six-axis arm, 1 for a four-bar).
+//!   can move (6 for a six-axis arm, 1 for a four-bar). A joint whose value
+//!   follows others (a coupling's follower, or a formula reading other
+//!   joints' values: two gripper fingers geared to one pinion) is not let
+//!   go on its own: it moves with what drives it, so it adds no freedom.
 //!
 //! Redundant constraints are those the others already imply (a part bolted
 //! at two places, a four-bar's hinges, which ideal parts allow but real parts
@@ -23,6 +26,7 @@ use crate::joints::{self, Link};
 use crate::transform::{self as tf, Transform, V3};
 use crate::{Instance, placement};
 use de_core::{IdIndex, StableId, bevy_ecs::world::World};
+use de_shape::params::ParameterSet;
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -75,7 +79,18 @@ pub struct GroupDof {
     pub redundant_joints: Vec<Redundant>,
     /// When the joints cannot all hold: those whose removal lets the rest hold.
     pub conflicting: Vec<JointRef>,
+    /// Joints whose values follow other joints (couplings, formulas): they move with them, adding no freedom.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub following: Vec<Following>,
     pub summary: String,
+}
+
+/// A joint whose value follows others', and the joints it follows.
+#[derive(Clone, Debug, Serialize)]
+pub struct Following {
+    pub id: StableId,
+    pub name: String,
+    pub drivers: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -145,25 +160,32 @@ pub fn null_space(rows: &[Vec<f64>], n: usize, tol: f64) -> Vec<Vec<f64>> {
         .collect()
 }
 
+/// The poses with moving instance `k / 6` nudged by `h` along freedom `k % 6`
+/// (x, y, z in mm; turns about x, y, z in radians).
+fn nudge(p: &HashMap<StableId, Transform>, moving: &[StableId], k: usize, h: f64) -> HashMap<StableId, Transform> {
+    let mut q = p.clone();
+    let (i, c) = (k / 6, k % 6);
+    let t = p[&moving[i]];
+    let moved = if c < 3 {
+        let mut d = [0.0; 3];
+        d[c] = h;
+        Transform { at: tf::add(t.at, d), rot: t.rot }
+    } else {
+        let mut w = [0.0; 3];
+        w[c - 3] = 1.0;
+        Transform { at: t.at, rot: tf::matmul(&tf::rotation_about(w, h), &t.rot) }
+    };
+    q.insert(moving[i], moved);
+    q
+}
+
+fn step_size(k: usize, size: f64) -> f64 {
+    if k % 6 < 3 { 1e-6 * size } else { 1e-6 }
+}
+
 /// The constraint rows of each link (and the moving instances' columns) at `poses`.
 fn jacobian(links: &[Link], moving: &[StableId], poses: &HashMap<StableId, Transform>, size: f64, release: &dyn Fn(&Link) -> bool) -> Vec<Vec<Vec<f64>>> {
     let n = 6 * moving.len();
-    let step = |p: &HashMap<StableId, Transform>, k: usize, h: f64| {
-        let mut q = p.clone();
-        let (i, c) = (k / 6, k % 6);
-        let t = p[&moving[i]];
-        let moved = if c < 3 {
-            let mut d = [0.0; 3];
-            d[c] = h;
-            Transform { at: tf::add(t.at, d), rot: t.rot }
-        } else {
-            let mut w = [0.0; 3];
-            w[c - 3] = 1.0;
-            Transform { at: t.at, rot: tf::matmul(&tf::rotation_about(w, h), &t.rot) }
-        };
-        q.insert(moving[i], moved);
-        q
-    };
     links
         .iter()
         .map(|l| {
@@ -172,13 +194,121 @@ fn jacobian(links: &[Link], moving: &[StableId], poses: &HashMap<StableId, Trans
             l.residuals_with(poses, size, release, &mut base);
             let mut cols = vec![];
             for k in 0..n {
-                let h = if k % 6 < 3 { 1e-6 * size } else { 1e-6 };
+                let h = step_size(k, size);
                 let (mut a, mut b) = (vec![], vec![]);
-                l.residuals_with(&step(poses, k, h), size, release, &mut a);
-                l.residuals_with(&step(poses, k, -h), size, release, &mut b);
+                l.residuals_with(&nudge(poses, moving, k, h), size, release, &mut a);
+                l.residuals_with(&nudge(poses, moving, k, -h), size, release, &mut b);
                 cols.push(a.iter().zip(&b).map(|(x, y)| (x - y) / (2.0 * h)).collect::<Vec<f64>>());
             }
             (0..base.len()).map(|r| cols.iter().map(|c| c.get(r).copied().unwrap_or(0.0)).collect()).collect()
+        })
+        .collect()
+}
+
+/// One joint value that others determine: moving its drivers by dv moves it by Σ c·dv.
+struct Follow {
+    link: usize,
+    index: usize,
+    /// (link, value index, follower units per driver unit), for drivers in this group.
+    drivers: Vec<(usize, usize, f64)>,
+    /// Every joint it follows, by name (in this group or not).
+    names: Vec<String>,
+}
+
+/// The joint values in `links` that follow other joints: couplings' followers,
+/// and values whose formulas read other joints' values (the slope worked out
+/// from the formula at the drivers' values now). A value following joints
+/// outside the group has no drivers here: it is held.
+fn follows(world: &World, scope: Option<StableId>, links: &[Link]) -> Vec<Follow> {
+    use crate::couplings::{self, CouplingKind};
+    let at = |id: StableId| links.iter().position(|l| l.id == id);
+    let list = couplings::couplings_in(world, scope);
+    let mut out: Vec<Follow> = vec![];
+    for (li, l) in links.iter().enumerate() {
+        if l.free || l.kind.mate().is_some() {
+            continue;
+        }
+        for (index, (key, _, _)) in l.kind.values().iter().enumerate() {
+            let mut f = Follow { link: li, index, drivers: vec![], names: vec![] };
+            // A coupling sets the value whatever its own formula says.
+            for (_, c) in list.iter().filter(|(_, c)| c.follower == l.id) {
+                if couplings::key_index(world, c.follower, c.follower_key.as_deref()).map(|k| k.0) != Ok(index) {
+                    continue;
+                }
+                f.names.push(joints::joint_name(world, c.driver));
+                let (Some(d), Ok((di, _))) = (at(c.driver), couplings::key_index(world, c.driver, c.driver_key.as_deref())) else { continue };
+                let slope = if c.kind == CouplingKind::Cam {
+                    let v = links[d].values.get(di).copied().unwrap_or(0.0);
+                    (couplings::cam_at(&c.profile, v + 0.01) - couplings::cam_at(&c.profile, v - 0.01)) / 0.02
+                } else {
+                    c.ratio
+                };
+                f.drivers.push((d, di, slope));
+            }
+            if f.names.is_empty()
+                && let Some(set) = entity(world, l.id).and_then(|e| world.get::<ParameterSet>(e))
+                && let Some(p) = set.params.iter().find(|p| p.key == *key && p.expr.is_some())
+            {
+                for r in de_shape::params::references(std::slice::from_ref(p)) {
+                    let Some(rj) = entity(world, r).and_then(|e| world.get::<joints::Joint>(e)) else { continue };
+                    if r == l.id {
+                        continue;
+                    }
+                    f.names.push(joints::joint_name(world, r));
+                    let Some(d) = at(r) else { continue };
+                    for (di, (dk, _, _)) in rj.kind.values().iter().enumerate() {
+                        let base = links[d].values.get(di).copied().unwrap_or(0.0);
+                        let value = |dv: f64| {
+                            let given = |id: StableId, k: &str| (id == r && k == *dk).then_some(base + dv);
+                            de_shape::params::resolve_with(world, &set.params, &given).ok().and_then(|m| m.get(*key).copied())
+                        };
+                        let h = 1e-3;
+                        // One-sided at a limit (a finger closed at 0 mm cannot go below).
+                        let slope = match (value(h), value(-h), value(0.0)) {
+                            (Some(a), Some(b), _) => (a - b) / (2.0 * h),
+                            (Some(a), None, Some(c)) => (a - c) / h,
+                            (None, Some(b), Some(c)) => (c - b) / h,
+                            _ => 0.0,
+                        };
+                        if slope.abs() > 1e-12 {
+                            f.drivers.push((d, di, slope));
+                        }
+                    }
+                }
+            }
+            if !f.names.is_empty() {
+                f.names.dedup();
+                out.push(f);
+            }
+        }
+    }
+    out
+}
+
+/// Rows saying each following value moves only with its drivers:
+/// d(value) − Σ c·d(driver) = 0, turns scaled by `size` like the joints' own rows.
+fn follow_rows(links: &[Link], follows: &[Follow], moving: &[StableId], poses: &HashMap<StableId, Transform>, size: f64) -> Vec<Vec<f64>> {
+    let n = 6 * moving.len();
+    let scale = |l: &Link, i: usize| if l.kind.values().get(i).is_some_and(|v| v.2 == "deg") { size.to_radians() } else { 1.0 };
+    let g = |f: &Follow, p: &HashMap<StableId, Transform>| -> Option<f64> {
+        let l = &links[f.link];
+        let s = scale(l, f.index);
+        let mut v = l.measure(p)?.get(f.index)? * s;
+        for &(d, di, c) in &f.drivers {
+            v -= c * links[d].measure(p)?.get(di)? * s;
+        }
+        Some(v)
+    };
+    follows
+        .iter()
+        .filter_map(|f| {
+            g(f, poses)?;
+            (0..n)
+                .map(|k| {
+                    let h = step_size(k, size);
+                    Some((g(f, &nudge(poses, moving, k, h))? - g(f, &nudge(poses, moving, k, -h))?) / (2.0 * h))
+                })
+                .collect::<Option<Vec<f64>>>()
         })
         .collect()
 }
@@ -273,7 +403,17 @@ pub fn report(world: &World, scope: Option<StableId>) -> Result<DofReport, Strin
         let flat = |blocks: &[Vec<Vec<f64>>]| blocks.iter().flatten().cloned().collect::<Vec<Vec<f64>>>();
         let scale = flat(&rel_rows).iter().flatten().fold(1.0f64, |m, v| m.max(v.abs()));
         let tol = 1e-6 * scale;
-        let (held_all, rel_all) = (flat(&held_rows), flat(&rel_rows));
+        // Values that follow other joints move only with them.
+        let follow = follows(world, scope, &links);
+        let (held_all, mut rel_all) = (flat(&held_rows), flat(&rel_rows));
+        rel_all.extend(follow_rows(&links, &follow, &moving, &poses, size));
+        let mut following: Vec<Following> = vec![];
+        for f in &follow {
+            let l = &links[f.link];
+            if !following.iter().any(|x| x.id == l.id) {
+                following.push(Following { id: l.id, name: l.name.clone(), drivers: f.names.clone() });
+            }
+        }
         let null_held = null_space(&held_all, n, tol);
         let null_rel = null_space(&rel_all, n, tol);
         let rank_red = rank(&flat(&red_rows), tol);
@@ -318,6 +458,10 @@ pub fn report(world: &World, scope: Option<StableId>) -> Result<DofReport, Strin
         } else {
             let mut s = if free == 0 { "fully defined".to_string() } else { format!("{free} freedom{} left undetermined", if free == 1 { "" } else { "s" }) };
             s.push_str(&format!("; moves with {mobility} degree{} of freedom", if mobility == 1 { "" } else { "s" }));
+            if !following.is_empty() {
+                let each: Vec<String> = following.iter().map(|f| format!("{} with {}", f.name, f.drivers.join(", "))).collect();
+                s.push_str(&format!(" ({} follow{} other joints)", each.join("; "), if following.len() == 1 { "s" } else { "" }));
+            }
             if redundant > 0 {
                 s.push_str(&format!("; {redundant} redundant condition{} ({})", if redundant == 1 { "" } else { "s" }, redundant_joints.iter().map(|j| j.name.as_str()).collect::<Vec<_>>().join(", ")));
             }
@@ -335,6 +479,7 @@ pub fn report(world: &World, scope: Option<StableId>) -> Result<DofReport, Strin
             redundant,
             redundant_joints,
             conflicting,
+            following,
             summary,
         });
     }

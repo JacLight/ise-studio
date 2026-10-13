@@ -46,6 +46,11 @@ pub struct Rates {
     pub currency: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub processes: BTreeMap<String, ProcessRate>,
+    /// Exchange rates: what one unit of another currency is worth in this
+    /// one (`EUR: 1.08` when costs are in USD). Prices listed or quoted in a
+    /// currency given here are converted; others are flagged, not converted.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub exchange: BTreeMap<String, f64>,
 }
 
 impl Persist for Rates {
@@ -55,6 +60,14 @@ impl Persist for Rates {
 impl Rates {
     pub fn currency(&self) -> String {
         self.currency.clone().unwrap_or_else(|| "USD".into())
+    }
+
+    /// What one unit of `currency` is worth in the project's currency, if known.
+    pub fn to_own(&self, currency: &str) -> Option<f64> {
+        if currency.eq_ignore_ascii_case(&self.currency()) {
+            return Some(1.0);
+        }
+        self.exchange.get(&currency.to_ascii_uppercase()).copied()
     }
 
     /// The rate for a process: the project's, else the typical default.
@@ -122,6 +135,10 @@ pub struct SetRates {
     pub processes: BTreeMap<String, ProcessRate>,
     #[serde(default)]
     pub reset: Vec<String>,
+    /// Exchange rates to merge in: what one unit of each currency is worth
+    /// in the project's (`{ "EUR": 1.08 }`); 0 removes one.
+    #[serde(default)]
+    pub exchange: BTreeMap<String, f64>,
 }
 
 impl Command for SetRates {
@@ -145,6 +162,17 @@ impl Command for SetRates {
         }
         for name in self.reset {
             rates.processes.remove(&name);
+        }
+        for (code, rate) in self.exchange {
+            let code = crate::check_currency(&code)?;
+            if !rate.is_finite() || rate < 0.0 {
+                return Err(bad(ErrorCode::InvalidParameters, format!("the exchange rate for {code} must be a positive number (0 removes it)")));
+            }
+            if rate == 0.0 {
+                rates.exchange.remove(&code);
+            } else {
+                rates.exchange.insert(code, rate);
+            }
         }
         tx.set(id, rates)?;
         Ok(json!({ "id": id }))

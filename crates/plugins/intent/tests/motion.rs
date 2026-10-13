@@ -52,3 +52,41 @@ fn an_arm_swinging_into_a_post_fails_until_its_limits_keep_it_clear() {
     run(&mut p, "assembly.instance.update", json!({ "target": post_inst, "at": [30, 20, 0] })).unwrap();
     assert!(!p.get::<RequirementResult>(r).unwrap().passed);
 }
+
+/// A requirement on a parameter: a torque margin worked out by formula from a
+/// joint's angle is re-checked as the joint moves.
+#[test]
+fn a_margin_worked_out_from_a_joint_is_a_live_requirement() {
+    let mut p = project();
+    let arm = id(&run(&mut p, "shape.create", json!({ "name": "Arm", "definition": true, "params": [],
+        "source": r#"connector("Pivot", { at: [0, 0, 0], axis: [0, 0, -1] }); return box(85, 10, 10).translate([-5, -5, 0]);"# })).unwrap());
+    let a = id(&run(&mut p, "assembly.instance.create", json!({ "of": arm, "name": "Arm", "at": [0, 0, 0] })).unwrap());
+    let j = id(&run(&mut p, "assembly.joint.create", json!({ "type": "hinge", "name": "Swing", "a": "ground", "b": { "instance": a, "connector": "Pivot" }, "value": 0, "limits": [0, 180] })).unwrap());
+    let set = id(&run(&mut p, "parameters.create", json!({ "name": "Torque check", "params": [
+        { "key": "stall", "label": "Stall torque", "value": 2.0, "unit": "" },
+        { "key": "need", "label": "Holding torque", "value": 0.5, "unit": "", "expr": "=0.5 + Swing.angle / 100" },
+        { "key": "margin", "label": "Stall ÷ need", "value": 4.0, "unit": "", "expr": "=stall / need" }
+    ] })).unwrap());
+    let r = id(&run(&mut p, "intent.requirement.create", json!({ "name": "Shoulder margin", "rule": { "kind": "parameter_range", "target": set, "key": "margin", "min": 2 } })).unwrap());
+    let result = p.get::<RequirementResult>(r).unwrap();
+    assert!(result.passed, "{}", result.summary);
+    assert_eq!(result.summary, "Torque check › Stall ÷ need is 4, at least 2");
+    // The joint moves: the margin follows its formula and the requirement fails.
+    run(&mut p, "parameters.set", json!({ "target": j, "values": { "angle": 100 } })).unwrap();
+    let result = p.get::<RequirementResult>(r).unwrap();
+    assert!(!result.passed, "{}", result.summary);
+    assert!((result.measured - 2.0 / 1.5).abs() < 1e-9 && result.limit == 2.0 && !result.upper_bound, "{result:?}");
+    // A key the set does not have, or no bound, is refused.
+    assert!(run(&mut p, "intent.requirement.create", json!({ "rule": { "kind": "parameter_range", "target": set, "key": "torque", "min": 1 } })).is_err());
+    assert!(run(&mut p, "intent.requirement.create", json!({ "rule": { "kind": "parameter_range", "target": set, "key": "margin" } })).is_err());
+
+    // A spreadsheet's cell, by alias or address: the spring's longest stretch against its catalogue maximum.
+    let sheet = id(&run(&mut p, "sheet.create", json!({ "name": "Spring", "cells": { "A1": "Longest (mm)", "B1": "=60 + Swing.angle / 5", "B2": "101.25" }, "aliases": { "B1": "longest" } })).unwrap());
+    let r = id(&run(&mut p, "intent.requirement.create", json!({ "rule": { "kind": "parameter_range", "target": sheet, "key": "longest", "max": 81 } })).unwrap());
+    let result = p.get::<RequirementResult>(r).unwrap();
+    assert!(result.passed && result.summary == "Spring › longest (B1) is 80, at most 81", "{}", result.summary);
+    run(&mut p, "parameters.set", json!({ "target": j, "values": { "angle": 110 } })).unwrap();
+    let result = p.get::<RequirementResult>(r).unwrap();
+    assert!(!result.passed && (result.measured - 82.0).abs() < 1e-9 && result.upper_bound, "{result:?}");
+    assert!(run(&mut p, "intent.requirement.create", json!({ "rule": { "kind": "parameter_range", "target": sheet, "key": "B9", "max": 1 } })).is_err(), "an empty cell");
+}
