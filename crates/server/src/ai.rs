@@ -321,7 +321,7 @@ impl Ai {
             .args([
                 "Bash(./forma:*)".to_string(),
                 format!("Read({folder}/**)"),
-                format!("Write({folder}/**)"),
+                // Edit rules cover every file-editing tool (Write too).
                 format!("Edit({folder}/**)"),
                 format!("Read({}/**)", abs(&repo.join("examples"))),
                 format!("Read({}/**)", abs(&repo.join("library/stock"))),
