@@ -31,6 +31,7 @@ import { AssemblyJoints, type JointView, jointName, jointOf } from "./Joints";
 import { IDENTITY, worldOf } from "./model";
 import { FitCheck } from "./FitCheck";
 import { AssemblyStudio, PatternSection, isMate } from "./AssemblyTools";
+import { LinkBadge, type LinkStatus } from "./InsertFromProject";
 
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
 
@@ -93,6 +94,8 @@ export function ComponentTree(props: {
   onIsolate: (id: string | null) => void;
   /** The pointer moved onto a row (its item, or "id#piece"), or off the tree. */
   onHover?: (key: string | null) => void;
+  /** Items linked from another project, with their link's state (badged in the tree). */
+  links?: ReadonlyMap<string, LinkStatus>;
 }) {
   const top = useMemo(() => [...props.entities.values()].filter(isPart), [props.entities]);
   // Open rows are remembered across refreshes.
@@ -204,7 +207,7 @@ export function ComponentTree(props: {
         );
       });
 
-  const row = (e: EntityView, depth: number): React.ReactNode => {
+  const row = (e: EntityView, depth: number, inLink: string | null = null): React.ReactNode => {
     if (!matches(e)) return null;
     const inst = instance(e);
     const kids = kidsOf(e);
@@ -214,6 +217,8 @@ export function ComponentTree(props: {
     const expanded = open.has(e.id) || openPath.has(e.id) || (pieces.length > 1 && props.selected === e.id) || (!!q && expandable);
     const hidden = props.hidden.has(e.id);
     const shared = inst ? usesOf(inst.of, props.entities) : 0;
+    // Linked itself, or an instance of a linked definition.
+    const linked = props.links?.get(e.id) ?? (inst ? props.links?.get(inst.of) : undefined);
     return (
       <div key={e.id}>
         <div className={`tree-row ${props.selected === e.id ? "active" : ""} ${hidden ? "is-hidden" : ""} ${q && hit(partName(e)) ? "is-match" : ""}`} style={{ paddingLeft: 6 + depth * 14 }} onPointerEnter={() => props.onHover?.(e.id)}>
@@ -222,11 +227,12 @@ export function ComponentTree(props: {
             <Icon name={expandable ? "layers" : "cube"} />
             <span>{partName(e)}</span>
             {inst && shared > 1 && <small title={`${definitionName(inst.of, props.entities)}, used ${shared} times`}>×{shared}</small>}
+            {linked && linked.id !== inLink && <LinkBadge link={linked} />}
             <StatusChip status={inst?.properties?.status} />
           </button>
           {actions(e.id, partName(e))}
         </div>
-        {expanded && kids.map((k) => row(k, depth + 1))}
+        {expanded && kids.map((k) => row(k, depth + 1, linked?.id ?? inLink))}
         {expanded && pieces.length > 1 && pieceRows(e, pieceTree(pieces.map((p) => p.name)), depth + 1, hidden)}
       </div>
     );
@@ -247,7 +253,7 @@ export function ComponentTree(props: {
 }
 
 /** The Components panel: search over the tree, then the tree; adding parts at the foot. */
-export function ComponentsBody(props: { query: string; onQuery: (q: string) => void; empty: boolean; onAdd: () => void; onImport?: (file: File) => void; children: React.ReactNode }) {
+export function ComponentsBody(props: { query: string; onQuery: (q: string) => void; empty: boolean; onAdd: () => void; onImport?: (file: File) => void; onInsertFrom?: () => void; children: React.ReactNode }) {
   return (
     <div className="components-panel">
       <label className="component-search">
@@ -269,6 +275,11 @@ export function ComponentsBody(props: { query: string; onQuery: (q: string) => v
               }}
             />
           </label>
+        )}
+        {props.onInsertFrom && (
+          <button type="button" className="secondary add-part" onClick={props.onInsertFrom} title="Parts, assemblies, boards or a whole project from another project: linked to follow it, or copied">
+            <Icon name="link" /> Insert from project
+          </button>
         )}
         <button type="button" className="secondary add-part" onClick={props.onAdd} title="Add a box part to start shaping">
           <Icon name="plus" /> Add box part

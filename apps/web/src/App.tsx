@@ -7,6 +7,7 @@ import { type Proposal, interpret } from "./assistant";
 import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
 import { StorageDialog } from "./Dialog";
 import { StockBrowser } from "./StockBrowser";
+import { type InsertRequest, type InsertResult, InsertFromProjectDialog, LinkSection, insertFromProject, insertedNote, useLinks } from "./InsertFromProject";
 import { EDA_DROP, PcbWorkspace, importEdaFile } from "./Pcb";
 import { Board3DBar } from "./Board3DBar";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
@@ -83,6 +84,9 @@ export function App({ engine }: { engine: Engine }) {
   const [prefs, setPrefs] = useState<UiPrefs>(loadPrefs);
   const [selected, setSelected] = usePersisted<string | null>("selected", null);
   const [stockOpen, setStockOpen] = useState(false);
+  const [insertOpen, setInsertOpen] = useState(false);
+  // Items picked to insert from another project, waiting for a click in the view.
+  const [placing, setPlacing] = useState<{ req: InsertRequest; names: string[] } | null>(null);
   const [pcbOpen, setPcbOpen] = usePersisted("pcbOpen", false);
   const [scansOpen, setScansOpen] = usePersisted("scansOpen", false);
   const [scanLayer, setScanLayer] = useState<ScanLayer | null>(null);
@@ -368,6 +372,39 @@ export function App({ engine }: { engine: Engine }) {
     },
     [engine, notify],
   );
+
+  // Items from other projects: this project's links, inserting, placing by a click.
+  const links = useLinks(engine, state.entities);
+  const refreshLinks = links.refresh;
+  const inserted = useCallback(
+    (r: InsertResult, req: InsertRequest) => {
+      setInsertOpen(false);
+      setPlacing(null);
+      notify(insertedNote(r, req));
+      refreshLinks();
+      if (r.show[0]) selectWhenReady(r.show[0], !req.whole);
+    },
+    [notify, refreshLinks, selectWhenReady],
+  );
+  const placeAt = useCallback(
+    async (at: [number, number, number]) => {
+      if (!placing) return;
+      const req = { ...placing.req, at };
+      setPlacing(null);
+      try {
+        inserted(await insertFromProject(req, state.userId), req);
+      } catch (e) {
+        notify((e as Error).message);
+      }
+    },
+    [placing, inserted, notify, state.userId],
+  );
+  useEffect(() => {
+    if (!placing) return;
+    const key = (e: KeyboardEvent) => e.key === "Escape" && (e.stopPropagation(), setPlacing(null));
+    window.addEventListener("keydown", key, true);
+    return () => window.removeEventListener("keydown", key, true);
+  }, [placing]);
 
   // A new project opened from the projects page brings its title (?title=…): kept in the project once it is up.
   useEffect(() => {
@@ -1527,6 +1564,7 @@ export function App({ engine }: { engine: Engine }) {
           }}
           onSelect={select}
           onSelectMany={selectMany}
+          pickPoint={placing ? placeAt : null}
           teammates={teammates}
           onHover3D={onHover3D}
           comments={commentsView}
@@ -1786,6 +1824,13 @@ export function App({ engine }: { engine: Engine }) {
           {panel === "project" && (
             <>
               <ProjectFileRows onPrefs={() => setPrefsOpen(true)} onConsole={() => setConsoleOpen(true)} onData={() => setDataOpen(true)} notify={notify} />
+              <button title="Parts, assemblies, boards or a whole project from another project: linked to follow it, or copied" type="button" className="list-row" onClick={() => setInsertOpen(true)}>
+                <Icon name="link" />
+                <span>
+                  Insert from project…
+                  {links.links.length > 0 && <small className="row-count">{links.links.length} {links.links.length === 1 ? "link" : "links"}{links.links.some((l) => l.state === "update_available") ? " · update available" : ""}</small>}
+                </span>
+              </button>
               <ProjectBody
                 onStorage={() => setDialog("storage")}
                 onHistory={() => setPanel("history")}
@@ -1813,6 +1858,7 @@ export function App({ engine }: { engine: Engine }) {
               empty={parts.length === 0}
               onAdd={addPart}
               onImport={importFile}
+              onInsertFrom={() => setInsertOpen(true)}
             >
               {(() => {
                 const building = stackingSubject(state.entities);
@@ -1840,6 +1886,7 @@ export function App({ engine }: { engine: Engine }) {
                       })
                     }
                     onIsolate={setIsolated}
+                    links={links.byItem}
                   />
                 );
                 if (!building) return tree;
@@ -1922,6 +1969,9 @@ export function App({ engine }: { engine: Engine }) {
                 onDraft={() => draftTool.setOpen(true)}
               />
             </>
+          )}
+          {panel === "properties" && selectedPart && (links.byItem.get(selectedPart.id) ?? links.byItem.get(instance(selectedPart)?.of ?? "")) && (
+            <LinkSection link={(links.byItem.get(selectedPart.id) ?? links.byItem.get(instance(selectedPart)!.of))!} user={state.userId} notify={notify} onChanged={links.refresh} />
           )}
           {panel === "properties" && selectedPart && instance(selectedPart) && (
             <>
@@ -2102,6 +2152,29 @@ export function App({ engine }: { engine: Engine }) {
           }}
           onClose={() => setStockOpen(false)}
         />
+      )}
+      {insertOpen && (
+        <InsertFromProjectDialog
+          user={state.userId}
+          notify={notify}
+          onInserted={inserted}
+          onPlaceInView={(req, names) => {
+            setInsertOpen(false);
+            setPlacing({ req, names });
+          }}
+          onClose={() => setInsertOpen(false)}
+        />
+      )}
+      {placing && (
+        <div className="place-hint" role="status">
+          <Icon name="cursor" />
+          <span>
+            Click where {placing.names.join(", ")} {placing.names.length === 1 ? "goes" : "go"}: on a part, or on the ground
+          </span>
+          <button type="button" title="Insert nothing (Esc)" onClick={() => setPlacing(null)}>
+            Cancel
+          </button>
+        </div>
       )}
       {home && (
         <ProjectsHome

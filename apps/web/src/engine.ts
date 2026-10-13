@@ -511,6 +511,16 @@ export class Engine {
     };
   }
 
+  private linkListeners = new Set<(event: { updated?: string; from?: string }) => void>();
+
+  /** A linked project changed, or a link took its changes by itself. Returns the unsubscribe. */
+  onLinks(listener: (event: { updated?: string; from?: string }) => void) {
+    this.linkListeners.add(listener);
+    return () => {
+      this.linkListeners.delete(listener);
+    };
+  }
+
   private jobListeners = new Set<(job: unknown) => void>();
 
   /** Photogrammetry jobs' progress as the engine reports it. Returns the unsubscribe. */
@@ -696,6 +706,9 @@ export class Engine {
         break;
       case "photogrammetry":
         for (const l of this.jobListeners) l(message.job);
+        break;
+      case "links":
+        for (const l of this.linkListeners) l(message);
         break;
       case "resync":
         this.send({ type: "snapshot" });
