@@ -106,6 +106,10 @@ pub(crate) async fn import(State(server): State<Arc<Server>>, Path(file): Path<S
     if lower.ends_with(".dwg") {
         return fail(StatusCode::UNSUPPORTED_MEDIA_TYPE, format!("{}.", formats::DWG));
     }
+    // IFC becomes a building: elements, levels, spaces, read by the BIM importer.
+    if lower.ends_with(".ifc") {
+        return crate::bim::import_ifc(&server, &query, &file, &body).await;
+    }
     // OpenSCAD and tables go to the data importer (a live shape, a sheet).
     if [".scad", ".csv", ".tsv", ".xlsx", ".xlsm"].iter().any(|x| lower.ends_with(x)) {
         return match server.project(query.get("project")) {

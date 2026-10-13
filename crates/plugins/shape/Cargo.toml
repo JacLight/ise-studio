@@ -9,6 +9,7 @@ publish.workspace = true
 de-core.workspace = true
 de-solid.workspace = true
 de-occt.workspace = true
+de-bim.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rayon.workspace = true

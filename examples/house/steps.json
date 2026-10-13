@@ -1,0 +1,30 @@
+[
+  { "operation": "solid.material.create", "parameters": { "name": "Concrete", "density": { "value": 2400, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Brick", "density": { "value": 1900, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Block", "density": { "value": 1400, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Timber", "density": { "value": 500, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Oak", "density": { "value": 750, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Aluminium", "density": { "value": 2700, "unit": "kg/m3" } } },
+  { "operation": "solid.material.create", "parameters": { "name": "Steel", "density": { "value": 7850, "unit": "kg/m3" } } },
+  {
+    "operation": "shape.create",
+    "parameters": {
+      "name": "Orchard House",
+      "description": "Two-storey house, 10 × 8 m on the wall centre lines: brick cavity-free 300 mm external walls, 100 mm block partitions, 250 mm ground slab with a B500B Ø10 mesh, 200 mm first floor slab open over an oak straight-flight stair, timber gable roof at 35°. Living room, hall and kitchen downstairs; two bedrooms, landing and bathroom upstairs.",
+      "source": { "$file": "house.js" },
+      "params": [
+        { "key": "width", "label": "Width (east–west)", "value": 10000, "unit": "mm", "min": 7000, "max": 16000 },
+        { "key": "depth", "label": "Depth (north–south)", "value": 8000, "unit": "mm", "min": 7000, "max": 12000 },
+        { "key": "wall", "label": "External wall", "value": 300, "unit": "mm", "min": 200, "max": 500 },
+        { "key": "partition", "label": "Partition", "value": 100, "unit": "mm", "min": 75, "max": 200 },
+        { "key": "groundHeight", "label": "Ground floor height", "value": 3000, "unit": "mm", "min": 2600, "max": 4000 },
+        { "key": "firstHeight", "label": "First floor height", "value": 2800, "unit": "mm", "min": 2500, "max": 3500 },
+        { "key": "floorSlab", "label": "Floor slab", "value": 200, "unit": "mm", "min": 150, "max": 300 },
+        { "key": "hallDepth", "label": "Hall depth", "value": 3500, "unit": "mm", "min": 2500, "max": 5000 },
+        { "key": "roofSlope", "label": "Roof slope", "value": 35, "unit": "deg", "min": 15, "max": 50 }
+      ],
+      "display_tolerance": 5,
+      "materials": { "Concrete": "$0.id", "Brick": "$1.id", "Block": "$2.id", "Timber": "$3.id", "Oak": "$4.id", "Aluminium": "$5.id", "Steel": "$6.id" }
+    }
+  }
+]

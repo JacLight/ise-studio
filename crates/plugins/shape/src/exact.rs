@@ -663,6 +663,13 @@ fn install<'js>(ctx: &Ctx<'js>, state: &Rc<RefCell<State>>) -> rquickjs::Result<
         )?;
     }
 
+    native.set(
+        "ifcData",
+        Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String| -> rquickjs::Result<String> {
+            crate::assets::ifc_json(&sha).map(|j| (*j).clone()).map_err(|e| throw(&ctx, format!("importIfc: {e}")))
+        })?,
+    )?;
+
     crate::runtime::install_pictures(ctx, &native)?;
 
     {
