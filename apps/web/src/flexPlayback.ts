@@ -121,6 +121,14 @@ export class FlexSamples {
       void this.load(f, ka, true);
       void this.load(f, kb, true);
       const get = (k: number) => this.meshes.get(this.sampleKey(f, f.values[k]));
+      // Held on a frame (scrubbed, paused, a frame exported): that frame itself, once evaluated.
+      const near = Math.round(x);
+      const exact = get(near);
+      if (exact) {
+        out.set(flexKey(f.path, f.shape), { a: exact.mesh, b: null, t: 0, parts: exact.parts });
+        continue;
+      }
+      if (this.queue.length < 3) void this.load(f, near, false);
       const [ma, mb] = [get(ka), get(kb)];
       const t = kb > ka ? (x - ka) / (kb - ka) : 0;
       if (ma && mb) out.set(flexKey(f.path, f.shape), { a: ma.mesh, b: mb.mesh, t, parts: ma.parts });

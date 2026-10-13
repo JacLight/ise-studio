@@ -757,6 +757,33 @@ function flexGeometry(mesh: MeshData, parts: { index_start: number; index_count:
   return g;
 }
 
+/** Whether two evaluated steps can be blended vertex by vertex, worked out once per pair. */
+const blendable = new WeakMap<THREE.BufferGeometry, WeakMap<THREE.BufferGeometry, boolean>>();
+function canBlend(a: THREE.BufferGeometry, b: THREE.BufferGeometry): boolean {
+  let known = blendable.get(a);
+  if (!known) blendable.set(a, (known = new WeakMap()));
+  const seen = known.get(b);
+  if (seen !== undefined) return seen;
+  const [pa, pb] = [a.getAttribute("position") as THREE.BufferAttribute, b.getAttribute("position") as THREE.BufferAttribute];
+  const [ia, ib] = [a.index?.array, b.index?.array];
+  let ok = pa.count === pb.count && !!ia && !!ib && ia.length === ib.length;
+  // The same triangles (a mesher can lay out the same count differently)…
+  for (let i = 0; ok && ia && ib && i < ia.length; i++) ok = ia[i] === ib[i];
+  // …and each vertex where its neighbours expect it: edges change smoothly, not wildly.
+  if (ok && ia) {
+    const [xa, xb] = [pa.array as Float32Array, pb.array as Float32Array];
+    const len = (x: Float32Array, i: number, j: number) => Math.hypot(x[3 * i] - x[3 * j], x[3 * i + 1] - x[3 * j + 1], x[3 * i + 2] - x[3 * j + 2]);
+    const step = Math.max(3, Math.floor(ia.length / 900) * 3);
+    for (let t = 0; ok && t + 2 < ia.length; t += step) {
+      const [i, j] = [ia[t], ia[t + 1]];
+      const [la, lb] = [len(xa, i, j), len(xb, i, j)];
+      ok = Math.abs(lb - la) <= 0.3 * Math.max(la, lb) + 0.05;
+    }
+  }
+  known.set(b, ok);
+  return ok;
+}
+
 /**
  * Shows a flexing shape on `mesh`: one evaluated step, or two blended
  * vertex by vertex when they have the same layout (a helix with the same
@@ -767,8 +794,7 @@ function flexMesh(mesh: THREE.Mesh, f: FlexMesh) {
   const a = flexGeometry(f.a, f.parts);
   const b = f.b ? flexGeometry(f.b, f.parts) : null;
   const pa = a.getAttribute("position") as THREE.BufferAttribute;
-  const pb = b?.getAttribute("position") as THREE.BufferAttribute | undefined;
-  const same = !!b && !!pb && pb.count === pa.count && (a.index?.count ?? 0) === (b.index?.count ?? 0);
+  const same = !!b && canBlend(a, b);
   if (!b || !same || f.t <= 1e-4 || f.t >= 1 - 1e-4) {
     mesh.geometry = !b || f.t < 0.5 ? a : b;
     return;
