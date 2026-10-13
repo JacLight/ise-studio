@@ -388,7 +388,39 @@ pub fn files(v: &BoardView, board: &Board) -> Vec<(String, Vec<u8>)> {
         }
         out.push((format!("{dir}attrlist"), b"".to_vec()));
     }
-    let _ = board;
+    // The stackup with its controlled impedances (ODB++ 8 matrix/stackup.xml), and the fab note.
+    let imp = crate::signal::impedance_table(board, v);
+    let mut x = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<StackupFile>\n  <Stackup name=\"Primary\" thickness=\"");
+    x.push_str(&f(v.stackup.total));
+    x.push_str("\" units=\"MM\">\n");
+    for r in &v.stackup.rows {
+        x.push_str(&format!("    <Layer name=\"{}\" type=\"{}\" thickness=\"{}\"{}{}/>\n", r.name, r.kind.to_ascii_uppercase(), f(r.thickness), r.material.as_ref().map(|m| format!(" material=\"{m}\"")).unwrap_or_default(), r.epsilon_r.filter(|_| r.kind == "core" || r.kind == "prepreg").map(|e| format!(" dielectricConstant=\"{e}\"")).unwrap_or_default()));
+    }
+    x.push_str("  </Stackup>\n");
+    if !imp.is_empty() {
+        x.push_str("  <Impedances>\n");
+        for r in &imp {
+            x.push_str(&format!(
+                "    <Impedance class=\"{}\" layer=\"{}\" type=\"{}\" value=\"{}\" tolerancePercent=\"{}\" width=\"{}\"{} structure=\"{}\" referenceLayers=\"{}\" nets=\"{}\"/>\n",
+                r.class,
+                layer_dir(&r.layer).replace('/', ""),
+                if r.kind == "differential" { "DIFFERENTIAL" } else { "SINGLE_ENDED" },
+                r.target,
+                r.tolerance,
+                f(r.width),
+                r.gap.map(|g| format!(" spacing=\"{}\"", f(g))).unwrap_or_default(),
+                r.model.to_ascii_uppercase(),
+                r.refs.join(","),
+                r.nets.join(",")
+            ));
+        }
+        x.push_str("  </Impedances>\n");
+    }
+    x.push_str("</StackupFile>\n");
+    out.push((format!("{root}matrix/stackup.xml"), x.into_bytes()));
+    if let Some(note) = crate::signal::fab_note(board, v) {
+        out.push((format!("{root}misc/impedance.txt"), note.into_bytes()));
+    }
     out
 }
 

@@ -329,7 +329,7 @@ impl Command for Import {
 // ---- Exports ----------------------------------------------------------------------
 
 /// The board's custom rules as a `.kicad_dru` file.
-fn dru(board: &Board) -> String {
+fn dru(board: &Board, view: &BoardView) -> String {
     let r = &board.rules;
     // The board minima first (later rules win in KiCad, as in Forma), then the custom rules.
     let mut out = String::from("(version 1)\n# Board minima (Forma board rules)\n");
@@ -337,10 +337,16 @@ fn dru(board: &Board) -> String {
         out.push_str(&format!("(rule \"{name}\"\n  (constraint {kind} (min {v}mm)))\n"));
     }
     out.push_str(&format!("(rule \"Micro via hole\"\n  (condition \"A.Via_Type == 'Micro'\")\n  (constraint hole_size (min {}mm)))\n", r.min_microvia_drill));
+    let routing = crate::signal::dru_rules(board, view);
+    if !routing.is_empty() {
+        out.push_str("# Routing constraints (net class impedance widths per layer, pairs, length groups)\n");
+        out.push_str(&routing);
+    }
     let t = board.drc_rules.trim();
     if !t.is_empty() {
         out.push_str("# Custom rules\n");
-        out.push_str(&t.lines().filter(|l| !(l.trim().starts_with("(version") && l.matches('(').count() == 1)).collect::<Vec<_>>().join("\n"));
+        // Forma's impedance constraint (Ω) is not KiCad's: kept as a comment.
+        out.push_str(&t.lines().filter(|l| !(l.trim().starts_with("(version") && l.matches('(').count() == 1)).map(|l| if l.contains("(constraint impedance") { format!("# Forma only: {}", l.trim()) } else { l.to_string() }).collect::<Vec<_>>().join("\n"));
         out.push('\n');
     }
     out
@@ -407,10 +413,10 @@ pub fn board_file(world: &World, id: StableId, name: &str) -> Option<Result<File
     let rest = name.strip_prefix(&s)?;
     match rest {
         ".kicad_pro" => txt(kicad_pro::write(&view, &board)),
-        ".kicad_dru" => txt(dru(&board)),
+        ".kicad_dru" => txt(dru(&board, &view)),
         "-kicad.zip" => {
             let mut files = vec![(format!("{s}.kicad_pro"), kicad_pro::write(&view, &board).into_bytes()), (format!("{s}.kicad_pcb"), crate::kicad::export_world(world, id)?.into_bytes())];
-            files.push((format!("{s}.kicad_dru"), dru(&board).into_bytes()));
+            files.push((format!("{s}.kicad_dru"), dru(&board, &view).into_bytes()));
             if let Some((sid, _)) = &sch {
                 for (n, t) in kicad_sch::write_world(world, *sid, &s)? {
                     files.push((n, t.into_bytes()));

@@ -1241,6 +1241,12 @@ pub enum Preview {
     Route(RouteInteractive),
     Drag(RouteDrag),
     Connection { targets: Vec<StableId> },
+    /// A differential pair routed together.
+    Pair(crate::pair::RoutePair),
+    /// A pair's segment dragged with its partner.
+    PairDrag(crate::pair::DragPair),
+    /// Length tuning (meanders) without changing anything.
+    Tune(crate::meander::Tune),
 }
 
 pub fn preview(b: &Board, v: &BoardView, p: Preview) -> Result<Value, String> {
@@ -1248,5 +1254,8 @@ pub fn preview(b: &Board, v: &BoardView, p: Preview) -> Result<Value, String> {
         Preview::Route(r) => plan_route(b, v, &r).map(|x| json!(x)),
         Preview::Drag(d) => plan_drag(b, v, &d).map(|x| json!(x)),
         Preview::Connection { targets } => Ok(json!({ "items": connection(v, &targets) })),
+        Preview::Pair(r) => crate::pair::plan(b, v, &r).map(|x| json!(x)),
+        Preview::PairDrag(d) => crate::pair::plan_drag(b, v, &d).map(|x| json!(x)),
+        Preview::Tune(t) => crate::meander::plan(b, v, &t).map(|x| json!(x)),
     }
 }

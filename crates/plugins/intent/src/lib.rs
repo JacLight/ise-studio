@@ -139,6 +139,33 @@ pub enum Rule {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         align: bool,
     },
+    /// A circuit board meets its routing constraints: none of its design-rule
+    /// violations of these `codes` (default every routing-constraint code:
+    /// impedance, diff_pair_gap, diff_pair_uncoupled, length, skew, via_count;
+    /// "all" for the whole DRC) — from its net classes, pairs, length groups
+    /// and custom rules. Re-checked on every change to the board.
+    PcbConstraints {
+        board: StableId,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        codes: Vec<String>,
+    },
+    /// Nets of a board (names, patterns like `D?`, or pair names) are each
+    /// `target` ± `tolerance` long, or between `min` and `max`, and within
+    /// `max_skew` of each other (mm, copper length with vias and pad-to-die).
+    PcbLength {
+        board: StableId,
+        nets: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tolerance: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_skew: Option<f64>,
+    },
 }
 
 fn yes() -> bool {
@@ -158,6 +185,7 @@ impl Rule {
             Rule::AssemblyFits { assembly, .. } => vec![*assembly],
             Rule::MinSafetyFactor { shape, .. } | Rule::MaxDeflection { shape, .. } | Rule::MinFirstFrequency { shape, .. } | Rule::MinBucklingFactor { shape, .. } => vec![*shape],
             Rule::ScanDeviation { part, .. } => vec![*part],
+            Rule::PcbConstraints { board, .. } | Rule::PcbLength { board, .. } => vec![*board],
         }
     }
 
@@ -175,6 +203,12 @@ impl Rule {
             Rule::MinFirstFrequency { min, .. } => format!("First frequency at least {} Hz", fmt(*min)),
             Rule::MinBucklingFactor { min, .. } => format!("Buckling factor at least {}", fmt(*min)),
             Rule::ScanDeviation { tolerance, .. } => format!("Matches its scan within ±{} mm", mm(tolerance)),
+            Rule::PcbConstraints { codes, .. } => if codes.is_empty() { "Board meets its routing constraints".into() } else { format!("Board clean of {}", codes.join(", ")) },
+            Rule::PcbLength { nets, target, tolerance, max_skew, .. } => match (target, max_skew) {
+                (Some(t), _) => format!("{} {} ± {} mm long", nets.join(", "), fmt(*t), fmt(tolerance.unwrap_or(t * 0.01))),
+                (None, Some(s)) => format!("{} matched within {} mm", nets.join(", "), fmt(*s)),
+                _ => format!("{} within length limits", nets.join(", ")),
+            },
         }
     }
 }
@@ -266,6 +300,111 @@ fn evaluate(world: &World, entity: Entity) -> Option<Result<RequirementResult, S
         Rule::MinFirstFrequency { shape, part, min } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Frequency, *min, false, "Hz"),
         Rule::ScanDeviation { part: id, part_name, scan, tolerance, within, align } => scan_check(world, *id, part_name.as_deref(), scan, tolerance.canonical() * 1000.0, within.unwrap_or(1.0), *align),
         Rule::MinBucklingFactor { shape, part, min } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Buckling, *min, false, ""),
+        Rule::PcbConstraints { board, codes } => pcb_constraints(world, *board, codes),
+        Rule::PcbLength { board, nets, target, tolerance, min, max, max_skew } => pcb_length(world, *board, nets, *target, *tolerance, *min, *max, *max_skew),
+    })
+}
+
+/// The board as worked out now (its derived result, else resolved on the spot).
+fn board_view(world: &World, id: StableId) -> Result<std::sync::Arc<de_pcb::BoardView>, String> {
+    if let Some(v) = de_pcb::view(world, id) {
+        return Ok(v);
+    }
+    let e = world.resource::<de_core::IdIndex>().get(id).ok_or_else(|| format!("{id} does not exist"))?;
+    let b = world.get::<de_pcb::Board>(e).ok_or_else(|| format!("{id} is not a circuit board"))?;
+    de_pcb::board::resolve(world, id, b).map(std::sync::Arc::new)
+}
+
+pub const ROUTING_CODES: [&str; 6] = ["impedance", "diff_pair_gap", "diff_pair_uncoupled", "length", "skew", "via_count"];
+
+fn pcb_constraints(world: &World, id: StableId, codes: &[String]) -> Result<RequirementResult, String> {
+    let v = board_view(world, id)?;
+    let all = codes.iter().any(|c| c == "all");
+    let hits: Vec<&de_pcb::board::Violation> = v
+        .violations
+        .iter()
+        .filter(|x| x.severity == "error")
+        .filter(|x| if all { true } else if codes.is_empty() { ROUTING_CODES.contains(&x.code) } else { codes.iter().any(|c| c == x.code) })
+        .collect();
+    let passed = hits.is_empty();
+    let s = &v.signal;
+    let mut facts = Vec::new();
+    for p in &s.pairs {
+        facts.push(format!("{} skew {:.3} mm, uncoupled {:.2} mm{}", p.name, p.skew, p.uncoupled, p.zdiff.map(|z| format!(", {z} Ω")).unwrap_or_default()));
+    }
+    for g in &s.groups {
+        facts.push(format!("{} spread {:.3} mm", g.name, g.skew));
+    }
+    let summary = if passed {
+        format!("no violations{}", if facts.is_empty() { String::new() } else { format!(" ({})", facts.join("; ")) })
+    } else {
+        format!("{} violation{}: {}", hits.len(), if hits.len() == 1 { "" } else { "s" }, hits.iter().take(4).map(|x| x.message.clone()).collect::<Vec<_>>().join(" · "))
+    };
+    Ok(RequirementResult {
+        passed,
+        measured: hits.len() as f64,
+        limit: 0.0,
+        unit: "violations".into(),
+        upper_bound: true,
+        summary,
+        violations: if passed { vec![] } else { vec![Violation { parts: vec![id], names: hits.iter().flat_map(|x| x.refs.clone()).take(12).collect(), region: None }] },
+        fix: None,
+        accuracy_mm: None,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pcb_length(world: &World, id: StableId, nets: &[String], target: Option<f64>, tolerance: Option<f64>, min: Option<f64>, max: Option<f64>, max_skew: Option<f64>) -> Result<RequirementResult, String> {
+    let v = board_view(world, id)?;
+    let all: Vec<String> = v.nets.iter().map(|n| n.name.clone()).collect();
+    let group = de_pcb::signal::LengthGroup { name: String::new(), nets: nets.to_vec(), target: None, tolerance: None, min: None, max: None, max_skew: None };
+    let members = de_pcb::signal::members(&group, &all, &v.signal.pairs);
+    if members.is_empty() {
+        return Err(format!("no net on the board matches {}", nets.join(", ")));
+    }
+    let len = |n: &str| v.signal.lengths.iter().find(|l| l.net == n).map(|l| l.length).unwrap_or(0.0);
+    let ls: Vec<(String, f64)> = members.iter().map(|n| (n.clone(), len(n))).collect();
+    let mut worst = 0.0f64;
+    let mut limit = 0.0;
+    let mut bad = Vec::new();
+    if let Some(t) = target {
+        let tol = tolerance.unwrap_or(t * 0.01);
+        limit = tol;
+        for (n, l) in &ls {
+            let e = (l - t).abs();
+            worst = worst.max(e);
+            if e > tol + 1e-6 {
+                bad.push(format!("{n} {l:.3} mm"));
+            }
+        }
+    }
+    for (n, l) in &ls {
+        if min.is_some_and(|m| *l + 1e-6 < m) || max.is_some_and(|m| *l > m + 1e-6) {
+            bad.push(format!("{n} {l:.3} mm"));
+        }
+    }
+    let hi = ls.iter().map(|x| x.1).fold(f64::MIN, f64::max);
+    let lo = ls.iter().map(|x| x.1).fold(f64::MAX, f64::min);
+    if let Some(s) = max_skew {
+        if target.is_none() {
+            worst = hi - lo;
+            limit = s;
+        }
+        if hi - lo > s + 1e-6 {
+            bad.push(format!("spread {:.3} mm", hi - lo));
+        }
+    }
+    let passed = bad.is_empty();
+    Ok(RequirementResult {
+        passed,
+        measured: worst,
+        limit,
+        unit: "mm".into(),
+        upper_bound: true,
+        summary: format!("{} (spread {:.3} mm){}", ls.iter().map(|(n, l)| format!("{n} {l:.3}")).collect::<Vec<_>>().join(", "), hi - lo, if passed { String::new() } else { format!("; off: {}", bad.join(", ")) }),
+        violations: if passed { vec![] } else { vec![Violation { parts: vec![id], names: members, region: None }] },
+        fix: None,
+        accuracy_mm: None,
     })
 }
 
@@ -625,6 +764,11 @@ fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
                 return Err(CommandError::new(ErrorCode::InvalidParameters, format!("{shape} is not a shape: studies are on shapes")));
             }
             positive(max, "the deflection limit")?;
+        }
+        Rule::PcbConstraints { board, .. } | Rule::PcbLength { board, .. } => {
+            if tx.get::<de_pcb::Board>(*board).is_none() {
+                return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{board} is not a circuit board")));
+            }
         }
         Rule::ScanDeviation { scan, tolerance, within, .. } => {
             positive(tolerance, "the tolerance")?;

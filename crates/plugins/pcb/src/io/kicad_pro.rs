@@ -68,17 +68,19 @@ pub fn write(view: &BoardView, board: &Board) -> String {
     let class_json: Vec<Value> = classes
         .iter()
         .map(|c| {
+            let top = view.signal.classes.iter().find(|x| x.name == c.name).and_then(|x| x.layers.first());
+            let (pw, pg) = (top.map(|t| t.width).or(Some(c.track_width)).unwrap(), top.and_then(|t| t.gap).or(c.diff_gap).unwrap_or(0.25));
             json!({
                 "name": if c.name.eq_ignore_ascii_case("default") { "Default" } else { c.name.as_str() },
                 "clearance": c.clearance,
-                "track_width": c.track_width,
+                "track_width": top.filter(|_| c.impedance.is_some()).map(|t| t.width).unwrap_or(c.track_width),
                 "via_diameter": c.via_diameter,
                 "via_drill": c.via_drill,
                 "uvia_diameter": 0.3,
                 "uvia_drill": 0.1,
-                "diff_pair_gap": 0.25,
-                "diff_pair_via_gap": 0.25,
-                "diff_pair_width": 0.2,
+                "diff_pair_gap": pg,
+                "diff_pair_via_gap": c.pair_via_pitch.map(|p| (p - c.via_diameter).max(0.05)).unwrap_or(0.25),
+                "diff_pair_width": if c.diff_impedance.is_some() { pw } else { c.track_width },
                 "line_style": 0,
                 "wire_width": 6,
                 "bus_width": 12,
@@ -88,7 +90,7 @@ pub fn write(view: &BoardView, board: &Board) -> String {
             })
         })
         .collect();
-    let patterns: Vec<Value> = classes.iter().filter(|c| !c.name.eq_ignore_ascii_case("default")).flat_map(|c| c.nets.iter().map(move |n| json!({ "netclass": c.name, "pattern": n }))).collect();
+    let patterns: Vec<Value> = classes.iter().filter(|c| !c.name.eq_ignore_ascii_case("default")).flat_map(|c| c.nets.iter().chain(c.patterns.iter()).map(move |n| json!({ "netclass": c.name, "pattern": n }))).collect();
     let r = &view.rules;
     let stem = crate::gerber::file_stem(&view.name);
     let v = json!({

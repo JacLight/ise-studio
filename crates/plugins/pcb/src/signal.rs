@@ -1090,6 +1090,153 @@ pub fn pair_clearance(board: &Board, v: &BoardView, a: Option<&str>, b: Option<&
     }
 }
 
+// ---- For the fab and other tools ---------------------------------------------------------
+
+/// One controlled-impedance line the fab must build: a class's target on one layer.
+#[derive(Clone, Debug, Serialize)]
+pub struct ImpedanceRow {
+    pub class: String,
+    pub layer: String,
+    /// "single" or "differential".
+    pub kind: &'static str,
+    pub target: f64,
+    /// ± %.
+    pub tolerance: f64,
+    pub width: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gap: Option<f64>,
+    /// What the closed forms give at that width (and gap).
+    pub computed: f64,
+    pub model: &'static str,
+    /// The reference planes (copper layers above and below).
+    pub refs: Vec<String>,
+    /// The nets it applies to.
+    pub nets: Vec<String>,
+}
+
+/// Every impedance the board asks for, per class and layer (layers its nets are routed on, or all when unrouted).
+pub fn impedance_table(board: &Board, v: &BoardView) -> Vec<ImpedanceRow> {
+    let mut out = Vec::new();
+    for c in &v.signal.classes {
+        let class = board.net_classes.iter().find(|x| x.name == c.name).cloned().unwrap_or_else(NetClass::default_class);
+        let nets: Vec<String> = v.nets.iter().filter(|n| n.class == c.name).map(|n| n.name.clone()).collect();
+        let used: BTreeSet<&str> = v.tracks.iter().filter(|t| t.net.as_ref().is_some_and(|n| nets.contains(n))).map(|t| t.layer.as_str()).collect();
+        for (k, lt) in c.layers.iter().enumerate() {
+            if !used.is_empty() && !used.contains(lt.layer.as_str()) {
+                continue;
+            }
+            let refs: Vec<String> = [k.checked_sub(1), Some(k + 1)].into_iter().flatten().filter_map(|i| v.layers.get(i).cloned()).collect();
+            let pair_nets: Vec<String> = nets.iter().filter(|n| pair_of(v, n).is_some()).cloned().collect();
+            let single_nets: Vec<String> = nets.iter().filter(|n| pair_of(v, n).is_none()).cloned().collect();
+            if let Some(z) = c.impedance {
+                out.push(ImpedanceRow { class: c.name.clone(), layer: lt.layer.clone(), kind: "single", target: z, tolerance: c.tolerance, width: lt.width, gap: None, computed: (lt.z0 * 10.0).round() / 10.0, model: lt.line.name(), refs: refs.clone(), nets: if class.diff_impedance.is_some() { single_nets.clone() } else { nets.clone() } });
+            }
+            if let (Some(z), Some(g), Some(zd)) = (c.diff_impedance, lt.gap, lt.zdiff) {
+                out.push(ImpedanceRow { class: c.name.clone(), layer: lt.layer.clone(), kind: "differential", target: z, tolerance: c.tolerance, width: lt.width, gap: Some(g), computed: (zd * 10.0).round() / 10.0, model: lt.line.name(), refs, nets: pair_nets });
+            }
+        }
+    }
+    out
+}
+
+/// The fab's "impedance control" note (none when nothing is controlled).
+pub fn fab_note(board: &Board, v: &BoardView) -> Option<String> {
+    let rows = impedance_table(board, v);
+    if rows.is_empty() {
+        return None;
+    }
+    let mut s = String::from("IMPEDANCE CONTROL\n\nBuild to the stackup below and hold these impedances; adjust track widths (and pair gaps) by up to ±10 % to meet them, and report the as-built values. Test coupons per IPC-2141 / IPC-6012.\n\n");
+    s.push_str("Stackup (top down):\n");
+    for r in &v.stackup.rows {
+        let mut line = format!("  {:<18} {:>7.4} mm", r.name, r.thickness);
+        if let Some(m) = &r.material {
+            line.push_str(&format!("  {m}"));
+        }
+        if let Some(e) = r.epsilon_r.filter(|_| r.kind == "core" || r.kind == "prepreg") {
+            line.push_str(&format!("  εr {e}"));
+        }
+        if let Some(oz) = r.copper_oz {
+            line.push_str(&format!("  {oz} oz"));
+        }
+        s.push_str(&line);
+        s.push('\n');
+    }
+    s.push_str("\nControlled lines:\n");
+    for r in &rows {
+        s.push_str(&format!(
+            "  {:<10} {:<7} {:<12} {:>5} Ω ±{} %  width {:.3} mm{}  ({} over {}; computed {} Ω)  nets: {}\n",
+            r.class,
+            r.layer,
+            r.kind,
+            r.target,
+            r.tolerance,
+            r.width,
+            r.gap.map(|g| format!(", gap {g:.3} mm")).unwrap_or_default(),
+            r.model,
+            r.refs.join(" / "),
+            r.computed,
+            if r.nets.is_empty() { "—".into() } else { r.nets.join(", ") }
+        ));
+    }
+    s.push_str("\nWidths from closed-form models (Hammerstad–Jensen microstrip, Cohn/Wheeler stripline, IPC-2141 coupling), solder mask not counted; the fab's field solver is final.\n");
+    Some(s)
+}
+
+/// `.kicad_dru` rules for the board's routing constraints (class widths per layer, pair gap,
+/// uncoupled length, skew, length groups), as KiCad reads them.
+pub fn dru_rules(board: &Board, v: &BoardView) -> String {
+    let mut out = String::new();
+    let q = |s: &str| s.replace('\'', "");
+    for c in &v.signal.classes {
+        let class = board.net_classes.iter().find(|x| x.name == c.name).cloned().unwrap_or_else(NetClass::default_class);
+        let tol = c.tolerance / 100.0;
+        for lt in &c.layers {
+            let kl = rules::kicad_layer(&lt.layer);
+            let w = lt.width;
+            out.push_str(&format!("(rule \"{} width {}\"\n  (layer \"{kl}\")\n  (condition \"A.NetClass == '{}'\")\n  (constraint track_width (min {:.4}mm) (opt {:.4}mm) (max {:.4}mm)))\n", c.name, lt.layer, q(&c.name), w * (1.0 - tol), w, w * (1.0 + tol)));
+            if let Some(g) = lt.gap {
+                out.push_str(&format!("(rule \"{} pair gap {}\"\n  (layer \"{kl}\")\n  (condition \"A.NetClass == '{}' && A.inDiffPair('*')\")\n  (constraint diff_pair_gap (min {:.4}mm) (opt {:.4}mm) (max {:.4}mm)))\n", c.name, lt.layer, q(&c.name), g * 0.9, g, g * 1.1));
+            }
+        }
+        if let Some(u) = class.max_uncoupled {
+            out.push_str(&format!("(rule \"{} uncoupled\"\n  (condition \"A.NetClass == '{}' && A.inDiffPair('*')\")\n  (constraint diff_pair_uncoupled (max {u}mm)))\n", c.name, q(&c.name)));
+        }
+        if let Some(sk) = class.max_skew {
+            out.push_str(&format!("(rule \"{} skew\"\n  (condition \"A.NetClass == '{}' && A.isCoupledDiffPair()\")\n  (constraint skew (max {sk}mm)))\n", c.name, q(&c.name)));
+        }
+    }
+    for p in &v.signal.pairs {
+        let def = board.signal.pairs.iter().find(|x| x.name == p.name);
+        if let Some(sk) = def.and_then(|d| d.max_skew) {
+            out.push_str(&format!("(rule \"pair {} skew\"\n  (condition \"A.NetName == '{}' || A.NetName == '{}'\")\n  (constraint skew (max {sk}mm)))\n", p.name, q(&p.p), q(&p.n)));
+        }
+        if let Some(u) = def.and_then(|d| d.max_uncoupled) {
+            out.push_str(&format!("(rule \"pair {} uncoupled\"\n  (condition \"A.NetName == '{}' || A.NetName == '{}'\")\n  (constraint diff_pair_uncoupled (max {u}mm)))\n", p.name, q(&p.p), q(&p.n)));
+        }
+    }
+    for g in &v.signal.groups {
+        if g.members.is_empty() {
+            continue;
+        }
+        let cond = g.members.iter().map(|m| format!("A.NetName == '{}'", q(&m.net))).collect::<Vec<_>>().join(" || ");
+        let def = board.signal.groups.iter().find(|x| x.name == g.name);
+        let mut cs = String::new();
+        if let Some(t) = def.and_then(|d| d.target) {
+            let tol = g.tolerance.unwrap_or(t * 0.01);
+            cs.push_str(&format!("\n  (constraint length (min {:.4}mm) (opt {:.4}mm) (max {:.4}mm))", t - tol, t, t + tol));
+        } else if g.min.is_some() || g.max.is_some() {
+            cs.push_str(&format!("\n  (constraint length{}{})", g.min.map(|x| format!(" (min {x}mm)")).unwrap_or_default(), g.max.map(|x| format!(" (max {x}mm)")).unwrap_or_default()));
+        }
+        if let Some(sk) = g.max_skew.or(if def.and_then(|d| d.target).is_none() { g.tolerance } else { None }) {
+            cs.push_str(&format!("\n  (constraint skew (max {sk}mm))"));
+        }
+        if !cs.is_empty() {
+            out.push_str(&format!("(rule \"length group {}\"\n  (condition \"{cond}\"){cs})\n", g.name));
+        }
+    }
+    out
+}
+
 // ---- Commands -----------------------------------------------------------------------
 
 fn opt_set(slot: &mut Option<f64>, v: Option<f64>) {

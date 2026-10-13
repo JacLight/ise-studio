@@ -49,6 +49,8 @@ pub struct Autoroute {
     pub rip_up: Option<bool>,
     /// What a via costs, in millimetres of track (default 5).
     pub via_cost: Option<f64>,
+    /// Route differential pairs together first, where they fit (default true).
+    pub pairs: Option<bool>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -151,13 +153,24 @@ struct Widths {
     clear: f64,
     via_r: f64,
     class: NetClass,
+    per_layer: Vec<f64>,
 }
 
-fn widths(board: &Board, net: &str) -> Widths {
+impl Widths {
+    /// The full width on layer `k` (its impedance target's, never wider than routed).
+    fn on(&self, k: usize) -> f64 {
+        self.per_layer.get(k).copied().unwrap_or(self.w).min(self.w)
+    }
+}
+
+fn widths(ctx: &Ctx, net: &str) -> Widths {
+    let board = ctx.board;
     let class = board.class_of(Some(net));
-    let w = class.track_width;
+    // Impedance-controlled nets: the widest of their layers' widths is routed, each run then set to its own layer's.
+    let per_layer: Vec<f64> = ctx.view.layers.iter().map(|l| crate::signal::width_on(board, ctx.view, Some(net), l)).collect();
+    let w = ctx.use_layers.iter().map(|k| per_layer[*k]).fold(0.0, f64::max).max(if per_layer.is_empty() { class.track_width } else { 0.0 });
     let neck = class.neck_width.unwrap_or(w * 0.6).max(board.rules.min_track).min(w);
-    Widths { w, neck, clear: class.clearance.max(board.rules.min_space), via_r: class.via_diameter / 2.0, class }
+    Widths { w, neck, clear: class.clearance.max(board.rules.min_space), via_r: class.via_diameter / 2.0, class, per_layer }
 }
 
 impl Ctx<'_> {
@@ -446,6 +459,8 @@ impl Command for Autoroute {
                 tx.delete(id)?;
             }
         }
+        // Differential pairs first, routed together where they fit.
+        let (paired, pair_notes) = if self.pairs.unwrap_or(true) { crate::pair::autoroute_pairs(tx, self.board, &pick)? } else { (vec![], vec![]) };
         let view = board::resolve(tx.world(), self.board, &board).map_err(|e| CommandError::new(ErrorCode::InvalidGeometry, e))?;
         let all_layers = view.layers.clone();
         let use_layers: Vec<usize> = match &self.layers {
@@ -610,7 +625,7 @@ impl Command for Autoroute {
                 order = next;
             }
         };
-        Ok(json!({ "board": self.board, "routed": routed, "failed": failed, "tracks": made_tracks, "vias": made_vias, "grid": g, "passes": pass, "ripped": ripped_total }))
+        Ok(json!({ "board": self.board, "routed": routed, "failed": failed, "tracks": made_tracks, "vias": made_vias, "grid": g, "passes": pass, "ripped": ripped_total, "pairs": paired, "pair_notes": pair_notes }))
     }
 }
 
@@ -629,7 +644,7 @@ fn remove(tx: &mut Tx, board: StableId, c: &NetCopper) -> Result<(), CommandErro
 /// nothing is laid, and the nets crossed come back as blockers.
 fn route_net(tx: &mut Tx, board_id: StableId, ctx: &Ctx, net: &str, base: &[Obstacle], copper: &BTreeMap<String, NetCopper>, rip: bool) -> Result<Outcome, CommandError> {
     let view = ctx.view;
-    let wd = widths(ctx.board, net);
+    let wd = widths(ctx, net);
     let pads: Vec<&PadView> = view.pads.iter().filter(|p| p.net.as_deref() == Some(net) && p.kind != PadKind::Npth).collect();
     let neck = ctx.neck_zone(&pads, &wd);
     let mut out = NetCopper { obstacles: vec![], created: vec![], tracks: 0, vias: 0 };
@@ -781,7 +796,7 @@ fn route_net(tx: &mut Tx, board_id: StableId, ctx: &Ctx, net: &str, base: &[Obst
             let p = ctx.grid.of(k);
             if l != run_layer {
                 if run.len() >= 2 {
-                    emit_track(tx, board_id, net, &all_layers[run_layer], if run_wide { wd.w } else { wd.neck }, &run, run_layer, &mut out)?;
+                    emit_track(tx, board_id, net, &all_layers[run_layer], if run_wide { wd.on(run_layer) } else { wd.neck }, &run, run_layer, &mut out)?;
                 }
                 emit_via(tx, board_id, net, p, wd.class.via_drill, wd.class.via_diameter, ctx.nl, &mut out)?;
                 run = vec![p];
@@ -795,7 +810,7 @@ fn route_net(tx: &mut Tx, board_id: StableId, ctx: &Ctx, net: &str, base: &[Obst
                 if run_wide && !w_here {
                     // Narrowing: the full-width run ends at the last wide cell; the neck starts there.
                     if run.len() >= 2 {
-                        emit_track(tx, board_id, net, &all_layers[run_layer], wd.w, &run, run_layer, &mut out)?;
+                        emit_track(tx, board_id, net, &all_layers[run_layer], wd.on(run_layer), &run, run_layer, &mut out)?;
                     }
                     run = vec![*run.last().unwrap(), p];
                     run_wide = false;
@@ -811,7 +826,7 @@ fn route_net(tx: &mut Tx, board_id: StableId, ctx: &Ctx, net: &str, base: &[Obst
             run.push(p);
         }
         if run.len() >= 2 {
-            emit_track(tx, board_id, net, &all_layers[run_layer], if run_wide { wd.w } else { wd.neck }, &run, run_layer, &mut out)?;
+            emit_track(tx, board_id, net, &all_layers[run_layer], if run_wide { wd.on(run_layer) } else { wd.neck }, &run, run_layer, &mut out)?;
         }
         connected.extend(path.iter().copied());
         for (pi, cells) in pad_cells.iter().enumerate() {

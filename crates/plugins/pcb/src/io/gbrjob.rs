@@ -84,6 +84,7 @@ pub fn write(v: &BoardView, board: &Board) -> String {
             "LayerNumber": n,
             "BoardThickness": v.thickness,
             "Finish": finish_code(&v.finish),
+            "ImpedanceControlled": !v.signal.classes.is_empty(),
         },
         "DesignRules": [{
             "Layers": "Outer",
