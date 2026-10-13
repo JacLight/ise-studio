@@ -762,7 +762,8 @@ fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
             return Err(CommandError::new(ErrorCode::InvalidParameters, "steps must be 2 to 720"));
         }
     }
-    let joint_of = |id: StableId| matches!(rule, Rule::NoClashesInMotion { joint, .. } if *joint == id);
+    // A motion check's joint and a photo match's canvas are checked below, not as parts.
+    let joint_of = |id: StableId| matches!(rule, Rule::NoClashesInMotion { joint, .. } if *joint == id) || matches!(rule, Rule::SilhouetteMatch { canvas, .. } if *canvas == id);
     for id in rule.targets().into_iter().filter(|id| !joint_of(*id)) {
         if tx.get::<BoxFeature>(id).is_none()
             && tx.get::<de_shape::ShapeProgram>(id).is_none()
