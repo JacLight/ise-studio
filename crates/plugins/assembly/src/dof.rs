@@ -309,7 +309,14 @@ pub fn report(world: &World, scope: Option<StableId>) -> Result<DofReport, Strin
             })
             .collect();
         let free = null_held.len();
-        let mobility = null_rel.len();
+        // A coupling (gear, rack and pinion, screw, belt, ratio, cam) makes one
+        // joint's value follow another's: one way to move fewer for each that
+        // ties two joints of this group (a caliper's thumb roller turning with its slide).
+        let tied = crate::couplings::couplings_in(world, scope)
+            .iter()
+            .filter(|(_, c)| c.driver != c.follower && g.joints.contains(&c.driver) && g.joints.contains(&c.follower))
+            .count();
+        let mobility = null_rel.len().saturating_sub(tied);
         let summary = if !solved {
             format!(
                 "the joints cannot all hold{}",
@@ -318,6 +325,9 @@ pub fn report(world: &World, scope: Option<StableId>) -> Result<DofReport, Strin
         } else {
             let mut s = if free == 0 { "fully defined".to_string() } else { format!("{free} freedom{} left undetermined", if free == 1 { "" } else { "s" }) };
             s.push_str(&format!("; moves with {mobility} degree{} of freedom", if mobility == 1 { "" } else { "s" }));
+            if tied > 0 {
+                s.push_str(&format!(" ({tied} more tied to {} by coupling{})", if tied == 1 { "another" } else { "others" }, if tied == 1 { "" } else { "s" }));
+            }
             if redundant > 0 {
                 s.push_str(&format!("; {redundant} redundant condition{} ({})", if redundant == 1 { "" } else { "s" }, redundant_joints.iter().map(|j| j.name.as_str()).collect::<Vec<_>>().join(", ")));
             }

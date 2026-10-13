@@ -416,13 +416,12 @@ fn kind_of(world: &World, id: StableId, inst: &Instance) -> Kind {
             number: stats.as_ref().and_then(|s| s.declared.stock.as_ref()).map(|s| s.part_number.clone()).unwrap_or_else(|| "linear bearing".into()),
         },
         Some("iso8734" | "iso8752") => Kind::Pin { d: v("d"), len: v("length") },
+        // PEM self-clinching nuts and standoffs: threaded through, pressed into the sheet.
+        Some(f) if f.starts_with("pem_") => Kind::Tapped { depth: metric("Tapped depth").or(metric("Length")).unwrap_or(1.0), seat: Seat::Clinched },
         _ if metric("Tapped thread").is_some() => Kind::Tapped {
             depth: metric("Tapped depth").unwrap_or(0.0),
-            seat: match family.as_deref() {
-                Some(f) if f.starts_with("pem_") => Seat::Clinched,
-                Some("standoff_hex") => Seat::Stud,
-                _ => Seat::Plain,
-            },
+            // A male-female standoff's stud threads into what it stands on.
+            seat: if metric("Stud length").is_some() { Seat::Stud } else { Seat::Plain },
         },
         Some(_) => Kind::Stock,
         None if declared_stock => Kind::Stock,
