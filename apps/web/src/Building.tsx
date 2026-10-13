@@ -91,9 +91,8 @@ function SheetView({ d }: { d: Sheet }) {
   return (
     <svg className="bim-sheet" viewBox={`0 0 ${d.width} ${d.height}`} role="img" aria-label="Drawing sheet">
       <rect width={d.width} height={d.height} fill="#fff" />
-      {d.fills.map((f, i) => (
-        <polygon key={`f${i}`} points={f.map(flip).join(" ")} fill="#1d1a24" stroke="#1d1a24" strokeWidth={0.05} />
-      ))}
+      {/* Every fill one path: the triangles of a cut wall show no seams. */}
+      {d.fills.length > 0 && <path d={d.fills.map((f) => `M${f.map(flip).join(" L")} Z`).join(" ")} fill="#1d1a24" />}
       {d.strokes.map((s, i) => (
         <polyline key={i} points={s.points.map(flip).join(" ")} fill="none" stroke="#1d1a24" strokeWidth={WIDTH[s.pen]} strokeDasharray={DASH[s.pen]} strokeLinecap="round" strokeLinejoin="round" />
       ))}

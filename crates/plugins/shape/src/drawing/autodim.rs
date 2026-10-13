@@ -342,6 +342,7 @@ pub(super) fn dimension(d: &mut Drawing, ink: &mut Grid, words: &mut Grid, cx: &
         ink.dump(&path);
     }
     holes(d, ink, words, cx);
+    bosses(d, ink, words, cx);
     rounds(d, ink, words, cx);
     done
 }
@@ -738,6 +739,53 @@ fn holes(d: &mut Drawing, ink: &mut Grid, words: &mut Grid, cx: &Ctx) {
                 d.autos.push(AutoMark { key, text: lines[0].main.clone(), view: view.name, bounds: b, value: hs[0].diameter });
             }
             None => d.warnings.push(format!("no room for the ⌀{} hole callout", length_text(hs[0].diameter))),
+        }
+    }
+}
+
+/// Round bosses, pins and ribbed or knurled outsides: their diameter, called
+/// out where they show round (their centres are placed by the ordinates).
+fn bosses(d: &mut Drawing, ink: &mut Grid, words: &mut Grid, cx: &Ctx) {
+    let f = cx.feats;
+    if f.turned.is_some() {
+        return;
+    }
+    let mut groups: Vec<(f64, usize, Vec<[f64; 3]>)> = vec![];
+    for (line, dia, _) in &f.bosses {
+        let Some(a) = features::principal(line.dir) else { continue };
+        match groups.iter_mut().find(|g| (g.0 - dia).abs() < 1e-3 && g.1 == a) {
+            Some(g) => g.2.push(line.point),
+            None => groups.push((*dia, a, vec![line.point])),
+        }
+    }
+    let sizes: Vec<f64> = groups.iter().map(|g| g.0).collect();
+    for (dia, axis, at) in groups {
+        let shared = sizes.iter().filter(|s| (**s - dia).abs() < 1e-3).count() > 1;
+        let key = if shared { format!("boss:{}@{}", key_value(dia), AXIS[axis]) } else { format!("boss:{}", key_value(dia)) };
+        if hidden(cx.options, &key) {
+            continue;
+        }
+        let Some(view) = cx.views.iter().find(|v| v.look() == axis) else { continue };
+        let n = at.len();
+        let text = if n > 1 { format!("{n}× ⌀{}", length_text(dia)) } else { format!("⌀{}", length_text(dia)) };
+        let centre = [(view.bounds[0] + view.bounds[2]) / 2.0, (view.bounds[1] + view.bounds[3]) / 2.0];
+        let r = dia / 2.0 * cx.s;
+        let mut placed = None;
+        for p in &at {
+            let c = view.sheet(*p, cx.s);
+            let off = [c[0] - centre[0], c[1] - centre[1]];
+            let l = (off[0] * off[0] + off[1] * off[1]).sqrt();
+            // Out from the view's middle; a boss in the middle leans up and left.
+            let dir = if l > 1e-6 { [off[0] / l, off[1] / l] } else { [-0.7071, 0.7071] };
+            let prefer = [c[0] + dir[0] * (r + 14.0), c[1] + dir[1] * (r + 14.0)];
+            if let Some(b) = callout_round(d, ink, words, c, r, &[plain(text.clone())], cx.frame, prefer) {
+                placed = Some(b);
+                break;
+            }
+        }
+        match placed {
+            Some(b) => d.autos.push(AutoMark { key, text, view: view.name, bounds: b, value: dia }),
+            None => d.warnings.push(format!("no room for the ⌀{} callout", length_text(dia))),
         }
     }
 }

@@ -449,6 +449,8 @@ pub fn report(world: &World, scope: Option<StableId>) -> Result<DofReport, Strin
             })
             .collect();
         let free = null_held.len();
+        // Couplings and formula-linked values are already rows above (`follows`):
+        // a caliper's thumb roller turning with its slide moves with it, not on its own.
         let mobility = null_rel.len();
         let summary = if !solved {
             format!(

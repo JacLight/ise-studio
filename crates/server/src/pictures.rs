@@ -112,7 +112,19 @@ fn content_type(kind: &str) -> &'static str {
 }
 
 /// `GET /images/<id>`: a stored picture's bytes (for showing it).
-pub async fn get(Path(id): Path<String>) -> axum::response::Response {
+/// `?silhouette=<rows>` instead measures the object it shows (`./forma image
+/// profile`): its outline row by row in pixels, and in mm given the object's
+/// real `height` or `width` (`threshold`: colour distance 0–1 from the background).
+pub async fn get(Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
+    if let Some(rows) = query.get("silhouette") {
+        let num = |k: &str| query.get(k).and_then(|v| v.parse::<f64>().ok()).filter(|v| v.is_finite() && *v > 0.0);
+        let rows = rows.parse::<usize>().unwrap_or(40);
+        let rim = query.get("rim").is_some_and(|v| v != "0" && v != "false");
+        return match silhouette(&id, rows, num("threshold").map(|t| t as f32), num("height"), num("width"), rim) {
+            Ok(v) => axum::Json(v).into_response(),
+            Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+        };
+    }
     match de_shape::assets::path(&id).and_then(|p| std::fs::read(p).map_err(|e| e.to_string())) {
         Ok(bytes) => {
             let kind = de_shape::assets::sniff(&bytes);
@@ -120,6 +132,37 @@ pub async fn get(Path(id): Path<String>) -> axum::response::Response {
         }
         Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
     }
+}
+
+/// A picture's object measured (see `de_shape::image::silhouette`): pixels,
+/// and millimetres when its real height or width is given, the profile as
+/// [radius, z] from the bottom up for revolving a round object.
+fn silhouette(id: &str, rows: usize, threshold: Option<f32>, height: Option<f64>, width: Option<f64>, rim: bool) -> Result<serde_json::Value, String> {
+    if !(2..=2000).contains(&rows) {
+        return Err("silhouette: 2 to 2000 rows".into());
+    }
+    let p = de_shape::image::load(id)?;
+    let s = de_shape::image::silhouette(&p, rows, threshold, rim)?;
+    let widest = s.rows.iter().map(|r| r.right - r.left).fold(0.0, f64::max);
+    let tall = s.bottom - s.top;
+    let k = height.map(|h| h / tall).or(width.map(|w| w / widest));
+    let rows_px: Vec<_> = s.rows.iter().map(|r| json!({ "y": r.y, "left": r.left, "right": r.right, "width": r.right - r.left, "middle": (r.left + r.right) / 2.0 })).collect();
+    let mut out = json!({
+        "picture": { "width": p.width, "height": p.height },
+        "pixels": { "top": s.top, "bottom": s.bottom, "height": tall, "widest": widest, "axis": s.axis, "drift": s.drift, "cap_top": s.cap_top, "cap_bottom": s.cap_bottom, "rows": rows_px },
+    });
+    if let Some(k) = k {
+        let r3 = |v: f64| (v * 1000.0).round() / 1000.0;
+        let mut points: Vec<[f64; 2]> = s.rows.iter().rev().map(|r| [r3((r.right - r.left) / 2.0 * k), r3((s.bottom - r.y) * k)]).collect();
+        if let Some(first) = points.first_mut() {
+            first[1] = 0.0;
+        }
+        if let Some(last) = points.last_mut() {
+            last[1] = r3(tall * k);
+        }
+        out["mm"] = json!({ "per_pixel": k, "height": r3(tall * k), "widest": r3(widest * k), "drift": r3(s.drift * k), "cap_top": r3((s.cap_top - s.top) * k), "cap_bottom": r3((s.bottom - s.cap_bottom) * k), "profile": points });
+    }
+    Ok(out)
 }
 
 // ---- Pictures in the conversation -------------------------------------------------
@@ -221,7 +264,9 @@ pub async fn look(State(server): State<Arc<Server>>, Query(query): Query<HashMap
                 })
                 .collect(),
         };
-        ids.into_iter().filter_map(|id| crate::source(&project, id)).collect::<Vec<_>>()
+        // One thing asked for by id may be a component (a definition placed only through instances): drawn as it is.
+        let one = query.get("id").is_some_and(|s| !s.is_empty());
+        ids.into_iter().filter_map(|id| if one { crate::exact_files::checked(&project, id) } else { crate::source(&project, id) }).collect::<Vec<_>>()
     };
     if sources.is_empty() {
         return fail(StatusCode::NOT_FOUND, "nothing placed to look at".into());
@@ -269,12 +314,23 @@ pub async fn look(State(server): State<Arc<Server>>, Query(query): Query<HashMap
             Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
         };
     }
+    // `box=x0,y0,z0,x1,y1,z1`: frame only that region (mm), a close look at a detail.
+    let frame = match query.get("box") {
+        Some(b) => {
+            let v: Vec<f64> = b.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+            if v.len() != 6 || v.iter().any(|x| !x.is_finite()) {
+                return fail(StatusCode::BAD_REQUEST, "box is x0,y0,z0,x1,y1,z1 in mm".into());
+            }
+            Some([v[0].min(v[3]), v[1].min(v[4]), v[2].min(v[5]), v[0].max(v[3]), v[1].max(v[4]), v[2].max(v[5])])
+        }
+        None => None,
+    };
     let drawn = tokio::task::spawn_blocking(move || -> Result<de_shape::render::Picture, String> {
         let mut meshes = Vec::new();
         for s in &sources {
             s.meshes(&mut meshes)?;
         }
-        de_shape::render::render(&meshes, view, w, h)
+        de_shape::render::render_framed(&meshes, view, w, h, frame)
     })
     .await
     .unwrap_or_else(|e| Err(e.to_string()));

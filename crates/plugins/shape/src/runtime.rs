@@ -455,6 +455,13 @@ pub(crate) fn install_pictures<'js>(ctx: &Ctx<'js>, native: &Object<'js>) -> rqu
             crate::decor::grid(&sha, &channel, nx.max(0.0) as usize, ny.max(0.0) as usize).map_err(|e| throw(&ctx, format!("image: {e}")))
         })?,
     )?;
+    native.set(
+        "imageSilhouette",
+        Function::new(ctx.clone(), |ctx: Ctx<'js>, sha: String, rows: f64, threshold: f64, rim: f64| -> rquickjs::Result<Vec<f64>> {
+            let t = (threshold > 0.0).then_some(threshold as f32);
+            crate::decor::silhouette(&sha, rows.max(0.0) as usize, t, rim != 0.0).map_err(|e| throw(&ctx, format!("image: {e}")))
+        })?,
+    )?;
     Ok(())
 }
 

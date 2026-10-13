@@ -658,6 +658,28 @@ fn offset_adds_an_outline_round_or_sharp() {
 }
 
 #[test]
+fn a_ribbed_knob_with_a_d_bore_is_dimensioned_by_its_diameters() {
+    // ⌀30 × 18 with 24 grip grooves 0.8 deep, a ⌀6 D bore 14 deep with its flat 4.5 across.
+    let source = "let k = cylinder(18, 15);
+        for (let i = 0; i < 24; i++) k = k.subtract(box(1.6, 2, 20).translate([14.2, -1, -1]).rotate([0, 0, i * 15 + 7.5]));
+        const bore = cylinder(14, 3).subtract(box(10, 10, 20).translate([1.5, -5, -1]));
+        return k.subtract(bore);";
+    let program = de_shape::ShapeProgram { name: "Knob".into(), description: String::new(), source: source.into(), params: vec![], display_tolerance: None, levels: vec![], uses: Default::default(), finishes: vec![], inputs: String::new() };
+    let title = de_shape::drawing::Title { title: "Knob".into(), ..Default::default() };
+    let d = de_shape::drawing::drawing(&program, &de_shape::drawing::Options { sheet: de_shape::drawing::Sheet::A3, ..Default::default() }, &title).unwrap();
+    let keys: Vec<&str> = d.autos.iter().map(|m| m.key.as_str()).collect();
+    assert!(keys.contains(&"boss:30"), "the ribbed outside is a ⌀30: {keys:?}");
+    assert!(keys.iter().any(|k| k.starts_with("hole:6")), "the D bore is a ⌀6 hole: {keys:?}");
+    assert!(!keys.iter().any(|k| k.starts_with("r:3")), "not an R3: {keys:?}");
+    assert!(d.texts.iter().any(|t| t.text == "⌀30"), "⌀30 is written");
+    // The grooves are the rim's pattern, not steps placed from the datum one by one.
+    for groove in ["0.8", "29.2", "14.2"] {
+        assert!(!d.texts.iter().any(|t| t.text == groove), "no ordinate at a groove ({groove}): {keys:?}");
+    }
+    assert!(d.texts.iter().any(|t| t.text == "18"), "the height is");
+}
+
+#[test]
 fn a_drawing_has_views_hidden_lines_dimensions_and_exports() {
     let program = de_shape::ShapeProgram {
         name: "Plate".into(),

@@ -83,8 +83,43 @@ fn unit(a: [f64; 3]) -> [f64; 3] {
     [a[0] / l, a[1] / l, a[2] / l]
 }
 
+/// The triangles of a mesh whose own box meets the box `f` (near enough,
+/// and never dropping one that shows in it).
+fn crop(m: &Mesh, f: [f64; 6]) -> Mesh {
+    let p = |i: u32| {
+        let i = i as usize * 3;
+        [m.positions[i] as f64, m.positions[i + 1] as f64, m.positions[i + 2] as f64]
+    };
+    let mut indices = vec![];
+    for t in m.indices.chunks_exact(3) {
+        let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
+        if (0..3).all(|k| a[k].max(b[k]).max(c[k]) >= f[k] && a[k].min(b[k]).min(c[k]) <= f[k + 3]) {
+            indices.extend_from_slice(t);
+        }
+    }
+    Mesh { positions: m.positions.clone(), normals: m.normals.clone(), indices, color: m.color, metal: m.metal }
+}
+
 /// Draws the meshes as seen from `view`, `width × height` pixels.
 pub fn render(meshes: &[Mesh], view: View, width: u32, height: u32) -> Result<Picture, String> {
+    render_framed(meshes, view, width, height, None)
+}
+
+/// As `render`, framing only the box `[x0, y0, z0, x1, y1, z1]` (mm) when
+/// given: a close look at a detail (a vernier's reading, a snap fit). What
+/// lies wholly outside the box is left out, so nothing in front hides it.
+pub fn render_framed(meshes: &[Mesh], view: View, width: u32, height: u32, frame: Option<[f64; 6]>) -> Result<Picture, String> {
+    let cropped: Vec<Mesh>;
+    let meshes = match frame {
+        Some(f) => {
+            cropped = meshes.iter().map(|m| crop(m, f)).filter(|m| !m.indices.is_empty()).collect();
+            if cropped.is_empty() {
+                return Err("nothing inside that box".into());
+            }
+            &cropped[..]
+        }
+        None => meshes,
+    };
     const SS: usize = 2;
     let (w, h) = (width as usize * SS, height as usize * SS);
     if meshes.iter().all(|m| m.indices.is_empty()) {
@@ -96,8 +131,14 @@ pub fn render(meshes: &[Mesh], view: View, width: u32, height: u32) -> Result<Pi
     // Fit: the projected extent of every vertex, with a margin.
     let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
     let mut b = [f64::MAX, f64::MAX, f64::MAX, f64::MIN, f64::MIN, f64::MIN];
-    for m in meshes {
-        for p in m.positions.chunks_exact(3) {
+    // Framing a box: its eight corners are what must fit.
+    let corners: Option<Vec<f32>> = frame.map(|f| (0..8).flat_map(|i: usize| [f[if i & 1 == 0 { 0 } else { 3 }] as f32, f[if i & 2 == 0 { 1 } else { 4 }] as f32, f[if i & 4 == 0 { 2 } else { 5 }] as f32]).collect());
+    let fit_points: Vec<&[f32]> = match &corners {
+        Some(c) => vec![&c[..]],
+        None => meshes.iter().map(|m| &m.positions[..]).collect(),
+    };
+    for pts in fit_points {
+        for p in pts.chunks_exact(3) {
             let p = [p[0] as f64, p[1] as f64, p[2] as f64];
             let (x, y) = (dot(p, right), dot(p, up));
             lo = [lo[0].min(x), lo[1].min(y)];

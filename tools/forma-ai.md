@@ -19,7 +19,7 @@ Run it from your working folder. It acts on the open project. It is your only wa
 ./forma surfaces <id> [part] [--pull x,y,z] [--min deg]   surface analysis of each part: continuity across every seam (gap, crease angle, curvature jump), tightest bend, faces needing draft
 ./forma bom <assembly|instance|project> [qty]   the bill of materials as CSV (made parts with process, bought parts with part numbers, totals)
 ./forma dof <assembly|top>            what can still move and how, mobility, redundant and conflicting joints
-./forma interference <assembly|instance|top> [clearance]   every pair of parts that overlap (mm³, where), touch, or come within clearance mm
+./forma interference <assembly|instance|shape|top> [clearance]   every pair of parts (a many-part shape's parts too: a building's walls, slabs, doors) that overlap (mm³, where), touch, or come within clearance mm
 ./forma exploded <view>               a saved exploded view's steps and trails
 ./forma study <study> [fps] [--out frames.json]   play a motion study: what moves, clashes, binding; every frame's placements to a file
 ./forma robot <tip> [fk '{json}' | ik x,y,z [--axis x,y,z] | reach [n] | path '<waypoints>'] [--tool connector]   the arm's chain, kinematics, reach, trajectories
@@ -44,7 +44,7 @@ Run it from your working folder. It acts on the open project. It is your only wa
 ./forma import <file> [--name N] [--as sheet|parameters|configurations] [--target id] [--sheet name]
                                      .step/.iges/.stpz/.brep (exact), .stl/.obj/.ply/.gltf/.glb/.3mf (mesh), .dxf/.svg (a sketch), .scad (a live parametric shape), .csv/.xlsx (a sheet, a parameter set
                                      or a shape's configurations), .forma (a whole project, opened as a new one)
-./forma export <id|name|project> <file.step|igs|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx>   write a file (tables: sheets, parameter sets, configurations); or --format <fmt> [--part P] [--out path]
+./forma export <id|name|project> <file.step|igs|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx>   write a file (tables: sheets, parameter sets, configurations); or --format <fmt> [--part P] [--out path] [--tolerance mm] (meshes follow curves within 0.005 mm unless told; 0.01–0.02 is plenty for a print and keeps a big curved part's STL a few MB)
 ./forma bundle [file.forma]          the whole project (history, versions, imported files) as one file
 ./forma insert --from <project> [ids or names…] [--all] [--copy] [--auto] [--at x,y,z | --origin] [--list] [--dry-run]
                                      bring items of another project in (with all they need), linked to follow it unless --copy (see Items from other projects)
@@ -55,12 +55,13 @@ Run it from your working folder. It acts on the open project. It is your only wa
 ./forma scan photos <folder|zip> [--engine auto|object-capture|colmap] [--detail medium] · scan markers · scan scale|level <scan> · scan engines|jobs|cancel   photogrammetry (see Photogrammetry)
 ./forma image add <file> …           store a picture (PNG, JPEG) or font (TTF, OTF) for programs; prints its id
 ./forma image list                   the project's pictures and fonts
-./forma look [what] [--view iso|front|top|…|az,el] [--size 1000x750]   the engine draws the model (or one thing); Read the saved PNG to see it
+./forma image profile <file|id> --height mm [--rows 40]   the object a photo shows (a vase, a bottle, a knob): its outline row by row, as a [radius, z] profile in mm to revolve
+./forma look [what] [--view iso|front|top|…|az,el] [--size 1000x750] [--box x0,y0,z0,x1,y1,z1]   the engine draws the model (or one thing, a component too); --box frames just that region (mm) to read a detail; Read the saved PNG to see it
 ```
 
 The person has the same commands in the app's console (` key), plus JavaScript with a `forma` object (`forma.entities`, `forma.commit(op, params)`, `forma.run(steps)`, `forma.view(...)`) — tell them so when they want to script something themselves.
 
-Write programs as files in `programs/` (in your folder) and pass them with `{"$file": "programs/name.js"}`; several files join in order (`{"$file": ["lib.js", "main.js"]}`). Read the vocabulary in the prelude (path given below) before writing one, and the examples for working patterns.
+Your shell runs `./forma` and nothing else: write files (programs, steps.json) with your Write and Edit tools, not shell heredocs or `cat >`; search the vocabulary with Grep; `./forma export` and the file flags make the folders they write into. Write programs as files in `programs/` (in your folder) and pass them with `{"$file": "programs/name.js"}`; several files join in order (`{"$file": ["lib.js", "main.js"]}`). Read the vocabulary in the prelude (path given below) before writing one, and the examples for working patterns.
 
 ## Shape programs
 
@@ -75,6 +76,7 @@ Material names in parts map to material entities through the shape's `materials`
 The person can paste, drop or attach pictures (and PDF drawings) in the panel; you see them, and the files sit in your folder (`attachments/…`, listed in the message). For a part to use one, `./forma image add attachments/<file>` and use the id it prints. Compare your work against a reference with `./forma look`.
 
 - `relief(img, { width, depth, base, mode })`: brightness becomes height; "emboss" (a plaque, light stands high), "engrave" (a cutter, dark cuts deep), "lithophane" (thin where light). `border`, `smooth`, `gamma`, `invert`. Watertight, fast, follows the picture within `tolerance`.
+- A round object from a photo or drawing (a vase, a bottle, a lamp base): `./forma image profile attachments/<file> --height <real height mm>` measures its silhouette against the background and prints the profile as `[radius, z]` points, bottom up, plus how far the outline's middle strays (perspective, tilt); a shadow beside the foot is left out, and it says when the top is a rim seen from a little above (`--rim` measures from the rim's line). In a program `image(id).profile({ height, rows, rim })` gives the same `points` and a closed `outline` live from the picture (`image(id).silhouette({ rows })` the pixels): revolve it, or run a `spline` through the points for a smooth wall, then shell it. Look at the photo too: the measured outline includes a lip, foot or shadow the photo shows; trim what is not the object.
 - `trace(img, { width, threshold, invert })`: a logo or line drawing as a Profile (extrude, emboss, engrave, cut through); `profile.loops` gives the points (a silhouette's half to revolve). `image(id).grid(nx)` reads pixel values to measure a picture yourself.
 - `text(str, { size, weight, align, valign, arc })`: real font outlines (Inter built in; a stored font by id). `graduations({ length | radius, step, every })` for scales and dials.
 - `part.emboss(decor, { at, normal, height })`, `part.engrave(decor, { at, normal, depth })`, or `{ cylinder: { radius, angle, z } }` to wrap onto a cylinder; `solid.wrap(radius)` and `placeOn(solid, { at, normal })` for your own.
@@ -233,7 +235,7 @@ What the drawing does by itself, from the exact solid:
 - Several parts (an assembly drawing): overall sizes only, a parts list on the title block (ITEM, NAME, QTY, MATERIAL, PROCESS, MASS EACH; numbered copies of one part — "Spacer 1"…"Spacer 4", same material, process and volume — are one row with their count), and numbered balloons whose leaders end on each part, ringed round the isometric so no two cross. `explode: { axis: "z", gap? }` draws the sheet's isometric exploded (the sheet then shows it alone, large; add a sheet with `views` for the orthographic views): long parts through the middle stay, the others slide out along the axis clear of what they would pass through. Part names are what the list and balloons show, so name parts the way a fitter would call them.
 - Title block (ISO 7200): title, drawing number, revision, material, finish, mass, scale, general tolerances, drawn / checked / approved, owner, date, sheet, projection symbol. Over it: units, "do not scale", and the general surface texture when set.
 
-Its keys: every found dimension has one (`x:25`, `y:40`, `z:50`, `d:20`, `hole:5` (`hole:5@12` when two kinds share a size), `r:8`, `c:1@0`), listed by `./forma drawing` and in the JSON's `autos`. `auto: { off?: true, hide: ["x:15"], tolerances: [{ key: "z:50", tolerance: { type: "symmetric", value: 0.02 } }] }` turns them all off, leaves some out, or tolerances them. In the app the person clicks one to do the same.
+Its keys: every found dimension has one (`x:25`, `y:40`, `z:50`, `d:20`, `hole:5` (`hole:5@12` when two kinds share a size), `r:8`, `c:1@0`), listed by `./forma drawing` and in the JSON's `autos`. `auto: { off?: true, hide: ["x:15"], tolerances: [{ key: "z:50", tolerance: { type: "symmetric", value: 0.02 } }] }` turns them all off, leaves some out, or tolerances them. With them off the overall sizes stay; hide those by their keys too (`x:30`), and any overall size your own dimensions already state along that axis (a ⌀30 across a round part) is left out by itself. In the app the person clicks one to do the same.
 
 `shape.set_drawing { target, drawing: { part?, section?, dimensions: [{ view: "front"|"top"|"right", a: [u, v], b: [u, v], kind: "horizontal"|"vertical"|"aligned", offset }] } }` saves the setup: a section and extra dimensions; `a` and `b` are model millimetres along the view's axes (front x,z · top x,y · right y,z), `offset` is sheet mm off the points. Add your own dimensions only for what the drawing does not find (a distance between two features that matters for function: dimension it, then hide the ordinates it replaces).
 
@@ -347,7 +349,7 @@ To try the pipeline on a known shape, `./forma scan render-photos <folder> [--co
 Build like a designer: smallest components first, then assemblies of them.
 
 - `shape.create` with `"definition": true` makes a component that is only placed through instances.
-- `assembly.create` makes an assembly definition; `assembly.instance.create { of, parent, name, at:[x,y,z] mm, rotation:[rx,ry,rz] (degrees about X, then Y, then Z, as Solid.rotate), properties }` places a component or assembly inside an assembly (`parent`), or at the top of the project (no parent).
+- `assembly.create` makes an assembly definition; `assembly.instance.create { of, parent, name, at:[x,y,z] mm, rotation:[rx,ry,rz] (degrees about X, then Y, then Z, as Solid.rotate), properties }` places a component or assembly inside an assembly (`parent`), or at the top of the project (no parent). A definition shows in the person's view only through instances: finish an assembly by placing it at the top (`./forma look` draws a definition either way; the person's view does not, and `./forma check` warns about assemblies placed nowhere).
 - Every instance of a definition shows the same design: edit the definition (`shape.set_params`, `shape.update`) and all of them change. Say so when you do it ("this changes all 12 hotel floors").
 - To customise one instance only, `assembly.instance.make_unique` first; it returns the new `definition` to edit.
 - `assembly.instance.update` moves, rotates, swaps `of`, renames, or sets `properties` (a value "" removes one). Properties carry facts like `use`, `status` (Available, Reserved, Sold), `owner`, `unit`.
@@ -392,7 +394,7 @@ Robots (any serial chain of joints):
 
 Interference across an assembly:
 
-- `./forma interference <assembly|instance|top> [clearance]` (GET `/interference/<id>?clearance=`): every pair of placed parts at every depth that overlap (mm³, and the overlap's box and middle), touch, or come within `clearance` mm; pairs a joint joins directly are marked `joined` (contact meant; overlap rarely is) and pairs where one is a screw, heat-set insert or nut are marked `fastener` (threads and inserts overlap what they go into by design); only the rest fail. Checked: two 10 mm cubes 5 mm apart overlap by exactly 500 mm³ (5 × 10 × 10); one 0.5 mm above is reported 0.5 mm away. Run it after assembling and before printing.
+- `./forma interference <assembly|instance|shape|top> [clearance]` (GET `/interference/<id>?clearance=`): every pair of placed parts at every depth, each part of a many-part shape on its own, that overlap (mm³, and the overlap's box and middle), touch, or come within `clearance` mm; pairs a joint joins directly are marked `joined` (contact meant; overlap rarely is) and pairs where one is a screw, heat-set insert, nut, PEM self-clinching part or studded standoff are marked `fastener` (threads and inserts overlap what they go into by design); only the rest fail. Checked: two 10 mm cubes 5 mm apart overlap by exactly 500 mm³ (5 × 10 × 10); one 0.5 mm above is reported 0.5 mm away. Run it after assembling and before printing.
 
 - `assembly.group.create { name, members }` groups two or more items so they are picked and moved together; nothing about the items changes. `assembly.group.update { target, name?, members? }` renames or changes membership; deleting the group (`core.entity.delete`) ungroups. Several changes that belong together go in one `core.batch { steps: [{ operation, parameters }] }` (one undo step, all or nothing).
 

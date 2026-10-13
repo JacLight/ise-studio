@@ -1207,8 +1207,43 @@ fn layout_in(arena: &mut Arena, shape: Shape, parts: &[(String, Shape)], options
         Projection::Third => false, // the top view is above: dimension below instead
     };
     let (r0, r1) = box_of(&right, at_right);
-    let [want_x, want_y, want_z] = [!done.axes[0], !done.axes[1], !done.axes[2]];
     let size3 = [0, 1, 2].map(|k| brk.true_at(k, b[k + 3]) - brk.true_at(k, b[k]));
+    // An overall size is left out when the ordinates give it, when it is
+    // hidden by its key ("x:30") like any automatic dimension, or when the
+    // person's own dimensions already state it along that axis (a ⌀30 across
+    // a round part): a size is dimensioned once.
+    let own_gives = |k: usize, size: f64| {
+        options.dimensions.iter().filter(|d| d.detail.is_none()).any(|d| {
+            let axes = d.view.axes();
+            let along = |i: usize| (d.a[i] - d.b[i]).abs();
+            let (axis, value) = match d.kind {
+                DimKind::Horizontal => (axes[0], along(0)),
+                DimKind::Vertical => (axes[1], along(1)),
+                DimKind::Aligned if along(1) < 1e-6 => (axes[0], along(0)),
+                DimKind::Aligned if along(0) < 1e-6 => (axes[1], along(1)),
+                DimKind::Aligned => return false,
+            };
+            axis == k && same(value, size)
+        })
+    };
+    // Within what a drawing states (two decimals): a ⌀30 states a 29.99 across.
+    fn same(a: f64, b: f64) -> bool {
+        (a - b).abs() <= 0.02f64.max(1e-4 * b.abs())
+    }
+    let hidden_overall = |k: usize| {
+        let axis = ['x', 'y', 'z'][k];
+        options.auto.hide.iter().any(|h| h.split_once(':').is_some_and(|(a, v)| a.len() == 1 && a.starts_with(axis) && v.parse::<f64>().is_ok_and(|v| same(v, size3[k]))))
+    };
+    // A round outside the full size of the part (a knob's ⌀30) states its width both ways across it.
+    let boss_gives = |k: usize| {
+        feats.as_ref().is_some_and(|f| {
+            f.bosses.iter().any(|(line, dia, _)| {
+                features::principal(line.dir).is_some_and(|a| a != k) && same(*dia, size3[k]) && d.autos.iter().any(|m| m.key.starts_with("boss:") && same(m.value, *dia))
+            })
+        })
+    };
+    let overall_off = |k: usize| hidden_overall(k) || own_gives(k, size3[k]) || boss_gives(k);
+    let [want_x, want_y, want_z] = [0, 1, 2].map(|k| !done.axes[k] && !overall_off(k));
     if has_f {
         if want_x {
             if above_front {
@@ -2053,7 +2088,7 @@ const HELVETICA_BOLD: [u16; 95] = [
 ];
 
 /// Width of Helvetica text (mm), for anchoring and keeping labels apart.
-fn text_width(t: &Text) -> f64 {
+pub(crate) fn text_width(t: &Text) -> f64 {
     let table = if t.bold { &HELVETICA_BOLD } else { &HELVETICA };
     let em: u32 = t
         .text
@@ -2131,11 +2166,16 @@ fn pdf_content(d: &Drawing) -> String {
         }
         content.push_str("S\n");
     }
-    for f in &d.fills {
-        for (i, p) in f.iter().enumerate() {
-            let _ = write!(content, "{:.3} {:.3} {} ", p[0] * PT, p[1] * PT, if i == 0 { "m" } else { "l" });
+    // Every fill in one path, filled once: a cut wall made of triangles then
+    // shows no hairline seams where they meet (each path is anti-aliased on its own).
+    if !d.fills.is_empty() {
+        for f in &d.fills {
+            for (i, p) in f.iter().enumerate() {
+                let _ = write!(content, "{:.3} {:.3} {} ", p[0] * PT, p[1] * PT, if i == 0 { "m" } else { "l" });
+            }
+            content.push_str("h\n");
         }
-        content.push_str("h f\n");
+        content.push_str("f\n");
     }
     for t in &d.texts {
         // Font size from cap height (Helvetica caps are 0.718 em).
@@ -2228,9 +2268,16 @@ pub fn svg(d: &Drawing) -> String {
     }
     let _ = writeln!(o, "</g>");
     let _ = writeln!(o, r#"<g fill="black" stroke="none">"#);
-    for f in &d.fills {
-        let pts: Vec<String> = f.iter().map(|p| format!("{:.3},{:.3}", p[0], y(p[1]))).collect();
-        let _ = writeln!(o, r#"<polygon points="{}"/>"#, pts.join(" "));
+    // One path for every fill (no seams between the triangles of a cut wall).
+    if !d.fills.is_empty() {
+        let mut path = String::new();
+        for f in &d.fills {
+            for (i, p) in f.iter().enumerate() {
+                let _ = write!(path, "{}{:.3},{:.3} ", if i == 0 { "M" } else { "L" }, p[0], y(p[1]));
+            }
+            path.push_str("Z ");
+        }
+        let _ = writeln!(o, r#"<path d="{}"/>"#, path.trim_end());
     }
     for t in &d.texts {
         let anchor = match t.anchor {

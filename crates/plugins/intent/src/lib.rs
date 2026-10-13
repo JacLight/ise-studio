@@ -312,7 +312,7 @@ fn evaluate(world: &World, entity: Entity) -> Option<Result<RequirementResult, S
             part(world, *a).and_then(|a| part(world, *b).map(|b| clearance(&a, &b, min.canonical() * 1000.0)))
         }
         // Assemblies are checked part against part, inside and out.
-        Rule::NoCollisions { parts: ids } => parts(world, ids).map(|ps| no_collisions(&geometry::expand(ps))),
+        Rule::NoCollisions { parts: ids } => parts(world, ids).map(|ps| no_collisions(world, &geometry::expand(ps))),
         Rule::NoClashesInMotion { joint, parts: ids, steps } => clear_in_motion(world, *joint, ids, steps.unwrap_or(72) as usize),
         Rule::AssemblyFits { assembly, motion, steps } => assembly_fits(world, *assembly, *motion, steps.unwrap_or(36) as usize),
         Rule::MinSafetyFactor { shape, part, min } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Safety, *min, false, ""),
@@ -587,11 +587,17 @@ fn clearance(a: &PartView, b: &PartView, min: f64) -> RequirementResult {
     }
 }
 
-fn no_collisions(ps: &[PartView]) -> RequirementResult {
+fn no_collisions(world: &World, ps: &[PartView]) -> RequirementResult {
     let mut violations = Vec::new();
     let mut fix = None;
+    // A screw in its thread, an insert in its boss, a PEM standoff pressed
+    // into its sheet: overlap is how fasteners go in (as the interference check counts them).
+    let fastener = |p: &PartView| p.instance.is_some_and(|i| de_assembly::fit::is_fastener(world, i));
     for (i, a) in ps.iter().enumerate() {
         for b in &ps[i + 1..] {
+            if fastener(a) || fastener(b) {
+                continue;
+            }
             if let (Some((_, o)), _) = geometry::contact(a, b, 0.0, geometry::collision_tolerance(a, b)) {
                 if fix.is_none() && a.is_box() && b.is_box() {
                     let (axis, delta) = a.aabb.push_apart(&b.aabb, 0.0);

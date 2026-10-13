@@ -88,6 +88,9 @@ pub struct PartView {
     pub members: Vec<PartView>,
     /// Instance path names, outermost first (for messages).
     pub path: Vec<String>,
+    /// The instance this shape is placed by, inside an assembly (to tell a
+    /// screw or a PEM standoff, whose overlap with what holds it is meant).
+    pub instance: Option<StableId>,
 }
 
 impl PartView {
@@ -139,6 +142,7 @@ pub fn part(world: &World, id: StableId) -> Result<PartView, String> {
             rotation: de_assembly::Transform::IDENTITY.rot,
             members: Vec::new(),
             path: Vec::new(),
+            instance: None,
         });
     }
     if world.get::<de_assembly::Instance>(entity).is_some() || world.get::<de_assembly::AssemblyDef>(entity).is_some() {
@@ -159,6 +163,7 @@ pub fn part(world: &World, id: StableId) -> Result<PartView, String> {
         rotation: de_assembly::Transform::IDENTITY.rot,
         members: Vec::new(),
         path: Vec::new(),
+        instance: None,
     })
 }
 
@@ -201,6 +206,7 @@ fn compound(world: &World, id: StableId, entity: de_core::bevy_ecs::entity::Enti
             rotation: o.transform.rot,
             members: Vec::new(),
             path,
+            instance: o.path.last().copied(),
         });
     }
     if members.is_empty() {
@@ -219,6 +225,7 @@ fn compound(world: &World, id: StableId, entity: de_core::bevy_ecs::entity::Enti
         rotation: de_assembly::Transform::IDENTITY.rot,
         members,
         path: vec![name],
+        instance: None,
     })
 }
 
@@ -256,6 +263,7 @@ pub fn expand(ps: Vec<PartView>) -> Vec<PartView> {
                 rotation: p.rotation,
                 members: Vec::new(),
                 path: p.path.clone(),
+                instance: p.instance,
             });
         }
     }

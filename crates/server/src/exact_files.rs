@@ -96,6 +96,16 @@ pub fn to_step(lower: &str, body: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// What a check looks at: a placed part or assembly as exports take it, or a
+/// shape definition (a component placed only through instances) as it is,
+/// so a sheet-metal part or a bought component can be checked by its own id.
+pub(crate) fn checked(project: &de_core::Project, id: StableId) -> Option<Source> {
+    source(project, id).or_else(|| {
+        let material = |mid: StableId| project.get::<de_solid::Material>(mid).map(|m| (m.name.clone(), m.density.canonical()));
+        crate::shape_source(project, id, None, &material)
+    })
+}
+
 /// `GET /check-geometry/<id>?project=…&part=…`: the exact kernel's check of
 /// every part (as FreeCAD's Check geometry): validity, what booleans would
 /// trip on (self-intersections, tiny edges, curves off their surfaces),
@@ -108,7 +118,7 @@ pub async fn check(State(server): State<Arc<Server>>, Path(id): Path<String>, Qu
     };
     let s = {
         let project = app.project.lock().unwrap();
-        match serde_json::from_value::<StableId>(json!(id)).ok().and_then(|i| source(&project, i)) {
+        match serde_json::from_value::<StableId>(json!(id)).ok().and_then(|i| checked(&project, i)) {
             Some(s) => s,
             None => return fail(StatusCode::NOT_FOUND, format!("{id} is not a part")),
         }
@@ -147,7 +157,7 @@ pub async fn surfaces(State(server): State<Arc<Server>>, Path(id): Path<String>,
     };
     let s = {
         let project = app.project.lock().unwrap();
-        match serde_json::from_value::<StableId>(json!(id)).ok().and_then(|i| source(&project, i)) {
+        match serde_json::from_value::<StableId>(json!(id)).ok().and_then(|i| checked(&project, i)) {
             Some(s) => s,
             None => return fail(StatusCode::NOT_FOUND, format!("{id} is not a part")),
         }

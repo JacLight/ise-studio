@@ -316,7 +316,10 @@ impl Ai {
         let repo = &self.config.repo;
         let mut cmd = Command::new(claude);
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])
-            .args(["--tools", "Bash,Read,Write,Edit"])
+            // Grep and Glob search only where the Read rules below allow (the
+            // vocabularies are thousands of lines: it looks a function up rather
+            // than reading them whole or trying shell grep, which is not allowed).
+            .args(["--tools", "Bash,Read,Write,Edit,Grep,Glob"])
             .arg("--allowedTools")
             .args([
                 "Bash(./forma:*)".to_string(),

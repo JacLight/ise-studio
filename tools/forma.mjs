@@ -44,7 +44,8 @@
 //   node tools/forma.mjs commit <operation> '<json>'   one command (same $file inlining)
 //   node tools/forma.mjs image add <file> …   store pictures (PNG, JPEG) or fonts (TTF, OTF) for programs; prints each id
 //   node tools/forma.mjs image list           the pictures and fonts in the project
-//   node tools/forma.mjs look [what] [--view iso|front|top|…|az,el] [--size 1000x750] [--out file.png]
+//   node tools/forma.mjs image profile <file|id> --height mm   a photo's object measured: its outline as a profile to revolve
+//   node tools/forma.mjs look [what] [--view iso|front|top|…|az,el] [--size 1000x750] [--box x0,y0,z0,x1,y1,z1] [--out file.png]
 //        a picture of the model (or one thing in it) drawn by the engine, saved to look/…png
 //   node tools/forma.mjs ops [filter]         the commands the engine accepts, with schemas
 //   node tools/forma.mjs view <action> [what] show something in the person's view (not saved):
@@ -90,13 +91,25 @@
 // path (e.g. "$0.id"), and { "$file": "path.js" } inlines a file's text (paths
 // are relative to steps.json; several files can be joined with an array).
 
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import fsModule, { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { request as httpRequest } from "node:http";
 import { pcbLib } from "./forma-pcblib.mjs";
 import { pcbBoard, BOARD_SUBS } from "./forma-pcbboard.mjs";
 import { pcbSignal, SIGNAL_SUBS } from "./forma-pcbsignal.mjs";
+
+// Every file a command writes (--pdf out/drawing.pdf, --dxf flat/base.dxf…)
+// gets its folder made first, wherever the command imports writeFileSync from.
+{
+  const write = fsModule.writeFileSync;
+  fsModule.writeFileSync = (path, ...rest) => {
+    if (typeof path === "string" && dirname(path) !== ".") fsModule.mkdirSync(dirname(resolve(path)), { recursive: true });
+    return write(path, ...rest);
+  };
+  syncBuiltinESMExports();
+}
 
 const args = process.argv.slice(2);
 const urlFlag = args.indexOf("--url");
@@ -169,6 +182,23 @@ function resolveRefs(value, outputs, base) {
 const engine = await connect();
 await engine.snapshot;
 let failed = false;
+
+// Names work wherever an id does: a shape's, instance's or assembly's name
+// (any case) stands for its id in the commands that read one part.
+if (["check-geometry", "surfaces", "drawing", "flat"].includes(command) && args[1] && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(args[1]) && args[1] !== "project") {
+  const snap = await engine.snapshot;
+  const want = args[1].toLowerCase();
+  const nameOf = (e) => {
+    const c = e.components ?? {};
+    return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["assembly.definition"]?.name;
+  };
+  const hits = snap.entities.filter((e) => nameOf(e)?.toLowerCase() === want);
+  if (hits.length === 1) args[1] = hits[0].id;
+  else if (hits.length > 1) {
+    console.error(`✗ “${args[1]}” names ${hits.length} things: use an id (${hits.map((e) => e.id).join(", ")})`);
+    process.exit(1);
+  }
+}
 
 if (command === "run") {
   const steps = JSON.parse(readFileSync(file, "utf8"));
@@ -1229,8 +1259,67 @@ if (command === "run") {
     const list = await res.json();
     if (!list.length) console.log("no pictures or fonts in this project yet (forma image add <file>)");
     for (const e of list) console.log(`${e.id}  ${e.name} (${e.kind.toUpperCase()}${e.width ? `, ${e.width} × ${e.height} px` : ""})`);
+  } else if (sub === "profile") {
+    // Measure the object a photo or drawing shows: its outline row by row,
+    // in mm from its real height or width, as a profile to revolve.
+    const what = args[2];
+    const flag = (k) => {
+      const i = args.indexOf(k);
+      return i > 0 ? args[i + 1] : undefined;
+    };
+    let id = what;
+    if (what && !/^[0-9a-f]{64}$/i.test(what)) {
+      let bytes;
+      try {
+        bytes = readFileSync(what);
+      } catch (e) {
+        console.error(`✗ ${what}: ${e.message}`);
+        failed = true;
+      }
+      if (bytes) {
+        const res = await fetch(`${http}/images/${encodeURIComponent(what.split("/").pop())}${q}`, { method: "POST", body: bytes });
+        if (res.ok) id = (await res.json()).id;
+        else {
+          console.error(`✗ ${await res.text()}`);
+          failed = true;
+        }
+      }
+    }
+    if (!what) {
+      console.error("usage: forma image profile <file|id> [--height mm | --width mm] [--rows 40] [--threshold 0.12] [--rim] [--json]");
+      failed = true;
+    } else if (!failed) {
+      const params = new URLSearchParams({ silhouette: flag("--rows") ?? "40" });
+      for (const k of ["height", "width", "threshold"]) if (flag(`--${k}`)) params.set(k, flag(`--${k}`));
+      if (args.includes("--rim")) params.set("rim", "1");
+      const res = await fetch(`${http}/images/${id}?${params}`);
+      if (!res.ok) {
+        console.error(`✗ ${await res.text()}`);
+        failed = true;
+      } else {
+        const v = await res.json();
+        const px = v.pixels;
+        if (args.includes("--json")) console.log(JSON.stringify(v, null, 1));
+        else {
+          console.log(`picture ${id} (${v.picture.width} × ${v.picture.height} px): object from y ${px.top} to ${px.bottom} px (${px.height} px tall), widest ${px.widest} px, axis x ${px.axis} px, middles stray ±${px.drift} px`);
+          if (v.mm) {
+            const m = v.mm;
+            console.log(`at ${m.per_pixel.toFixed(4)} mm/px: ${m.height} mm tall, widest Ø${m.widest} mm, axis drift ${m.drift} mm`);
+            if (m.cap_top > 0.01 * m.height && !args.includes("--rim"))
+              console.log(`! its top only reaches full width ${m.cap_top} mm down (y ${px.cap_top} px): a rim seen from a little above (an opening's ellipse), or a rounded top. For a rim, measure from its line with --rim (and give the height to the rim).`);
+            if (m.cap_bottom > 0.01 * m.height) console.log(`! its bottom narrows over the last ${m.cap_bottom} mm: a rounded or undercut foot, or the base's ellipse; look at the photo.`);
+            console.log("profile [radius, z] mm, bottom up (polygon([[0,0], …profile, [0, height]]).revolve(), or a spline through it):");
+            console.log(JSON.stringify(m.profile));
+          } else {
+            console.log("rows (y, left, right px) — give --height or --width (mm) for a profile in mm:");
+            for (const r of px.rows) console.log(`  ${r.y}  ${r.left}–${r.right}  (${r.width} px)`);
+          }
+          console.log(`in a program: image("${id}").profile({ height: …, rows: ${flag("--rows") ?? 40} }) gives the same points live`);
+        }
+      }
+    }
   } else {
-    console.error("usage: forma image add <file> … | forma image list");
+    console.error("usage: forma image add <file> … | forma image list | forma image profile <file|id> [--height mm]");
     failed = true;
   }
 } else if (command === "look") {
@@ -1242,6 +1331,8 @@ if (command === "run") {
   };
   const viewName = flag("--view") ?? "iso";
   const size = flag("--size");
+  // --box x0,y0,z0,x1,y1,z1: frame only that region (mm), to read a detail.
+  const box = flag("--box");
   const out = flag("--out");
   const what = args.slice(1).join(" ").trim();
   let id = null;
@@ -1261,7 +1352,7 @@ if (command === "run") {
     } else id = pick[0].id;
   }
   if (!failed) {
-    const q = new URLSearchParams({ ...(project ? { project } : {}), ...(id ? { id } : {}), view: viewName, ...(size ? { size } : {}) });
+    const q = new URLSearchParams({ ...(project ? { project } : {}), ...(id ? { id } : {}), view: viewName, ...(size ? { size } : {}), ...(box ? { box } : {}) });
     const res = await fetch(`${http}/look?${q}`);
     if (!res.ok) {
       console.error(`✗ ${await res.text()}`);
@@ -1320,14 +1411,18 @@ if (command === "run") {
   }
 } else if (command === "get") {
   const s = await engine.snapshot;
-  const e = s.entities.find((x) => x.id === file);
+  // By id, or by name (a shape, sketch, material, instance, assembly…), as the other commands take them.
+  const named = (x) => Object.values(x.components ?? {}).some((c) => c && typeof c === "object" && typeof c.name === "string" && c.name.toLowerCase() === String(file ?? "").toLowerCase());
+  const e = s.entities.find((x) => x.id === file) ?? s.entities.find(named);
   if (!e) {
-    console.error(`no entity ${file}`);
+    console.error(`no entity ${file} (\`forma list\` shows every id and name)`);
     failed = true;
   } else {
-    // Meshes are for drawing, not reading: report their size instead.
+    // Meshes are for drawing, not reading: report their size instead (a
+    // snapshot sends a mesh as a reference with its triangle count).
     const { mesh, ...rest } = e;
-    console.log(JSON.stringify({ ...rest, mesh: mesh ? { triangles: mesh.indices.length / 3 } : null }, null, 2));
+    const triangles = mesh ? (mesh.indices ? mesh.indices.length / 3 : mesh.triangles) : null;
+    console.log(JSON.stringify({ ...rest, mesh: mesh ? { triangles } : null }, null, 2));
   }
 } else if (command === "commit") {
   const operation = file;
@@ -1538,6 +1633,8 @@ if (command === "run") {
       const format = flag("--format");
       const part = flag("--part");
       const outFlag = flag("--out");
+      // Meshes (STL, 3MF, OBJ…) follow curves within this many mm (default 0.005: very fine; 0.02 is plenty to print).
+      const tolerance = flag("--tolerance");
       const [, what, given] = args;
       const ext = (format ?? given?.split(".").pop() ?? "").toLowerCase().replace(/^\./, "");
       if (!what || !ext) throw new Error("forma export <id|name|project> <file.step|…> | --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]");
@@ -1551,7 +1648,7 @@ if (command === "run") {
       const found = what === "project" ? [{ id: "project" }] : placed.length ? placed : named;
       if (found.length !== 1) throw new Error(found.length ? `“${what}” matches ${found.length} things: use an id (${found.map((e) => e.id).join(", ")})` : `nothing called “${what}”`);
       const route = ext === "csv" || ext === "xlsx" ? "table" : "export";
-      const q = new URLSearchParams({ project: projectName, ...(part ? { part } : {}) });
+      const q = new URLSearchParams({ project: projectName, ...(part ? { part } : {}), ...(tolerance ? { tolerance } : {}) });
       const res = await fetch(`${http}/${route}/${found[0].id}.${ext === "iges" ? "igs" : ext}?${q}`);
       if (!res.ok) throw new Error(await res.text());
       const bytes = Buffer.from(await res.arrayBuffer());
@@ -2188,4 +2285,22 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
 }
 
 engine.close();
+
+// An assembly made but never placed shows nothing in the person's view (a
+// definition appears only through its instances): say so after changes and
+// checks, while it is easy to put right.
+if (["run", "commit", "check", "look"].includes(command)) {
+  try {
+    const fresh = await connect();
+    const s = await fresh.snapshot;
+    fresh.close();
+    const placedOf = new Set(s.entities.map((e) => e.components?.["assembly.instance"]?.of).filter(Boolean));
+    const unplaced = s.entities.filter((e) => e.components?.["assembly.definition"] && !placedOf.has(e.id));
+    for (const e of unplaced) {
+      console.log(`! assembly “${e.components["assembly.definition"].name}” (${e.id}) is not placed anywhere, so the person's view does not show it: place it with assembly.instance.create { "of": "${e.id}", "name": "…" } (no parent puts it at the top of the project)`);
+    }
+  } catch {
+    // The engine went away: nothing to add.
+  }
+}
 process.exit(failed ? 1 : 0);

@@ -269,8 +269,10 @@ function __filler(o, f, y0, y1, levelName, external, z0) {
         // Swing: hinge at the jamb, leaf drawn open square to the wall, arc back to closed.
         const leftHinge = leaves === 2 ? k === 0 : o.swing !== "right";
         const hx = leftHinge ? x0 + fw : x0 + w - fw;
-        const closed = leftHinge ? 0 : Math.PI;
         const open = s > 0 ? Math.PI / 2 : -Math.PI / 2;
+        // Closed lies along the wall: a quarter turn from open, the short way
+        // (a right-hand door opening to the right sweeps -90° to -180°, not round through 0°).
+        const closed = leftHinge ? 0 : s > 0 ? Math.PI : -Math.PI;
         plan.push({ points: [P(hx, face), P(hx, face + s * lw)] });
         plan.push({ points: __arc([hx, face], lw, open, closed).map(([x, y]) => P(x, y)) });
       }
