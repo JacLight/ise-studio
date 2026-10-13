@@ -10,6 +10,7 @@ de-core.workspace = true
 de-solid.workspace = true
 de-shape.workspace = true
 de-assembly.workspace = true
+de-scan.workspace = true
 manifold-csg = "0.4"
 serde.workspace = true
 serde_json.workspace = true

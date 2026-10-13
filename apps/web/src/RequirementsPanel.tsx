@@ -17,7 +17,8 @@ const KINDS: { kind: Rule["kind"]; icon: IconName; title: string; detail: string
   { kind: "no_collisions", icon: "collide", title: "No collisions", detail: "Nothing overlaps" },
 ];
 
-const iconFor = (kind: Rule["kind"]) => KINDS.find((k) => k.kind === kind)!.icon;
+const OTHER_ICONS: Partial<Record<string, IconName>> = { scan_deviation: "scan" };
+const iconFor = (kind: Rule["kind"]) => KINDS.find((k) => k.kind === kind)?.icon ?? OTHER_ICONS[kind] ?? "shield";
 
 function Ring({ passing, total }: { passing: number; total: number }) {
   const r = 17;

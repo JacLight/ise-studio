@@ -9,6 +9,7 @@ publish.workspace = true
 de-core.workspace = true
 de-solid.workspace = true
 de-intent.workspace = true
+de-scan.workspace = true
 de-shape.workspace = true
 de-assembly.workspace = true
 de-draft.workspace = true

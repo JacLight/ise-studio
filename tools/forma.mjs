@@ -67,6 +67,13 @@
 //        .scad a live parametric shape, .csv/.xlsx a sheet, parameter set or configurations, .forma a new project
 //   node tools/forma.mjs export <id|name|project> <file.ext> | --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]
 //   node tools/forma.mjs bundle [file.forma]   the whole project (history, assets) as one file
+//   node tools/forma.mjs scan add <file> [--source colmap] | list | info | fit <scan> [kind] [--near x,y,z --within r] | detect
+//        | downsample | outliers | normals | reconstruct [--depth 7] | surface [--poles 8] | shape | export | remove
+//                                            point clouds (XYZ/PLY/PCD/E57) and meshes: add, thin, fit primitives, rebuild surfaces
+//   node tools/forma.mjs mesh check|repair|decimate|smooth|remesh|fill-holes|split|merge|section|curvature|segment|unwrap <scan> …
+//        | mesh from <part> [--tolerance] [--angle] [--max-edge]   mesh evaluation and repair, reworking, sections, flattening
+//   node tools/forma.mjs inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] [--require]
+//                                            deviation of a scan from its CAD part: statistics, pass/fail, as a requirement
 //
 // steps.json is an array of { "operation": "...", "parameters": { ... } }.
 // Any string "$N.path" in parameters is replaced by step N's output at that
@@ -1416,6 +1423,244 @@ if (command === "run") {
       const bytes = Buffer.from(await res.arrayBuffer());
       write(out, bytes);
       console.log(`✓ wrote ${out} (${(bytes.length / 1024).toFixed(0)} KB): the whole project with its history and assets; import it elsewhere with forma import ${out}`);
+    }
+  } catch (e) {
+    console.error(`✗ ${e.message}`);
+    failed = true;
+  }
+} else if (command === "scan" || command === "mesh" || command === "inspect") {
+  // Point clouds and meshes: add, check, repair, rework, fit, section, unwrap, inspect against a part.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const q = new URLSearchParams(project ? { project } : {}).toString();
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : null;
+  };
+  const has = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? (args.splice(i, 1), true) : false;
+  };
+  const nums = (s) => (s == null ? undefined : s.split(",").map(Number));
+  const num = (s) => (s == null ? undefined : Number(s));
+  const call = async (method, path, body) => {
+    const res = await fetch(`${http}${path}${path.includes("?") ? "&" : "?"}${q}`, { method, body: body === undefined ? undefined : typeof body === "string" || body instanceof Uint8Array ? body : JSON.stringify(body) });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  };
+  const r3 = (v) => Math.round(v * 1000) / 1000;
+  const p3 = (p) => `(${p.map(r3).join(", ")})`;
+  const sayScan = (e) => `${e.name} [${e.id.slice(0, 12)}]: ${e.kind === "mesh" ? `mesh, ${e.triangles} triangles, ${e.points} vertices` : `${e.points} points`} (${e.format}${e.source && e.source !== "file" ? `, from ${e.source}` : ""}); ${e.bounds.slice(3).map((v, i) => r3(v - e.bounds[i])).join(" × ")} mm`;
+  const region = () => {
+    const near = flag("--near");
+    const within = flag("--within");
+    const box = flag("--box");
+    return { ...(near ? { near: nums(near), within: num(within ?? "5") } : {}), ...(box ? { box: nums(box) } : {}) };
+  };
+  const sayFit = (f) => {
+    const g = { ...f };
+    for (const k of ["kind", "rms", "max", "points", "of", "alternatives"]) delete g[k];
+    const params = Object.entries(g)
+      .map(([k, v]) => `${k} ${Array.isArray(v) ? p3(v) : typeof v === "number" ? r3(v) : v}`)
+      .join(", ");
+    return `${f.kind}: ${params} — RMS ${f.rms.toExponential(2)} mm, worst ${r3(f.max)} mm over ${f.points}${f.of !== f.points ? ` of ${f.of}` : ""} points`;
+  };
+  const report = (r) =>
+    [
+      `${r.vertices} vertices, ${r.triangles} triangles, ${r.components} piece${r.components === 1 ? "" : "s"}`,
+      r.solid ? "a closed solid" : "NOT a closed solid",
+      r.holes && `${r.holes} hole${r.holes === 1 ? "" : "s"} (${r.open_edges} open edges)`,
+      r.non_manifold_edges && `${r.non_manifold_edges} non-manifold edges`,
+      r.non_manifold_vertices && `${r.non_manifold_vertices} non-manifold vertices`,
+      r.flipped && `${r.flipped} flipped triangles`,
+      r.degenerate && `${r.degenerate} degenerate`,
+      r.duplicate && `${r.duplicate} duplicate`,
+      r.self_intersections && `${r.self_intersections}${r.intersections_capped ? "+" : ""} self-intersecting pairs`,
+      r.unused_vertices && `${r.unused_vertices} unused vertices`,
+      `volume ${r3(r.volume)} mm³, area ${r3(r.area)} mm²`,
+    ]
+      .filter(Boolean)
+      .join("; ");
+  const sub = command === "inspect" ? "inspect" : file;
+  const id = command === "inspect" ? args[1] : args[2];
+  try {
+    if (command === "scan" && sub === "add") {
+      const path = args[2];
+      if (!path) throw new Error("forma scan add <file> [--name N] [--source colmap|object-capture|scanner]");
+      const name = flag("--name");
+      const source = flag("--source");
+      const qs = new URLSearchParams({ ...(name ? { name } : {}), ...(source ? { source } : {}) });
+      const e = await call("POST", `/scans/${encodeURIComponent(basename(path))}?${qs}`, readFileSync(path));
+      console.log(`✓ ${sayScan(e)}\n  in a program: fitScan("${e.id}", …), ${e.kind === "mesh" ? `importMesh("${e.id}", { repair: true })` : `reconstruct("${e.id}")`}`);
+    } else if (command === "scan" && (sub === "list" || !sub)) {
+      const list = await call("GET", "/scans");
+      if (!list.length) console.log("no scans in this project yet (forma scan add <file>)");
+      for (const e of list) console.log(`${e.id}  ${sayScan(e)}${e.parent ? `  ← ${e.parent.slice(0, 12)}` : ""}`);
+    } else if (!id && !(command === "mesh" && sub === "from")) {
+      throw new Error(`say which scan: forma ${command} ${command === "inspect" ? "<scan> <part> --tolerance mm" : `${sub ?? "<what>"} <scan>`}`);
+    } else if (command === "scan" && sub === "info") {
+      const r = await call("POST", `/scans/${id}/query/info`, {});
+      console.log(`${r.kind}: ${r.points} points, spacing ${r3(r.spacing)} mm, ${p3(r.bounds.slice(0, 3))} to ${p3(r.bounds.slice(3))}${r.normals ? ", with normals" : ""}${r.colors ? ", coloured" : ""}`);
+      if (r.kind === "mesh") console.log(`  ${r.triangles} triangles; ${r.solid ? "a closed solid" : `not a solid: ${r.problems}`}; volume ${r3(r.volume)} mm³`);
+    } else if (command === "scan" && sub === "fit") {
+      const kind = args[3] && !args[3].startsWith("--") ? args[3] : "auto";
+      const ransac = has("--ransac");
+      const threshold = num(flag("--threshold"));
+      const f = await call("POST", `/scans/${id}/query/fit`, { kind, ransac, ...(threshold ? { threshold } : {}), ...region() });
+      console.log(`✓ ${sayFit(f)}`);
+      for (const a of f.alternatives ?? []) console.log(`  also ${a.kind}: RMS ${a.rms.toExponential(2)} mm`);
+    } else if (command === "scan" && sub === "detect") {
+      const kinds = flag("--kinds");
+      const threshold = num(flag("--threshold"));
+      const r = await call("POST", `/scans/${id}/query/detect`, { ...(kinds ? { kinds: kinds.split(",") } : {}), ...(threshold ? { threshold } : {}), ...region() });
+      console.log(`✓ ${r.shapes.length} shapes in ${r.points} points (${r.unassigned} left over)`);
+      r.shapes.forEach((f, i) => console.log(`  ${i + 1}. ${sayFit(f)}`));
+    } else if (command === "scan" && ["downsample", "outliers", "normals"].includes(sub)) {
+      const o = { voxel: num(flag("--voxel")), count: num(flag("--count")), neighbours: num(flag("--neighbours")), sigma: num(flag("--sigma")), toward: nums(flag("--toward")) };
+      const r = await call("POST", `/scans/${id}/points/${sub}`, o);
+      console.log(`✓ ${sub}: ${r.report.points[0]} → ${r.report.points[1]} points${r.report.removed ? ` (${r.report.removed} removed)` : ""}${r.report.voxel ? `, voxel ${r3(r.report.voxel)} mm` : ""}\n  new scan ${sayScan(r.scan)}`);
+    } else if (command === "scan" && sub === "reconstruct") {
+      const r = await call("POST", `/scans/${id}/surface/reconstruct`, { depth: num(flag("--depth")), trim: num(flag("--trim")), smooth: num(flag("--smooth")), ...region() });
+      const t = r.report;
+      console.log(`✓ Poisson surface (depth ${t.depth}) from ${t.points} points: ${t.triangles} triangles, ${t.closed ? "closed" : `${t.holes} openings`}; passes the points within RMS ${r3(t.rms)} mm, worst ${r3(t.max)} mm\n  new scan ${sayScan(r.scan)}`);
+    } else if (command === "scan" && sub === "surface") {
+      const p = flag("--poles");
+      const s = await call("POST", `/scans/${id}/query/surface`, { poles: p?.includes(",") ? nums(p) : num(p ?? "8"), degree: num(flag("--degree") ?? "3"), smoothing: num(flag("--smoothing")), ...region() });
+      const full = (await call("GET", "/scans")).find((e) => e.id.startsWith(id) || e.name === id)?.id ?? id;
+      console.log(`✓ B-spline surface ${s.nu}×${s.nv} poles, degree ${s.degree[0]}: RMS ${r3(s.rms)} mm, worst ${r3(s.max)} mm over ${s.points} points\n  in a program: fitSurface("${full}", { poles: ${p ?? 8}, thickness: 1 })`);
+    } else if (command === "scan" && sub === "shape") {
+      const o = { name: flag("--name"), repair: has("--repair") || undefined, decimate: num(flag("--decimate")), smooth: num(flag("--smooth")), refine: has("--refine") || undefined, depth: num(flag("--depth")) };
+      const r = await call("POST", `/scans/${id}/shape`, o);
+      console.log(`✓ part “${r.name}” (${r.id}):\n${r.source.replace(/^/gm, "  ")}`);
+    } else if (command === "scan" && sub === "export") {
+      const out = flag("--out");
+      const res = await fetch(`${http}/scans/${id}/file?${q}`);
+      if (!res.ok) throw new Error(await res.text());
+      const bytes = Buffer.from(await res.arrayBuffer());
+      const suggested = res.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? `${id}.ply`;
+      const target = out ? resolve(out) : join(homedir(), "Downloads", "Forma exports", suggested);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, bytes);
+      console.log(`✓ ${target} (${(bytes.length / 1024).toFixed(1)} KB)`);
+    } else if (command === "scan" && sub === "remove") {
+      const r = await call("POST", `/scans/${id}/remove`);
+      console.log(`✓ ${r.removed} taken off the list`);
+    } else if (command === "mesh" && sub === "check") {
+      const r = await call("POST", `/scans/${id}/query/check`, {});
+      console.log(`${r.solid ? "✓" : "✗"} ${report(r)}`);
+      for (const [k, list] of Object.entries(r.at)) for (const p of list.slice(0, 3)) console.log(`    ${k.replace(/_/g, " ")} at ${Array.isArray(p[0]) ? p3(p[0]) : p3(p)}`);
+      failed = !r.solid;
+    } else if (command === "scan" && ["crop", "merge"].includes(sub)) {
+      const r = await call("POST", `/scans/${id}/points/${sub}`, { ...region(), ...(sub === "merge" ? { with: args.slice(3) } : {}) });
+      console.log(`✓ ${sub}: new scan ${sayScan(r.scan)}`);
+    } else if (command === "mesh" && sub === "trim") {
+      const r = await call("POST", `/scans/${id}/mesh/trim`, { origin: nums(flag("--origin")), normal: nums(flag("--normal")) ?? [0, 0, 1] });
+      console.log(`✓ trimmed: ${r.report.triangles[0]} → ${r.report.triangles[1]} triangles\n  new scan ${sayScan(r.scan)}`);
+    } else if (command === "mesh" && sub === "project") {
+      const pts = JSON.parse(args[3] ?? "[]");
+      const r = await call("POST", `/scans/${id}/query/projectCurve`, { points: pts, step: num(flag("--step") ?? "1") });
+      console.log(`✓ ${r.points.length} points on the surface`);
+      console.log(JSON.stringify(r.points.map((p) => p.map(r3))));
+    } else if (command === "mesh" && ["repair", "decimate", "smooth", "remesh", "fill-holes", "flip", "harmonize", "largest", "split", "merge", "sample"].includes(sub)) {
+      const op = { "fill-holes": "fillHoles" }[sub] ?? sub;
+      const maxEdges = num(flag("--max-edges"));
+      const o = {
+        fillHoles: has("--no-fill") ? false : maxEdges,
+        largestOnly: has("--largest") || undefined,
+        minComponent: num(flag("--min-component")),
+        ratio: num(flag("--ratio")),
+        triangles: num(flag("--triangles")),
+        maxError: num(flag("--max-error")),
+        iterations: num(flag("--iterations")),
+        method: has("--laplacian") ? "laplacian" : undefined,
+        edge: num(flag("--edge")),
+        maxEdges,
+        count: num(flag("--count")),
+        name: flag("--name") ?? undefined,
+        with: sub === "merge" ? args.slice(3) : undefined,
+      };
+      const r = await call("POST", `/scans/${id}/${sub === "sample" ? "surface" : "mesh"}/${op}`, o);
+      if (sub === "split") {
+        console.log(`✓ ${r.pieces} pieces`);
+        for (const e of r.scans) console.log(`  ${sayScan(e)}`);
+      } else {
+        const t = r.report;
+        if (t?.before) {
+          console.log(`${t.after.solid ? "✓" : "✗"} repaired:`);
+          for (const s of t.steps) console.log(`  ${s.count} ${s.step}`);
+          console.log(`  before: ${report(t.before)}\n  after:  ${report(t.after)}`);
+          failed = !t.after.solid;
+        } else if (t) {
+          console.log(`✓ ${sub}: ${t.triangles ? `${t.triangles[0]} → ${t.triangles[1]} triangles` : ""}${t.max_deviation != null ? `, strays at most ${r3(t.max_deviation)} mm (mean ${r3(t.mean_deviation)})` : ""}${t.volume_change != null ? `, volume ${t.volume_change >= 0 ? "+" : ""}${r3(t.volume_change)} mm³` : ""}${t.filled != null ? `, ${t.filled} holes filled${t.skipped ? `, ${t.skipped} too large` : ""}` : ""}`);
+        }
+        console.log(`  new scan ${sayScan(r.scan)}`);
+      }
+    } else if (command === "mesh" && sub === "section") {
+      const count = num(flag("--count"));
+      const origin = nums(flag("--origin"));
+      const normal = nums(flag("--normal")) ?? [0, 0, 1];
+      const out = flag("--out");
+      const r = await call("POST", `/scans/${id}/query/section`, { normal, ...(origin ? { origin } : {}), ...(count ? { count } : {}) });
+      for (const s of r) {
+        console.log(`plane through ${p3(s.origin)} normal ${p3(s.normal)}: ${s.polylines.length} ${s.polylines.length === 1 ? "loop" : "loops"}`);
+        for (const l of s.polylines) console.log(`  ${l.closed ? "closed" : "open"}, ${l.points.length} points, length ${r3(l.length)} mm${l.closed ? `, area ${r3(Math.abs(l.area))} mm²` : ""}`);
+      }
+      if (out) writeFileSync(out, JSON.stringify(r));
+    } else if (command === "mesh" && sub === "curvature") {
+      const r = await call("POST", `/scans/${id}/query/curvature`, {});
+      for (const k of ["mean", "gaussian", "k1", "k2"]) console.log(`  ${k.padEnd(8)} min ${r3(r[k].min)}  5% ${r3(r[k].p5)}  median ${r3(r[k].median)}  95% ${r3(r[k].p95)}  max ${r3(r[k].max)}  (1/mm${k === "gaussian" ? "²" : ""})`);
+    } else if (command === "mesh" && sub === "segment") {
+      const r = await call("POST", `/scans/${id}/query/segment`, { by: has("--planes") ? "planes" : "curvature", angle: num(flag("--angle")), threshold: num(flag("--threshold")) });
+      console.log(`✓ ${r.segments.length} regions`);
+      for (const s of r.segments.slice(0, 40)) console.log(`  ${s.id}. ${s.triangles} triangles, ${r3(s.area)} mm² at ${p3(s.centroid)}${s.fit ? ` — ${sayFit(s.fit)}` : ""}`);
+    } else if (command === "mesh" && sub === "boundaries") {
+      const r = await call("POST", `/scans/${id}/query/boundaries`, {});
+      console.log(`${r.loops.length} open-edge loops`);
+      for (const l of r.loops.slice(0, 20)) console.log(`  ${l.length} edges from ${p3(l[0])}`);
+    } else if (command === "mesh" && sub === "unwrap") {
+      const svg = flag("--svg");
+      const segment = num(flag("--segment"));
+      const r = await call("POST", `/scans/${id}/unwrap`, { ...region(), ...(segment != null ? { segment } : {}), sketch: has("--sketch"), name: flag("--name") ?? undefined });
+      console.log(`✓ flat pattern ${r3(r.size[0])} × ${r3(r.size[1])} mm, ${r.outlines.length} outline${r.outlines.length === 1 ? "" : "s"}; stretch: area ${(r.area_distortion_mean * 100).toFixed(2)}% mean, ${(r.area_distortion_max * 100).toFixed(2)}% worst; lengths ${(r.length_distortion_mean * 100).toFixed(2)}% mean, ${(r.length_distortion_max * 100).toFixed(2)}% worst`);
+      if (r.sketch) console.log(`  sketch “${r.sketch.name}” (${r.sketch.id}): sketch("${r.sketch.name}").extrude(…)`);
+      if (svg) {
+        writeFileSync(svg, r.svg);
+        console.log(`  ${svg}`);
+      }
+    } else if (command === "mesh" && sub === "from") {
+      const part = args[2];
+      if (!part) throw new Error("forma mesh from <part id> [--tolerance 0.01] [--angle 20] [--max-edge 2] [--name N]");
+      const r = await call("POST", `/mesh-from/${part}`, { tolerance: num(flag("--tolerance")), angle: num(flag("--angle")), maxEdge: num(flag("--max-edge")), name: flag("--name") ?? undefined });
+      console.log(`✓ ${r.triangles} triangles, ${r.solid ? "closed" : "NOT closed"}\n  new scan ${sayScan(r.scan)}${r.faceted.length ? `\n  faceted already: ${r.faceted.join("; ")}` : ""}`);
+    } else if (command === "inspect") {
+      const target = args[2];
+      const tolerance = num(flag("--tolerance"));
+      if (!target || !tolerance) throw new Error("forma inspect <scan> <part id or name> --tolerance mm [--required 0.99] [--align icp|best] [--part P] [--require]");
+      const align = flag("--align");
+      const part = flag("--part");
+      const required = num(flag("--required"));
+      const require = has("--require");
+      const at = nums(flag("--at"));
+      const r = await call("POST", `/scans/${id}/inspect`, { target, tolerance, ...(part ? { part } : {}), ...(required ? { required } : {}), ...(align ? { align } : {}), ...(at ? { at } : {}), max: 1 });
+      const s = r.stats;
+      console.log(`${r.passed ? "✓ PASS" : "✗ FAIL"} ${r.scan.name} against ${r.target.name}${part ? ` › ${part}` : ""}: ${(r.within * 100).toFixed(2)}% of ${s.count} points within ±${tolerance} mm (${((r.required ?? 1) * 100).toFixed(0)}% required)`);
+      console.log(`  deviation min ${r3(s.min)}  max ${r3(s.max)}  mean ${r3(s.mean)}  |mean| ${r3(s.mean_abs)}  RMS ${r3(s.rms)}  σ ${r3(s.std)}  95% within ±${r3(s.p95)} mm`);
+      console.log(`  ${r.over} points over (material where there should be none), ${r.under} under (missing material)`);
+      if (r.alignment) console.log(`  best-fit aligned: RMS ${r3(r.alignment.rms_before)} → ${r3(r.alignment.rms_after)} mm in ${r.alignment.iterations} steps`);
+      for (const w of r.worst.slice(0, 3)) console.log(`  worst ${w.deviation >= 0 ? "+" : ""}${r3(w.deviation)} mm at ${p3(w.at)}`);
+      if (r.probe) console.log(`  at ${p3(r.probe.point)} (nearest scan point, ${r3(r.probe.distance_from_probe)} mm from the spot asked): ${r.probe.deviation >= 0 ? "+" : ""}${r3(r.probe.deviation)} mm from the part (its surface at ${p3(r.probe.on_part)})`);
+      const bins = r.histogram;
+      const top = Math.max(...bins, 1);
+      console.log(`  histogram (−4…+4 × tol/2): ${bins.map((b) => " ▁▂▃▄▅▆▇█"[Math.ceil((b / top) * 8)]).join("")}`);
+      if (require) {
+        const reply = await engine.commit("intent.requirement.create", { rule: { kind: "scan_deviation", part: r.target.id, ...(part ? { part_name: part } : {}), scan: r.scan.id, tolerance: { value: tolerance, unit: "mm" }, ...(required ? { within: required } : {}), ...(align ? { align: true } : {}) } });
+        if (!reply.ok) throw new Error(reply.error?.message ?? "could not add the requirement");
+        console.log(`  ✓ requirement added (${reply.value.output.id}): checked on every change`);
+      }
+      failed = !r.passed;
+    } else {
+      throw new Error(`forma scan add|list|info|fit|detect|downsample|outliers|normals|reconstruct|surface|shape|export|remove …
+forma mesh check|repair|decimate|smooth|remesh|fill-holes|flip|harmonize|largest|split|merge|sample|section|curvature|segment|boundaries|unwrap <scan> … · forma mesh from <part>
+forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] [--require]`);
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);

@@ -87,6 +87,27 @@ class Solid {
   hull() {
     return new Solid(__n.sop("hull", this.h, []));
   }
+  /**
+   * Fewer triangles, kept where they matter (quadric edge collapse): a
+   * count (2000), a share (0.25), or { triangles | ratio, maxError } in mm.
+   * Faceted in STEP, as any mesh.
+   */
+  decimate(target = 0.5) {
+    const o = typeof target === "number" ? (target < 1 ? { ratio: target } : { triangles: target }) : target;
+    return new Solid(__n.meshOp("decimate", this.h, JSON.stringify(o)));
+  }
+  /** Noise smoothed away: { method: "taubin" (keeps volume) | "laplacian", iterations: 10 }. */
+  smooth(options = {}) {
+    return new Solid(__n.meshOp("smooth", this.h, JSON.stringify(typeof options === "number" ? { iterations: options } : options)));
+  }
+  /** Even triangles about `edge` mm on a side (isotropic remeshing; sharp edges kept). */
+  remesh(edge, { iterations = 5 } = {}) {
+    return new Solid(__n.meshOp("remesh", this.h, JSON.stringify({ edge, iterations })));
+  }
+  /** Coplanar faces merged into one (a mesh-made box becomes six planes in STEP). */
+  refine() {
+    return new Solid(__n.meshOp("refine", this.h, "{}"));
+  }
   /** Minkowski sum: this swept over every point of the others (faceted in STEP). */
   minkowski(...others) {
     return others.flat().reduce((a, b) => new Solid(__n.sbool("minkowski", a.h, asSolid(b).h)), this);
@@ -882,8 +903,91 @@ function importIges(sha, opts = {}) {
  * named as in the file. Triangles stay triangles: exact exports carry them
  * as flat faces, and say so.
  */
-function importMesh(sha, { material, process } = {}) {
-  return __importedParts(JSON.parse(__n.importMesh(sha)), material, process);
+function importMesh(sha, { material, process, ...mesh } = {}) {
+  // Mesh work first when asked: repair (holes, flipped or crossing triangles),
+  // remesh, decimate, smooth; refine merges coplanar triangles into flat faces (exact export).
+  const ops = ["repair", "remesh", "decimate", "smooth", "refine"].filter((k) => mesh[k] !== undefined && mesh[k] !== false);
+  const bodies = ops.length ? __n.importMeshWith(sha, JSON.stringify(mesh)) : __n.importMesh(sha);
+  return __importedParts(JSON.parse(bodies), material, process);
+}
+
+// ---- Scans: point clouds and meshes as data -----------------------------------------
+
+/**
+ * What a stored scan is: { kind: "points" | "mesh", points, bounds, spacing,
+ * normals, colors } and, for a mesh, { triangles, solid, problems, volume, area }.
+ */
+function scanInfo(sha) {
+  return JSON.parse(__n.scanQuery("info", sha, "{}"));
+}
+
+/**
+ * The primitive a scan's points (or a region of them) best fit, or one kind:
+ *   fitScan(sha)                         best of plane, sphere, cylinder, cone, torus
+ *   fitScan(sha, "cylinder", { near: [x, y, z], within: 12 })   only points near a spot
+ *   fitScan(sha, "plane", { box: [x0, y0, z0, x1, y1, z1], ransac: true, threshold: 0.1 })
+ * Returns { kind, rms, max, points, of, …parameters }: plane { point, normal },
+ * sphere { center, radius }, cylinder { base, axis, radius, length }, cone
+ * { apex, axis, half_angle, half_angle_degrees, base, radius, length }, torus
+ * { center, axis, major, minor }. Build exact geometry from these numbers.
+ */
+function fitScan(sha, kind = "auto", options = {}) {
+  return JSON.parse(__n.scanQuery("fit", sha, JSON.stringify({ kind, ...options })));
+}
+
+/** Every primitive in a scan, largest first ({ shapes: [fit…], unassigned, points }). */
+function detectShapes(sha, options = {}) {
+  return JSON.parse(__n.scanQuery("detect", sha, JSON.stringify(options)));
+}
+
+/**
+ * A scan mesh cut by a plane: [{ points, flat, closed, length, area }] per
+ * loop, `flat` in the plane's own coordinates (u, v below) — ready for
+ * polygon(loop.flat).extrude(…) placed with placeOn(…, { at: origin, normal, x: u }).
+ */
+function scanSection(sha, { origin, normal = [0, 0, 1] } = {}) {
+  const s = JSON.parse(__n.scanQuery("section", sha, JSON.stringify({ origin, normal })))[0];
+  return Object.assign(s.polylines, { origin: s.origin, normal: s.normal, u: s.u, v: s.v });
+}
+
+/** A scan's mesh as one solid, mesh work applied first ({ repair, remesh, decimate, smooth }). */
+function scanMesh(sha, options = {}) {
+  return new Solid(__n.scanSolid("mesh", sha, JSON.stringify(options)));
+}
+
+/**
+ * A closed surface through a scan's points (Poisson reconstruction), as a
+ * solid: { depth: 7 (grid 2^depth, 5…9), smooth: 2, box | near+within to use part of the scan }.
+ */
+function reconstruct(sha, options = {}) {
+  return new Solid(__n.scanSolid("reconstruct", sha, JSON.stringify(options)));
+}
+
+/**
+ * A free-form patch fitted to a scan's points (an exact B-spline surface in
+ * STEP), thickened into a solid: { poles: 8 | [nu, nv], degree: 3,
+ * smoothing, thickness: 1, box | near+within }. The patch must be seen
+ * without folding from its best-fit plane (a skin, a panel, a face).
+ */
+function fitSurface(sha, options = {}) {
+  return new Solid(__n.scanSolid("surface", sha, JSON.stringify(options)));
+}
+
+/** The fitted B-spline's numbers ({ poles, nu, nv, degree, uknots, vknots, rms, max }). */
+function fitSurfaceInfo(sha, options = {}) {
+  return JSON.parse(__n.scanQuery("surface", sha, JSON.stringify(options)));
+}
+
+/** A polyline laid onto a scan's mesh (densified to `step` mm): points for polyline() or spline(). */
+function curveOnScan(sha, points, { step = 1 } = {}) {
+  return JSON.parse(__n.scanQuery("projectCurve", sha, JSON.stringify({ points, step }))).points;
+}
+
+/** A smooth curve through ordered points (or a region of a scan): { poles, rms, max, samples } — spline(samples) draws it. */
+function fitCurve(points, { poles = 8, degree = 3 } = {}) {
+  const sha = typeof points === "string" ? points : "0".repeat(64);
+  const opts = typeof points === "string" ? { poles, degree } : { points, poles, degree };
+  return JSON.parse(__n.scanQuery("fitCurve", sha, JSON.stringify(opts)));
 }
 
 /** Imported bodies as parts (the file's colours are listed where it was imported: materials are given, not guessed). */

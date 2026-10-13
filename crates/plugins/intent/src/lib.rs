@@ -123,6 +123,22 @@ pub enum Rule {
         part: Option<String>,
         min: f64,
     },
+    /// The made part matches its CAD model: the scan's points (`scan`, a
+    /// stored scan's id) lie within ±`tolerance` of the part's surface — all
+    /// of them, or the share `within` (0…1) — after a best-fit alignment when
+    /// `align` is set. Re-checked whenever the part changes.
+    ScanDeviation {
+        part: StableId,
+        /// One named part of a multi-part shape.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        part_name: Option<String>,
+        scan: String,
+        tolerance: Length,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        within: Option<f64>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        align: bool,
+    },
 }
 
 fn yes() -> bool {
@@ -141,6 +157,7 @@ impl Rule {
             Rule::NoClashesInMotion { joint, parts, .. } => std::iter::once(*joint).chain(parts.iter().copied()).collect(),
             Rule::AssemblyFits { assembly, .. } => vec![*assembly],
             Rule::MinSafetyFactor { shape, .. } | Rule::MaxDeflection { shape, .. } | Rule::MinFirstFrequency { shape, .. } | Rule::MinBucklingFactor { shape, .. } => vec![*shape],
+            Rule::ScanDeviation { part, .. } => vec![*part],
         }
     }
 
@@ -157,6 +174,7 @@ impl Rule {
             Rule::MaxDeflection { max, .. } => format!("Deflection at most {} mm", mm(max)),
             Rule::MinFirstFrequency { min, .. } => format!("First frequency at least {} Hz", fmt(*min)),
             Rule::MinBucklingFactor { min, .. } => format!("Buckling factor at least {}", fmt(*min)),
+            Rule::ScanDeviation { tolerance, .. } => format!("Matches its scan within ±{} mm", mm(tolerance)),
         }
     }
 }
@@ -246,6 +264,7 @@ fn evaluate(world: &World, entity: Entity) -> Option<Result<RequirementResult, S
         Rule::MinSafetyFactor { shape, part, min } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Safety, *min, false, ""),
         Rule::MaxDeflection { shape, part, max } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Deflection, max.canonical() * 1000.0, true, "mm"),
         Rule::MinFirstFrequency { shape, part, min } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Frequency, *min, false, "Hz"),
+        Rule::ScanDeviation { part: id, part_name, scan, tolerance, within, align } => scan_check(world, *id, part_name.as_deref(), scan, tolerance.canonical() * 1000.0, within.unwrap_or(1.0), *align),
         Rule::MinBucklingFactor { shape, part, min } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Buckling, *min, false, ""),
     })
 }
@@ -483,6 +502,53 @@ fn study_check(world: &World, shape: StableId, part: Option<&str>, check: de_sha
     })
 }
 
+/// A part against its scan: each point's distance from the part's surface.
+fn scan_check(world: &World, id: StableId, part_name: Option<&str>, scan: &str, tolerance: f64, within: f64, align: bool) -> Result<RequirementResult, String> {
+    use de_scan::inspect;
+    let mut view = part(world, id)?;
+    if let Some(n) = part_name {
+        view.part = Some(n.to_string());
+    }
+    let accuracy = (tolerance / 10.0).clamp(0.0005, 0.05);
+    let mesh = de_shape::scans::from_manifold(&view.solid(accuracy));
+    let bvh = de_scan::spatial::TriBvh::new(&mesh);
+    let data = de_shape::scans::load(scan)?;
+    let points: Vec<[f64; 3]> = if align {
+        let a = inspect::align(&data.cloud.positions, &bvh, true, 60);
+        data.cloud.positions.iter().map(|p| inspect::apply(&a.transform, *p)).collect()
+    } else {
+        data.cloud.positions.clone()
+    };
+    let d = inspect::deviation(&points, &bvh, tolerance, within);
+    // The gauge: the |deviation| that the required share of points stays under.
+    let mut abs: Vec<f64> = d.values.iter().map(|v| v.abs()).collect();
+    abs.sort_by(|a, b| a.total_cmp(b));
+    let at = ((abs.len() as f64 * within).ceil() as usize).clamp(1, abs.len().max(1)) - 1;
+    let measured = abs.get(at).copied().unwrap_or(0.0);
+    let w = d.stats.worst;
+    let share = if within < 1.0 { format!("{}% of points", fmt(within * 100.0)) } else { "every point".into() };
+    Ok(RequirementResult {
+        passed: d.passed,
+        measured,
+        limit: tolerance,
+        unit: "mm".into(),
+        upper_bound: true,
+        summary: format!(
+            "{}% of {} points within ±{} mm ({share} required); worst {:+.3} mm, mean {:+.3}, RMS {:.3}{}",
+            fmt(d.within * 100.0),
+            d.stats.count,
+            fmt(tolerance),
+            d.stats.worst_deviation,
+            d.stats.mean,
+            d.stats.rms,
+            if align { ", best-fit aligned" } else { "" }
+        ),
+        violations: if d.passed { vec![] } else { vec![Violation { parts: vec![id], names: vec![name(&view)], region: Some([w[0] - 2.0, w[1] - 2.0, w[2] - 2.0, w[0] + 2.0, w[1] + 2.0, w[2] + 2.0]) }] },
+        fix: None,
+        accuracy_mm: Some(accuracy),
+    })
+}
+
 // ---- Commands --------------------------------------------------------------
 
 fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
@@ -559,6 +625,15 @@ fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
                 return Err(CommandError::new(ErrorCode::InvalidParameters, format!("{shape} is not a shape: studies are on shapes")));
             }
             positive(max, "the deflection limit")?;
+        }
+        Rule::ScanDeviation { scan, tolerance, within, .. } => {
+            positive(tolerance, "the tolerance")?;
+            if within.is_some_and(|w| !(w > 0.0 && w <= 1.0)) {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, "within is the share of points that must pass, 0 to 1"));
+            }
+            if de_shape::assets::path(scan).is_err() {
+                return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{scan} is not a stored scan (add it with POST /scans or forma scan add)")));
+            }
         }
     }
     Ok(())

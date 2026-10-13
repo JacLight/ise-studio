@@ -10,6 +10,8 @@ import { EDA_DROP, PcbWorkspace, importEdaFile } from "./Pcb";
 import { Board3DBar } from "./Board3DBar";
 import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, suggestRule, targetsOf } from "./intent";
 import { type Bench, Workbench } from "./Bom";
+import { ScanTools } from "./ScanTools";
+import type { ScanLayer } from "./scanLayer";
 import { RequirementsPanel } from "./RequirementsPanel";
 import { type Attachment, type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, type TeamCursor, mm, projectInfo, projectName, projectTitle, projectUrl } from "./engine";
 import { type ConfigRow, type EdgeFinish, type Frac, type LiveEdit, type Shape, assemblyParts, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
@@ -81,6 +83,8 @@ export function App({ engine }: { engine: Engine }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [stockOpen, setStockOpen] = useState(false);
   const [pcbOpen, setPcbOpen] = useState(false);
+  const [scansOpen, setScansOpen] = useState(false);
+  const [scanLayer, setScanLayer] = useState<ScanLayer | null>(null);
   // More items picked with Shift: they move and delete together with the selected one.
   const [also, setAlso] = useState<string[]>([]);
   const alsoRef = useRef<string[]>([]);
@@ -1549,6 +1553,7 @@ export function App({ engine }: { engine: Engine }) {
           onConnectorPick={(key) => connectorPick?.onPick(key)}
           poses={posePreview}
           overlay={assemblyOverlay}
+          scan={scanLayer}
           onGeometryPick={geometryPick}
           onTurnInstance={async (id, at, rotation) => (await run("assembly.instance.update", { target: id, at, rotation })) !== null}
         />
@@ -1723,6 +1728,8 @@ export function App({ engine }: { engine: Engine }) {
               onBench={(b) => setBench((current) => (current === b ? null : b))}
               pcbOpen={pcbOpen}
               onPcb={() => setPcbOpen((o) => !o)}
+              scansOpen={scansOpen}
+              onScans={() => setScansOpen((o) => !o)}
               drafting={draftTool.open}
               onDraft={() => (draftTool.open ? draftTool.close() : draftTool.setOpen(true))}
               dataOpen={dataOpen}
@@ -1748,6 +1755,8 @@ export function App({ engine }: { engine: Engine }) {
         </div>
       )}
       {focus && <Restore onRestore={restoreAll} />}
+
+      {!focus && scansOpen && <ScanTools entities={state.entities} run={run} notify={notify} onLayer={setScanLayer} onClose={() => setScansOpen(false)} />}
 
       {!focus && bench && (
         <Workbench

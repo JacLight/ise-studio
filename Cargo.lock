@@ -529,6 +529,7 @@ version = "0.1.0"
 dependencies = [
  "de-assembly",
  "de-core",
+ "de-scan",
  "de-shape",
  "de-solid",
  "de-sourcing",
@@ -561,6 +562,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "de-scan"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "de-server"
 version = "0.1.0"
 dependencies = [
@@ -573,6 +583,7 @@ dependencies = [
  "de-intent",
  "de-occt",
  "de-pcb",
+ "de-scan",
  "de-shape",
  "de-solid",
  "de-sourcing",
@@ -595,6 +606,7 @@ dependencies = [
  "de-bim",
  "de-core",
  "de-occt",
+ "de-scan",
  "de-solid",
  "jpeg-decoder",
  "manifold-csg",

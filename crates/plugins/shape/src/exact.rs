@@ -671,6 +671,76 @@ fn install<'js>(ctx: &Ctx<'js>, state: &Rc<RefCell<State>>) -> rquickjs::Result<
     )?;
 
     crate::runtime::install_pictures(ctx, &native)?;
+    crate::scans::install_queries(ctx, &native)?;
+
+    // Scans: meshes have no exact surfaces (they pass through as flat faces,
+    // merged where coplanar when refined); fitted B-spline patches are exact.
+    {
+        let st = state.clone();
+        native.set(
+            "importMeshWith",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, sha: String, options: String| -> rquickjs::Result<String> {
+                let o: serde_json::Value = serde_json::from_str(&options).unwrap_or_default();
+                let refine = o.get("refine").and_then(serde_json::Value::as_bool) == Some(true);
+                let bodies = crate::scans::import_mesh_with(&sha, &o).map_err(|e| throw(&ctx, format!("importMesh: {e}")))?;
+                let mut s = st.borrow_mut();
+                s.faceted.push(if refine { "an imported mesh file (importMesh; coplanar triangles merged into flat faces)" } else { "an imported mesh file (importMesh)" }.into());
+                let mut list: Vec<(String, u32, Option<String>)> = Vec::new();
+                for (n, m, c) in bodies {
+                    let mut h = from_manifold(&mut s.arena, &m).map_err(|e| fail(&ctx, "importMesh", e))?;
+                    if refine {
+                        h = s.arena.unify(h).map_err(|e| fail(&ctx, "importMesh", e))?;
+                    }
+                    list.push((n, handle(h), c.map(crate::assets::hex)));
+                }
+                Ok(serde_json::to_string(&list).unwrap())
+            })?,
+        )?;
+    }
+    {
+        let st = state.clone();
+        native.set(
+            "scanSolid",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, op: String, sha: String, options: String| -> rquickjs::Result<u32> {
+                let o: serde_json::Value = serde_json::from_str(&options).unwrap_or_default();
+                let mut s = st.borrow_mut();
+                if op == "surface" {
+                    // The fitted B-spline as an exact face, thickened.
+                    let data = crate::scans::load(&sha).map_err(|e| fail(&ctx, "fitSurface", e))?;
+                    let surf = crate::scans::fit_surface(&data.cloud, &o).map_err(|e| fail(&ctx, "fitSurface", e))?;
+                    let (uk, um) = de_scan::bspline::unique_knots(&surf.uknots);
+                    let (vk, vm) = de_scan::bspline::unique_knots(&surf.vknots);
+                    let face = s
+                        .arena
+                        .bspline_face(&de_occt::BSplineSurface { poles: &surf.poles, nu: surf.nu, nv: surf.nv, uknots: &uk, umults: &um, vknots: &vk, vmults: &vm, udegree: surf.degree[0], vdegree: surf.degree[1] })
+                        .map_err(|e| fail(&ctx, "fitSurface", e))?;
+                    let t = o.get("thickness").and_then(serde_json::Value::as_f64).unwrap_or(1.0);
+                    return s.arena.thicken(face, t, &[], false).map(handle).map_err(|e| fail(&ctx, "fitSurface", e));
+                }
+                let m = crate::scans::scan_solid(&op, &sha, &o).map_err(|e| fail(&ctx, &op, e))?;
+                s.faceted.push(format!("a solid made from a scan ({op})"));
+                from_manifold(&mut s.arena, &m).map(handle).map_err(|e| fail(&ctx, &op, e))
+            })?,
+        )?;
+    }
+    {
+        let st = state.clone();
+        native.set(
+            "meshOp",
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, op: String, h: u32, options: String| -> rquickjs::Result<u32> {
+                let mut s = st.borrow_mut();
+                if op == "refine" {
+                    return s.arena.unify(shape(h)).map(handle).map_err(|e| fail(&ctx, "refine", e));
+                }
+                let o: serde_json::Value = serde_json::from_str(&options).unwrap_or_default();
+                let tol = s.tolerance;
+                let m = to_manifold(&mut s.arena, shape(h), tol).map_err(|e| fail(&ctx, &op, e))?;
+                let out = crate::scans::solid_op(&m, &op, &o).map_err(|e| fail(&ctx, &op, e))?;
+                s.faceted.push(format!("a mesh operation ({op})"));
+                from_manifold(&mut s.arena, &out).map(handle).map_err(|e| fail(&ctx, &op, e))
+            })?,
+        )?;
+    }
 
     {
         let st = state.clone();
