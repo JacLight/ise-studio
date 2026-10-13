@@ -1,0 +1,259 @@
+{
+ "id": "pem_standoff",
+ "name": "Self-clinching standoff",
+ "standard": "PEM SO",
+ "category": "Inserts & pins",
+ "summary": "PEM SO thru-threaded self-clinching standoff (zinc-plated steel) for mounting boards on sheet metal: hex head in the sheet flush with its back, barrel standing up +Z from the sheet's face at z = 0.",
+ "keywords": [
+  "PEM",
+  "standoff",
+  "self-clinching",
+  "PCB standoff",
+  "SO",
+  "press-fit standoff",
+  "PennEngineering",
+  "spacer"
+ ],
+ "source": [
+  "common.js",
+  "pem_standoff.js"
+ ],
+ "display_tolerance": 0.01,
+ "material": "Steel, zinc plated",
+ "materials": {
+  "Steel, zinc plated": 7850
+ },
+ "params": [
+  {
+   "key": "d",
+   "label": "Thread diameter",
+   "value": 3,
+   "unit": "mm",
+   "min": 2,
+   "max": 3,
+   "step": 0.5
+  },
+  {
+   "key": "length",
+   "label": "Length above the sheet",
+   "value": 6,
+   "unit": "mm",
+   "min": 3,
+   "max": 25,
+   "step": 1
+  },
+  {
+   "key": "threads",
+   "label": "True helical thread (1 = on)",
+   "value": 0,
+   "unit": "",
+   "min": 0,
+   "max": 1,
+   "step": 1
+  }
+ ],
+ "columns": [
+  "d",
+  "length"
+ ],
+ "rows": [
+  {
+   "name": "SO-M2-3",
+   "values": {
+    "d": 2,
+    "length": 3
+   }
+  },
+  {
+   "name": "SO-M2-4",
+   "values": {
+    "d": 2,
+    "length": 4
+   }
+  },
+  {
+   "name": "SO-M2-5",
+   "values": {
+    "d": 2,
+    "length": 5
+   }
+  },
+  {
+   "name": "SO-M2-6",
+   "values": {
+    "d": 2,
+    "length": 6
+   }
+  },
+  {
+   "name": "SO-M2-8",
+   "values": {
+    "d": 2,
+    "length": 8
+   }
+  },
+  {
+   "name": "SO-M2-10",
+   "values": {
+    "d": 2,
+    "length": 10
+   }
+  },
+  {
+   "name": "SO-M2.5-3",
+   "values": {
+    "d": 2.5,
+    "length": 3
+   }
+  },
+  {
+   "name": "SO-M2.5-4",
+   "values": {
+    "d": 2.5,
+    "length": 4
+   }
+  },
+  {
+   "name": "SO-M2.5-5",
+   "values": {
+    "d": 2.5,
+    "length": 5
+   }
+  },
+  {
+   "name": "SO-M2.5-6",
+   "values": {
+    "d": 2.5,
+    "length": 6
+   }
+  },
+  {
+   "name": "SO-M2.5-8",
+   "values": {
+    "d": 2.5,
+    "length": 8
+   }
+  },
+  {
+   "name": "SO-M2.5-10",
+   "values": {
+    "d": 2.5,
+    "length": 10
+   }
+  },
+  {
+   "name": "SO-M2.5-12",
+   "values": {
+    "d": 2.5,
+    "length": 12
+   }
+  },
+  {
+   "name": "SO-M3-3",
+   "values": {
+    "d": 3,
+    "length": 3
+   }
+  },
+  {
+   "name": "SO-M3-4",
+   "values": {
+    "d": 3,
+    "length": 4
+   }
+  },
+  {
+   "name": "SO-M3-5",
+   "values": {
+    "d": 3,
+    "length": 5
+   }
+  },
+  {
+   "name": "SO-M3-6",
+   "values": {
+    "d": 3,
+    "length": 6
+   }
+  },
+  {
+   "name": "SO-M3-8",
+   "values": {
+    "d": 3,
+    "length": 8
+   }
+  },
+  {
+   "name": "SO-M3-10",
+   "values": {
+    "d": 3,
+    "length": 10
+   }
+  },
+  {
+   "name": "SO-M3-12",
+   "values": {
+    "d": 3,
+    "length": 12
+   }
+  },
+  {
+   "name": "SO-M3-14",
+   "values": {
+    "d": 3,
+    "length": 14
+   }
+  },
+  {
+   "name": "SO-M3-16",
+   "values": {
+    "d": 3,
+    "length": 16
+   }
+  },
+  {
+   "name": "SO-M3-20",
+   "values": {
+    "d": 3,
+    "length": 20
+   }
+  },
+  {
+   "name": "SO-M3-25",
+   "values": {
+    "d": 3,
+    "length": 25
+   }
+  }
+ ],
+ "default": "SO-M3-6",
+ "checks": {
+  "SO-M3-6": {
+   "size": [
+    4.8,
+    5.5426,
+    7.0
+   ],
+   "tolerance": 0.06,
+   "metrics": {
+    "Hole in sheet Ø": 4.22,
+    "Length": 6
+   },
+   "connectors": [
+    "Sheet face",
+    "Top"
+   ],
+   "connector_at": {
+    "Top": [
+     0,
+     0,
+     6
+    ]
+   },
+   "partNumber": "SO-M3-6ZI"
+  },
+  "SO-M2-5": {
+   "partNumber": "SO-M2-5ZI"
+  }
+ }
+}

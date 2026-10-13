@@ -23,6 +23,8 @@
 //   node tools/forma.mjs study <study> [fps] [--out frames.json]   play a motion study: what moves, clashes, binding; frames to a file
 //   node tools/forma.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]'] [--tool connector]
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
+//   node tools/forma.mjs render [--width 1920] [--height 1080] [--samples 256] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open)
+//   node tools/forma.mjs flat [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
 //   node tools/forma.mjs pcb calc|panel|gerbview|glb …   board calculators, panelization, the Gerber viewer, the board as glTF
 //   node tools/forma.mjs pcb route|drag|cleanup|optimize …   the interactive router: pad to pad (walkaround/shove), drag a track or via, tidy copper
@@ -52,10 +54,10 @@
 //        moments of inertia (kg·mm² about the centre of mass); with two: centre to centre and the gap per axis
 //   node tools/forma.mjs sheet <sheet>        a spreadsheet as a grid: what each cell shows, aliases, errors
 //   node tools/forma.mjs draft                draft objects, dimensions with their values, layers, working planes, arrays
-//   node tools/forma.mjs import <file> [--as sheet|parameters|configurations] [--target id] [--sheet name]
-//        .step/.stp, .scad (a live parametric shape), .csv/.xlsx (a sheet, a parameter set or a shape's
-//        configurations), .forma (a whole project bundle, as a new project)
-//   node tools/forma.mjs export <id|name> <file.step|stl|3mf|dxf|scad|zip|csv|xlsx>   write a file
+//   node tools/forma.mjs import <file> [--name N] [--as sheet|parameters|configurations] [--target id] [--sheet name]
+//        STEP/IGES (exact, also .stpz, .brep) and STL/OBJ/PLY/glTF/GLB/3MF (mesh) become a shape, DXF/SVG a sketch,
+//        .scad a live parametric shape, .csv/.xlsx a sheet, parameter set or configurations, .forma a new project
+//   node tools/forma.mjs export <id|name|project> <file.ext> | --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]
 //   node tools/forma.mjs bundle [file.forma]   the whole project (history, assets) as one file
 //
 // steps.json is an array of { "operation": "...", "parameters": { ... } }.
@@ -63,8 +65,9 @@
 // path (e.g. "$0.id"), and { "$file": "path.js" } inlines a file's text (paths
 // are relative to steps.json; several files can be joined with an array).
 
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { request as httpRequest } from "node:http";
 import { pcbLib } from "./forma-pcblib.mjs";
 
@@ -238,6 +241,104 @@ if (command === "run") {
     if (r.pass && extra !== "all") console.log(`  (${r.pass} passing items hidden; add "all" to list them)`);
     for (const n of r.notes) console.log(`  ! ${n}`);
     failed = !r.ok;
+  }
+} else if (command === "render") {
+  // A photoreal PNG of the model as the person's view shows it; with no view open, a headless browser renders it.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const opt = (name, fallback) => {
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 ? args.splice(i, 2)[1] : fallback;
+  };
+  const width = Number(opt("width", 1920));
+  const height = Number(opt("height", Math.round((width * 9) / 16)));
+  const samples = Number(opt("samples", 256));
+  const out = opt("out", `render-${width}x${height}.png`);
+  const q = new URLSearchParams({ ...(project ? { project } : {}), width, height, samples });
+  // A render can take minutes: no header timeout (fetch gives up after five).
+  const { request } = await import("node:http");
+  const ask = () =>
+    new Promise((done, fail) => {
+      const r = request(`${http}/render?${q}`, { method: "POST" }, (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const body = Buffer.concat(chunks);
+          done({ status: res.statusCode, ok: res.statusCode === 200, text: async () => body.toString(), arrayBuffer: async () => body });
+        });
+      });
+      r.on("error", fail);
+      r.end();
+    });
+  let res = await ask();
+  let chrome = null;
+  if (res.status === 409) {
+    // No view open: start a headless browser on the project and ask again once it has loaded.
+    const { spawn } = await import("node:child_process");
+    const { existsSync, mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const paths = [process.env.CHROME, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium", "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"].filter(Boolean);
+    const exe = paths.find((p) => existsSync(p));
+    if (!exe) {
+      console.error("✗ no view is open and no Chrome or Chromium to render in headless (set CHROME to its path)");
+      process.exit(1);
+    }
+    const page = `${http}/${project ? `?project=${encodeURIComponent(project)}` : ""}`;
+    chrome = spawn(exe, ["--headless=new", `--user-data-dir=${mkdtempSync(`${tmpdir()}/forma-render-`)}`, "--enable-unsafe-swiftshader", `--window-size=${Math.min(width, 1920)},${Math.min(height, 1080)}`, "--hide-scrollbars", page], { stdio: "ignore" });
+    for (let i = 0; i < 30 && res.status === 409; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      res = await ask();
+    }
+  }
+  if (!res.ok) {
+    console.error(`✗ ${await res.text()}`);
+    failed = true;
+  } else {
+    const png = Buffer.from(await res.arrayBuffer());
+    writeFileSync(out, png);
+    console.log(`✓ ${out}: ${width} × ${height} px, ${samples} samples, ${(png.length / 1024).toFixed(0)} KB${chrome ? " (rendered headless)" : ""}`);
+  }
+  chrome?.kill();
+} else if (command === "flat") {
+  // Sheet-metal flat patterns: every sheet part, or one with its bend table and checks; files on request.
+  const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
+  const files = {};
+  for (const ext of ["dxf", "svg", "csv"]) {
+    const i = args.indexOf(`--${ext}`);
+    if (i >= 0) files[ext] = args.splice(i, 2)[1];
+  }
+  const [, id = "project", part] = args;
+  const q = new URLSearchParams({ ...(project ? { project } : {}), ...(part ? { part } : {}) });
+  const res = await fetch(`${http}/sheet-metal/${id}?${q}`);
+  if (!res.ok) {
+    console.error(`✗ ${await res.text()}`);
+    failed = true;
+  } else if (id === "project") {
+    const list = await res.json();
+    if (!list.length) console.log("no sheet-metal parts (build them with sheet() or sheetProfile(); see the prelude)");
+    for (const s of list) console.log(`${s.errors ? "✗" : "✓"} ${s.part} (${s.shape}, ${s.id}): ${s.thickness} mm ${s.material}, flat ${s.flat.join(" × ")} mm, ${s.bends} bends${s.errors ? `, ${s.errors} errors` : ""}${s.warnings ? `, ${s.warnings} warnings` : ""}`);
+    failed = list.some((s) => s.errors);
+  } else {
+    const f = await res.json();
+    const errors = f.checks.filter((c) => c.severity === "error");
+    console.log(`${errors.length ? "✗" : "✓"} ${f.part}: ${f.thickness} mm ${f.material}, K ${f.k} at R${f.radius}; flat blank ${f.size.map((v) => v.toFixed(2)).join(" × ")} mm, ${(f.area / 100).toFixed(1)} cm², cut ${f.cut_length.toFixed(0)} mm in ${f.pierces} outline${f.pierces > 1 ? "s" : ""}`);
+    if (f.bends.length) console.log("  order bend  dir   angle  R      K     BA      BD      length  from → to");
+    for (const b of [...f.bends].sort((a, b) => a.order - b.order)) {
+      console.log(`  ${String(b.order).padStart(5)} ${b.id.padEnd(5)} ${(b.dir + (b.hem ? "*" : "")).padEnd(5)} ${String(b.angle).padStart(5)}° ${String(b.radius).padEnd(6)} ${String(b.k).padEnd(5)} ${b.allowance.toFixed(3).padStart(7)} ${b.deduction.toFixed(3).padStart(7)} ${b.length.toFixed(1).padStart(7)}  ${b.from} → ${b.to}`);
+    }
+    if (f.bends.some((b) => b.hem)) console.log("  (* hem)");
+    for (const c of f.checks) console.log(`  ${c.severity.padEnd(7)} ${c.code}: ${c.message}`);
+    for (const [ext, path] of Object.entries(files)) {
+      const r = await fetch(`${http}/sheet-metal/${id}?${new URLSearchParams({ ...Object.fromEntries(q), format: ext })}`);
+      if (!r.ok) {
+        console.error(`✗ ${ext}: ${await r.text()}`);
+        failed = true;
+        continue;
+      }
+      const bytes = Buffer.from(await r.arrayBuffer());
+      writeFileSync(path, bytes);
+      console.log(`  wrote ${path} (${bytes.length} bytes)`);
+    }
+    failed ||= errors.length > 0;
   }
 } else if (["stress", "fatigue", "modes", "buckle", "heat", "converge", "inp", "probe", "section", "path", "csv", "frame", "materials", "set-study", "plate"].includes(command)) {
   // Simulation: a part's saved study run as kept, results read back, frames, materials.
@@ -1230,8 +1331,7 @@ if (command === "run") {
   }
 } else if (command === "import" || command === "export" || command === "bundle") {
   const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
-  const { readFileSync: read, writeFileSync: write } = await import("node:fs");
-  const { basename } = await import("node:path");
+  const [read, write] = [readFileSync, writeFileSync];
   const flag = (name) => {
     const i = args.indexOf(name);
     return i >= 0 ? args.splice(i, 2)[1] : null;
@@ -1240,13 +1340,16 @@ if (command === "run") {
   const projectName = project ?? snap.project_id;
   try {
     if (command === "import") {
+      // STEP/IGES (exact), STL/OBJ/PLY/glTF/GLB/3MF (mesh) become a shape; DXF/SVG a sketch;
+      // .scad a live shape; .csv/.xlsx a sheet, parameter set or configurations; .forma a project.
       const as = flag("--as");
       const target = flag("--target");
       const sheet = flag("--sheet");
+      const named = flag("--name");
       const path = args[1];
-      if (!path) throw new Error("say which file: forma import <file>");
+      if (!path) throw new Error("say which file: forma import <file> [--name N] [--as sheet|parameters|configurations]");
       const bytes = read(path);
-      const name = basename(path);
+      const name = named ? `${named}${extname(path)}` : basename(path);
       if (name.toLowerCase().endsWith(".forma")) {
         const res = await fetch(`${http}/projects/import`, { method: "POST", body: bytes });
         if (!res.ok) throw new Error(await res.text());
@@ -1257,23 +1360,44 @@ if (command === "run") {
         const res = await fetch(`${http}/import/${encodeURIComponent(name)}?${q}`, { method: "POST", body: bytes });
         if (!res.ok) throw new Error(await res.text());
         const r = await res.json();
-        console.log(`✓ ${r.operation ?? "import"} → ${JSON.stringify(r.output ?? r)}`);
+        if (r.kind === "sketch") {
+          const c = r.counts;
+          console.log(`✓ ${basename(path)} → sketch “${r.name}” (${r.id}): ${c.lines} lines, ${c.arcs} arcs, ${c.circles} circles, ${c.curves} curves; ${r.size.map((v) => v.toFixed(1)).join(" × ")} mm. Use it in a program: sketch("${r.name}").extrude(3)`);
+        } else if (r.kind === "shape") {
+          console.log(`✓ ${basename(path)} → shape ${r.id}: ${r.bodies} ${r.bodies === 1 ? "body" : "bodies"}, ${r.exact ? "exact" : "mesh (faceted)"}; program reads ${r.format === "step" ? "importStep" : r.format === "iges" ? "importIges" : "importMesh"}("${r.sha}")`);
+          if (r.colors?.length) console.log(`  colours in the file: ${r.colors.map((c) => `${c.part} ${c.color}`).join(", ")}`);
+        } else console.log(`✓ ${r.operation ?? "import"} → ${JSON.stringify(r.output ?? r)}`);
       }
     } else if (command === "export") {
-      const [, what, out] = args;
-      if (!what || !out) throw new Error("forma export <id|name> <file.step|stl|3mf|dxf|scad|zip|csv|xlsx>");
+      // forma export <id|name|project> <file.ext>, or --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]
+      const format = flag("--format");
+      const part = flag("--part");
+      const outFlag = flag("--out");
+      const [, what, given] = args;
+      const ext = (format ?? given?.split(".").pop() ?? "").toLowerCase().replace(/^\./, "");
+      if (!what || !ext) throw new Error("forma export <id|name|project> <file.step|…> | --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]");
       const name = (e) => {
         const c = e.components;
         return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["shape.sheet"]?.name ?? c["shape.parameter_set"]?.name ?? c["assembly.definition"]?.name;
       };
-      const found = snap.entities.filter((e) => e.id === what || name(e)?.toLowerCase() === what.toLowerCase());
-      if (found.length !== 1) throw new Error(found.length ? `“${what}” matches ${found.length} things: use an id` : `nothing called “${what}”`);
-      const ext = out.split(".").pop().toLowerCase();
+      // An id, or a name (what is placed first).
+      const named = snap.entities.filter((e) => e.id === what || name(e)?.toLowerCase() === what.toLowerCase());
+      const placed = named.filter((e) => e.components["assembly.instance"] || e.components["solid.placement"]);
+      const found = what === "project" ? [{ id: "project" }] : placed.length ? placed : named;
+      if (found.length !== 1) throw new Error(found.length ? `“${what}” matches ${found.length} things: use an id (${found.map((e) => e.id).join(", ")})` : `nothing called “${what}”`);
       const route = ext === "csv" || ext === "xlsx" ? "table" : "export";
-      const res = await fetch(`${http}/${route}/${found[0].id}.${ext}?project=${encodeURIComponent(projectName)}`);
+      const q = new URLSearchParams({ project: projectName, ...(part ? { part } : {}) });
+      const res = await fetch(`${http}/${route}/${found[0].id}.${ext === "iges" ? "igs" : ext}?${q}`);
       if (!res.ok) throw new Error(await res.text());
-      write(out, Buffer.from(await res.arrayBuffer()));
-      console.log(`✓ wrote ${out}`);
+      const bytes = Buffer.from(await res.arrayBuffer());
+      const suggested = res.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? `${found[0].id}.${ext}`;
+      const out = given && !format ? given : outFlag;
+      const target = out ? resolve(out) : join(homedir(), "Downloads", "Forma exports", suggested);
+      const path = out && existsSync(target) && statSync(target).isDirectory() ? join(target, suggested) : target;
+      mkdirSync(dirname(path), { recursive: true });
+      write(path, bytes);
+      const size = bytes.length >= 1048576 ? `${(bytes.length / 1048576).toFixed(1)} MB` : `${(bytes.length / 1024).toFixed(1)} KB`;
+      console.log(`✓ ${path} (${size})`);
     } else {
       const out = args[1] ?? `${projectName}.forma`;
       const res = await fetch(`${http}/projects/${encodeURIComponent(projectName)}/bundle`);
@@ -1431,7 +1555,7 @@ if (command === "run") {
     failed = true;
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | get <id> | tree | list | check | ops | check-geometry <id> [part] | measure <part> [other] | sheet <name> | draft | import <file> | export <id> <file> | bundle [file] | view <action> [what] | image add <file> | image list | look [what] [--view v] | drawing <id> | dof | interference | exploded | study | robot | pcb … | simulate <schematic>  [--project name] [--url ws://…]");
+  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | flat [id] [part] | render [--width] | get <id> | tree | list | check | ops | check-geometry <id> [part] | measure <part> [other] | sheet <name> | draft | view <action> [what] | import <file> [--name N] | export <id> <file> | --format <fmt> [--part P] [--out path] | bundle [file] | image add <file> | image list | look [what] [--view v]  [--project name] [--url ws://…]");
   failed = true;
 }
 

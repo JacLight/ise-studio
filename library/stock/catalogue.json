@@ -29,6 +29,8 @@
     "standoff_hex",
     "iso15977",
     "heatset_insert",
+    "pem_nut",
+    "pem_standoff",
     "iso8734",
     "iso8752",
     "din471",
