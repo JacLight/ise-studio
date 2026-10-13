@@ -83,7 +83,7 @@ pub fn area(p: &[[f64; 2]]) -> f64 {
 /// with a ring of empty pixels around so every contour closes. Ink is on the
 /// left as the picture is seen (y down here, so the cross product of travel
 /// and the way to the ink is negative).
-fn contours(f: &Field, t: f32) -> Vec<Vec<[f64; 2]>> {
+pub(crate) fn contours(f: &Field, t: f32) -> Vec<Vec<[f64; 2]>> {
     let (w, h) = (f.w as isize, f.h as isize);
     let val = |x: isize, y: isize| -> f32 { if x < 0 || y < 0 || x >= w || y >= h { 0.0 } else { f.v[(y * w + x) as usize] } };
     let inside = |x: isize, y: isize| val(x, y) > t;

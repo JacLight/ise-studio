@@ -14,6 +14,8 @@ import { type Rule, displayedWorld, evaluateRule, overlaysFor, requirement, sugg
 import { type Bench, Workbench } from "./Bom";
 import { ScanTools } from "./ScanTools";
 import type { ScanLayer } from "./scanLayer";
+import { canvasOf } from "./canvasLayer";
+import { CalibrateBar, CanvasInsertDialog, CanvasProperties, CanvasSection } from "./CanvasTools";
 import { RequirementsPanel } from "./RequirementsPanel";
 import { type Attachment, type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, type TeamCursor, mm, projectInfo, projectName, projectTitle, projectUrl } from "./engine";
 import { type ConfigRow, type EdgeFinish, type Frac, type LiveEdit, type Shape, assemblyParts, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
@@ -102,6 +104,9 @@ export function App({ engine }: { engine: Engine }) {
   const [placing, setPlacing] = useState<{ req: InsertRequest; names: string[] } | null>(null);
   const [pcbOpen, setPcbOpen] = usePersisted("pcbOpen", false);
   const [scansOpen, setScansOpen] = usePersisted("scansOpen", false);
+  // Reference pictures: placing them, and a canvas being calibrated (the points clicked on it so far).
+  const [canvasInsert, setCanvasInsert] = useState(false);
+  const [calibrating, setCalibrating] = useState<{ id: string; points: [number, number][] } | null>(null);
   const [scanLayer, setScanLayer] = useState<ScanLayer | null>(null);
   // More items picked with Shift: they move and delete together with the selected one.
   const [also, setAlso] = useState<string[]>([]);
@@ -1694,8 +1699,19 @@ export function App({ engine }: { engine: Engine }) {
           overlay={assemblyOverlay}
           scan={scanLayer}
           onGeometryPick={geometryPick}
+          canvasPick={calibrating}
+          onCanvasPick={(px) => setCalibrating((c) => (c && c.points.length < 2 ? { ...c, points: [...c.points, px] } : c))}
           onTurnInstance={async (id, at, rotation) => (await run("assembly.instance.update", { target: id, at, rotation })) !== null}
         />
+        {calibrating && (
+          <CalibrateBar
+            entity={state.entities.get(calibrating.id)}
+            points={calibrating.points}
+            run={run}
+            onDone={() => setCalibrating(null)}
+            onUndoPoint={() => setCalibrating((c) => (c ? { ...c, points: [] } : c))}
+          />
+        )}
         {rendering && <RenderView source={renderSource} name={projectTitle()} onClose={() => setRendering(false)} />}
         <div className="view-caption">
           <span>{projectTitle().toUpperCase()}</span>
@@ -1896,7 +1912,20 @@ export function App({ engine }: { engine: Engine }) {
       )}
       {focus && <Restore onRestore={restoreAll} />}
 
-      {!focus && scansOpen && <ScanTools entities={state.entities} onJob={(l) => engine.onPhotogrammetry(l)} run={run} notify={notify} onLayer={setScanLayer} onClose={() => setScansOpen(false)} />}
+      {!focus && scansOpen && <ScanTools entities={state.entities} onJob={(l) => engine.onPhotogrammetry(l)} run={run} notify={notify} onLayer={setScanLayer} onClose={() => setScansOpen(false)} onReferencePhotos={() => setCanvasInsert(true)} />}
+      {canvasInsert && (
+        <CanvasInsertDialog
+          run={run}
+          notify={notify}
+          onClose={() => setCanvasInsert(false)}
+          onPlaced={(ids) => {
+            if (!ids.length) return;
+            setSelected(ids[0]);
+            setPanel("properties");
+            notify(`${ids.length} reference ${ids.length === 1 ? "picture" : "pictures"} placed: calibrate each from a known distance`);
+          }}
+        />
+      )}
 
       {!focus && bench && (
         <Workbench
@@ -2087,10 +2116,30 @@ export function App({ engine }: { engine: Engine }) {
                 }}
                 onDraft={() => draftTool.setOpen(true)}
               />
+              <h3 className="panel-section">Canvases</h3>
+              <CanvasSection
+                entities={state.entities}
+                selected={selected}
+                run={run}
+                onSelect={(id) => {
+                  setSelected(id);
+                  setPanel("properties");
+                }}
+                onAdd={() => setCanvasInsert(true)}
+              />
             </>
           )}
           {kind === "properties" && selectedPart && (links.byItem.get(selectedPart.id) ?? links.byItem.get(instance(selectedPart)?.of ?? "")) && (
             <LinkSection link={(links.byItem.get(selectedPart.id) ?? links.byItem.get(instance(selectedPart)!.of))!} user={state.userId} notify={notify} onChanged={links.refresh} />
+          )}
+          {kind === "properties" && selectedPart && canvasOf(selectedPart) && (
+            <CanvasProperties
+              entity={selectedPart}
+              run={run}
+              notify={notify}
+              onCalibrate={(id) => setCalibrating({ id, points: [] })}
+              onDeleted={() => setSelected(null)}
+            />
           )}
           {kind === "properties" && selectedPart && instance(selectedPart) && (
             <>
@@ -2101,7 +2150,7 @@ export function App({ engine }: { engine: Engine }) {
           {kind === "properties" && selectedPart && draftOf(selectedPart) && (
             <DraftProperties entity={selectedPart} entities={state.entities} also={also} run={run} notify={notify} onSelect={(id) => setSelected(id)} />
           )}
-          {kind === "properties" && !(selectedPart && (instance(selectedPart) || draftOf(selectedPart))) && (
+          {kind === "properties" && !(selectedPart && (instance(selectedPart) || draftOf(selectedPart) || canvasOf(selectedPart))) && (
             <PropertiesBody
               part={selectedPart}
               shape={selectedPart && isPart(selectedPart) ? (live?.id === selectedPart.id ? live : shapeOf(selectedPart)) : null}

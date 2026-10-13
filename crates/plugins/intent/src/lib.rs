@@ -139,6 +139,18 @@ pub enum Rule {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         align: bool,
     },
+    /// The model matches a reference picture: seen square to the canvas, the
+    /// part's silhouette overlaps the photo's object by at least `min_iou`
+    /// (intersection over union, 0…1) and, when `max_deviation` is given, no
+    /// region of extra or missing material is thicker than that. Re-checked
+    /// whenever the part or the canvas changes.
+    SilhouetteMatch {
+        part: StableId,
+        canvas: StableId,
+        min_iou: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_deviation: Option<Length>,
+    },
     /// A circuit board meets its routing constraints: none of its design-rule
     /// violations of these `codes` (default every routing-constraint code:
     /// impedance, diff_pair_gap, diff_pair_uncoupled, length, skew, via_count;
@@ -198,6 +210,7 @@ impl Rule {
             Rule::AssemblyFits { assembly, .. } => vec![*assembly],
             Rule::MinSafetyFactor { shape, .. } | Rule::MaxDeflection { shape, .. } | Rule::MinFirstFrequency { shape, .. } | Rule::MinBucklingFactor { shape, .. } => vec![*shape],
             Rule::ScanDeviation { part, .. } => vec![*part],
+            Rule::SilhouetteMatch { part, canvas, .. } => vec![*part, *canvas],
             Rule::PcbConstraints { board, .. } | Rule::PcbLength { board, .. } => vec![*board],
             Rule::ParameterRange { target, .. } => vec![*target],
         }
@@ -217,6 +230,7 @@ impl Rule {
             Rule::MinFirstFrequency { min, .. } => format!("First frequency at least {} Hz", fmt(*min)),
             Rule::MinBucklingFactor { min, .. } => format!("Buckling factor at least {}", fmt(*min)),
             Rule::ScanDeviation { tolerance, .. } => format!("Matches its scan within ±{} mm", mm(tolerance)),
+            Rule::SilhouetteMatch { min_iou, .. } => format!("Matches its reference picture (IoU ≥ {})", fmt(*min_iou)),
             Rule::PcbConstraints { codes, .. } => if codes.is_empty() { "Board meets its routing constraints".into() } else { format!("Board clean of {}", codes.join(", ")) },
             Rule::ParameterRange { key, min, max, .. } => match (min, max) {
                 (Some(a), Some(b)) => format!("{key} between {} and {}", fmt(*a), fmt(*b)),
@@ -319,6 +333,7 @@ fn evaluate(world: &World, entity: Entity) -> Option<Result<RequirementResult, S
         Rule::MaxDeflection { shape, part, max } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Deflection, max.canonical() * 1000.0, true, "mm"),
         Rule::MinFirstFrequency { shape, part, min } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Frequency, *min, false, "Hz"),
         Rule::ScanDeviation { part: id, part_name, scan, tolerance, within, align } => scan_check(world, *id, part_name.as_deref(), scan, tolerance.canonical() * 1000.0, within.unwrap_or(1.0), *align),
+        Rule::SilhouetteMatch { part: id, canvas, min_iou, max_deviation } => silhouette_check(world, *id, *canvas, *min_iou, max_deviation.as_ref().map(|l| l.canonical() * 1000.0)),
         Rule::MinBucklingFactor { shape, part, min } => study_check(world, *shape, part.as_deref(), de_shape::studies::Check::Buckling, *min, false, ""),
         Rule::PcbConstraints { board, codes } => pcb_constraints(world, *board, codes),
         Rule::PcbLength { board, nets, target, tolerance, min, max, max_skew } => pcb_length(world, *board, nets, *target, *tolerance, *min, *max, *max_skew),
@@ -768,6 +783,46 @@ fn scan_check(world: &World, id: StableId, part_name: Option<&str>, scan: &str, 
     })
 }
 
+fn silhouette_check(world: &World, id: StableId, canvas: StableId, min_iou: f64, max_deviation: Option<f64>) -> Result<RequirementResult, String> {
+    let e = world.resource::<de_core::IdIndex>().get(canvas).ok_or_else(|| format!("canvas {canvas} does not exist"))?;
+    let c = world.get::<de_shape::canvas::Canvas>(e).ok_or_else(|| format!("{canvas} is not a canvas"))?;
+    let view = part(world, id)?;
+    let accuracy = (c.mm_per_px_at([c.pixels[0] as f64 / 2.0, c.pixels[1] as f64 / 2.0]) / 4.0).clamp(0.01, 0.5);
+    let mesh = de_shape::silhouette::mesh_of(&view.solid(accuracy), [0.7, 0.7, 0.7]);
+    let o = de_shape::silhouette::Options { picture: false, ..Default::default() };
+    let m = de_shape::silhouette::compare(c, &[mesh], &o)?;
+    let deviation_ok = max_deviation.is_none_or(|d| m.worst_mm <= d);
+    let passed = m.iou >= min_iou && deviation_ok;
+    let worst = m.regions.first();
+    Ok(RequirementResult {
+        passed,
+        measured: m.iou,
+        limit: min_iou,
+        unit: "IoU".into(),
+        upper_bound: false,
+        summary: format!(
+            "“{}”: silhouette IoU {:.3} (needs {}); outlines {:.2} mm apart on average, worst {:.1} mm{}{}",
+            c.name,
+            m.iou,
+            fmt(min_iou),
+            m.mean_mm,
+            m.worst_mm,
+            max_deviation.map(|d| format!(" (limit {} mm)", fmt(d))).unwrap_or_default(),
+            worst.map(|r| format!("; largest difference: {} {:.0} mm² near ({:.0}, {:.0}, {:.0})", if r.kind == "extra" { "extra material" } else { "missing material" }, r.area_mm2, r.at[0], r.at[1], r.at[2])).unwrap_or_default()
+        ),
+        violations: if passed {
+            vec![]
+        } else {
+            worst.map(|r| {
+                let (a, b) = (c.plane.to_world([r.bounds[0], r.bounds[1]]), c.plane.to_world([r.bounds[2], r.bounds[3]]));
+                vec![Violation { parts: vec![id], names: vec![name(&view)], region: Some([a[0].min(b[0]), a[1].min(b[1]), a[2].min(b[2]), a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2])]) }]
+            }).unwrap_or_default()
+        },
+        fix: None,
+        accuracy_mm: Some(accuracy),
+    })
+}
+
 // ---- Commands --------------------------------------------------------------
 
 fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
@@ -787,7 +842,10 @@ fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
             return Err(CommandError::new(ErrorCode::InvalidParameters, "steps must be 2 to 720"));
         }
     }
-    let joint_of = |id: StableId| matches!(rule, Rule::NoClashesInMotion { joint, .. } if *joint == id) || matches!(rule, Rule::ParameterRange { .. });
+    // A motion check's joint, a value check's target and a photo match's canvas are checked below, not as parts.
+    let joint_of = |id: StableId| {
+        matches!(rule, Rule::NoClashesInMotion { joint, .. } if *joint == id) || matches!(rule, Rule::ParameterRange { .. }) || matches!(rule, Rule::SilhouetteMatch { canvas, .. } if *canvas == id)
+    };
     for id in rule.targets().into_iter().filter(|id| !joint_of(*id)) {
         if tx.get::<BoxFeature>(id).is_none()
             && tx.get::<de_shape::ShapeProgram>(id).is_none()
@@ -860,6 +918,17 @@ fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
         Rule::PcbConstraints { board, .. } | Rule::PcbLength { board, .. } => {
             if tx.get::<de_pcb::Board>(*board).is_none() {
                 return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{board} is not a circuit board")));
+            }
+        }
+        Rule::SilhouetteMatch { canvas, min_iou, max_deviation, .. } => {
+            if tx.get::<de_shape::canvas::Canvas>(*canvas).is_none() {
+                return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{canvas} is not a canvas (forma canvas list)")));
+            }
+            if !(*min_iou > 0.0 && *min_iou <= 1.0) {
+                return Err(CommandError::new(ErrorCode::InvalidParameters, "min_iou is the overlap needed, above 0 and at most 1"));
+            }
+            if let Some(d) = max_deviation {
+                positive(d, "the largest deviation")?;
             }
         }
         Rule::ScanDeviation { scan, tolerance, within, .. } => {

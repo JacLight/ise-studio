@@ -226,6 +226,22 @@ pub async fn attachment(State(server): State<Arc<Server>>, Path(id): Path<String
 
 // ---- Looking at the model ---------------------------------------------------------
 
+/// JSON with every character outside ASCII escaped, so it fits in a header.
+fn ascii_json(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch.is_ascii() {
+            out.push(ch);
+        } else {
+            let mut buf = [0u16; 2];
+            for u in ch.encode_utf16(&mut buf) {
+                out.push_str(&format!("\\u{:04x}", u));
+            }
+        }
+    }
+    out
+}
+
 /// `GET /look?project=…[&id=…][&view=iso][&size=1000x750]`: a picture of the
 /// model (or of one placed thing), drawn by the engine. Headers carry the
 /// scale (mm per pixel) and the bounds.
@@ -235,6 +251,44 @@ pub async fn look(State(server): State<Arc<Server>>, Query(query): Query<HashMap
         Ok(app) => app,
         Err(e) => return fail(StatusCode::BAD_REQUEST, e),
     };
+    // A canvas's outline measured in mm (no model needed): `measure=<canvas>`
+    // with trace options (channel, threshold, invert, largest, holes, region
+    // l,t,r,b) and `every` (mm between stations).
+    if let Some(what) = query.get("measure").filter(|s| !s.is_empty()) {
+        let found = {
+            let project = app.project.lock().unwrap();
+            de_shape::canvas::find(project.world(), what)
+        };
+        let Some((_, canvas)) = found else { return fail(StatusCode::NOT_FOUND, format!("no canvas called “{what}” (./forma canvas list)")) };
+        let mut o = serde_json::Map::new();
+        for key in ["channel", "threshold", "invert", "largest", "holes", "region", "smooth", "minArea"] {
+            if let Some(v) = query.get(key) {
+                let value = match key {
+                    "channel" => json!(v),
+                    "invert" | "largest" | "holes" => json!(v != "0" && v != "false"),
+                    "region" => json!(v.split(',').filter_map(|s| s.trim().parse::<f64>().ok()).collect::<Vec<f64>>()),
+                    _ => match v.parse::<f64>() {
+                        Ok(n) => json!(n),
+                        Err(_) => return fail(StatusCode::BAD_REQUEST, format!("{key} must be a number")),
+                    },
+                };
+                o.insert(key.to_string(), value);
+            }
+        }
+        if !o.contains_key("largest") && !o.contains_key("channel") {
+            o.insert("largest".into(), json!(true));
+        }
+        let options: de_shape::canvas::TraceOptions = match serde_json::from_value(serde_json::Value::Object(o)) {
+            Ok(v) => v,
+            Err(e) => return fail(StatusCode::BAD_REQUEST, e.to_string()),
+        };
+        let every = query.get("every").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+        let measured = tokio::task::spawn_blocking(move || de_shape::canvas::measure(&canvas, &options, every, 0.05)).await.unwrap_or_else(|e| Err(e.to_string()));
+        return match measured {
+            Ok(v) => axum::Json(v).into_response(),
+            Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        };
+    }
     let view = match de_shape::render::View::parse(query.get("view").map(String::as_str).unwrap_or("iso")) {
         Ok(v) => v,
         Err(e) => return fail(StatusCode::BAD_REQUEST, e),
@@ -270,6 +324,36 @@ pub async fn look(State(server): State<Arc<Server>>, Query(query): Query<HashMap
     };
     if sources.is_empty() {
         return fail(StatusCode::NOT_FOUND, "nothing placed to look at".into());
+    }
+    // Against a canvas: the model drawn square to it over its photo, and how well the silhouettes match.
+    if let Some(what) = query.get("canvas").filter(|s| !s.is_empty()) {
+        let found = {
+            let project = app.project.lock().unwrap();
+            de_shape::canvas::find(project.world(), what)
+        };
+        let Some((_, canvas)) = found else { return fail(StatusCode::NOT_FOUND, format!("no canvas called “{what}” (./forma canvas list)")) };
+        let json_only = query.get("format").is_some_and(|f| f == "json");
+        let compared = tokio::task::spawn_blocking(move || -> Result<de_shape::silhouette::Comparison, String> {
+            let mut meshes = Vec::new();
+            for s in &sources {
+                s.meshes(&mut meshes)?;
+            }
+            let o = de_shape::silhouette::Options { picture: !json_only, max_edge: w.max(h) as usize, ..Default::default() };
+            de_shape::silhouette::compare(&canvas, &meshes, &o)
+        })
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
+        return match compared {
+            Ok(c) => {
+                let numbers = serde_json::to_string(&c).unwrap_or_default();
+                if json_only {
+                    ([(header::CONTENT_TYPE, "application/json")], numbers).into_response()
+                } else {
+                    ([(header::CONTENT_TYPE, "image/png".to_string()), (header::HeaderName::from_static("x-forma-match"), ascii_json(&numbers))], c.png).into_response()
+                }
+            }
+            Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        };
     }
     // A photo-like picture from an orbiting perspective camera (photogrammetry test sets).
     if let Some(orbit) = query.get("orbit") {

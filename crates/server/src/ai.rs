@@ -626,7 +626,7 @@ fn attached(list: &[Attachment]) -> String {
         })
         .collect();
     format!(
-        "<attachments>\nThe person attached (shown to you above; the files are in your folder):\n{}\nFor a part to use a picture (a relief, a trace, measuring it), add it to the project: ./forma image add <file>.\n</attachments>\n\n",
+        "<attachments>\nThe person attached (shown to you above; the files are in your folder):\n{}\nFor a part to use a picture (a relief, a trace, measuring it), add it to the project: ./forma image add <file>. Photos of an object to model in 3D (its side, top, front…): place each as a calibrated canvas (./forma canvas add) and follow “Model from reference photos” in your manual: never a relief or one traced extrusion.\n</attachments>\n\n",
         lines.join("\n")
     )
 }

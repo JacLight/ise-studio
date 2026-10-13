@@ -462,6 +462,12 @@ pub(crate) fn install_pictures<'js>(ctx: &Ctx<'js>, native: &Object<'js>) -> rqu
             crate::decor::silhouette(&sha, rows.max(0.0) as usize, t, rim != 0.0).map_err(|e| throw(&ctx, format!("image: {e}")))
         })?,
     )?;
+    native.set(
+        "canvasTrace",
+        Function::new(ctx.clone(), |ctx: Ctx<'js>, canvas: String, options: String, tolerance: f64| -> rquickjs::Result<String> {
+            crate::canvas::trace_json(&canvas, &options, tolerance).map_err(|e| throw(&ctx, e))
+        })?,
+    )?;
     Ok(())
 }
 

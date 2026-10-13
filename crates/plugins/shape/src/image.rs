@@ -27,6 +27,11 @@ pub enum Channel {
     Red,
     Green,
     Blue,
+    /// The object standing out from its backdrop: 1 where a pixel's colour
+    /// differs from the backdrop (the median of the picture's border), as a
+    /// product photo on white or a plain wall shows it; opaque pixels on a
+    /// see-through picture.
+    Object,
 }
 
 impl Channel {
@@ -37,7 +42,8 @@ impl Channel {
             "red" => Channel::Red,
             "green" => Channel::Green,
             "blue" => Channel::Blue,
-            other => return Err(format!("unknown channel “{other}” (use brightness, alpha, red, green or blue)")),
+            "object" | "silhouette" => Channel::Object,
+            other => return Err(format!("unknown channel “{other}” (use brightness, alpha, red, green, blue or object)")),
         })
     }
 }
@@ -54,6 +60,7 @@ impl Picture {
             Channel::Red => self.rgb[0].clone(),
             Channel::Green => self.rgb[1].clone(),
             Channel::Blue => self.rgb[2].clone(),
+            Channel::Object => self.object(None, OBJECT_THRESHOLD),
             Channel::Alpha => self.alpha.clone().unwrap_or_else(|| vec![1.0; self.width * self.height]),
             Channel::Brightness => {
                 let [r, g, b] = &self.rgb;
@@ -273,7 +280,66 @@ impl Field {
     }
 }
 
+/// How far (0–1, the largest difference of red, green or blue) a colour must
+/// stand from the backdrop to count as the object.
+pub const OBJECT_THRESHOLD: f32 = 0.12;
+
 impl Picture {
+    /// The backdrop's colour: the median of a band two percent wide round the
+    /// picture's edge (a product shot on white, a plain wall, a cutting mat).
+    pub fn backdrop(&self) -> [f32; 3] {
+        let (w, h) = (self.width, self.height);
+        let band = ((w.min(h) as f64 * 0.02).round() as usize).clamp(1, w.min(h) / 2);
+        let mut picks = [Vec::new(), Vec::new(), Vec::new()];
+        for y in 0..h {
+            for x in 0..w {
+                if x < band || y < band || x + band >= w || y + band >= h {
+                    for c in 0..3 {
+                        picks[c].push(self.rgb[c][y * w + x]);
+                    }
+                }
+            }
+        }
+        picks.map(|mut v| {
+            if v.is_empty() {
+                return 1.0;
+            }
+            let m = v.len() / 2;
+            *v.select_nth_unstable_by(m, f32::total_cmp).1
+        })
+    }
+
+    /// The object as 0–1 values (1 is the object): how far each pixel's
+    /// colour stands from the backdrop (`background`, else measured), as a
+    /// soft ramp centred on `threshold` so outlines land between pixels.
+    /// On a picture with see-through pixels, its coverage.
+    pub fn object(&self, background: Option<[f32; 3]>, threshold: f32) -> Vec<f32> {
+        if let Some(a) = &self.alpha {
+            return a.clone();
+        }
+        let bg = background.unwrap_or_else(|| self.backdrop());
+        let t = threshold.clamp(0.01, 0.95);
+        let (lo, hi) = (t * 0.5, t * 1.5);
+        (0..self.width * self.height)
+            .map(|i| {
+                let d = (0..3).map(|c| (self.rgb[c][i] - bg[c]).abs()).fold(0.0f32, f32::max);
+                ((d - lo) / (hi - lo)).clamp(0.0, 1.0)
+            })
+            .collect()
+    }
+
+    /// A white picture (for placing before the real one is read).
+    pub fn blank(width: usize, height: usize) -> Picture {
+        let n = width * height;
+        Picture { width, height, rgb: [vec![1.0; n], vec![1.0; n], vec![1.0; n]], alpha: None, bits: 8 }
+    }
+
+    /// One pixel's colour (sRGB 0–1).
+    pub fn rgb_at(&self, x: usize, y: usize) -> [f32; 3] {
+        let i = y * self.width + x;
+        [self.rgb[0][i], self.rgb[1][i], self.rgb[2][i]]
+    }
+
     pub fn field(&self, c: Channel) -> Field {
         Field { w: self.width, h: self.height, v: self.channel(c) }
     }

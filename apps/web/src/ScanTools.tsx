@@ -80,6 +80,8 @@ export function ScanTools(props: {
   notify: (message: string) => void;
   onLayer: (layer: ScanLayer | null) => void;
   onClose: () => void;
+  /** Place a few separate views (side, top, front) as reference pictures to model over. */
+  onReferencePhotos?: () => void;
 }) {
   const [scans, setScans] = useState<Entry[]>([]);
   const [active, setActive] = useState<string | null>(null);
@@ -262,6 +264,18 @@ export function ScanTools(props: {
         </div>
 
         <PhotoScan active={active} onJob={props.onJob} onScan={(id) => void refresh(id)} notify={props.notify} />
+
+        {props.onReferencePhotos && (
+          <section className="scan-section">
+            <h4>Reference photos → model</h4>
+            <p className="scan-facts">A few separate views (side, top, front) cannot be aligned into a scan. Place each on its plane as a canvas, size it, and model over it; the model is checked against every view.</p>
+            <div className="scan-actions">
+              <button type="button" className="btn" onClick={props.onReferencePhotos}>
+                <Icon name="image" /> Place reference photos…
+              </button>
+            </div>
+          </section>
+        )}
 
         {scans.length > 0 && (
           <div className="scan-list" role="listbox" aria-label="Scans">

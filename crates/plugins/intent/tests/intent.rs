@@ -155,3 +155,38 @@ fn shapes_are_judged_by_exact_geometry_not_bounding_boxes() {
     assert!(r.summary.starts_with("Parts overlap by"), "{}", r.summary);
     assert!(!result(&p, none).passed);
 }
+
+#[test]
+fn a_part_matches_its_reference_picture_and_is_rechecked_when_it_changes() {
+    let mut p = Project::new("p", Arc::new(Registry::with_plugins(&[&SolidPlugin, &de_shape::ShapePlugin, &IntentPlugin])));
+    if de_shape::assets::dir().is_none() {
+        de_shape::assets::set_dir(std::env::temp_dir().join(format!("forma-intent-assets-{}", std::process::id())));
+    }
+    // A dark 200 × 100 px rectangle on white.
+    let mut px: Vec<u8> = [250u8, 250, 250, 255].repeat(400 * 300);
+    for y in 100..200 {
+        for x in 100..300 {
+            px[(y * 400 + x) * 4..(y * 400 + x) * 4 + 3].copy_from_slice(&[30, 30, 30]);
+        }
+    }
+    let image = de_shape::assets::store(&de_shape::image::encode_png(400, 300, &px)).unwrap();
+    // Sized by the object (100 mm long), its left-bottom corner at the origin: x 0…100, z 0…50.
+    let canvas = id(run(&mut p, "canvas.create", json!({ "name": "Side", "image": image, "plane": "front", "object": { "width": 100.0, "align": "left bottom" } })).unwrap());
+    let part = id(run(&mut p, "shape.create", json!({ "name": "Block", "source": "return box(p.l, 20, 50).translate(0, -10, 0);", "params": [{ "key": "l", "label": "Length", "value": 100.0, "unit": "mm" }] })).unwrap());
+    let req = id(run(&mut p, "intent.requirement.create", json!({ "rule": { "kind": "silhouette_match", "part": part, "canvas": canvas, "min_iou": 0.95, "max_deviation": mm(2.0) } })).unwrap());
+    let r = result(&p, req);
+    assert!(r.passed && r.measured > 0.97, "{}", r.summary);
+    // 20 mm too long: the requirement fails and points past the end.
+    run(&mut p, "shape.set_params", json!({ "target": part, "values": { "l": 120.0 } })).unwrap();
+    let r = result(&p, req);
+    assert!(!r.passed && r.measured < 0.9, "{}", r.summary);
+    let region = r.violations[0].region.unwrap();
+    assert!(region[0] > 95.0 && region[3] < 125.0, "{region:?}");
+    // Recalibrating the canvas to 120 × 50 mm (stretched) makes it pass again:
+    // the requirement follows the canvas too.
+    run(&mut p, "canvas.update", json!({ "target": canvas, "object": { "width": 120.0, "height": 50.0, "align": "left bottom" } })).unwrap();
+    let r = result(&p, req);
+    assert!(r.passed, "{}", r.summary);
+    // A part is not a canvas.
+    assert!(run(&mut p, "intent.requirement.create", json!({ "rule": { "kind": "silhouette_match", "part": part, "canvas": part, "min_iou": 0.9 } })).is_err());
+}
