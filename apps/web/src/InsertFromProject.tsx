@@ -32,6 +32,9 @@ export type LinkStatus = {
 
 type TreeItem = { id: string; name: string; kind: string; detail?: string; brings?: number; children?: TreeItem[] };
 type SourceTree = { project: string; title: string; revision: number; entities: number; items: TreeItem[] };
+/** The engine counts kinds in the plural; one of each reads singular. */
+const ONE: Record<string, string> = { placements: "placement", assemblies: "assembly", boards: "board", "board items": "board item", joints: "joint", "parts and components": "part or component", materials: "material", requirements: "requirement", "parameter sets": "parameter set" };
+
 type Preview = { entities: number; reused: number | null; placed: number | null; renamed: { from: string; to: string }[]; kinds: Record<string, number> };
 
 export type InsertRequest = { from: string; items: string[]; whole: boolean; copy: boolean; auto_update: boolean; place?: "same" | "origin"; at?: [number, number, number] };
@@ -410,7 +413,7 @@ export function InsertFromProjectDialog(props: {
     if (!preview) return "Working out what comes along…";
     const kinds = Object.entries(preview.kinds)
       .sort((a, b) => b[1] - a[1])
-      .map(([k, n]) => `${n} ${k}`)
+      .map(([k, n]) => `${n} ${n === 1 ? (ONE[k] ?? k) : k}`)
       .join(", ");
     return `Brings ${preview.entities} items (${kinds})${preview.reused ? ` · uses ${preview.reused} already here` : ""}`;
   })();

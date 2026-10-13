@@ -133,6 +133,8 @@ dialog.xp-dialog[open] {
 .xp-project {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
+  flex-shrink: 0;
   gap: 10px;
   width: 100%;
   min-height: 54px;
@@ -186,6 +188,7 @@ dialog.xp-dialog[open] {
 }
 
 .xp-project-text {
+  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
