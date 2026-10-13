@@ -31,6 +31,7 @@
 #include <ShapeFix_Face.hxx>
 #include <BRepProj_Projection.hxx>
 #include <BRepTopAdaptor_FClass2d.hxx>
+#include <ShapeUpgrade_ShapeDivideArea.hxx>
 #include <GeomAPI_ProjectPointOnCurve.hxx>
 #include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <GeomAdaptor_Surface.hxx>
@@ -43,6 +44,7 @@
 #include <TColgp_HArray1OfPnt2d.hxx>
 #include <GeomLProp_SLProps.hxx>
 #include <Geom_BSplineSurface.hxx>
+#include <Geom_OffsetSurface.hxx>
 #include <Geom_RectangularTrimmedSurface.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
 #include <ShapeFix_Shell.hxx>
@@ -783,6 +785,40 @@ TopoDS_Face face_at(const TopoDS_Shape& s, int i) {
   return TopoDS::Face(faces(i + 1));
 }
 
+
+/// The shape as the view meshes it: a free-form face with many spans (a
+/// network or fill surface) is cut along iso-lines into patches, since
+/// OpenCascade's mesher slows sharply with a face's size (a vase wall: 12 s
+/// whole, 0.25 s in 48 patches). The exact shape is untouched.
+TopoDS_Shape for_view(const TopoDS_Shape& s) {
+  double max_area = 0;
+  bool any = false;
+  for (TopExp_Explorer x(s, TopAbs_FACE); x.More(); x.Next()) {
+    TopoDS_Face f = TopoDS::Face(x.Current());
+    Handle(Geom_Surface) g = BRep_Tool::Surface(f);
+    if (auto t = Handle(Geom_RectangularTrimmedSurface)::DownCast(g)) g = t->BasisSurface();
+    if (auto o = Handle(Geom_OffsetSurface)::DownCast(g)) g = o->BasisSurface();
+    auto b = Handle(Geom_BSplineSurface)::DownCast(g);
+    if (b.IsNull()) continue;
+    double spans = (double)(b->NbUKnots() - 1) * (b->NbVKnots() - 1);
+    if (spans <= 400) continue;
+    GProp_GProps gp;
+    BRepGProp::SurfaceProperties(f, gp);
+    double cand = gp.Mass() / std::ceil(spans / 100);
+    max_area = any ? std::min(max_area, cand) : cand;
+    any = true;
+  }
+  if (!any || !(max_area > 0)) return s;
+  try {
+    ShapeUpgrade_ShapeDivideArea d(s);
+    d.MaxArea() = max_area;
+    if (!d.Perform()) return s;
+    TopoDS_Shape r = d.Result();
+    return r.IsNull() ? s : r;
+  } catch (Standard_Failure&) {
+    return s;
+  }
+}
 
 }  // namespace
 

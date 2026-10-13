@@ -164,7 +164,7 @@ pub async fn surfaces(State(server): State<Arc<Server>>, Path(id): Path<String>,
         let mut maker = fabricate::StepMaker::new(0.01);
         let (name, list) = shapes(&s, part.as_deref(), &mut maker)?;
         let mut parts = Vec::new();
-        for (n, shape) in list {
+        for (n, shape, _) in list {
             let a = maker.arena();
             let body = a.body_info(shape)?;
             let cont = a.continuity(shape, None, 24)?;

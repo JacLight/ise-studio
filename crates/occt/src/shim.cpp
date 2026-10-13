@@ -234,6 +234,9 @@ TopoDS_Wire section(const TopoDS_Wire& w, double z, double twist_deg, double sx,
   return TopoDS::Wire(transformed(transformed(s, r), t));
 }
 
+/// The shape as the view meshes it (big free-form faces cut into patches; surfaces.cpp).
+TopoDS_Shape for_view(const TopoDS_Shape& s);
+
 /// Paint (colours, face names) onto a part's STEP label (solids.cpp).
 void apply_paint(Arena* a, const Handle(XCAFDoc_ShapeTool) & tool, const Handle(XCAFDoc_ColorTool) & colours, const TDF_Label& label, const TopoDS_Shape& part);
 
@@ -866,10 +869,11 @@ int occ_mesh(void* p, int h, double deflection, const double** positions, int* n
   return guard(a, [&] {
     const TopoDS_Shape* s = get(a, h);
     if (!s) return -1;
-    BRepMesh_IncrementalMesh mesher(*s, deflection, false, 0.2, true);
+    TopoDS_Shape view = for_view(*s);
+    BRepMesh_IncrementalMesh mesher(view, deflection, false, 0.2, true);
     a->mesh_positions.clear();
     a->mesh_triangles.clear();
-    for (TopExp_Explorer e(*s, TopAbs_FACE); e.More(); e.Next()) {
+    for (TopExp_Explorer e(view, TopAbs_FACE); e.More(); e.Next()) {
       TopoDS_Face f = TopoDS::Face(e.Current());
       TopLoc_Location loc;
       Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(f, loc);

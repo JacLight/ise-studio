@@ -16,4 +16,4 @@ const floor = fillSurface([wall.border({ near: [rs[0], 0, 0] }, { continuity: 0 
 const cup = sew([wall, floor], { solid: false });
 metric("open edges", cup.report.freeEdges);
 const vase = cup.thicken(2.5, { join: "round" });
-return [part("Vase", vase, { material: "white PLA" })];
+return [part("Vase", vase)];

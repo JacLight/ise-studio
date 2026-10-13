@@ -24,4 +24,4 @@ for (const [name, other] of [["skirt", skirt], ["crown", crown]]) {
 const body = sew([floor, skirt, shoulder, crown]);
 metric("closed", body.body.closed ? 1 : 0);
 const shell = body.shell(1.8, { normal: [0, 0, -1] });
-return [part("Mouse shell", shell, { material: "black ABS" })];
+return [part("Mouse shell", shell)];

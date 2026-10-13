@@ -10,4 +10,4 @@ metric("seam gap", seam.max.g0, "mm");
 metric("seam crease", seam.max.g1, "deg");
 metric("seam curvature jump", seam.max.g2, "1/mm");
 const skin = sew([holed, patch], { solid: false });
-return [part("Fender", skin.thicken(1, { join: "round" }), { material: "steel" })];
+return [part("Fender", skin.thicken(1, { join: "round" }))];
