@@ -220,7 +220,10 @@ export function LinkSection(props: { link: LinkStatus; user: string; notify: (te
           type="checkbox"
           checked={l.auto_update}
           disabled={!!busy}
-          onChange={(e) => act("auto", "/links/settings", { link: l.id, auto_update: e.target.checked }, () => (e.target.checked ? `Follows ${l.title} automatically` : `Updates from ${l.title} when you ask`))}
+          onChange={(e) => {
+            const on = e.target.checked;
+            void act("auto", "/links/settings", { link: l.id, auto_update: on }, () => (on ? `Follows ${l.title} automatically` : `Updates from ${l.title} when you ask`));
+          }}
         />
         Update automatically
         {l.auto_update && !l.updates_here && <small> (by the teammate's engine that inserted it)</small>}
@@ -237,11 +240,10 @@ export function LinkSection(props: { link: LinkStatus; user: string; notify: (te
           type="checkbox"
           checked={l.local_edits}
           disabled={!!busy}
-          onChange={(e) =>
-            act("local", "/links/settings", { link: l.id, local_edits: e.target.checked }, () =>
-              e.target.checked ? `Items from ${l.title} can be edited here; updates merge with your edits` : `Items from ${l.title} are read-only again`,
-            )
-          }
+          onChange={(e) => {
+            const on = e.target.checked;
+            void act("local", "/links/settings", { link: l.id, local_edits: on }, () => (on ? `Items from ${l.title} can be edited here; updates merge with your edits` : `Items from ${l.title} are read-only again`));
+          }}
         />
         Edit locally
       </label>
