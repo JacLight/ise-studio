@@ -2,7 +2,9 @@
 // Talk to a running Forma engine from the command line, through the same API
 // the UI and the AI use.
 //
-//   node tools/forma.mjs run steps.json [--project name] [--url ws://127.0.0.1:7420/ws]
+//   node tools/forma.mjs run steps.json [--from N] [--fresh] [--project name] [--url ws://127.0.0.1:7420/ws]
+//        steps already applied (same step, same parameters) are skipped, so a rerun after a failure
+//        continues from it; --from N starts at step N; --fresh applies every step again
 //   node tools/forma.mjs check
 //   node tools/forma.mjs gears <id> [torque N·m] [rpm]   turn a gear train through a full turn; tooth strength with a load
 //   node tools/forma.mjs motion <joint id> [steps] [--set '{"Elbow":40}']   sweep a joint through its limits: what moves, closest approaches, clashes, where it binds
@@ -95,13 +97,20 @@
 //   node tools/forma.mjs scan scale <scan> --from x,y,z --to x,y,z --distance mm [--pick mm] | --factor f  ·  scan level <scan>
 //   node tools/forma.mjs scan render-photos <folder> [--count 40] [--rings 25,50] [--distance mm] [--fov 45] [--sheet]   a test photo set of the model
 //
-// steps.json is an array of { "operation": "...", "parameters": { ... } }.
+// steps.json is an array of { "operation": "...", "parameters": { ... }, "id"?: "name" }.
 // Any string "$N.path" in parameters is replaced by step N's output at that
 // path (e.g. "$0.id"), and { "$file": "path.js" } inlines a file's text (paths
 // are relative to steps.json; several files can be joined with an array).
+// Each step has a key: its "id" when given (stable across files and edits
+// elsewhere), else the file, the operation and its parameters as resolved.
+// What each key applied is kept beside the file (.<name>.run.json, per
+// project) and the command goes to the engine under an id made from the key
+// (the engine never applies one id twice), so running a file again skips
+// what is already in the project and continues where it stopped.
 
 import fsModule, { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { request as httpRequest } from "node:http";
@@ -160,9 +169,10 @@ function connect() {
             ws.send(JSON.stringify({ type, request_id: id, ...extra }));
           });
         },
-        commit(operation, parameters) {
-          return this.send("commit", { operation, parameters, expected_revision: revision });
+        commit(operation, parameters, command_id) {
+          return this.send("commit", { operation, parameters, expected_revision: revision, ...(command_id ? { command_id } : {}) });
         },
+        revision: () => revision,
         close: () => ws.close(),
       });
   });
@@ -173,6 +183,8 @@ function resolveRefs(value, outputs, base) {
     const m = value.match(/^\$(\d+)\.(.+)$/);
     if (!m) return value;
     let v = outputs[Number(m[1])];
+    if (v === null && Number(m[1]) < outputs.length)
+      throw new Error(`${value}: step ${m[1]} was applied in an earlier run whose output is not known here (its record is gone): run again with --fresh, or give the id itself`);
     for (const key of m[2].split(".")) v = v?.[key];
     if (v === undefined) throw new Error(`${value} does not resolve`);
     return v;
@@ -222,21 +234,102 @@ if (["check-geometry", "surfaces", "drawing", "flat"].includes(command) && args[
 }
 
 if (command === "run") {
-  const steps = JSON.parse(readFileSync(file, "utf8"));
-  const base = dirname(resolve(file));
+  // Resumable: a step already applied (same key, same parameters) is skipped; see the top of this file.
+  const rest = args.slice(1);
+  const fromAt = rest.indexOf("--from");
+  const from = fromAt >= 0 ? Number(rest.splice(fromAt, 2)[1]) : 0;
+  const freshAt = rest.indexOf("--fresh");
+  const fresh = freshAt >= 0 && rest.splice(freshAt, 1).length > 0;
+  const path = rest[0];
+  if (!path || !Number.isInteger(from) || from < 0) {
+    console.error("✗ forma run <steps.json> [--from N] [--fresh]");
+    process.exit(1);
+  }
+  const steps = JSON.parse(readFileSync(path, "utf8"));
+  const base = dirname(resolve(path));
+  const snap = await engine.snapshot;
+  const live = new Set(snap.entities.map((e) => e.id));
+  // What earlier runs of this file applied to this project, by step key.
+  const recordPath = join(base, `.${basename(path)}.run.json`);
+  let record = {};
+  try {
+    record = JSON.parse(readFileSync(recordPath, "utf8"));
+  } catch {}
+  const mine = fresh ? {} : { ...(record[snap.project_id] ?? {}) };
+  const save = () => {
+    record[snap.project_id] = mine;
+    writeFileSync(recordPath, JSON.stringify(record, null, 1));
+  };
+  const canonical = (v) => (Array.isArray(v) ? `[${v.map(canonical).join(",")}]` : v && typeof v === "object" ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}` : JSON.stringify(v));
+  const hash = (text) => createHash("sha256").update(text).digest("hex").slice(0, 32);
+  const isId = (v) => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+  // Still in the project: what the step made (its output's id) has not been undone or deleted.
+  const present = (out) => !isId(out?.id) || live.has(out.id);
+  const nonce = Date.now().toString(36);
+  const scope = resolve(path);
+  const counts = new Map();
   const outputs = [];
+  let skipped = 0;
+  let applied = 0;
   for (const [i, step] of steps.entries()) {
-    const parameters = resolveRefs(step.parameters ?? {}, outputs, base);
-    const started = Date.now();
-    const r = await engine.commit(step.operation, parameters);
-    if (!r.ok) {
-      console.error(`✗ ${i} ${step.operation}: ${r.error.code} ${r.error.message}`);
+    const label = `${i}${step.id != null ? ` (${step.id})` : ""} ${step.operation}`;
+    let parameters;
+    try {
+      parameters = resolveRefs(step.parameters ?? {}, outputs, base);
+    } catch (e) {
+      console.error(`✗ ${label}: ${e.message}`);
       failed = true;
       break;
     }
-    outputs.push(r.value.output);
-    console.log(`✓ ${i} ${step.operation} → ${JSON.stringify(r.value.output)} (rev ${r.value.revision}, ${Date.now() - started} ms)`);
+    // The step's key: its id, or the file; with what it does (identical steps in one file are told apart by order).
+    const what = `${step.id != null ? `id:${step.id}` : `file:${scope}`}\n${step.operation}\n${canonical(parameters)}`;
+    const n = counts.get(what) ?? 0;
+    counts.set(what, n + 1);
+    const key = hash(`${what}\n${n}`);
+    const done = mine[key];
+    if (i < from) {
+      outputs.push(done?.output ?? null);
+      console.log(`· ${label}: not run (--from ${from})`);
+      continue;
+    }
+    if (done && present(done.output)) {
+      outputs.push(done.output);
+      skipped++;
+      console.log(`↷ ${label}: already applied (rev ${done.revision}${done.at ? `, ${done.at.slice(0, 16).replace("T", " ")}` : ""}), skipped`);
+      continue;
+    }
+    // The same step with other parameters before (an edited step): applied as it is now.
+    const earlier = Object.values(mine).find((d) => (step.id != null ? d.id === step.id : d.index === i && d.id == null) && d.operation === step.operation && d.key !== key && d.file === scope);
+    if (earlier) console.log(`! ${label}: changed since it was applied (rev ${earlier.revision}); applying it as it is now (what the earlier one made stays: undo or remove it if it should not)`);
+    // Applied before but undone or deleted since: a new command id (the engine would take the old one as done).
+    const commandId = done ? `run-${key}-${nonce}` : fresh ? `run-${key}-${nonce}` : `run-${key}`;
+    if (done) console.log(`! ${label}: applied before (rev ${done.revision}) but what it made is gone (undone or deleted): applying it again`);
+    const started = Date.now();
+    const before = engine.revision();
+    const r = await engine.commit(step.operation, parameters, commandId);
+    if (!r.ok) {
+      console.error(`✗ ${label}: ${r.error.code} ${r.error.message}`);
+      failed = true;
+      break;
+    }
+    // The engine had it already (its record here was lost): the same change, not a new one.
+    const known = r.value.op_count > 0 && r.value.revision <= before;
+    const output = r.value.output ?? done?.output ?? null;
+    outputs.push(output);
+    mine[key] = { key, index: i, ...(step.id != null ? { id: step.id } : {}), file: scope, operation: step.operation, command_id: commandId, revision: r.value.revision, at: new Date().toISOString(), output };
+    save();
+    if (known) {
+      skipped++;
+      console.log(`↷ ${label}: already in the project (rev ${r.value.revision}), skipped`);
+    } else {
+      applied++;
+      console.log(`✓ ${label} → ${JSON.stringify(r.value.output)} (rev ${r.value.revision}, ${Date.now() - started} ms)`);
+    }
   }
+  const notRun = Math.min(from, steps.length);
+  const parts = [`${applied} applied`, skipped && `${skipped} already applied (skipped)`, notRun && `${notRun} before --from not run`].filter(Boolean).join(", ");
+  if (failed) console.error(`stopped: ${parts}. Fix the step and run the file again: the steps applied are skipped and it continues from there.`);
+  else if (skipped || notRun) console.log(`${steps.length} steps: ${parts}`);
 } else if (command === "check") {
   const r = await engine.send("check");
   const report = r.value;
