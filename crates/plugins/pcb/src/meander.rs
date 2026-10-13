@@ -446,48 +446,58 @@ impl<'a> Work<'a> {
             for s in self.segments(net) {
                 let t = self.track(s.id);
                 let w = t.width;
-                let sh = Shape { style: opts.style, corner: opts.corner, spacing: opts.spacing.unwrap_or(3.0 * w).max(w * 1.5), radius: 0.0, min_radius: 0.0 };
-                let sh = Shape { radius: opts.radius.unwrap_or(sh.spacing / 2.0), ..sh };
-                let l = geom::dist(s.a, s.b);
-                let margin = sh.spacing.max(w);
-                let per = period(&sh);
-                let room = l - 2.0 * margin;
-                if room < per {
-                    continue;
-                }
-                let nmax = (room / per).floor() as usize;
-                let amax = opts.amplitude.unwrap_or(2.0);
-                let dir = (s.b[1] - s.a[1]).atan2(s.b[0] - s.a[0]);
-                let sides: Vec<f64> = match (opts.side, away) {
-                    (SideSel::Left, _) => vec![1.0],
-                    (SideSel::Right, _) => vec![-1.0],
-                    (SideSel::Auto, Some(o)) => vec![self.side_away(&s, o)],
-                    (SideSel::Auto, None) => vec![1.0, -1.0],
+                // Legs three widths apart, closer where the run is short (small skew bumps).
+                let spacings: Vec<f64> = match opts.spacing {
+                    Some(x) => vec![x.max(w * 1.5)],
+                    None => vec![3.0 * w, 2.2 * w],
                 };
-                let full = added(&sh, nmax, amax);
-                let goal = left_to_add.min(full);
-                // Fewest legs that reach it; fall back to more, lower legs when the room is taken.
-                let n0 = (1..=nmax).find(|n| added(&sh, *n, amax) + 1e-9 >= goal).unwrap_or(nmax);
-                'n: for n in n0..=nmax {
-                    let Some(amp) = amplitude_for(&sh, n, goal, 1e-4, amax) else { continue };
-                    for &side in &sides {
-                        let steps = pattern(&sh, n, amp, side);
-                        let off = (l - n as f64 * per) / 2.0;
-                        let u = [(s.b[0] - s.a[0]) / l, (s.b[1] - s.a[1]) / l];
-                        let start = geom::add(s.a, [u[0] * off, u[1] * off]);
-                        let (mp, mb) = realize(&steps, start, dir, 0.0);
-                        let flat = pns::flatten(&mp, &mb);
-                        let layer = self.layer(t);
-                        if !self.node.path_clear(&flat, w, layer, &t.net, &|_| false) {
-                            continue;
+                for spacing in spacings {
+                    let sh = Shape { style: opts.style, corner: opts.corner, spacing, radius: 0.0, min_radius: 0.0 };
+                    let sh = Shape { radius: opts.radius.unwrap_or(sh.spacing / 2.0), ..sh };
+                    let l = geom::dist(s.a, s.b);
+                    let margin = w + sh.spacing / 2.0;
+                    let per = period(&sh);
+                    let room = l - 2.0 * margin;
+                    if room < per {
+                        continue;
+                    }
+                    let nmax = (room / per).floor() as usize;
+                    let amax = opts.amplitude.unwrap_or(2.0);
+                    let dir = (s.b[1] - s.a[1]).atan2(s.b[0] - s.a[0]);
+                    let sides: Vec<f64> = match (opts.side, away) {
+                        (SideSel::Left, _) => vec![1.0],
+                        (SideSel::Right, _) => vec![-1.0],
+                        (SideSel::Auto, Some(o)) => vec![self.side_away(&s, o)],
+                        (SideSel::Auto, None) => vec![1.0, -1.0],
+                    };
+                    let full = added(&sh, nmax, amax);
+                    let goal = left_to_add.min(full);
+                    // Fewest legs that reach it; fall back to more, lower legs when the room is taken.
+                    let n0 = (1..=nmax).find(|n| added(&sh, *n, amax) + 1e-9 >= goal).unwrap_or(nmax);
+                    'n: for n in n0..=nmax {
+                        let Some(amp) = amplitude_for(&sh, n, goal, 1e-4, amax) else { continue };
+                        for &side in &sides {
+                            let steps = pattern(&sh, n, amp, side);
+                            let off = (l - n as f64 * per) / 2.0;
+                            let u = [(s.b[0] - s.a[0]) / l, (s.b[1] - s.a[1]) / l];
+                            let start = geom::add(s.a, [u[0] * off, u[1] * off]);
+                            let (mp, mb) = realize(&steps, start, dir, 0.0);
+                            let flat = pns::flatten(&mp, &mb);
+                            let layer = self.layer(t);
+                            if !self.node.path_clear(&flat, w, layer, &t.net, &|_| false) {
+                                continue;
+                            }
+                            let (p, b) = self.geom(t);
+                            let (np, nb) = splice(&p, &b, s.k, &mp, &mb);
+                            let gained = signal::path_length(&np, &nb) - signal::path_length(&p, &b);
+                            self.commit(s.id, np, nb);
+                            left_to_add -= gained;
+                            placed = true;
+                            break 'n;
                         }
-                        let (p, b) = self.geom(t);
-                        let (np, nb) = splice(&p, &b, s.k, &mp, &mb);
-                        let gained = signal::path_length(&np, &nb) - signal::path_length(&p, &b);
-                        self.commit(s.id, np, nb);
-                        left_to_add -= gained;
-                        placed = true;
-                        break 'n;
+                    }
+                    if placed {
+                        break;
                     }
                 }
                 if placed {
@@ -562,7 +572,7 @@ impl<'a> Work<'a> {
                     let spacing = opts.spacing.unwrap_or(cc + 3.0 * w).max(cc + w * 1.5);
                     let sh = Shape { style: Style::Trombone, corner: if opts.corner == Corner::Square { Corner::Square } else { opts.corner }, spacing, radius: opts.radius.unwrap_or(spacing / 2.0).max(half), min_radius: half };
                     let per = period(&sh);
-                    let margin = spacing.max(w);
+                    let margin = w + spacing / 2.0;
                     let room = hi - lo - 2.0 * margin;
                     if room < per {
                         continue;

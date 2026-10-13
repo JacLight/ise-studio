@@ -245,7 +245,23 @@ pub fn plan(b: &Board, v: &BoardView, r: &RoutePair) -> Result<PairPlan, String>
 
     let start = mid(ps.at, ns.at);
     let end = mid(pe.at, ne.at);
-    let mut targets: Vec<(P, usize)> = Vec::new();
+    // Escapes: the pair leaves each pad pair square to the line through its pads, clear of the pad row.
+    let escape = |a: &PadView, b: &PadView, toward: P| -> P {
+        let c = mid(a.at, b.at);
+        let d = geom::sub(b.at, a.at);
+        let l = geom::len(d).max(1e-9);
+        let mut n = [-d[1] / l, d[0] / l];
+        if geom::dot(n, geom::sub(toward, c)) < 0.0 {
+            n = [-n[0], -n[1]];
+        }
+        let e = a.size[0].max(a.size[1]).max(b.size[0].max(b.size[1])) / 2.0 + w0;
+        geom::add(c, [n[0] * e, n[1] * e])
+    };
+    let first_target = r.steps.first().map(|s| s.at).unwrap_or(end);
+    let last_from = r.steps.last().map(|s| s.at).unwrap_or(start);
+    let start_esc = escape(ps, ns, first_target);
+    let end_esc = escape(pe, ne, last_from);
+    let mut targets: Vec<(P, usize)> = vec![(start_esc, layer)];
     {
         let mut l = layer;
         for s in &r.steps {
@@ -257,6 +273,7 @@ pub fn plan(b: &Board, v: &BoardView, r: &RoutePair) -> Result<PairPlan, String>
             }
             targets.push((s.at, l));
         }
+        targets.push((end_esc, l));
         targets.push((end, l));
     }
     let mut legs: Vec<(usize, Vec<P>)> = Vec::new();
@@ -266,6 +283,15 @@ pub fn plan(b: &Board, v: &BoardView, r: &RoutePair) -> Result<PairPlan, String>
         if *l != layer {
             via_at.push(cur);
             layer = *l;
+            // Out of the coupled vias straight on (they sit square to the incoming line), then on to the target.
+            let dir = legs.last().and_then(|(_, p)| (p.len() >= 2).then(|| heading(p[p.len() - 2], p[p.len() - 1])));
+            if let Some(d) = dir {
+                let (w, g) = geo(layer);
+                let stub = geom::add(cur, [d.cos() * pitch.max(via_d), d.sin() * pitch.max(via_d)]);
+                node.lines.push(pns::Line { id: None, net: syn.clone(), layer, width: 2.0 * w + g, points: vec![cur, stub], locked: true, arcs: false, moved: false });
+                legs.push((layer, vec![cur, stub]));
+                cur = stub;
+            }
         }
         let (w, g) = geo(layer);
         let env = 2.0 * w + g;

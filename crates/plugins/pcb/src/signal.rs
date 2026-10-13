@@ -634,10 +634,10 @@ struct Coupled {
     runs: Vec<(f64, f64, String, f64)>,
 }
 
-fn coupled(a: &[Piece], b: &[Piece], max_gap: f64) -> Coupled {
+fn coupled(a: &[Piece], b: &[Piece], max_gap: &dyn Fn(&str) -> f64) -> Coupled {
     let mut out = Coupled::default();
     for pa in a {
-        let mut spans: Vec<(f64, f64, f64)> = b.iter().filter_map(|pb| alongside(pa, pb, max_gap)).collect();
+        let mut spans: Vec<(f64, f64, f64)> = b.iter().filter_map(|pb| alongside(pa, pb, max_gap(&pa.layer))).collect();
         spans.sort_by(|x, y| x.0.total_cmp(&y.0));
         let mut cur: Option<(f64, f64)> = None;
         for (lo, hi, gap) in &spans {
@@ -694,6 +694,9 @@ pub struct PairView {
     pub gap_min: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gap_max: Option<f64>,
+    /// The coupled gap per layer, against that layer's own.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub gaps: Vec<LayerGap>,
     /// Differential impedance of the coupled stretches as routed (length-weighted, Ω).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zdiff: Option<f64>,
@@ -702,6 +705,15 @@ pub struct PairView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_uncoupled: Option<f64>,
     pub routed: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct LayerGap {
+    pub layer: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nominal: Option<f64>,
+    pub min: f64,
+    pub max: f64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -738,6 +750,8 @@ pub struct SignalView {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub pad_to_die: BTreeMap<String, f64>,
     pub detect_pairs: bool,
+    /// Every net class as set (the editor's).
+    pub net_classes: Vec<NetClass>,
 }
 
 /// The nets of a group: names, patterns and pair names expanded.
@@ -781,22 +795,35 @@ pub fn view(board: &Board, v: &BoardView) -> SignalView {
     let mut pv = Vec::new();
     for (p, detected) in pairs(board, &names) {
         let class = board.class_of(Some(&p.p));
-        let top = classes.iter().find(|c| c.name == class.name).and_then(|c| c.layers.first());
+        let ct = classes.iter().find(|c| c.name == class.name);
+        let top = ct.and_then(|c| c.layers.first());
         let nominal = top.and_then(|t| t.gap).or(class.diff_gap);
-        let w = top.map(|t| t.width).unwrap_or(class.track_width);
-        let max_gap = match nominal {
-            Some(g) => (2.0 * g).max(g + 0.25),
-            None => (2.0 * w).max(0.5),
+        let nominal_on = |layer: &str| ct.and_then(|c| c.layers.iter().find(|l| l.layer == layer)).and_then(|l| l.gap).or(class.diff_gap);
+        let width_on_layer = |layer: &str| ct.and_then(|c| c.layers.iter().find(|l| l.layer == layer)).map(|l| l.width).unwrap_or(class.track_width);
+        // Side by side within a quarter of the layer's gap (plus 20 µm); further apart is uncoupled (skew bumps, via jogs).
+        let max_gap = |layer: &str| match nominal_on(layer) {
+            Some(g) => g * 1.25 + 0.02,
+            None => (2.0 * width_on_layer(layer)).max(0.5),
         };
         let tp: Vec<&TrackView> = v.tracks.iter().filter(|t| t.net.as_deref() == Some(p.p.as_str())).collect();
         let tn: Vec<&TrackView> = v.tracks.iter().filter(|t| t.net.as_deref() == Some(p.n.as_str())).collect();
         let (pp, pn) = (pieces(&tp), pieces(&tn));
-        let cp = coupled(&pp, &pn, max_gap);
-        let cn = coupled(&pn, &pp, max_gap);
+        let cp = coupled(&pp, &pn, &max_gap);
+        let cn = coupled(&pn, &pp, &max_gap);
         let (lp, ln) = (len_of(&p.p), len_of(&p.n));
         let tracks_p: f64 = pp.iter().map(|x| x.len).sum();
         let tracks_n: f64 = pn.iter().map(|x| x.len).sum();
         let gaps: Vec<f64> = cp.runs.iter().map(|r| r.0).collect();
+        let mut by_layer: Vec<LayerGap> = Vec::new();
+        for (g, _, layer, _) in &cp.runs {
+            match by_layer.iter_mut().find(|x| &x.layer == layer) {
+                Some(x) => {
+                    x.min = x.min.min(*g);
+                    x.max = x.max.max(*g);
+                }
+                None => by_layer.push(LayerGap { layer: layer.clone(), nominal: nominal_on(layer), min: *g, max: *g }),
+            }
+        }
         let total: f64 = cp.runs.iter().map(|r| r.1).sum();
         let zdiff = (total > 0.0).then(|| {
             cp.runs
@@ -823,6 +850,7 @@ pub fn view(board: &Board, v: &BoardView) -> SignalView {
             gap: nominal,
             gap_min: gaps.iter().copied().reduce(f64::min).map(r3),
             gap_max: gaps.iter().copied().reduce(f64::max).map(r3),
+            gaps: by_layer.into_iter().map(|x| LayerGap { min: r3(x.min), max: r3(x.max), ..x }).collect(),
             zdiff: zdiff.map(|z| (z * 10.0).round() / 10.0),
             max_skew: p.max_skew.or(class.max_skew),
             max_uncoupled: p.max_uncoupled.or(class.max_uncoupled),
@@ -841,7 +869,11 @@ pub fn view(board: &Board, v: &BoardView) -> SignalView {
             GroupView { name: g.name.clone(), target: g.target.unwrap_or(longest), tolerance: g.tolerance, min: g.min, max: g.max, max_skew: g.max_skew, skew: if m.is_empty() { 0.0 } else { ((longest - shortest) * 1e6).round() / 1e6 }, members: m }
         })
         .collect();
-    SignalView { classes, pairs: pv, lengths, groups, pad_to_die: board.signal.pad_to_die.clone(), detect_pairs: board.signal.detect_pairs.unwrap_or(true) }
+    let mut net_classes = board.net_classes.clone();
+    if !net_classes.iter().any(|c| c.name.eq_ignore_ascii_case("default")) {
+        net_classes.insert(0, NetClass::default_class());
+    }
+    SignalView { classes, pairs: pv, lengths, groups, pad_to_die: board.signal.pad_to_die.clone(), detect_pairs: board.signal.detect_pairs.unwrap_or(true), net_classes }
 }
 
 // ---- Checks --------------------------------------------------------------------------------
@@ -962,26 +994,25 @@ pub fn check(board: &Board, v: &BoardView, out: &mut Vec<Violation>) {
                 push("diff_pair_uncoupled", sv, format!("Pair {}: {} mm runs uncoupled; at most {} mm{by}", p.name, f3(p.uncoupled), f3(max)), at, None, objs.clone(), refs.clone());
             }
         }
-        let (lo, hi, by, sv) = match custom("diff_pair_gap") {
-            Some((name, sv, c)) => (c.min.or(c.opt.map(|o| o * 0.9)), c.max.or(c.opt.map(|o| o * 1.1)), format!(" (rule “{name}”)"), sev(&sv)),
-            None => match p.gap {
-                Some(g) => {
-                    let tol = (g * 0.1).max(0.005);
-                    (Some(g - tol), Some(g + tol), format!(" ({} mm ± {} mm for {})", f3(g), f3(tol), p.class), Some("error"))
-                }
-                None => (None, None, String::new(), None),
-            },
-        };
-        if let Some(sv) = sv {
-            if let (Some(lo), Some(gmin)) = (lo, p.gap_min) {
-                if gmin + 1e-6 < lo {
-                    push("diff_pair_gap", sv, format!("Pair {}: the gap narrows to {} mm; at least {} mm{by}", p.name, f3(gmin), f3(lo)), at, None, objs.clone(), refs.clone());
-                }
+        // The gap: a custom rule's range everywhere, else each layer's own gap ± 10 %.
+        let rule = custom("diff_pair_gap");
+        for lg in &p.gaps {
+            let (lo, hi, by, sv) = match &rule {
+                Some((name, sv, c)) => (c.min.or(c.opt.map(|o| o * 0.9)), c.max.or(c.opt.map(|o| o * 1.1)), format!(" (rule “{name}”)"), sev(sv)),
+                None => match lg.nominal {
+                    Some(g) => {
+                        let tol = (g * 0.1).max(0.005);
+                        (Some(g - tol), Some(g + tol), format!(" ({} mm ± {} mm for {} on {})", f3(g), f3(tol), p.class, lg.layer), Some("error"))
+                    }
+                    None => (None, None, String::new(), None),
+                },
+            };
+            let Some(sv) = sv else { continue };
+            if lo.is_some_and(|lo| lg.min + 1e-6 < lo) {
+                push("diff_pair_gap", sv, format!("Pair {}: the gap narrows to {} mm on {}; at least {} mm{by}", p.name, f3(lg.min), lg.layer, f3(lo.unwrap()), ), at, Some(lg.layer.clone()), objs.clone(), refs.clone());
             }
-            if let (Some(hi), Some(gmax)) = (hi, p.gap_max) {
-                if gmax > hi + 1e-6 {
-                    push("diff_pair_gap", sv, format!("Pair {}: the gap widens to {} mm; at most {} mm{by}", p.name, f3(gmax), f3(hi)), at, None, objs.clone(), refs.clone());
-                }
+            if hi.is_some_and(|hi| lg.max > hi + 1e-6) {
+                push("diff_pair_gap", sv, format!("Pair {}: the gap widens to {} mm on {}; at most {} mm{by}", p.name, f3(lg.max), lg.layer, f3(hi.unwrap())), at, Some(lg.layer.clone()), objs.clone(), refs.clone());
             }
         }
     }
@@ -1581,7 +1612,7 @@ mod tests {
         // Two tracks 0.35 mm apart centre to centre (0.15 mm gap) for 10 mm, then apart.
         let a = t(vec![[0.0, 0.0], [10.0, 0.0], [10.0, 5.0]], vec![]);
         let b = t(vec![[0.0, 0.35], [10.0, 0.35]], vec![]);
-        let c = coupled(&pieces(&[&a]), &pieces(&[&b]), 0.3);
+        let c = coupled(&pieces(&[&a]), &pieces(&[&b]), &|_| 0.3);
         assert!((c.length - 10.0).abs() < 1e-9, "{}", c.length);
         assert!((c.runs[0].0 - 0.15).abs() < 1e-9);
         // Concentric arcs couple along their shared sweep.
@@ -1590,7 +1621,7 @@ mod tests {
         let q = (PI / 8.0).tan();
         let a = t(vec![[r1, 0.0], [0.0, r1]], vec![q]);
         let b = t(vec![[r2, 0.0], [0.0, r2]], vec![q]);
-        let c = coupled(&pieces(&[&a]), &pieces(&[&b]), 0.3);
+        let c = coupled(&pieces(&[&a]), &pieces(&[&b]), &|_| 0.3);
         assert!((c.length - r1 * PI / 2.0).abs() < 1e-6, "{}", c.length);
     }
 }
