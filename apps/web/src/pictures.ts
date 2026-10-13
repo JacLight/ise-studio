@@ -19,7 +19,9 @@ const pictures = () =>
 /** The picture a reference names: its file name, its id, or the id's first characters. */
 const named = (e: Entry, ref: string) => {
   const r = ref.toLowerCase();
-  return e.name.toLowerCase() === r || e.id === r || (/^[0-9a-f]{8,}$/.test(r) && e.id.startsWith(r));
+  // An id may be written as a file name too ("<id>.png", as an attachment is stored).
+  const bare = r.replace(/\.(png|jpe?g)$/, "");
+  return e.name.toLowerCase() === r || e.id === bare || (/^[0-9a-f]{8,}$/.test(bare) && e.id.startsWith(bare));
 };
 
 const textures = new Map<string, THREE.Texture>();
