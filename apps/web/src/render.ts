@@ -129,11 +129,13 @@ export function productStudio(width = 1024): THREE.DataTexture {
   const data = new Float32Array(width * height * 4);
   // Softboxes: centre (azimuth, elevation in degrees), half sizes (degrees), intensity.
   const boxes: [number, number, number, number, number][] = [
-    [-50, 32, 24, 17, 6.5], // key, camera left, high
-    [62, 22, 18, 14, 2.2], // fill, camera right
-    [0, 60, 34, 9, 3.2], // overhead, toward the camera
-    [-122, 24, 5, 30, 6], // strip, behind left
-    [124, 24, 5, 30, 4.5], // strip, behind right
+    // A smaller, harder key raking across the sides from high on the left, so every slot, groove and rib
+    // casts a crisp shadow; little fill, so the shadow side stays deep; bright strips behind trace the edges.
+    [-80, 26, 13, 15, 22], // key, from the camera's left side, low: it skims the side faces, so grooves and ribs shade
+    [55, 15, 16, 12, 1.5], // fill, camera right, low
+    [0, 62, 30, 8, 2.6], // overhead, toward the camera
+    [-122, 24, 3, 30, 12], // strip, behind left (rim)
+    [124, 24, 3, 30, 10], // strip, behind right (rim)
   ];
   const smooth = (e0: number, e1: number, x: number) => {
     const t = THREE.MathUtils.clamp((x - e0) / (e1 - e0), 0, 1);
@@ -145,7 +147,7 @@ export function productStudio(width = 1024): THREE.DataTexture {
       const azimuth = (x / width) * 360 - 180;
       // Black cards round the camera, the white sweep behind the product, the white floor.
       const behind = smooth(95, 135, Math.abs(azimuth));
-      let v = elevation < 0 ? 0.8 : 0.03 + 0.92 * behind * (1 - smooth(45, 75, elevation));
+      let v = elevation < 0 ? 0.8 : 0.02 + 0.7 * behind * (1 - smooth(45, 75, elevation));
       // Overhead, a big diffuser graded from bright on the camera's left to dim on its right (across,
       // not round the zenith): flat steel or a gloss top seen from above mirrors a silver sweep, not a grey.
       if (elevation >= 0) {
@@ -597,7 +599,7 @@ function expose(renderer: THREE.WebGLRenderer, studio: Studio, white: number) {
     return;
   }
   renderer.toneMapping = THREE.LinearToneMapping;
-  renderer.toneMappingExposure = 1.06 / white;
+  renderer.toneMappingExposure = 1.3 / white;
 }
 
 /**
