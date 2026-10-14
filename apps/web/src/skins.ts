@@ -89,6 +89,18 @@ function fillBackdrop(img: ImageData, c: CanvasData) {
       count++;
     }
   }
+  // The silhouette's own rim is part backdrop (soft focus, antialiasing, the sweep's glow round the
+  // product): take it off, a few pixels in, so the fill starts from the product's true edge colour.
+  const rim = Math.max(2, Math.round(Math.max(w, h) / 450));
+  for (let pass = 0; pass < rim; pass++) {
+    const off: number[] = [];
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (known[i] && (x === 0 || y === 0 || x === w - 1 || y === h - 1 || !known[i - 1] || !known[i + 1] || !known[i - w] || !known[i + w])) off.push(i);
+      }
+    for (const i of off) known[i] = 0;
+  }
   let edge: number[] = [];
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) if (!known[y * w + x] && near(known, w, h, x, y)) edge.push(y * w + x);
