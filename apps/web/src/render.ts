@@ -80,7 +80,8 @@ export function studioEnvironment(width = 1024, softboxes = 1): THREE.DataTextur
  * camera's frame (azimuth 0 toward the camera, +90 its right, elevation from
  * the floor): the white sweep behind and below the product, black cards round
  * the camera and the sides, a big softbox high on the camera's left (the key),
- * a smaller one on its right (fill), one overhead toward the camera, and two
+ * a smaller one on its right (fill), one overhead toward the camera, a graded
+ * diffuser over the top, and two
  * tall strips behind for rim light. Gloss and chrome need the dark: a face
  * turned to the camera mirrors the black cards and reads deep, a badge's
  * dome carries a crisp highlight, steel shows bright and dark bands and reads
@@ -106,10 +107,15 @@ export function productStudio(width = 1024): THREE.DataTexture {
     const elevation = 90 - (y / (height - 1)) * 180;
     for (let x = 0; x < width; x++) {
       const azimuth = (x / width) * 360 - 180;
-      // Black cards round the camera, the white sweep behind the product, a grey ceiling, the white floor.
+      // Black cards round the camera, the white sweep behind the product, the white floor.
       const behind = smooth(95, 135, Math.abs(azimuth));
       let v = elevation < 0 ? 0.8 : 0.03 + 0.92 * behind * (1 - smooth(45, 75, elevation));
-      if (elevation >= 0) v += 0.22 * smooth(50, 85, elevation);
+      // Overhead, a big diffuser graded from bright on the camera's left to dim on its right (across,
+      // not round the zenith): flat steel or a gloss top seen from above mirrors a silver sweep, not a grey.
+      if (elevation >= 0) {
+        const across = Math.cos(THREE.MathUtils.degToRad(elevation)) * Math.sin(THREE.MathUtils.degToRad(azimuth));
+        v += smooth(55, 75, elevation) * (0.25 + 1.6 * (1 - smooth(-0.3, 0.3, across)));
+      }
       let r = v, g = v, b = v;
       for (const [az, el, ha, he, intensity] of boxes) {
         let da = Math.abs(azimuth - az);
