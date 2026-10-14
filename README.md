@@ -4,10 +4,12 @@
 
 *Iṣẹ́* (ee-sheh) is Yoruba for "work".
 
+<img src="docs/images/pcb-in-app.jpg" width="900" alt="Iṣẹ́ Studio with an ESP32 circuit board open: the routed board in 3D with its parts, the tools on the left and Iṣẹ́ AI on the right">
+
 <table>
 <tr>
 <td align="center"><img src="docs/images/robot-arm.jpg" width="280" alt="A 3D-printable robot arm with servos, joints and a gripper"><br><sub>Robot arm: printed parts, bought servos, joints, reach and torque checks</sub></td>
-<td align="center"><img src="docs/images/esp32-enclosure.jpg" width="280" alt="An ESP32 board inside its printed enclosure"><br><sub>ESP32 board designed, routed and checked, in the enclosure built around it</sub></td>
+<td align="center"><img src="docs/images/esp32-board.jpg" width="280" alt="An ESP32 circuit board with its parts, routed in Iṣẹ́ Studio"><br><sub>ESP32 board: schematic, layout, routing and checks, then the enclosure around it</sub></td>
 <td align="center"><img src="docs/images/tower.jpg" width="280" alt="A high-rise tower with levels, glazing and a podium"><br><sub>A tower: levels, rooms, schedules and IFC</sub></td>
 </tr>
 </table>
