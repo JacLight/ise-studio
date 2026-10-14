@@ -28,8 +28,7 @@
 //   node tools/ise.mjs study <study> [fps] [--out frames.json]   play a motion study: what moves, clashes, binding; frames to a file
 //   node tools/ise.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]' | controller [json|arduino] [--out f]] [--tool connector]
 //   node tools/ise.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
-//   node tools/ise.mjs render [--width 1920] [--height 1080] [--samples 256] [--studio white|studio] [--timeout minutes] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open); white: a seamless white sweep for product shots
-//   node tools/ise.mjs render ... --skin "Left side,Right side,Top"   lay the product's calibrated photos (canvases) onto the faces they saw (none: off)
+//   node tools/ise.mjs render [--width 1920] [--height 1080] [--samples 256] [--studio white|studio] [--skin "Left side,Top"] [--headless] [--timeout minutes] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open); white: a seamless white sweep for product shots; --skin lays the product's calibrated photos (canvases) onto the faces they saw (none: off); --headless renders in a browser of its own even when a view is open
 //   node tools/ise.mjs render --glb product.glb   the shown model as a .glb for a website (the render's materials and printed labels; metres, Y up, on the ground)
 //   node tools/ise.mjs flat [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
 //   node tools/ise.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
@@ -514,10 +513,12 @@ if (command === "run") {
       r.on("error", fail);
       r.end();
     });
-  let res = await ask();
-  let chrome = null;
-  if (res.status === 409) {
-    // No view open: start a headless browser on the project and ask again once it has loaded.
+  // --headless: render in a browser of our own even when a view is open (a background tab, which browsers
+  // throttle, can hold a render up for minutes); it answers the job as soon as it has loaded.
+  const ownBrowser = args.includes("--headless");
+  if (ownBrowser) args.splice(args.indexOf("--headless"), 1);
+  let chrome = null, profile = null;
+  const startBrowser = async () => {
     const { spawn } = await import("node:child_process");
     const { existsSync, mkdtempSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
@@ -528,7 +529,17 @@ if (command === "run") {
       process.exit(1);
     }
     const page = `${http}/?${new URLSearchParams({ ...(project ? { project } : {}), ...(studio ? { studio } : {}) })}`;
-    chrome = spawn(exe, ["--headless=new", `--user-data-dir=${mkdtempSync(`${tmpdir()}/ise-render-`)}`, "--enable-unsafe-swiftshader", `--window-size=${Math.min(width, 1920)},${Math.min(height, 1080)}`, "--hide-scrollbars", page], { stdio: "ignore" });
+    profile = mkdtempSync(`${tmpdir()}/ise-render-`);
+    chrome = spawn(exe, ["--headless=new", `--user-data-dir=${profile}`, "--enable-unsafe-swiftshader", "--disable-extensions", `--window-size=${Math.min(width, 1920)},${Math.min(height, 1080)}`, "--hide-scrollbars", page], { stdio: "ignore" });
+  };
+  if (ownBrowser) {
+    await startBrowser();
+    await new Promise((r) => setTimeout(r, 12000));   // the app loads and joins the project
+  }
+  let res = await ask();
+  if (res.status === 409) {
+    // No view open: start a headless browser on the project and ask again once it has loaded.
+    if (!chrome) await startBrowser();
     for (let i = 0; i < 30 && res.status === 409; i++) {
       await new Promise((r) => setTimeout(r, 1000));
       res = await ask();
@@ -543,6 +554,7 @@ if (command === "run") {
     console.log(glbOut ? `✓ ${out}: 3D model for the web (.glb, metres, Y up), ${(png.length / 1024).toFixed(0)} KB${chrome ? " (made headless)" : ""}` : `✓ ${out}: ${width} × ${height} px, ${samples} samples, ${(png.length / 1024).toFixed(0)} KB${chrome ? " (rendered headless)" : ""}`);
   }
   chrome?.kill();
+  if (profile) setTimeout(async () => (await import("node:fs")).rmSync(profile, { recursive: true, force: true }), 1500);   // the browser's throwaway profile
 } else if (command === "flat") {
   // Sheet-metal flat patterns: every sheet part, or one with its bend table and checks; files on request.
   const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
