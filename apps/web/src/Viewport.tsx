@@ -3569,6 +3569,13 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     renderSource() {
       const t = three.current;
       if (!t) return null;
+      // A glide still under way (a view just asked for, perhaps not yet begun in a busy tab): the
+      // picture is taken from where it is going, not from part way round or the view before.
+      if (t.flight) {
+        t.flight.start ??= 0;
+        stepFlight(t, Infinity);
+        t.camera.updateMatrixWorld();
+      }
       return { objects: [...t.parts.values()].map((p) => p.group), camera: t.camera };
     },
     resize() {
