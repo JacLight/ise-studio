@@ -14,15 +14,20 @@
 
 ## From the screen to a real part
 
-<img src="docs/images/gearbox-print-photo.jpg" width="560" alt="A green print-in-place gearbox printed in one piece, gears turning in their housing">
+<table>
+<tr>
+<td align="center"><img src="docs/images/gearbox-in-app.jpg" width="430" alt="The print-in-place gear reducer open in Iṣẹ́ Studio"><br><sub>The design in Iṣẹ́ Studio</sub></td>
+<td align="center"><img src="docs/images/gearbox-print-photo.jpg" width="380" alt="The same gear reducer printed in green PLA, gears turning in their housing"><br><sub>The same design, printed</sub></td>
+</tr>
+</table>
 
-A two-stage **print-in-place gear reducer**, designed in Iṣẹ́ Studio and printed in one piece on a Bambu Lab X1 (PLA, 0.2 mm layers, no supports). It came off the bed and turned: one short break-in turn, then smooth. The housing, every gear and the knob print together and never fuse.
+A two-stage **print-in-place gear reducer** (1 : 7.5), designed in Iṣẹ́ Studio and printed in one piece on a Bambu Lab X1 (PLA, 0.2 mm layers, no supports). It came off the bed and turned: one short break-in turn, then smooth. The knob and its pinion, the compound middle gear, and the output gear with its pointer all print inside the housing around them, and none of them fuse.
 
-- **Herringbone (V) teeth** lock each gear to its mate, so the train cannot slide apart, and print without supports at 30°.
-- **Every gear stands on the bed** and every bottom edge is chamfered, so the first layer cannot weld neighbours together.
-- **Checked before printing:** the engine's gear check turned the train through a full revolution and found at least 0.30 mm between moving parts everywhere. The clearances it used (0.4 mm running, 0.4 mm between layers) worked on the first print.
+- **Involute spur gears computed from their definition**: 18 : 54, then 18 : 45, every flank the true involute curve.
+- **Every gap sized for a 3D printer**: 0.4 mm running clearance, 0.4 mm between layers, 0.3 mm extra centre distance, 0.5 mm backlash. They worked on the first print.
+- **Nothing for the slicer to support**: the housing never overhangs.
 
-The AI didn't pick features from a menu: it wrote the gearbox as a program (involute teeth, the twist, the clearances as parameters), and the engine proved the moving parts never touch. The same approach is in [`examples/gearbox-print`](examples/gearbox-print/print-in-place.js), ready to load and change, and its [3MF is ready to print](examples/gearbox-print/print/), with the lithophane lamp, the relief plaque and the robot arm's 17 parts: [printable examples](examples/README.md#ready-to-print).
+The AI didn't pick features from a menu. It wrote the gearbox as a program, with the gear teeth, the clearances and the housing as parameters you can change. [`examples/gearbox-print`](examples/gearbox-print/) is this exact design, and its [3MF is ready to print](examples/gearbox-print/print/). There are more [printable examples](examples/README.md#ready-to-print): a lithophane lamp, a relief plaque made from a photo, and the robot arm's 17 parts.
 
 ## What it does
 

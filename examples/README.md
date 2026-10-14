@@ -14,7 +14,7 @@ These folders also carry a `print/` folder of files exported from the design, so
 
 | Example | Files | Size (mm) | How to print |
 |---|---|---|---|
-| [Print-in-place gear reducer](gearbox-print/) | `print-in-place-reducer.3mf` | 213 × 139 × 50 | One piece, **no supports, no brim**. 0.4 mm clearance between moving parts and 0.4 mm between layers. When it's done, work the knob back and forth once to break it free; then it turns smoothly at 1 : 7.5. |
+| [Print-in-place gear reducer](gearbox-print/) | `print-in-place-reducer.3mf` | 188 × 103 × 49 | One piece, **no supports**: the exact design that was printed. 0.4 mm clearance between moving parts and 0.4 mm between layers. When it's done, work the knob back and forth once to break it free; then it turns smoothly at 1 : 7.5. |
 | [Lithophane lamp](lithophane/) | `lighthouse-panel.3mf` (white PLA), `lighthouse-base.3mf` (black PLA) | panel 150 × 3 × 113, base 174 × 64 × 22 | Print the panel **standing up as it lies in the file**, with a brim and 100 % infill so every thickness shows; slow outer walls help. The base prints flat, no supports. Slide the panel into the slot and put two tea lights (LED) in the pockets behind it. |
 | [Relief plaque from a photo](relief-from-photo/) | `valley-relief-plaque.3mf` | 180 × 120 × 7 | Face up, no supports. Finer layers (0.12 mm) bring out more detail. The keyhole slots on the back hang it on two screws. |
 | [Desktop robot arm](robot-arm/) | 17 `.3mf` files, one per printed part | up to 173 long (upper arm halves) | Every part is already in its print orientation; the first lines of its program in `programs/` say which face goes on the bed. PLA, 4 walls, 30 % infill for the base, turntable, yoke and arm halves. Then the bought parts below. |

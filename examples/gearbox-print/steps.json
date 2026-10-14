@@ -13,7 +13,7 @@
   "operation": "shape.create",
   "parameters": {
    "name": "Print-in-place reducer",
-   "description": "A 1 : 7.5 two-stage reducer that prints in one piece and turns straight off the bed. Every gear stands on the bed in a floorless frame, herringbone teeth lock the train together, and the input hangs from a bridge by its knob: nothing for the slicer to support. Turn the knob; the pointer turns 7.5 times slower.",
+   "description": "A 1 : 7.5 two-stage spur reducer that prints in one piece and turns straight off the bed: three rotating bodies captured in a housing printed around them, every gap sized for FDM (0.4 mm running clearance, 0.4 mm between layers), no slicer supports. Printed on a Bambu Lab X1 in PLA at 0.2 mm; one break-in turn, then smooth. Turn the knob; the pointer turns 7.5 times slower.",
    "source": {
     "$file": [
      "../gearbox/involute.js",
@@ -28,143 +28,137 @@
     {
      "key": "module1",
      "label": "Stage 1 module",
-     "value": 1.25,
+     "max": 4.0,
+     "min": 1.0,
+     "step": 0.25,
      "unit": "mm",
-     "min": 1,
-     "max": 3,
-     "step": 0.25
+     "value": 1.5
     },
     {
      "key": "pinion1",
      "label": "Stage 1 pinion teeth",
-     "value": 14,
+     "max": 40.0,
+     "min": 12.0,
+     "step": 1.0,
      "unit": "count",
-     "min": 12,
-     "max": 30,
-     "step": 1
+     "value": 18.0
     },
     {
      "key": "gear1",
      "label": "Stage 1 wheel teeth",
-     "value": 42,
+     "max": 120.0,
+     "min": 17.0,
+     "step": 1.0,
      "unit": "count",
-     "min": 20,
-     "max": 90,
-     "step": 1
+     "value": 54.0
     },
     {
      "key": "width1",
      "label": "Stage 1 face width",
-     "value": 10,
+     "max": 40.0,
+     "min": 4.0,
+     "step": null,
      "unit": "mm",
-     "min": 5,
-     "max": 30
+     "value": 10.0
     },
     {
      "key": "module2",
      "label": "Stage 2 module",
-     "value": 1.5,
+     "max": 4.0,
+     "min": 1.0,
+     "step": 0.25,
      "unit": "mm",
-     "min": 1,
-     "max": 3,
-     "step": 0.25
+     "value": 2.0
     },
     {
      "key": "pinion2",
      "label": "Stage 2 pinion teeth",
-     "value": 34,
+     "max": 40.0,
+     "min": 12.0,
+     "step": 1.0,
      "unit": "count",
-     "min": 20,
-     "max": 80,
-     "step": 1
+     "value": 18.0
     },
     {
      "key": "gear2",
      "label": "Stage 2 wheel teeth",
-     "value": 85,
+     "max": 120.0,
+     "min": 17.0,
+     "step": 1.0,
      "unit": "count",
-     "min": 40,
-     "max": 160,
-     "step": 1
+     "value": 45.0
     },
     {
      "key": "width2",
      "label": "Stage 2 face width",
-     "value": 14,
+     "max": 40.0,
+     "min": 4.0,
+     "step": null,
      "unit": "mm",
-     "min": 5,
-     "max": 30
+     "value": 14.0
     },
     {
-     "key": "helix",
-     "label": "Herringbone helix angle",
-     "value": 30,
-     "unit": "deg",
-     "min": 10,
-     "max": 40,
-     "step": 1
+     "key": "shaft",
+     "label": "Shaft diameter",
+     "max": 20.0,
+     "min": 4.0,
+     "step": null,
+     "unit": "mm",
+     "value": 8.0
     },
     {
      "key": "clearance",
      "label": "Running clearance",
-     "value": 0.4,
-     "unit": "mm",
+     "max": 1.0,
      "min": 0.2,
-     "max": 1,
-     "step": 0.05
+     "step": 0.05,
+     "unit": "mm",
+     "value": 0.4
     },
     {
      "key": "layerGap",
      "label": "Layer gap",
-     "value": 0.4,
-     "unit": "mm",
+     "max": 1.0,
      "min": 0.2,
-     "max": 1,
-     "step": 0.05
+     "step": 0.05,
+     "unit": "mm",
+     "value": 0.4
     },
     {
      "key": "meshGap",
      "label": "Extra centre distance",
-     "value": 0.3,
+     "max": 1.0,
+     "min": 0.0,
+     "step": 0.05,
      "unit": "mm",
-     "min": 0,
-     "max": 1,
-     "step": 0.05
+     "value": 0.3
     },
     {
      "key": "backlash",
      "label": "Backlash",
-     "value": 0.5,
-     "unit": "mm",
+     "max": 1.0,
      "min": 0.05,
-     "max": 1,
-     "step": 0.05
+     "step": 0.05,
+     "unit": "mm",
+     "value": 0.5
     },
     {
-     "key": "chamfer",
-     "label": "Bottom chamfer",
-     "value": 0.6,
+     "key": "floor",
+     "label": "Floor thickness",
+     "max": 10.0,
+     "min": 2.0,
+     "step": null,
      "unit": "mm",
-     "min": 0,
-     "max": 2,
-     "step": 0.1
-    },
-    {
-     "key": "bridgeGap",
-     "label": "Gap under the bridge",
-     "value": 1,
-     "unit": "mm",
-     "min": 0.4,
-     "max": 3,
-     "step": 0.1
+     "value": 3.0
     },
     {
      "key": "wall",
      "label": "Wall thickness",
-     "value": 4,
+     "max": 10.0,
+     "min": 2.0,
+     "step": null,
      "unit": "mm",
-     "min": 2,
-     "max": 10
+     "value": 4.0
     }
    ]
   }
