@@ -12,6 +12,12 @@
 </tr>
 </table>
 
+## Watch it build
+
+[<img src="docs/images/planetary-gearbox-build.gif" width="900" alt="Iṣẹ́ AI building a print-in-place planetary gearbox from one prompt, then the exploded view">](docs/videos/planetary-gearbox-build.mp4)
+
+One prompt in an empty project. Iṣẹ́ AI wrote a **print-in-place planetary gearbox** as a program: a 12-tooth sun on an input knob, three 18-tooth planets on a carrier, and a 48-tooth ring gear in a housing with mounting feet, for a 5 : 1 reduction. The engine then turned it through a full revolution, checking 192 positions with no parts touching, and Iṣẹ́ AI wrote the ready-to-print 3MF. It took 7 min 57 s, recorded as it happened; the sped-up parts are labelled. [Full video](docs/videos/planetary-gearbox-build.mp4).
+
 ## From the screen to a real part
 
 <table>
