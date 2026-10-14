@@ -10,6 +10,7 @@
 //   ise.get(idOrName) · ise.find(name) · ise.entities
 //   ise.commit(op, params)     one change (one undo step) · ise.run(steps) several, "$0.id" naming step 0's output
 //   ise.check() · ise.view(action, what?, value?) · ise.undo() · ise.redo() · ise.fetch(path)
+//   ise.exportUrl(idOrName, format, part?) · ise.download(idOrName, format, part?)   files, for this project
 
 import { type Engine, type EntityView, projectUrl } from "./engine";
 
@@ -48,6 +49,9 @@ const HELP = `Iṣẹ́ Studio: \`ise\` changes the open project through its eng
   ise.commit("shape.update", { target, source })   one change, one undo step
   ise.run([{ operation, parameters }, …])          several, one after another ("$0.id" is step 0's output id)
   ise.check()                every requirement and geometry check
+  ise.exportUrl("Bracket", "3mf")   a link to the file (stl, 3mf, step, obj, glb, dxf, zip…), for this project
+  ise.download("Bracket", "3mf")    save it; ise.download("Lamp", "3mf", "Panel") one part of a shape
+                             An assembly gives a .zip of every part; one printed part of it: ise.download("Base", "3mf")
   ise.view("isolate", "Bracket")   show the person something: select, isolate, frame, hide, show_all, camera, explode…
   ise.undo() · ise.redo()
 
@@ -99,6 +103,27 @@ export function agentApi(engine: Engine, onStep?: (i: number, operation: string,
     }
     return outputs;
   };
+  // Links carry the project: without it the engine looks in its default project and finds nothing.
+  const exportUrl = (what: string, format: string, part?: string) => {
+    const e = find(what);
+    // An instance's own file is its component's shape, as drawn (a printed part: how it prints).
+    // (A configured instance keeps its own id: its definition alone would be the default configuration.)
+    const inst = e.components["assembly.instance"] as { of?: string; config?: string | null } | undefined;
+    const def = inst?.of && !inst.config ? entities().find((x) => x.id === inst.of) : undefined;
+    const id = def?.components["shape.program"] ? def.id : e.id;
+    const path = `/export/${id}.${format.replace(/^\./, "").toLowerCase()}${part ? `?part=${encodeURIComponent(part)}` : ""}`;
+    return new URL(projectUrl(path), location.href).href;
+  };
+  const download = async (what: string, format: string, part?: string) => {
+    const url = exportUrl(what, format, part);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(await res.text());
+    const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? `${nameOf(find(what)) ?? "export"}.${format}`;
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(await res.blob()), download: name });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
+    return { saved: name, url };
+  };
   const VALUED = ["color", "camera", "projection", "display", "section"];
   const view = (action: string, what?: string, value?: string) => {
     if (VALUED.includes(action)) return engine.emitView({ action, target: null, value: what ?? value ?? null });
@@ -118,6 +143,8 @@ export function agentApi(engine: Engine, onStep?: (i: number, operation: string,
     check: () => engine.check(),
     view,
     fetch: fetchPath,
+    exportUrl,
+    download,
     undo: () => engine.undo(),
     redo: () => engine.redo(),
     help: () => HELP,

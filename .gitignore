@@ -11,3 +11,6 @@ node_modules
 *.swp
 .idea/
 .vscode/
+
+# Progress of `ise run` (resumes a step list), per machine
+*.run.json

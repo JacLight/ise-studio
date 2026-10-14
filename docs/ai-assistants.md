@@ -29,6 +29,8 @@ The page has a JavaScript object `window.ise` for assistants. Use your JavaScrip
 3. Before using an operation, run `ise.ops("<name>")` to see its exact parameters.
 4. Make changes with `ise.commit(operation, parameters)` or `ise.run([...steps])`, check them with `ise.check()`,
    and show results with `ise.view("isolate", "<part name>")`.
+5. For a file (to print, or for another program), use `ise.download("<name>", "3mf")` or give the link from
+   `ise.exportUrl("<name>", "3mf")`: never build export links by hand (they need the project).
 The full guide is also readable at http://127.0.0.1:7420/agent/
 ```
 
@@ -43,6 +45,7 @@ Save it as a Claude in Chrome shortcut (type `/` in its message box), e.g. `/ise
 | `commit(op, params)` · `run(steps)` | change the design (one undo step each) |
 | `check()` | every requirement and geometry check |
 | `view(action, what?, value?)` | show something: `select`, `isolate`, `frame`, `hide`, `show_all`, `camera`, `explode`, `section`… |
+| `exportUrl(name, format, part?)` · `download(name, format, part?)` | a file of it, for this project: `stl`, `3mf`, `step`, `obj`, `glb`, `dxf`, `zip`… (an assembly: `zip`, every part; one of its parts by that part's name) |
 | `undo()` · `redo()` | your own last change |
 
 For safety, Claude in Chrome treats web pages as information, not instructions: the page cannot make it do anything, but it reads the guide when you ask it to. That is why the one-time prompt is needed.

@@ -22,7 +22,7 @@ A two-stage **print-in-place gear reducer**, designed in Iṣẹ́ Studio and pr
 - **Every gear stands on the bed** and every bottom edge is chamfered, so the first layer cannot weld neighbours together.
 - **Checked before printing:** the engine's gear check turned the train through a full revolution and found at least 0.30 mm between moving parts everywhere. The clearances it used (0.4 mm running, 0.4 mm between layers) worked on the first print.
 
-The AI didn't pick features from a menu: it wrote the gearbox as a program (involute teeth, the twist, the clearances as parameters), and the engine proved the moving parts never touch. The same approach is in [`examples/gearbox-print`](examples/gearbox-print/print-in-place.js), ready to load and print.
+The AI didn't pick features from a menu: it wrote the gearbox as a program (involute teeth, the twist, the clearances as parameters), and the engine proved the moving parts never touch. The same approach is in [`examples/gearbox-print`](examples/gearbox-print/print-in-place.js), ready to load and change, and its [3MF is ready to print](examples/gearbox-print/print/), with the lithophane lamp, the relief plaque and the robot arm's 17 parts: [printable examples](examples/README.md#ready-to-print).
 
 ## What it does
 

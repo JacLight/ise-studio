@@ -1049,8 +1049,7 @@ async fn send_to_slicer(State(server): State<Arc<Server>>, Path(stem): Path<Stri
 
 fn source(project: &Project, id: StableId) -> Option<Source> {
     let material = |mid: StableId| project.get::<de_solid::Material>(mid).map(|m| (m.name.clone(), m.density.canonical()));
-    // Instances and assemblies export every shape inside them; shapes with no
-    // placement are definitions, made only through their instances.
+    // Instances and assemblies export every shape inside them.
     let instance = project.get::<de_assembly::Instance>(id);
     if instance.is_some() || project.get::<de_assembly::AssemblyDef>(id).is_some() {
         let name = instance.map(|i| i.name.clone()).or_else(|| project.get::<de_assembly::AssemblyDef>(id).map(|a| a.name.clone())).unwrap_or_default();
@@ -1064,10 +1063,8 @@ fn source(project: &Project, id: StableId) -> Option<Source> {
         }
         return Some(Source { name, at: [0.0; 3], rotation: de_assembly::Transform::IDENTITY.rot, program: None, boxed: None, materials: HashMap::new(), prefix: String::new(), members });
     }
-    let program = project.get::<ShapeProgram>(id);
-    if program.is_some() && project.get::<de_solid::Placement>(id).is_none() {
-        return None;
-    }
+    // A shape with no placement is a component's definition: on its own it
+    // exports as drawn, in its own coordinates (for a printed part, how it prints).
     shape_source(project, id, None, &material)
 }
 
@@ -1219,7 +1216,8 @@ fn assembly_package(folder: &str, members: &[Source], tolerance: f64, step_of: &
 
 /// Exports, in project millimeters with curves within `tolerance` of the formula:
 ///
-/// - `/export/<id>.stl`: the whole part or assembly, where it sits in the project.
+/// - `/export/<id>.stl`: the whole part or assembly, where it sits in the project;
+///   a component's shape (an instance's definition) as drawn, in its own coordinates.
 /// - `/export/<id>.stl?part=<name>` and `.dxf?part=<name>`: one part of an
 ///   assembly, at the origin; the DXF is laid flat with one layer per cut depth.
 /// - `/export/<id>.step` and `.igs`: exact B-rep (OpenCascade), every part
@@ -1259,11 +1257,13 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
     let sources: Vec<Source> = {
         let project = app.project.lock().unwrap();
         if stem == "project" && ext == "zip" {
-            // Top-level items only: nested instances and assembly definitions come with their parents.
+            // Top-level items only: nested instances and definitions (assemblies, and
+            // shapes with no placement) come with the instances that use them.
             project
                 .entity_ids()
                 .into_iter()
                 .filter(|id| project.get::<de_assembly::AssemblyDef>(*id).is_none() && project.get::<de_assembly::Instance>(*id).is_none_or(|i| i.parent.is_none()))
+                .filter(|id| project.get::<ShapeProgram>(*id).is_none() || project.get::<de_solid::Placement>(*id).is_some())
                 .filter_map(|id| source(&project, id))
                 .collect()
         } else {

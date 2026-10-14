@@ -63,7 +63,7 @@ The project page (the logo menu, top left) lists them. `projects/` holds your ow
 node tools/ise.mjs run examples/bracket/steps.json --project bracket
 ```
 
-then open `http://127.0.0.1:7420/?project=bracket`.
+then open `http://127.0.0.1:7420/?project=bracket`. Some examples also come ready to print: see [examples/README.md](../examples/README.md#ready-to-print).
 
 ## The command line: `ise`
 
