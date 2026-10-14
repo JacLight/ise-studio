@@ -7,9 +7,45 @@
 import * as THREE from "three";
 import { WebGLPathTracer } from "three-gpu-pathtracer";
 import { picturesReady } from "./pictures";
+import { type PreparedSkin, type Skin, type SkinWorld, prepareSkins, skinPieces, skinWorld } from "./skins";
 
-/** What the view shows: its part groups and its camera. */
-export type RenderSource = { objects: THREE.Object3D[]; camera: THREE.PerspectiveCamera };
+/**
+ * What the view shows: its part groups and its camera; `skins`, product photos to lay onto the
+ * model (see skins.ts), `prepared` once they are loaded (withSkins).
+ */
+export type RenderSource = { objects: THREE.Object3D[]; camera: THREE.PerspectiveCamera; skins?: Skin[]; prepared?: PreparedSkin[] };
+
+/** The source with its photo skins loaded, ready for buildRenderScene. */
+export async function withSkins(source: RenderSource): Promise<RenderSource> {
+  return source.skins?.length ? { ...source, prepared: await prepareSkins(source.skins) } : source;
+}
+
+/** A skinned face's material: the part's own finish over its photograph (the photo is its colour). */
+const skinned = new Map<THREE.Material, Map<PreparedSkin, THREE.Material>>();
+function skinMaterial(base: THREE.Material, skin: PreparedSkin): THREE.Material {
+  let byBase = skinned.get(base);
+  if (!byBase) skinned.set(base, (byBase = new Map()));
+  let m = byBase.get(skin);
+  if (!m) {
+    const p = (base as THREE.MeshPhysicalMaterial).clone();
+    p.map = skin.texture;
+    p.color.set(0xffffff);
+    // The photo carries the surface's look (grain, stipple, print): no texture of our own over it.
+    p.normalMap = null;
+    p.userData = { ...p.userData, texture: undefined };
+    byBase.set(skin, (m = p));
+  }
+  return m;
+}
+
+/** Which modelled materials take a photo: plastics, rubber, paint and print (metals and see-through keep their own). */
+const takesSkin = (m: THREE.Material) => {
+  const p = m as THREE.MeshPhysicalMaterial;
+  return p.metalness < 0.5 && !(p.transmission > 0);
+};
+
+/** Skinned pieces, worked out once per geometry, placement and set of photos. */
+const skinCache = new WeakMap<THREE.BufferGeometry, { key: string; pieces: [THREE.BufferGeometry, number][] }>();
 
 /**
  * The room the model is shown in: "studio", a grey dome with softboxes and a
@@ -436,10 +472,25 @@ export function buildRenderScene(
     return p;
   };
   const bounds = new THREE.Box3();
+  const skins = source.prepared ?? [];
+  const skinKey = skins.map((k) => k.name).join("|");
+  let world: SkinWorld | null = null;
   const visible = (o: THREE.Object3D) => {
     for (let x: THREE.Object3D | null = o; x; x = x.parent) if (!x.visible) return false;
     return true;
   };
+  if (skins.length) {
+    // Everything shown, for the skins' sight lines (a photo paints only what its camera saw).
+    const all: { geometry: THREE.BufferGeometry; matrix: THREE.Matrix4 }[] = [];
+    for (const root of source.objects) {
+      root.updateMatrixWorld(true);
+      root.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (mesh.isMesh && visible(mesh) && !(mesh as unknown as THREE.InstancedMesh).isInstancedMesh) all.push({ geometry: mesh.geometry, matrix: mesh.matrixWorld });
+      });
+    }
+    world = skinWorld(all);
+  }
   for (const root of source.objects) {
     root.updateMatrixWorld(true);
     root.traverse((o) => {
@@ -455,9 +506,20 @@ export function buildRenderScene(
         const material = convert(m);
         // A textured surface needs texture coordinates: projected from the box side it faces, in mm.
         const scale = new THREE.Vector3().setFromMatrixScale(mesh.matrixWorld).x || 1;
-        const copy = new THREE.Mesh(material.userData.texture ? boxUvs(geometry, 1000 * scale) : geometry, material);
-        mesh.matrixWorld.decompose(copy.position, copy.quaternion, copy.scale);
-        scene.add(copy);
+        const own = material.userData.texture ? boxUvs(geometry, 1000 * scale) : geometry;
+        // Photo skins: the faces the product's photos saw take the photo, the rest their own finish.
+        let parts: [THREE.BufferGeometry, THREE.Material][] = [[own, material]];
+        if (skins.length && takesSkin(material)) {
+          const key = `${skinKey}@${mesh.matrixWorld.elements.map((v) => v.toFixed(4)).join(",")}`;
+          let cached = skinCache.get(geometry);
+          if (!cached || cached.key !== key) skinCache.set(geometry, (cached = { key, pieces: skinPieces(geometry, mesh.matrixWorld, skins, world) }));
+          parts = cached.pieces.map(([g, k]) => [k < 0 ? (material.userData.texture ? boxUvs(g, 1000 * scale) : g) : g, k < 0 ? material : skinMaterial(material, skins[k])]);
+        }
+        for (const [g, mat] of parts) {
+          const copy = new THREE.Mesh(g, mat);
+          mesh.matrixWorld.decompose(copy.position, copy.quaternion, copy.scale);
+          scene.add(copy);
+        }
         added = true;
       }
       if (!added) return;
@@ -641,8 +703,9 @@ function breathe(): Promise<void> {
  */
 export async function renderImage(source: RenderSource, options: RenderOptions, onProgress?: (samples: number) => void): Promise<Blob> {
   const { width, height, samples, studio = "studio" } = options;
-  // Every printed picture (labels, decals) in before the first sample.
+  // Every printed picture (labels, decals) and photo skin in before the first sample.
   await picturesReady();
+  source = await withSkins(source);
   if (studio !== "white") return png((await trace(source, studio, undefined, width, height, samples, onProgress)).pixels, width, height);
   // The white sweep: the model on a cut-out floor, then the floor alone (fewer samples) for
   // its shading, laid on pure white. One pass with the floor in the picture leaves a grey

@@ -7,13 +7,14 @@
 
 import * as THREE from "three";
 import { picturesReady } from "./pictures";
-import { buildRenderScene, type RenderSource } from "./render";
+import { buildRenderScene, type RenderSource, withSkins } from "./render";
 
 /** Largest texture side written (printed labels, the stipple map): plenty for a web page, small to download. */
 const MAX_TEXTURE = 2048;
 
 export async function modelForWeb(source: RenderSource): Promise<ArrayBuffer> {
   await picturesReady();
+  source = await withSkins(source);
   const { GLTFExporter } = await import("three/examples/jsm/exporters/GLTFExporter.js");
   // The render's own scene (no studio needed: the page lights it).
   const { scene, bounds } = buildRenderScene(source, new THREE.Texture(), "studio");

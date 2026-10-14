@@ -29,6 +29,7 @@
 //   node tools/forma.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]' | controller [json|arduino] [--out f]] [--tool connector]
 //   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
 //   node tools/forma.mjs render [--width 1920] [--height 1080] [--samples 256] [--studio white|studio] [--timeout minutes] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open); white: a seamless white sweep for product shots
+//   node tools/forma.mjs render ... --skin "Left side,Right side,Top"   lay the product's calibrated photos (canvases) onto the faces they saw (none: off)
 //   node tools/forma.mjs render --glb product.glb   the shown model as a .glb for a website (the render's materials and printed labels; metres, Y up, on the ground)
 //   node tools/forma.mjs flat [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
 //   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
@@ -491,7 +492,10 @@ if (command === "run") {
   }
   // To every open view of the project, as the render job itself goes to whichever view answers first
   // (sent only to the person the AI last spoke to, a view opened since rendered the grey studio).
-  if (studio) await engine.send("view", { action: "render", target: null, value: JSON.stringify({ studio, open: false }), to: "*" });
+  // --skin "Left side,Top": lay those calibrated photos (canvases) onto the model, as photographed; --skin none clears it.
+  const skinArg = opt("skin", null);
+  const skin = skinArg === null ? undefined : skinArg === "none" ? [] : skinArg.split(",").map((n) => n.trim()).filter(Boolean);
+  if (studio || skin) await engine.send("view", { action: "render", target: null, value: JSON.stringify({ ...(studio ? { studio } : {}), ...(skin ? { skin } : {}), open: false }), to: "*" });
   // --timeout N: give up after N minutes (default 15), as when the view rendering it was closed part way.
   const timeout = opt("timeout", null);
   const q = new URLSearchParams({ ...(project ? { project } : {}), width, height, samples, ...(glbOut ? { format: "glb" } : {}), ...(timeout ? { timeout } : {}) });

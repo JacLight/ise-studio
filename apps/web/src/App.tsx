@@ -201,6 +201,8 @@ export function App({ engine }: { engine: Engine }) {
   // ?studio=white wins (a headless render started by ./forma render --studio white).
   const studioAsked = new URLSearchParams(location.search).get("studio");
   const studioNow = useRef(studio);
+  // Product photos laid onto the model in renders (canvas names), as ./forma render --skin asks.
+  const skinNow = useRef<string[]>([]);
   studioNow.current = studioAsked === "white" || studioAsked === "studio" ? studioAsked : studio;
   const renderSource = useCallback(() => viewport.current?.renderSource() ?? null, []);
   const [proposal, setProposal] = useState<Proposal | null>(null);
@@ -350,15 +352,24 @@ export function App({ engine }: { engine: Engine }) {
             break;
           case "render": {
             // A render asked for from ./forma render: made here, sent back to the engine.
-            const job = value ? (JSON.parse(value) as { job?: string; width?: number; height?: number; samples?: number; open?: boolean; studio?: Studio; format?: string }) : {};
+            const job = value ? (JSON.parse(value) as { job?: string; width?: number; height?: number; samples?: number; open?: boolean; studio?: Studio; format?: string; skin?: string[] }) : {};
             if (job.studio === "white" || job.studio === "studio") studioNow.current = job.studio;
+            // Photo skins (./forma render --skin "Left side,Top"): kept for the renders that follow; [] clears them.
+            if (job.skin) skinNow.current = job.skin;
             if (job.studio) setStudio(studioNow.current);
             if (!job.job) {
               // Render mode opens (unless only the studio was set).
               if (job.open !== false) setRendering(true);
               break;
             }
-            const source = viewport.current?.renderSource();
+            const view = viewport.current?.renderSource();
+            // The photo skins asked for: the project's canvases of those names.
+            const skins = skinNow.current.flatMap((name) => {
+              const hit = [...entitiesNow.current.values()].find((e) => canvasOf(e)?.name.toLowerCase() === name.toLowerCase());
+              const canvas = canvasOf(hit);
+              return canvas ? [{ name: canvas.name, canvas }] : [];
+            });
+            const source = view && skins.length ? { ...view, skins } : view;
             const back = (body: BodyInit, error?: string) =>
               fetch(projectUrl(`/render/${job.job}${error ? `?error=${encodeURIComponent(error)}` : ""}`), { method: "POST", body }).catch(() => undefined);
             if (!source) {
