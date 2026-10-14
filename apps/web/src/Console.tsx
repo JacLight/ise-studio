@@ -5,6 +5,7 @@
 // is saved, synced and undoable like any other change.
 
 import { useEffect, useRef, useState } from "react";
+import { agentApi, kindOf, nameOf } from "./agentApi";
 import { type Engine, type EntityView, projectName, projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
 import "./data.css";
@@ -22,32 +23,9 @@ const HELP = `Commands (as ./ise takes them; "./ise" in front is fine):
   view <select|frame|isolate|hide|show|show_all|camera|display|projection|section|explode|measure> [what]
   undo · redo · clear · help
 Anything else runs as JavaScript, with:
-  ise.entities · ise.get(idOrName) · ise.find(name) · ise.commit(op, params)
-  ise.run(steps) · ise.check() · ise.view(action, what?, value?) · ise.fetch(path)
+  ise.entities · ise.get(idOrName) · ise.find(name) · ise.tree() · ise.ops(filter) · ise.commit(op, params)
+  ise.run(steps) · ise.check() · ise.view(action, what?, value?) · ise.fetch(path) · ise.docs(topic) · ise.help()
   print(…)  — e.g.  for (const e of ise.entities) if (e.draft?.value) print(e.id, e.draft.value)`;
-
-const nameOf = (e: EntityView) => {
-  const c = e.components as Record<string, { name?: string } | undefined>;
-  return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["assembly.definition"]?.name ?? c["shape.parameter_set"]?.name ?? c["shape.sheet"]?.name ?? c["draft.object"]?.name ?? c["shape.sketch"]?.name ?? c["draft.layer"]?.name ?? c["draft.plane"]?.name;
-};
-
-function kindOf(e: EntityView) {
-  const c = e.components as Record<string, Record<string, unknown> | undefined>;
-  if (c["shape.program"]) return `shape “${c["shape.program"].name}”`;
-  if (c["assembly.instance"]) return `instance ${c["assembly.instance"].name}`;
-  if (c["assembly.definition"]) return `assembly “${c["assembly.definition"].name}”`;
-  if (c["draft.array"]) return `array “${c["shape.parameter_set"]?.name}”`;
-  if (c["shape.parameter_set"]) return `parameters “${c["shape.parameter_set"].name}”`;
-  if (c["shape.sheet"]) return `sheet “${c["shape.sheet"].name}”`;
-  if (c["shape.sketch"]) return `sketch “${c["shape.sketch"].name}”`;
-  if (c["draft.object"]) return `draft ${c["draft.object"].kind} “${c["draft.object"].name}”`;
-  if (c["draft.layer"]) return `layer “${c["draft.layer"].name}”`;
-  if (c["draft.plane"]) return `working plane “${c["draft.plane"].name}”`;
-  if (c["solid.material"]) return `material ${c["solid.material"].name}`;
-  if (c["intent.requirement"]) return `requirement “${c["intent.requirement"].name}”`;
-  if (c["solid.box"]) return "box";
-  return Object.keys(c)[0] ?? "entity";
-}
 
 /** Splits "commit op {json}" into words, keeping the JSON (or quoted text) whole. */
 function words(line: string): string[] {
@@ -101,23 +79,13 @@ export function Console(props: { engine: Engine; onClose: () => void }) {
   }, [lines]);
 
   const print = (kind: Line["kind"], text: string) => setLines((l) => [...l.slice(-800), { kind, text }]);
-  const entities = () => [...engine.getState().entities.values()];
-  const find = (what: string) => {
-    const all = entities();
-    const byId = all.find((e) => e.id === what);
-    if (byId) return byId;
-    const named = all.filter((e) => nameOf(e)?.toLowerCase() === what.toLowerCase());
-    const placed = named.filter((e) => e.components["assembly.instance"] || e.components["solid.placement"]);
-    const pick = placed.length ? placed : named;
-    if (pick.length > 1) throw new Error(`“${what}” matches ${pick.length} things: use an id (${pick.map((e) => e.id).join(", ")})`);
-    if (!pick.length) throw new Error(`nothing called “${what}”`);
-    return pick[0];
-  };
-  const getJson = async (path: string) => {
-    const res = await fetch(projectUrl(path));
-    if (!res.ok) throw new Error(await res.text());
-    return res.headers.get("content-type")?.includes("json") ? res.json() : res.text();
-  };
+  // The same `ise` the page gives assistants (window.ise): one implementation, with each step of a run printed here.
+  const api = agentApi(engine, (i, operation, o) => print("out", `✓ ${i} ${operation} → ${JSON.stringify(o)}`));
+  const entities = () => api.entities;
+  const find = api.get;
+  const getJson = api.fetch;
+  const commit = api.commit;
+  const runSteps = api.run;
   const save = (url: string) => {
     const a = document.createElement("a");
     a.href = url;
@@ -126,48 +94,7 @@ export function Console(props: { engine: Engine; onClose: () => void }) {
     a.click();
     a.remove();
   };
-  const commit = async (operation: string, parameters: Record<string, unknown>) => {
-    const r = (await engine.commit(operation, parameters)) as { output?: unknown; revision?: number };
-    return r?.output ?? r;
-  };
-  const runSteps = async (steps: { operation: string; parameters?: Record<string, unknown> }[]) => {
-    const outputs: unknown[] = [];
-    const resolve = (v: unknown): unknown => {
-      if (typeof v === "string") {
-        const m = /^\$(\d+)\.(.+)$/.exec(v);
-        if (!m) return v;
-        let x = outputs[Number(m[1])] as Record<string, unknown> | undefined;
-        for (const k of m[2].split(".")) x = x?.[k] as Record<string, unknown> | undefined;
-        if (x === undefined) throw new Error(`${v} does not resolve`);
-        return x;
-      }
-      if (Array.isArray(v)) return v.map(resolve);
-      if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, resolve(x)]));
-      return v;
-    };
-    for (const [i, s] of steps.entries()) {
-      const o = await commit(s.operation, resolve(s.parameters ?? {}) as Record<string, unknown>);
-      outputs.push(o);
-      print("out", `✓ ${i} ${s.operation} → ${JSON.stringify(o)}`);
-    }
-    return outputs;
-  };
   const view = (action: string, target: string | null = null, value: string | null = null) => engine.emitView({ action, target, value });
-
-  const api = {
-    get entities() {
-      return entities();
-    },
-    get: (what: string) => find(what),
-    find: (name: string) => entities().filter((e) => nameOf(e)?.toLowerCase().includes(name.toLowerCase())),
-    commit,
-    run: runSteps,
-    check: () => engine.check(),
-    view: (action: string, what?: string, value?: string) => view(action, what ? find(what).id : null, value ?? null),
-    fetch: getJson,
-    undo: () => engine.undo(),
-    redo: () => engine.redo(),
-  };
 
   async function command(w: string[]) {
     const [cmd, ...rest] = w;

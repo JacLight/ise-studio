@@ -45,6 +45,14 @@ import { SelectionTools } from "./SelectionTools";
 import type { ConnectorPick, JointView } from "./Joints";
 import type { Transform } from "./model";
 import { Console } from "./Console";
+import { type AgentApi, agentApi } from "./agentApi";
+
+declare global {
+  interface Window {
+    /** The Iṣẹ́ Studio commands for assistants working in this page: ise.help(). */
+    ise?: AgentApi;
+  }
+}
 import { SheetWorkspace } from "./SheetWorkspace";
 import { PreferencesDialog, ProjectFileRows } from "./Preferences";
 import { ArraySection, DraftProperties, DraftSection, draftOf, draftPicture, layerEffects, useDraftTool } from "./DraftTools";
@@ -110,6 +118,14 @@ const MATE_COLORS = ["#e2553f", "#1f9d74", "#2f7de1", "#d4880f", "#c23d8f", "#0f
 
 export function App({ engine }: { engine: Engine }) {
   const state = useSyncExternalStore(engine.subscribe, engine.getState);
+  // `window.ise`: the console's commands for an assistant working in this page (Claude in Chrome and the like),
+  // so it changes the design through the engine with one call instead of clicking. ise.help() says how.
+  useEffect(() => {
+    window.ise = agentApi(engine);
+    return () => {
+      delete window.ise;
+    };
+  }, [engine]);
   const [prefs, setPrefs] = useState<UiPrefs>(loadPrefs);
   const [selected, setSelected] = usePersisted<string | null>("selected", null);
   const [stockOpen, setStockOpen] = useState(false);
