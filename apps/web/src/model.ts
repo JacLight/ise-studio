@@ -415,8 +415,12 @@ export const describeOperation = (op: string) => {
   return verb.charAt(0).toUpperCase() + verb.slice(1) + what;
 };
 
-/** How a material looks: colour, metal or not, how rough, see-through; `picture` a printed picture on it (a label); `texture` a moulded surface texture the render draws ("stipple": a grip's pebbled rubber). */
-export type Look = { color: string; metalness: number; roughness: number; opacity?: number; picture?: string; texture?: "stipple" };
+/**
+ * How a material looks: colour, metal or not, how rough, see-through; `picture` a printed picture on it (a label);
+ * `texture` a surface texture the render draws: "stipple" a grip's pebbled rubber, "grain" the fine
+ * texture a mould gives a matte plastic housing, "brushed" the lines of brushed or grained metal.
+ */
+export type Look = { color: string; metalness: number; roughness: number; opacity?: number; picture?: string; texture?: "stipple" | "grain" | "brushed" };
 
 const LOOKS: Record<string, Look> = {
   // Printed circuit boards (the PCB workspace's 3D part): exact names, matched before any family.
@@ -587,7 +591,11 @@ export function materialLook(name: string | undefined): Look {
   // More finish words: "Badge rim (chrome)", "TPE (black, stippled)", "PC (clear)".
   const has = (re: RegExp) => re.test(key);
   if (has(/\b(chrome|mirror)\b/)) Object.assign(out, { metalness: 1, roughness: 0.06, color: hex ?? "#eceef0" });
-  if (has(/\b(stippled|pebbled)\b/) || (has(/\btextured\b/) && out.metalness < 0.5)) Object.assign(out, { texture: "stipple", roughness: Math.max(out.roughness, 0.55) });
+  if (has(/\b(stippled|pebbled)\b/)) Object.assign(out, { texture: "stipple", roughness: Math.max(out.roughness, 0.55) });
+  // A textured moulding ("ABS, matte textured", "mould texture", "grained"): the mould's fine grain, not a grip's pebbles.
+  else if (has(/\b(textured|grained|mou?ld texture)\b/) && out.metalness < 0.5) Object.assign(out, { texture: "grain", roughness: Math.max(out.roughness, 0.6) });
+  // Brushed, grained or satin-finished sheet and bar: the fine lines of the abrasive.
+  else if (has(/\b(brushed|grained|hairline)\b/) && out.metalness >= 0.5) Object.assign(out, { texture: "brushed" });
   if (has(/\b(clear|transparent)\b/) && out.metalness < 0.5) Object.assign(out, { opacity: Math.min(out.opacity ?? 1, 0.45), roughness: Math.min(out.roughness, 0.06), ...(color ? {} : { color: "#e4ecf0" }) });
   return out;
 }

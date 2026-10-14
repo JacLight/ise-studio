@@ -26,12 +26,10 @@ export type RenderOptions = { width: number; height: number; samples: number; st
  * overhead, a dark floor bounce, and softboxes (a big key above front left, a
  * fill right, a strip overhead, a rim behind) that metals mirror as clean
  * highlights. `softboxes` scales the softboxes (the live view uses them
- * dimmed, beside its own sun). `white`: an even white dome all round (the
- * seamless sweep) with the softboxes over it for shape and highlights.
- * `userData.floor` is what a white matte floor under it sends back (its
+ * dimmed, beside its own sun). `userData.floor` is what a white matte floor under it sends back (its
  * radiance per unit albedo), so a backdrop can be made to match it.
  */
-export function studioEnvironment(width = 1024, softboxes = 1, white = false): THREE.DataTexture {
+export function studioEnvironment(width = 1024, softboxes = 1): THREE.DataTexture {
   const height = width / 2;
   const data = new Float32Array(width * height * 4);
   // Softboxes: centre (azimuth, elevation in degrees), half sizes (degrees), intensity.
@@ -48,12 +46,7 @@ export function studioEnvironment(width = 1024, softboxes = 1, white = false): T
       // Dome: a cool grey brightening upward; the floor below the horizon dimmer and warm.
       const up = Math.max(0, Math.sin(THREE.MathUtils.degToRad(elevation)));
       let r: number, g: number, b: number;
-      // The white sweep: white walls all round under a dimmer ceiling, as in a
-      // product studio. A face turned up (a steel plate seen from the front)
-      // mirrors the ceiling and reads as metal, not as a white mirror; a
-      // stamped letter's sloped sides mirror the bright walls, so stamping reads.
-      if (white) [r, g, b] = Array(3).fill(0.35 + 0.65 * Math.pow(1 - up, 2)) as [number, number, number];
-      else if (elevation >= 0) {
+      if (elevation >= 0) {
         const k = 0.5 + 0.55 * Math.pow(up, 0.6);
         [r, g, b] = [0.92 * k, 0.95 * k, 1.0 * k];
       } else {
@@ -67,8 +60,7 @@ export function studioEnvironment(width = 1024, softboxes = 1, white = false): T
         // Soft edges: full inside, falling off over two degrees.
         const fa = THREE.MathUtils.clamp((ha - da) / 2 + 0.5, 0, 1);
         const fe = THREE.MathUtils.clamp((he - de) / 2 + 0.5, 0, 1);
-        // (The overhead strip stays out of the white sweep: it would sit in every top-down reflection.)
-        const f = white && el > 70 ? 0 : fa * fe * intensity * softboxes;
+        const f = fa * fe * intensity * softboxes;
         r += f;
         g += f;
         b += f * 0.97;
@@ -80,6 +72,67 @@ export function studioEnvironment(width = 1024, softboxes = 1, white = false): T
       data[i + 3] = 1;
     }
   }
+  return equirect(data, width, height);
+}
+
+/**
+ * The white sweep's light, set as a product photographer sets it, in the
+ * camera's frame (azimuth 0 toward the camera, +90 its right, elevation from
+ * the floor): the white sweep behind and below the product, black cards round
+ * the camera and the sides, a big softbox high on the camera's left (the key),
+ * a smaller one on its right (fill), one overhead toward the camera, and two
+ * tall strips behind for rim light. Gloss and chrome need the dark: a face
+ * turned to the camera mirrors the black cards and reads deep, a badge's
+ * dome carries a crisp highlight, steel shows bright and dark bands and reads
+ * as metal, where a room white all round made them all a flat grey or white.
+ * `turnStudio` turns it to the camera for each picture.
+ */
+export function productStudio(width = 1024): THREE.DataTexture {
+  const height = width / 2;
+  const data = new Float32Array(width * height * 4);
+  // Softboxes: centre (azimuth, elevation in degrees), half sizes (degrees), intensity.
+  const boxes: [number, number, number, number, number][] = [
+    [-50, 32, 24, 17, 6.5], // key, camera left, high
+    [62, 22, 18, 14, 2.2], // fill, camera right
+    [0, 60, 34, 9, 3.2], // overhead, toward the camera
+    [-122, 24, 5, 30, 6], // strip, behind left
+    [124, 24, 5, 30, 4.5], // strip, behind right
+  ];
+  const smooth = (e0: number, e1: number, x: number) => {
+    const t = THREE.MathUtils.clamp((x - e0) / (e1 - e0), 0, 1);
+    return t * t * (3 - 2 * t);
+  };
+  for (let y = 0; y < height; y++) {
+    const elevation = 90 - (y / (height - 1)) * 180;
+    for (let x = 0; x < width; x++) {
+      const azimuth = (x / width) * 360 - 180;
+      // Black cards round the camera, the white sweep behind the product, a grey ceiling, the white floor.
+      const behind = smooth(95, 135, Math.abs(azimuth));
+      let v = elevation < 0 ? 0.8 : 0.03 + 0.92 * behind * (1 - smooth(45, 75, elevation));
+      if (elevation >= 0) v += 0.22 * smooth(50, 85, elevation);
+      let r = v, g = v, b = v;
+      for (const [az, el, ha, he, intensity] of boxes) {
+        let da = Math.abs(azimuth - az);
+        if (da > 180) da = 360 - da;
+        const de = Math.abs(elevation - el);
+        // Soft edges: full inside, falling off over three degrees.
+        const f = THREE.MathUtils.clamp((ha - da) / 3 + 0.5, 0, 1) * THREE.MathUtils.clamp((he - de) / 3 + 0.5, 0, 1) * intensity;
+        r += f;
+        g += f;
+        b += f * 0.98;
+      }
+      const i = (y * width + x) * 4;
+      data[i] = r;
+      data[i + 1] = g;
+      data[i + 2] = b;
+      data[i + 3] = 1;
+    }
+  }
+  return equirect(data, width, height);
+}
+
+/** An equirectangular HDR from its pixels (top row the zenith), with what a white matte floor under it sends back. */
+function equirect(data: Float32Array, width: number, height: number): THREE.DataTexture {
   // Light on a floor facing up: the radiance above the horizon, cosine weighted (E / π).
   let floor = 0;
   for (let y = 0; y < height; y++) {
@@ -102,34 +155,31 @@ export function studioEnvironment(width = 1024, softboxes = 1, white = false): T
   return tex;
 }
 
+/**
+ * Turns the product studio so its azimuth 0 faces the camera: the direction
+ * to the camera across the floor (for a view straight down, the bottom of the
+ * picture). `under`: the camera is below the floor and the studio is turned
+ * over. The studio's azimuth is the world's atan2(y, x) and its elevation the
+ * world's, once turned Z up.
+ */
+export function turnStudio(scene: THREE.Scene, camera: THREE.Camera, under = false) {
+  const forward = camera.getWorldDirection(new THREE.Vector3());
+  let toward = new THREE.Vector2(-forward.x, -forward.y);
+  if (toward.length() < 0.05) {
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion()));
+    toward = new THREE.Vector2(-up.x, -up.y);
+  }
+  const azimuth = Math.atan2(toward.y, toward.x);
+  scene.environmentRotation.set(under ? Math.PI / 2 : -Math.PI / 2, 0, azimuth, "ZYX");
+}
+
 /** Size of one tile of a surface texture, mm. */
 const TEXTURE_TILE_MM = 10;
 
-let stippleMap: THREE.DataTexture | null = null;
-/**
- * A moulded stipple (a grip's pebbled rubber) as a tiling normal map: round
- * bumps 0.2–0.35 mm across, packed at random over a 10 mm tile.
- */
-function stipple(): THREE.DataTexture {
-  if (stippleMap) return stippleMap;
-  const n = 512;
-  const height = new Float32Array(n * n);
-  let seed = 7;
-  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-  for (let k = 0; k < 2600; k++) {
-    const cx = rand() * n, cy = rand() * n, r = 8 + rand() * 7, h = 0.6 + rand() * 0.4;
-    for (let dy = -Math.ceil(r); dy <= Math.ceil(r); dy++)
-      for (let dx = -Math.ceil(r); dx <= Math.ceil(r); dx++) {
-        const d = Math.hypot(dx, dy) / r;
-        if (d >= 1) continue;
-        const x = (Math.floor(cx) + dx + n) % n, y = (Math.floor(cy) + dy + n) % n;
-        const bump = h * Math.sqrt(1 - d * d);
-        if (bump > height[y * n + x]) height[y * n + x] = bump;
-      }
-  }
+/** A tiling height field (n × n, any units) as a normal map; `strength` steepens it. */
+function normalMap(height: Float32Array, n: number, strength: number): THREE.DataTexture {
   const data = new Uint8Array(n * n * 4);
   const at = (x: number, y: number) => height[((y + n) % n) * n + ((x + n) % n)];
-  const strength = 3;
   for (let y = 0; y < n; y++)
     for (let x = 0; x < n; x++) {
       const nx = (at(x - 1, y) - at(x + 1, y)) * strength, ny = (at(x, y - 1) - at(x, y + 1)) * strength;
@@ -147,7 +197,85 @@ function stipple(): THREE.DataTexture {
   tex.generateMipmaps = true;
   tex.colorSpace = THREE.NoColorSpace;
   tex.needsUpdate = true;
-  return (stippleMap = tex);
+  return tex;
+}
+
+/** A seeded random in [0, 1). */
+function random(seed: number) {
+  return () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+}
+
+/** Smooth noise that tiles over `n`: random values on a `cells` × `cells` lattice, eased between. */
+function tilingNoise(n: number, cells: number, rand: () => number): Float32Array {
+  const lattice = Float32Array.from({ length: cells * cells }, rand);
+  const out = new Float32Array(n * n);
+  const ease = (t: number) => t * t * (3 - 2 * t);
+  for (let y = 0; y < n; y++)
+    for (let x = 0; x < n; x++) {
+      const fx = (x / n) * cells, fy = (y / n) * cells;
+      const x0 = Math.floor(fx), y0 = Math.floor(fy);
+      const tx = ease(fx - x0), ty = ease(fy - y0);
+      const v = (i: number, j: number) => lattice[((j + cells) % cells) * cells + ((i + cells) % cells)];
+      const top = v(x0, y0) * (1 - tx) + v(x0 + 1, y0) * tx;
+      const bottom = v(x0, y0 + 1) * (1 - tx) + v(x0 + 1, y0 + 1) * tx;
+      out[y * n + x] = top * (1 - ty) + bottom * ty;
+    }
+  return out;
+}
+
+const surfaceMaps = new Map<string, THREE.DataTexture>();
+
+/** The normal map of a surface texture a look names, over a 10 mm tile. */
+function surfaceTexture(kind: string): THREE.DataTexture | null {
+  const made = surfaceMaps.get(kind);
+  if (made) return made;
+  const n = 512;
+  const height = new Float32Array(n * n);
+  let strength: number;
+  if (kind === "stipple") {
+    // A moulded stipple (a grip's pebbled rubber): round bumps 0.2–0.35 mm across, packed at random.
+    const rand = random(7);
+    for (let k = 0; k < 2600; k++) {
+      const cx = rand() * n, cy = rand() * n, r = 8 + rand() * 7, h = 0.6 + rand() * 0.4;
+      for (let dy = -Math.ceil(r); dy <= Math.ceil(r); dy++)
+        for (let dx = -Math.ceil(r); dx <= Math.ceil(r); dx++) {
+          const d = Math.hypot(dx, dy) / r;
+          if (d >= 1) continue;
+          const x = (Math.floor(cx) + dx + n) % n, y = (Math.floor(cy) + dy + n) % n;
+          const bump = h * Math.sqrt(1 - d * d);
+          if (bump > height[y * n + x]) height[y * n + x] = bump;
+        }
+    }
+    strength = 3;
+  } else if (kind === "grain") {
+    // A mould's fine texture (as on a matte ABS or PC/ABS housing, the like of VDI 3400
+    // 27–30 or a fine Mold-Tech grain): an irregular sandy grain about 0.1–0.4 mm across,
+    // shallow, which breaks highlights up into the soft sheen of moulded plastic.
+    const rand = random(11);
+    for (const [cells, weight] of [[128, 0.55], [64, 0.3], [32, 0.15]] as const) {
+      const layer = tilingNoise(n, cells, rand);
+      for (let i = 0; i < n * n; i++) height[i] += layer[i] * weight;
+    }
+    strength = 2.2;
+  } else if (kind === "brushed") {
+    // Brushed metal: fine parallel lines of the abrasive along the tile's u, each a random
+    // depth, running a random length before the next starts, a faint waviness across.
+    const rand = random(23);
+    const wave = tilingNoise(n, 8, rand);
+    for (let y = 0; y < n; y++) {
+      let x = 0;
+      while (x < n) {
+        const run = 40 + Math.floor(rand() * 300), depth = rand();
+        for (let k = 0; k < run && x + k < n; k++) height[y * n + x + k] = depth;
+        x += run;
+      }
+    }
+    for (let i = 0; i < n * n; i++) height[i] = height[i] * 0.8 + wave[i] * 0.2;
+    strength = 1.1;
+  } else return null;
+  const tex = normalMap(height, n, strength);
+  surfaceMaps.set(kind, tex);
+  return tex;
 }
 
 /** The geometry with texture coordinates projected from the box side each vertex faces (mm / tile), for surface textures. */
@@ -186,8 +314,8 @@ function physical(m: THREE.Material): THREE.Material {
     metalness: metal,
     roughnessMap: m.roughnessMap,
     metalnessMap: m.metalnessMap,
-    // A moulded texture the look names ("stippled" rubber) as a normal map.
-    normalMap: look?.texture === "stipple" ? stipple() : m.normalMap,
+    // A surface texture the look names (stippled rubber, a mould's grain, brushed steel) as a normal map.
+    normalMap: (look?.texture && surfaceTexture(look.texture)) || m.normalMap,
     // A part's look has no glow of its own: what glows in the view is its
     // selection or hover highlight, which a render leaves out.
     emissive: look ? 0x000000 : m.emissive.clone(),
@@ -357,9 +485,10 @@ export function buildRenderScene(
     scene.background = environment;
     scene.backgroundBlurriness = 0.4;
   }
-  // The studio is made Y up; the model is Z up.
+  // The studio is made Y up; the model is Z up. The white sweep's lights face the camera.
   scene.environmentRotation.set(-Math.PI / 2, 0, 0);
   scene.backgroundRotation.set(-Math.PI / 2, 0, 0);
+  if (sweep) turnStudio(scene, source.camera);
   return { scene, bounds, white };
 }
 
@@ -382,7 +511,7 @@ function cameraFor(source: RenderSource, aspect: number) {
 const environments = new Map<Studio, THREE.DataTexture>();
 function environment(studio: Studio) {
   let e = environments.get(studio);
-  if (!e) environments.set(studio, (e = studio === "white" ? studioEnvironment(1024, 0.55, true) : studioEnvironment()));
+  if (!e) environments.set(studio, (e = studio === "white" ? productStudio() : studioEnvironment()));
   return e;
 }
 
@@ -419,7 +548,7 @@ export class LiveRender {
   private stopped = false;
   ready = false;
 
-  constructor(private source: RenderSource, onFrame: (samples: number) => void, studio: Studio = "studio") {
+  constructor(private source: RenderSource, onFrame: (samples: number) => void, private studio: Studio = "studio") {
     this.canvas = document.createElement("canvas");
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: false, preserveDrawingBuffer: true });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -467,6 +596,10 @@ export class LiveRender {
       this.camera.aspect = w / h;
       this.camera.updateProjectionMatrix();
       this.tracer.updateCamera();
+      if (this.studio === "white") {
+        turnStudio(this.scene, this.camera);
+        this.tracer.updateEnvironment();
+      }
     }
     this.tracer.renderSample();
   }
@@ -603,7 +736,7 @@ async function trace(
   const ground = scene.children.find((o) => o.userData.floor);
   if (layer && ground && camera.position.z < ground.position.z) {
     scene.remove(ground);
-    scene.environmentRotation.set(Math.PI / 2, 0, 0);
+    turnStudio(scene, camera, true);
   }
   const tracer = new WebGLPathTracer(renderer);
   // Big images in tiles, so each draw call stays short.
