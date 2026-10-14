@@ -28,7 +28,7 @@ fn run(name: &str) -> (exact::Exact, runtime::Evaluated) {
         assert_eq!(c["valid"], true, "{name}/{}: {c}", p.name);
         assert_eq!(c["solids"], 1, "{name}/{}: one solid", p.name);
     }
-    let path = std::env::temp_dir().join(format!("forma-surf-{}-{name}.step", std::process::id()));
+    let path = std::env::temp_dir().join(format!("ise-surf-{}-{name}.step", std::process::id()));
     let parts: Vec<(String, de_occt::Shape)> = ex.parts.iter().map(|p| (p.name.clone(), p.shape)).collect();
     ex.arena.write_step(&parts, &path).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();

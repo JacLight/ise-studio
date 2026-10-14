@@ -1,6 +1,6 @@
-//! Boards from other EDA tools put into Forma's terms. Every importer reads
+//! Boards from other EDA tools put into Iṣẹ́ Studio's terms. Every importer reads
 //! its file into a [`BoardIn`]: parts with their pads where they sit on the
-//! board (Forma coordinates: mm, y up), copper segments and arcs, vias,
+//! board (Iṣẹ́ Studio coordinates: mm, y up), copper segments and arcs, vias,
 //! pours and the board edge as loose lines. [`finish`] makes that a
 //! [`KicadBoard`] (the shape `pcb.board.import_kicad` also produces): each
 //! part's pads turned back into a footprint in its own coordinates
@@ -247,11 +247,11 @@ fn same_geometry(a: &Footprint, b: &Footprint) -> bool {
     a.pads == b.pads
 }
 
-/// The board in Forma's terms.
+/// The board in Iṣẹ́ Studio's terms.
 pub fn finish(mut b: BoardIn) -> Result<KicadBoard, String> {
     let mut notes = std::mem::take(&mut b.notes);
     if b.source_copper_layers > 4 {
-        notes.push(format!("the board has {} copper layers; Forma boards have up to 4, so copper on layers past the second inner layer was left out", b.source_copper_layers));
+        notes.push(format!("the board has {} copper layers; ISE Studio boards have up to 4, so copper on layers past the second inner layer was left out", b.source_copper_layers));
     }
     let uses_inner = b.segments.iter().any(|s| s.layer.starts_with("in")) || b.zones.iter().any(|z| z.layer.starts_with("in"));
     let layers: u8 = if uses_inner || b.source_copper_layers >= 4 { 4 } else { 2 };

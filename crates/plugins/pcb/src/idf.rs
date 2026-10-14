@@ -56,7 +56,7 @@ pub fn files(view: &BoardView, board: &Board) -> Vec<(String, String)> {
     let stem = crate::gerber::file_stem(&view.name);
     let date = stamp();
     let mut emn = String::new();
-    let _ = writeln!(emn, ".HEADER\nBOARD_FILE 3.0 \"Forma\" {date} 1\n{} MM\n.END_HEADER", q(&view.name));
+    let _ = writeln!(emn, ".HEADER\nBOARD_FILE 3.0 \"ISE Studio\" {date} 1\n{} MM\n.END_HEADER", q(&view.name));
     let _ = writeln!(emn, ".BOARD_OUTLINE ECAD\n{}", f(view.thickness));
     let mut outline = view.outline.clone();
     if geom::polygon_area(&outline) < 0.0 {
@@ -96,7 +96,7 @@ pub fn files(view: &BoardView, board: &Board) -> Vec<(String, String)> {
 
     // The library: one entry per package and part number, drawn in footprint coordinates.
     let mut emp = String::new();
-    let _ = writeln!(emp, ".HEADER\nLIBRARY_FILE 3.0 \"Forma\" {date} 1\n.END_HEADER");
+    let _ = writeln!(emp, ".HEADER\nLIBRARY_FILE 3.0 \"ISE Studio\" {date} 1\n.END_HEADER");
     let mut done: BTreeMap<(String, String), ()> = BTreeMap::new();
     for c in &placed {
         let key = package(c);

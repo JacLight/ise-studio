@@ -53,10 +53,10 @@ pub fn export(s: &Source, part: Option<&str>, ext: &str, tolerance: f64) -> Resu
 
 fn temp(ext: &str) -> std::path::PathBuf {
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    std::env::temp_dir().join(format!("forma-{}-{}.{ext}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)))
+    std::env::temp_dir().join(format!("ise-{}-{}.{ext}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)))
 }
 
-/// The file names Forma imports, and how: STEP as it is, compressed STEP
+/// The file names Iṣẹ́ Studio imports, and how: STEP as it is, compressed STEP
 /// unpacked, BREP translated to STEP (so every copy of a project stores one kind).
 pub fn importable(lower: &str) -> bool {
     [".step", ".stp", ".stpz", ".stepz", ".step.gz", ".stp.gz", ".brep", ".brp"].iter().any(|e| lower.ends_with(e))

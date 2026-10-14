@@ -136,7 +136,7 @@ pub fn kicad(n: &Netlist, title: &str) -> String {
         .comps
         .iter()
         .map(|c| {
-            let (lib, part) = c.symbol.split_once(':').unwrap_or(("forma", &c.symbol));
+            let (lib, part) = c.symbol.split_once(':').unwrap_or(("ise", &c.symbol));
             let mut v = vec![list("ref", vec![s(c.reference.clone())]), list("value", vec![s(c.value.clone())])];
             if !c.footprint.is_empty() {
                 v.push(list("footprint", vec![s(c.footprint.clone())]));
@@ -171,7 +171,7 @@ pub fn kicad(n: &Netlist, title: &str) -> String {
         "export",
         vec![
             list("version", vec![s("E")]),
-            list("design", vec![list("source", vec![s(n.source.clone())]), list("date", vec![s(today())]), list("tool", vec![s("Forma")])]),
+            list("design", vec![list("source", vec![s(n.source.clone())]), list("date", vec![s(today())]), list("tool", vec![s("ISE Studio")])]),
             list("components", comps),
             list("nets", nets),
         ],
@@ -186,11 +186,11 @@ pub fn kicad_xml(n: &Netlist, _title: &str) -> String {
     w.open("design", &[]);
     w.text("source", &[], &n.source);
     w.text("date", &[], &today());
-    w.text("tool", &[], "Forma");
+    w.text("tool", &[], "ISE Studio");
     w.close();
     w.open("components", &[]);
     for c in &n.comps {
-        let (lib, part) = c.symbol.split_once(':').unwrap_or(("forma", &c.symbol));
+        let (lib, part) = c.symbol.split_once(':').unwrap_or(("ise", &c.symbol));
         w.open("comp", &[("ref", c.reference.clone())]);
         w.text("value", &[], &c.value);
         if !c.footprint.is_empty() {
@@ -223,7 +223,7 @@ pub fn orcad(n: &Netlist) -> String {
         }
     }
     let mut o = String::new();
-    let _ = writeln!(o, "( {{ EESchema Netlist Version 1.1 created by Forma {} }}", today());
+    let _ = writeln!(o, "( {{ EESchema Netlist Version 1.1 created by ISE Studio {} }}", today());
     for c in &n.comps {
         let fp = if c.footprint.is_empty() { "$noname".to_string() } else { c.footprint.replace(' ', "_") };
         let val = if c.value.is_empty() { "~".to_string() } else { c.value.replace(' ', "_") };
@@ -261,7 +261,7 @@ pub fn pads(n: &Netlist) -> String {
 /// Allegro third-party (Telesis) netlist.
 pub fn allegro(n: &Netlist) -> String {
     let q = |s: &str| format!("'{}'", s.replace('\'', "_"));
-    let mut o = String::from("(Source: Forma)\n$PACKAGES\n");
+    let mut o = String::from("(Source: ISE Studio)\n$PACKAGES\n");
     let mut groups: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
     for c in &n.comps {
         groups.entry((c.footprint.clone(), c.value.clone())).or_default().push(c.reference.clone());
@@ -283,7 +283,7 @@ pub fn cadstar(n: &Netlist, title: &str) -> String {
     let q = |s: &str| format!("\"{}\"", s.replace('"', "'"));
     let mut o = String::from(".HEA\n");
     let _ = writeln!(o, ".TIM {}", today().replace('-', " "));
-    let _ = writeln!(o, ".APP \"Forma\"\n.TYP FULL\n.JOB {}\n", q(title));
+    let _ = writeln!(o, ".APP \"ISE Studio\"\n.TYP FULL\n.JOB {}\n", q(title));
     for c in &n.comps {
         let _ = writeln!(o, ".ADD_COM {} {} {}", c.reference, q(&c.footprint), q(&c.value));
     }

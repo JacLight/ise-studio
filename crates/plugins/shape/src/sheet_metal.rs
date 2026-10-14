@@ -218,7 +218,7 @@ pub fn dxf(f: &FlatPattern) -> String {
     let mut pair = |code: i32, value: &str| {
         let _ = writeln!(out, "{code}\n{value}");
     };
-    pair(999, &format!("Forma flat pattern: {} — {} mm {}, K {}, {} bends; CUT = laser, BEND_UP / BEND_DOWN = bend lines seen from this side", f.part, fmt_num(f.thickness), f.material, fmt_num(f.k), f.bends.len()));
+    pair(999, &format!("ISE Studio flat pattern: {} — {} mm {}, K {}, {} bends; CUT = laser, BEND_UP / BEND_DOWN = bend lines seen from this side", f.part, fmt_num(f.thickness), f.material, fmt_num(f.k), f.bends.len()));
     pair(0, "SECTION");
     pair(2, "HEADER");
     pair(9, "$ACADVER");

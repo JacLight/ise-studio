@@ -7,7 +7,7 @@
     "operation": "shape.create",
     "parameters": {
       "name": "Valley relief plaque",
-      "description": "A bas-relief wall plaque from a picture (valley.jpg, added with ./forma image add): brightness becomes height, the moonlit pines standing 4 mm proud of the night sky. Framed, printed face up in one piece, with blind keyhole slots in the back.",
+      "description": "A bas-relief wall plaque from a picture (valley.jpg, added with ./ise image add): brightness becomes height, the moonlit pines standing 4 mm proud of the night sky. Framed, printed face up in one piece, with blind keyhole slots in the back.",
       "source": { "$file": "plaque.js" },
       "display_tolerance": 0.02,
       "materials": { "PLA (Bambu, white)": "$0.id" },

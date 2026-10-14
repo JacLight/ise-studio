@@ -84,7 +84,7 @@ pub fn decode(bytes: &[u8]) -> Result<Picture, String> {
     match crate::assets::sniff(bytes) {
         "png" => decode_png(bytes),
         "jpg" => decode_jpeg(bytes),
-        _ => Err("not a picture Forma reads (PNG or JPEG)".into()),
+        _ => Err("not a picture ISE Studio reads (PNG or JPEG)".into()),
     }
 }
 

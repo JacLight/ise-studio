@@ -1,4 +1,4 @@
-//! Schematics from other tools put into Forma's terms. A reader fills a
+//! Schematics from other tools put into Iṣẹ́ Studio's terms. A reader fills a
 //! [`Draft`]: symbols drawn where they sit (their body graphics and pins in
 //! the source's sheet coordinates), wires, labels, power ports, junctions,
 //! no-connect flags and notes, per sheet. [`Draft::finish`] moves each

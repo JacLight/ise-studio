@@ -11,7 +11,7 @@
     "operation": "shape.create",
     "parameters": {
       "name": "Lighthouse lithophane lamp",
-      "description": "A lithophane of lighthouse.png (added with ./forma image add): 0.8 mm of white PLA where the picture is lightest, 3.2 mm where it is darkest, so it shows the picture when lit from behind. It stands in a black base with a slot for its frame and two tea-light pockets behind it; the title is cut into the base's front.",
+      "description": "A lithophane of lighthouse.png (added with ./ise image add): 0.8 mm of white PLA where the picture is lightest, 3.2 mm where it is darkest, so it shows the picture when lit from behind. It stands in a black base with a slot for its frame and two tea-light pockets behind it; the title is cut into the base's front.",
       "source": { "$file": "lithophane.js" },
       "display_tolerance": 0.02,
       "materials": { "PLA (Bambu, white)": "$0.id", "PLA (Bambu, black)": "$1.id" },

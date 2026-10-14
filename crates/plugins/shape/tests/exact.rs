@@ -40,7 +40,7 @@ fn every_example_evaluates_exactly_and_matches_the_mesh() {
     let mut report = Vec::new();
     let mut failures = Vec::new();
     // Examples read their pictures by content hash: store each example's pictures.
-    de_shape::assets::set_dir(std::env::temp_dir().join(format!("forma-example-assets-{}", std::process::id())));
+    de_shape::assets::set_dir(std::env::temp_dir().join(format!("ise-example-assets-{}", std::process::id())));
     for dir in std::fs::read_dir(examples()).unwrap().flatten() {
         for f in std::fs::read_dir(dir.path()).into_iter().flatten().flatten() {
             let path = f.path();

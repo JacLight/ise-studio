@@ -620,7 +620,7 @@ impl Command for AssignFootprints {
                 }
                 let fp = board.and_then(|b| board_of(tx, b).ok()).and_then(|b| b.footprint(&fp_name)).or_else(|| crate::footprints::get(&fp_name)).or_else(|| find_footprint(tx.world(), &fp_name).map(|(_, f)| placeable_footprint(&f)));
                 match fp {
-                    None => warnings.push(format!("{r}: no footprint “{fp_name}” here yet (a KiCad one goes on the board with `./forma pcb footprint`)")),
+                    None => warnings.push(format!("{r}: no footprint “{fp_name}” here yet (a KiCad one goes on the board with `./ise pcb footprint`)")),
                     Some(fp) => {
                         if let Some(def) = parts[0].1.def() {
                             let missing: Vec<String> = def.pins.iter().filter(|p| !(p.hidden && p.etype == symbols::PinType::NoConnect)).flat_map(|p| parts[0].1.pads_of(p)).filter(|pad| !fp.pads.iter().any(|q| &q.number == pad)).collect();

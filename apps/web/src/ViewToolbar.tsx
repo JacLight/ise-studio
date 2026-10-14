@@ -28,7 +28,7 @@ export function ViewToolbar({ tools, selected, onFitAll }: { tools: ViewTools; s
   // Folded away to one button; remembered on this computer.
   const [folded, setFolded] = useState(() => {
     try {
-      return localStorage.getItem("forma.viewTools.folded") === "1";
+      return localStorage.getItem("ise.viewTools.folded") === "1";
     } catch {
       return false;
     }
@@ -36,7 +36,7 @@ export function ViewToolbar({ tools, selected, onFitAll }: { tools: ViewTools; s
   const fold = (on: boolean) => {
     setFolded(on);
     try {
-      localStorage.setItem("forma.viewTools.folded", on ? "1" : "0");
+      localStorage.setItem("ise.viewTools.folded", on ? "1" : "0");
     } catch {
       /* private window */
     }
@@ -206,7 +206,7 @@ function SectionCard(props: { tools: ViewTools; planes: SectionPlane[]; capped: 
         );
       })}
       <div className="section-actions">
-        <button type="button" className={`vt-btn vt-small ${boxOn ? "is-on" : ""}`} onClick={() => (boxOn ? tools.setSection(planes.filter((p) => p.id.length !== 2)) : tools.sectionBox())} title={boxOn ? "Remove the section box" : "Section box: six planes a fifth in from the model's sides (set each face with ./forma view section box)"}>
+        <button type="button" className={`vt-btn vt-small ${boxOn ? "is-on" : ""}`} onClick={() => (boxOn ? tools.setSection(planes.filter((p) => p.id.length !== 2)) : tools.sectionBox())} title={boxOn ? "Remove the section box" : "Section box: six planes a fifth in from the model's sides (set each face with ./ise view section box)"}>
           Box
         </button>
         <button type="button" className={`vt-btn vt-small ${props.picking ? "is-on" : ""}`} onClick={() => tools.pickSectionFace(!props.picking)} title={props.picking ? "Stop picking a face to cut along" : "Cut along a face: click the face next"}>

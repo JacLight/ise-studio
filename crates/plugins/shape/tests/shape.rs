@@ -692,7 +692,7 @@ fn a_drawing_has_views_hidden_lines_dimensions_and_exports() {
         finishes: vec![],
         inputs: String::new(),
     };
-    let title = de_shape::drawing::Title { title: "Plate".into(), number: "P-001".into(), material: "Aluminium".into(), mass: "300 g".into(), drawn_by: "Forma".into(), date: "2026-10-10".into(), parts: vec![], ..Default::default() };
+    let title = de_shape::drawing::Title { title: "Plate".into(), number: "P-001".into(), material: "Aluminium".into(), mass: "300 g".into(), drawn_by: "ISE Studio".into(), date: "2026-10-10".into(), parts: vec![], ..Default::default() };
     for projection in [de_shape::drawing::Projection::First, de_shape::drawing::Projection::Third] {
         let d = de_shape::drawing::drawing(&program, &de_shape::drawing::Options { sheet: de_shape::drawing::Sheet::A4, projection, part: None, ..Default::default() }, &title).unwrap();
         assert_eq!(d.scale_text, "1:1", "100 mm fits an A4 at full size");

@@ -531,7 +531,7 @@ fn drill(text: &str, offsets: &[P], extra: &[(f64, P)], plated: bool, name: &str
     let _ = writeln!(s, "M48");
     let _ = writeln!(s, "; DRILL file: panel of {} boards ({})", offsets.len(), if plated { "plated" } else { "not plated" });
     let _ = writeln!(s, "; FORMAT={{-:-/ absolute / metric / decimal}}");
-    let _ = writeln!(s, "; #@! TF.GenerationSoftware,Forma,PCB,{}", env!("CARGO_PKG_VERSION"));
+    let _ = writeln!(s, "; #@! TF.GenerationSoftware,ISE Studio,PCB,{}", env!("CARGO_PKG_VERSION"));
     let _ = writeln!(s, "; #@! TF.FileFunction,{},1,2,{}", if plated { "Plated" } else { "NonPlated" }, if plated { "PTH" } else { "NPTH" });
     let _ = writeln!(s, "FMAT,2\nMETRIC");
     for (i, t) in tools.iter().enumerate() {
@@ -660,7 +660,7 @@ fn bom(text: &str, copies: usize) -> String {
 pub fn files(view: &BoardView, board: &Board, panel: &Panel, fab: Option<&str>) -> Result<Vec<(String, Vec<u8>)>, String> {
     let stem = format!("{}-panel", gerber::file_stem(&view.name));
     let spec = &panel.spec;
-    let note = format!("Panel of {} × {} boards ({}), {:.2} × {:.2} mm, made by Forma", spec.rows, spec.cols, spec.separation, panel.size[0], panel.size[1]);
+    let note = format!("Panel of {} × {} boards ({}), {:.2} × {:.2} mm, made by ISE Studio", spec.rows, spec.cols, spec.separation, panel.size[0], panel.size[1]);
     let mut out: Vec<(String, Vec<u8>)> = Vec::new();
     let board_stem = gerber::file_stem(&view.name);
     for (name, text) in gerber::files(view) {

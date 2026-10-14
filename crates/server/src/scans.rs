@@ -131,7 +131,7 @@ pub async fn upload(State(server): State<Arc<Server>>, Path(file): Path<String>,
         return fail(StatusCode::BAD_REQUEST, e);
     }
     let Some(ext) = scans::ext_of(&body, Some(&file)) else {
-        return fail(StatusCode::BAD_REQUEST, format!("Forma reads scans as {}", scans::FORMATS));
+        return fail(StatusCode::BAD_REQUEST, format!("ISE Studio reads scans as {}", scans::FORMATS));
     };
     let project = project_name(&server, &query);
     let name = query.get("name").cloned().unwrap_or_else(|| file.rsplit_once('.').map(|(n, _)| n.to_string()).unwrap_or(file.clone()));
@@ -627,7 +627,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_scan_is_added_repaired_inspected_against_its_part_and_made_a_part() {
-        let dir = std::env::temp_dir().join(format!("forma-scans-{}", StableId::new()));
+        let dir = std::env::temp_dir().join(format!("ise-scans-{}", StableId::new()));
         if de_shape::assets::dir().is_none() {
             de_shape::assets::set_dir(dir.join("assets"));
         }

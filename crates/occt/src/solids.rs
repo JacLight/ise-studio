@@ -407,7 +407,7 @@ mod tests {
         assert_eq!(r["boolean_ready"], true);
         assert_eq!(r["faces"], 6);
         assert_eq!(r["free_edges"], 0);
-        let path = std::env::temp_dir().join(format!("forma-occt-brep-{}.brep", std::process::id()));
+        let path = std::env::temp_dir().join(format!("ise-occt-brep-{}.brep", std::process::id()));
         a.write_brep(&[b], &path).unwrap();
         let mut r = Arena::new();
         let read = r.read_brep(&path).unwrap();
@@ -424,7 +424,7 @@ mod tests {
         a.paint(b, None, Some([0.2, 0.4, 0.8]), "").unwrap();
         a.paint(b, Some(&[top]), Some([1.0, 0.0, 0.0]), "Sealing face").unwrap();
         let moved = a.translate(b, [100.0, 0.0, 0.0]).unwrap();
-        let path = std::env::temp_dir().join(format!("forma-occt-paint-{}.step", std::process::id()));
+        let path = std::env::temp_dir().join(format!("ise-occt-paint-{}.step", std::process::id()));
         a.write_step(&[("Lid".into(), moved)], &path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_file(&path);

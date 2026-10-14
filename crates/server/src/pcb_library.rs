@@ -1,10 +1,10 @@
 //! The KiCad libraries and the footprint check, over HTTP (the parts library
-//! in the Electronics workspace and `./forma pcb …` use these):
+//! in the Electronics workspace and `./ise pcb …` use these):
 //!
 //! - `GET  /pcb/kicad`                              what is downloaded, where, and the licence
 //! - `POST /pcb/kicad/fetch?repo=footprints|symbols|all`   download (again)
 //! - `GET  /pcb/kicad/search?q=&kind=symbols|footprints&limit=`   parts matching every word
-//! - `GET  /pcb/kicad/footprint/<Library:Name>`     a footprint in Forma's terms (for `pcb.footprint.define`)
+//! - `GET  /pcb/kicad/footprint/<Library:Name>`     a footprint in Iṣẹ́ Studio's terms (for `pcb.footprint.define`)
 //! - `GET  /pcb/kicad/symbol/<Library:Name>`        a symbol (for `pcb.schematic.place`'s `definition`),
 //!   its default footprint read too, and a preview drawing
 //! - `GET  /pcb/verify-footprints?names=a,b`        built-in footprints against KiCad's, pad by pad

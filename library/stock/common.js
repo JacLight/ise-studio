@@ -1,4 +1,4 @@
-// Forma stock library: helpers shared by every catalogue item. A family's
+// Iṣẹ́ Studio stock library: helpers shared by every catalogue item. A family's
 // program is this file followed by the family's own file (see catalogue.json).
 //
 // Conventions for every item:

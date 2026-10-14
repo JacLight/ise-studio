@@ -16,7 +16,7 @@ export const LENGTH_UNITS: { unit: LengthUnit; label: string }[] = [
   { unit: "ft", label: "Feet (ft)" },
 ];
 
-const KEY = "forma.display.v1";
+const KEY = "ise.display.v1";
 const DEFAULTS: DisplayPrefs = { length: "mm", decimals: 2, angle: "deg" };
 
 function load(): DisplayPrefs {

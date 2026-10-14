@@ -1,5 +1,5 @@
 //! Custom design rules: the KiCad `.kicad_dru` language, read and evaluated
-//! by Forma's own parser.
+//! by Iṣẹ́ Studio's own parser.
 //!
 //! ```text
 //! (version 1)
@@ -29,7 +29,7 @@
 //! annular_width, and disallow (track, via, micro_via, buried_via, pad, zone,
 //! text, graphic, hole, footprint); and on whole nets (in `signal`): length,
 //! skew (across the nets a rule matches, or within a pair), diff_pair_gap,
-//! diff_pair_uncoupled, via_count, and Forma's impedance (Ω, per track:
+//! diff_pair_uncoupled, via_count, and Iṣẹ́ Studio's impedance (Ω, per track:
 //! differential for a pair's tracks). `A.inDiffPair('USB_D')` and
 //! `A.isCoupledDiffPair()` read the pairs.
 
@@ -282,7 +282,7 @@ pub struct Item {
     pub kind: &'static str,
     pub net: Option<String>,
     pub netclass: Option<String>,
-    /// Forma layer names ("top", "in1", "bottom", "silk_top" …).
+    /// Iṣẹ́ Studio layer names ("top", "in1", "bottom", "silk_top" …).
     pub layers: Vec<String>,
     pub reference: Option<String>,
     pub footprint: Option<String>,
@@ -310,12 +310,12 @@ enum Val {
     Undef,
 }
 
-/// A layer name in Forma's terms ("F.Cu" → "top").
-pub fn forma_layer(l: &str) -> String {
+/// A layer name in Iṣẹ́ Studio's terms ("F.Cu" → "top").
+pub fn ise_layer(l: &str) -> String {
     crate::graphics::normalize_layer(l)
 }
 
-/// KiCad's name for a Forma layer, for comparisons written either way.
+/// KiCad's name for a Iṣẹ́ Studio layer, for comparisons written either way.
 pub fn kicad_layer(l: &str) -> String {
     match l {
         "top" => "F.Cu".into(),
@@ -448,7 +448,7 @@ fn value(e: &Expr, a: Option<&Item>, b: Option<&Item>) -> Val {
                 "insidearea" | "enclosedbyarea" => it.inside.iter().any(|n| wild(&arg_s, n)),
                 "intersectsarea" | "intersectsfrontcourtyard" | "intersectsbackcourtyard" => it.touches.iter().any(|n| wild(&arg_s, n)) || it.inside.iter().any(|n| wild(&arg_s, n)),
                 "existsonlayer" => {
-                    let want = forma_layer(&arg_s);
+                    let want = ise_layer(&arg_s);
                     it.layers.iter().any(|l| wild(&want, l) || wild(&arg_s, &kicad_layer(l)))
                 }
                 "isplated" => it.plated,
@@ -624,7 +624,7 @@ fn layer_ok(sel: &Option<String>, layer: Option<&str>, layers: &[String]) -> boo
         "outer" => l == "top" || l == "bottom",
         "inner" => l.starts_with("in"),
         _ => {
-            let want = forma_layer(sel);
+            let want = ise_layer(sel);
             let _ = layers;
             wild(&want, l) || wild(sel, &kicad_layer(l))
         }

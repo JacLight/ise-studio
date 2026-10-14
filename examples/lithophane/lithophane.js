@@ -1,5 +1,5 @@
 // A lithophane and its lamp base. The picture is lighthouse.png (drawn for
-// this example as lighthouse.svg), added with `./forma image add`.
+// this example as lighthouse.svg), added with `./ise image add`.
 //
 // The panel is plastic whose thickness is the picture: thin where it is
 // light, thick where it is dark, so with a light behind it the picture

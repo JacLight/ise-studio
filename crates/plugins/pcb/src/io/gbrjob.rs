@@ -75,7 +75,7 @@ pub fn write(v: &BoardView, board: &Board) -> String {
     let st = &v.stats;
     let j = json!({
         "Header": {
-            "GenerationSoftware": { "Vendor": "Forma", "Application": "Forma PCB", "Version": env!("CARGO_PKG_VERSION") },
+            "GenerationSoftware": { "Vendor": "ISE Studio", "Application": "ISE Studio PCB", "Version": env!("CARGO_PKG_VERSION") },
             "CreationDate": super::now_iso(),
         },
         "GeneralSpecs": {

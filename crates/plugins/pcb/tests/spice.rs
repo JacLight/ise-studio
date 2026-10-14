@@ -39,8 +39,8 @@ fn schematic() -> Arc<de_pcb::schematic_view::SchematicView> {
 fn the_netlist_models_every_power_part() {
     let v = schematic();
     let nl = spice::netlist(&v, &SimRequest::default());
-    assert!(nl.text.contains("forma_ldo") && nl.text.contains("X_U2 n_vbus 0 n_vbus n_3v3"), "{}", nl.text);
-    assert!(nl.text.contains("X_U1 n_3v3 0 n_en forma_load"));
+    assert!(nl.text.contains("ise_ldo") && nl.text.contains("X_U2 n_vbus 0 n_vbus n_3v3"), "{}", nl.text);
+    assert!(nl.text.contains("X_U1 n_3v3 0 n_en ise_load"));
     assert!(nl.text.contains("R_R3 n_3v3 n_en 10000") || nl.text.contains("R_R3 n_en n_3v3 10000"), "{}", nl.text);
     assert!(nl.text.contains("V_J1 n_vbus_src 0"));
     assert!(nl.parts.iter().any(|p| p.reference == "U2" && p.approximate && p.source.contains("ME6211")));

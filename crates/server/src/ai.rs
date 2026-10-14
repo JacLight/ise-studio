@@ -1,11 +1,11 @@
-//! Forma AI: a Claude Code session on this computer, one per project, that
-//! the Forma AI panel talks to.
+//! Iṣẹ́ AI: a Claude Code session on this computer, one per project, that
+//! the Iṣẹ́ AI panel talks to.
 //!
 //! The session stays running between messages (streamed JSON in and out), so
 //! a reply starts as soon as a message arrives instead of after a cold start;
 //! its id is saved, so after a restart the same conversation resumes. It is
-//! walled into its own folder in the project directory: it can run `./forma`
-//! (which acts on this project through the engine API, as user "forma-ai"),
+//! walled into its own folder in the project directory: it can run `./ise`
+//! (which acts on this project through the engine API, as user "ise-ai"),
 //! read and write files in its folder, and read the shape vocabulary and the
 //! examples. It loads none of this computer's Claude settings, hooks or MCP
 //! servers. Every message carries live context (selection, revision, what
@@ -29,7 +29,7 @@ use tokio::{
 
 /// How sessions are started, shared by every project.
 pub struct AiConfig {
-    /// The repository: tools/forma.mjs, the briefing, the prelude, examples.
+    /// The repository: tools/ise.mjs, the briefing, the prelude, examples.
     pub repo: PathBuf,
     pub port: u16,
     /// The Claude Code CLI, if found.
@@ -38,9 +38,9 @@ pub struct AiConfig {
 }
 
 impl AiConfig {
-    /// Finds the Claude Code CLI: `FORMA_CLAUDE`, else `claude` on the PATH.
+    /// Finds the Claude Code CLI: `ISE_CLAUDE`, else `claude` on the PATH.
     pub fn find_claude() -> Option<PathBuf> {
-        if let Ok(p) = std::env::var("FORMA_CLAUDE") {
+        if let Ok(p) = std::env::var("ISE_CLAUDE") {
             return Some(PathBuf::from(p));
         }
         let path = std::env::var_os("PATH")?;
@@ -113,7 +113,7 @@ struct State {
     seen_revision: u64,
 }
 
-/// The Forma AI of one project.
+/// The Iṣẹ́ AI of one project.
 pub struct Ai {
     config: Arc<AiConfig>,
     project: String,
@@ -241,16 +241,16 @@ impl Ai {
         let _ = app.events.send(e.to_string().into());
     }
 
-    /// Prepares the session's folder: its `./forma` tool, a place for programs, its memory.
+    /// Prepares the session's folder: its `./ise` tool, a place for programs, its memory.
     fn prepare(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(self.folder.join("programs"))?;
         std::fs::create_dir_all(self.folder.join("memory"))?;
-        let tool = self.folder.join("forma");
+        let tool = self.folder.join("ise");
         let script = format!(
-            "#!/bin/sh\n# Acts on project \"{p}\" through the engine API, as Forma AI.\n# `./forma files ls|rm|mv` works inside this folder only.\nexport FORMA_FILES_ROOT=\"{folder}\"\nexec node \"{cli}\" --project \"{p}\" --url \"ws://127.0.0.1:{port}/ws?user=forma-ai\" \"$@\"\n",
+            "#!/bin/sh\n# Acts on project \"{p}\" through the engine API, as ISE AI.\n# `./ise files ls|rm|mv` works inside this folder only.\nexport ISE_FILES_ROOT=\"{folder}\"\nexec node \"{cli}\" --project \"{p}\" --url \"ws://127.0.0.1:{port}/ws?user=ise-ai\" \"$@\"\n",
             p = self.project,
             folder = self.folder.display(),
-            cli = self.config.repo.join("tools/forma.mjs").display(),
+            cli = self.config.repo.join("tools/ise.mjs").display(),
             port = self.config.port,
         );
         std::fs::write(&tool, script)?;
@@ -304,7 +304,7 @@ impl Ai {
 
     fn briefing(&self) -> String {
         let repo = &self.config.repo;
-        let brief = std::fs::read_to_string(repo.join("tools/forma-ai.md")).unwrap_or_default();
+        let brief = std::fs::read_to_string(repo.join("tools/ise-ai.md")).unwrap_or_default();
         format!(
             "{brief}\n\n## This installation\n\n- Project: \"{p}\". Your folder: {folder}.\n- Shape vocabulary (read it before writing programs): {prelude}; sheet metal: {sheet}\n- Building vocabulary (levels, walls, doors, windows, slabs, roofs, stairs, spaces; read it before modelling a building): {bim}\n- Worked examples, one folder per design (programs and the steps.json that built them): {examples}\n- Stock library (bought parts as programs, one manifest + program per family; read them to model a new bought part the same way): {library}\n",
             p = self.project,
@@ -318,7 +318,7 @@ impl Ai {
     }
 
     fn spawn(self: &Arc<Self>, app: Arc<App>, resume: Option<&str>) -> Result<Running, String> {
-        let claude = self.config.claude.clone().ok_or("Claude Code is not installed on this computer (set FORMA_CLAUDE to its path)")?;
+        let claude = self.config.claude.clone().ok_or("Claude Code is not installed on this computer (set ISE_CLAUDE to its path)")?;
         self.prepare().map_err(|e| format!("could not prepare the AI folder: {e}"))?;
         let abs = |p: &Path| format!("/{}", p.display()); // a rule path starting with // is absolute
         let folder = abs(&self.folder);
@@ -331,7 +331,7 @@ impl Ai {
             .args(["--tools", "Bash,Read,Write,Edit,Grep,Glob"])
             .arg("--allowedTools")
             .args([
-                "Bash(./forma:*)".to_string(),
+                "Bash(./ise:*)".to_string(),
                 format!("Read({folder}/**)"),
                 // Edit rules cover every file-editing tool (Write too).
                 format!("Edit({folder}/**)"),
@@ -372,7 +372,7 @@ impl Ai {
                 err.push('\n');
             }
             if !err.trim().is_empty() {
-                eprintln!("forma ai ({}): {}", me.project, err.trim());
+                eprintln!("ise ai ({}): {}", me.project, err.trim());
             }
             drop(app2);
         });
@@ -444,7 +444,7 @@ impl Ai {
         let mut st = self.state.lock().await;
         st.running = None;
         if resume_failed && let Some(line) = st.in_flight.take() {
-            eprintln!("forma ai ({}): saved session not found; starting a fresh one", self.project);
+            eprintln!("ise ai ({}): saved session not found; starting a fresh one", self.project);
             self.forget_session();
             st.resumed = false;
             drop(st);
@@ -490,7 +490,7 @@ impl Ai {
 
     /// What the session needs to know with this message.
     fn context(&self, project: &Project, view: &ViewContext, seen: u64) -> String {
-        let mut c = format!("<forma-context>\nProject: {} · revision {}\n", self.project, project.revision().0);
+        let mut c = format!("<ise-context>\nProject: {} · revision {}\n", self.project, project.revision().0);
         match view.selected.and_then(|id| describe(project, id).map(|d| (id, d))) {
             Some((id, d)) => {
                 c += &format!("Selected: {d} ({id})\n");
@@ -513,7 +513,7 @@ impl Ai {
         let changes: Vec<String> = project
             .journal()
             .iter()
-            .filter(|ch| ch.revision.0 > seen && ch.actor.user_id != "forma-ai")
+            .filter(|ch| ch.revision.0 > seen && ch.actor.user_id != "ise-ai")
             .map(|ch| format!("  r{} {} by {}", ch.revision.0, ch.operation, ch.actor.user_id))
             .collect();
         if seen > 0 && !changes.is_empty() {
@@ -522,7 +522,7 @@ impl Ai {
         }
         let report = de_intent::check(project);
         c += &format!("Requirements: {}/{} met\n", report.requirements_passing, report.requirements_total);
-        c += "</forma-context>\n\n";
+        c += "</ise-context>\n\n";
         c
     }
 
@@ -621,7 +621,7 @@ fn with_prefix(line: &str, prefix: &str) -> String {
 }
 
 /// What the person attached, for the prompt: where each file is, so a part
-/// can use a picture (`./forma image add` puts it in the project).
+/// can use a picture (`./ise image add` puts it in the project).
 fn attached(list: &[Attachment]) -> String {
     if list.is_empty() {
         return String::new();
@@ -637,7 +637,7 @@ fn attached(list: &[Attachment]) -> String {
         })
         .collect();
     format!(
-        "<attachments>\nThe person attached (shown to you above; the files are in your folder):\n{}\nFor a part to use a picture (a relief, a trace, measuring it), add it to the project: ./forma image add <file>. Photos of an object to model in 3D (its side, top, front…): place each as a calibrated canvas (./forma canvas add) and follow “Model from reference photos” in your manual: never a relief or one traced extrusion.\n</attachments>\n\n",
+        "<attachments>\nThe person attached (shown to you above; the files are in your folder):\n{}\nFor a part to use a picture (a relief, a trace, measuring it), add it to the project: ./ise image add <file>. Photos of an object to model in 3D (its side, top, front…): place each as a calibrated canvas (./ise canvas add) and follow “Model from reference photos” in your manual: never a relief or one traced extrusion.\n</attachments>\n\n",
         lines.join("\n")
     )
 }
@@ -680,7 +680,7 @@ mod tests {
     use super::*;
 
     fn temp_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("forma-ai-{}", StableId::new()));
+        let dir = std::env::temp_dir().join(format!("ise-ai-{}", StableId::new()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -690,9 +690,9 @@ mod tests {
         let dir = temp_dir();
         let ai = Ai::new(Arc::new(AiConfig { repo: PathBuf::from("/repo"), port: 7484, claude: None, model: None }), "demo", &dir);
         ai.prepare().unwrap();
-        let tool = std::fs::read_to_string(ai.folder.join("forma")).unwrap();
-        assert!(tool.contains(&format!("export FORMA_FILES_ROOT=\"{}\"\n", ai.folder.display())), "{tool}");
-        assert!(tool.contains("--project \"demo\"") && tool.contains("ws://127.0.0.1:7484/ws?user=forma-ai"), "{tool}");
+        let tool = std::fs::read_to_string(ai.folder.join("ise")).unwrap();
+        assert!(tool.contains(&format!("export ISE_FILES_ROOT=\"{}\"\n", ai.folder.display())), "{tool}");
+        assert!(tool.contains("--project \"demo\"") && tool.contains("ws://127.0.0.1:7484/ws?user=ise-ai"), "{tool}");
     }
 
     #[test]
@@ -747,7 +747,7 @@ mod tests {
         let at = crate::tests::serve(crate::tests::server_in(&dir)).await;
         let (mut view, _) = tokio_tungstenite::connect_async(format!("ws://{at}/ws?project=demo&user=user-ada")).await.unwrap();
         next(&mut view, "snapshot").await;
-        let (mut tool, _) = tokio_tungstenite::connect_async(format!("ws://{at}/ws?project=demo&user=forma-ai")).await.unwrap();
+        let (mut tool, _) = tokio_tungstenite::connect_async(format!("ws://{at}/ws?project=demo&user=ise-ai")).await.unwrap();
         next(&mut tool, "snapshot").await;
         tool.send(Ws::Text(json!({ "type": "view", "request_id": 1, "action": "camera", "value": "top" }).to_string().into())).await.unwrap();
         let reply = next(&mut tool, "result").await;
@@ -758,7 +758,7 @@ mod tests {
         // A project nobody has talked about yet: every open view follows.
         let (mut other, _) = tokio_tungstenite::connect_async(format!("ws://{at}/ws?project=fresh&user=user-cy")).await.unwrap();
         next(&mut other, "snapshot").await;
-        let (mut tool, _) = tokio_tungstenite::connect_async(format!("ws://{at}/ws?project=fresh&user=forma-ai")).await.unwrap();
+        let (mut tool, _) = tokio_tungstenite::connect_async(format!("ws://{at}/ws?project=fresh&user=ise-ai")).await.unwrap();
         next(&mut tool, "snapshot").await;
         tool.send(Ws::Text(json!({ "type": "view", "request_id": 2, "action": "show_all" }).to_string().into())).await.unwrap();
         assert_eq!(next(&mut tool, "result").await["value"]["shown_to"], EVERYONE);

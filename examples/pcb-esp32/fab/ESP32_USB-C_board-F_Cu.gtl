@@ -1,11 +1,11 @@
-%TF.GenerationSoftware,Forma,PCB,0.1.0*%
+%TF.GenerationSoftware,ISE Studio,PCB,0.1.0*%
 %TF.ProjectId,ESP32_USB-C_board,01a13164-a0a3-765f-a336-971938d93228,A*%
 %TF.SameCoordinates,Original*%
 %TF.FileFunction,Copper,L1,Top*%
 %TF.FilePolarity,Positive*%
 %FSLAX46Y46*%
 G04 Gerber Fmt 4.6, Leading zero omitted, Abs format (unit mm)*
-G04 ESP32 USB-C board rev A, made by Forma*
+G04 ESP32 USB-C board rev A, made by ISE Studio*
 %MOMM*%
 %LPD*%
 G01*

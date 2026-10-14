@@ -101,7 +101,7 @@ export function CanvasProperties(props: { entity: EntityView; run: Run; notify: 
     try {
       const r = await fetch(projectUrl(`/look?canvas=${encodeURIComponent(entity.id)}&size=900x900`));
       if (!r.ok) throw new Error(await r.text());
-      const m = JSON.parse(r.headers.get("x-forma-match") ?? "{}") as Match;
+      const m = JSON.parse(r.headers.get("x-ise-match") ?? "{}") as Match;
       setMatch({ png: URL.createObjectURL(await r.blob()), m });
     } catch (e) {
       props.notify(String((e as Error).message ?? e));
@@ -335,7 +335,7 @@ export function CanvasInsertDialog(props: { run: Run; notify: (t: string) => voi
     <Dialog title="Place reference photos" onClose={props.onClose}>
       <div className="canvas-insert">
         <p className="small muted">
-          A few photos of one object from different sides (side, top, front)? Put each on the plane it was taken square to, size it, and model over it. Forma AI compares the model with every view.
+          A few photos of one object from different sides (side, top, front)? Put each on the plane it was taken square to, size it, and model over it. Iṣẹ́ AI compares the model with every view.
         </p>
         <label className="btn primary canvas-choose">
           <Icon name="upload" /> Choose pictures…

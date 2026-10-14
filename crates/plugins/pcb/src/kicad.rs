@@ -2,10 +2,10 @@
 //! format, KiCad 6 to 9; footprints may also be KiCad 5 `module`s).
 //!
 //! Import is two stages: [`parse_board`] reads the file into a [`KicadBoard`]
-//! in Forma's terms (no project needed, so other readers can share it), and
+//! in Iṣẹ́ Studio's terms (no project needed, so other readers can share it), and
 //! `pcb.board.import_kicad` writes that as a board, its footprints,
 //! components, tracks, vias and pours in one change. KiCad draws y down;
-//! Forma's y is up: a point (x, y) becomes (x, −y), angles stay
+//! Iṣẹ́ Studio's y is up: a point (x, y) becomes (x, −y), angles stay
 //! (counter-clockwise as seen from the top), and the board is moved so its
 //! outline's lower-left corner is the origin.
 //!
@@ -30,7 +30,7 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 
-// ---- The board in Forma's terms ------------------------------------------------
+// ---- The board in Iṣẹ́ Studio's terms ------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct KComponent {
@@ -78,7 +78,7 @@ pub struct KZone {
     pub thermal_spoke: Option<f64>,
 }
 
-/// A `.kicad_pcb` read into Forma's terms (mm, y up, outline lower-left at the origin).
+/// A `.kicad_pcb` read into Iṣẹ́ Studio's terms (mm, y up, outline lower-left at the origin).
 #[derive(Clone, Debug)]
 pub struct KicadBoard {
     pub title: Option<String>,
@@ -98,7 +98,7 @@ pub struct KicadBoard {
     pub rules: Rules,
     /// What was approximated or left out.
     pub notes: Vec<String>,
-    /// How far the board was moved to put its lower-left corner at the origin (Forma coordinates).
+    /// How far the board was moved to put its lower-left corner at the origin (Iṣẹ́ Studio coordinates).
     pub shift: P,
     /// Keepouts (rule areas).
     pub areas: Vec<KArea>,
@@ -124,7 +124,7 @@ fn rot(p: P, deg: f64) -> P {
     geom::rotate(p, deg)
 }
 
-/// KiCad file point → Forma (before the shift).
+/// KiCad file point → Iṣẹ́ Studio (before the shift).
 fn kf(x: f64, y: f64) -> P {
     [x, -y]
 }
@@ -270,7 +270,7 @@ fn layer_of(e: &Sexp) -> Option<&str> {
     e.value("layer")
 }
 
-/// Forma's copper layer name for a KiCad one.
+/// Iṣẹ́ Studio's copper layer name for a KiCad one.
 fn cu_layer(k: &str) -> Option<&'static str> {
     match k {
         "F.Cu" => Some("top"),
@@ -279,7 +279,7 @@ fn cu_layer(k: &str) -> Option<&'static str> {
     }
 }
 
-/// KiCad's name for a Forma layer ("in3" → "In3.Cu", "silk_top" → "F.SilkS").
+/// KiCad's name for a Iṣẹ́ Studio layer ("in3" → "In3.Cu", "silk_top" → "F.SilkS").
 fn kicad_layer(f: &str) -> String {
     crate::rules::kicad_layer(f)
 }
@@ -334,7 +334,7 @@ impl Nets {
     }
 }
 
-/// A footprint instance's placement: KiCad local ↔ board (Forma, before the shift).
+/// A footprint instance's placement: KiCad local ↔ board (Iṣẹ́ Studio, before the shift).
 #[derive(Clone, Copy)]
 struct Place {
     at: P,
@@ -347,8 +347,8 @@ impl Place {
     fn board(&self, local: P) -> P {
         geom::add(self.at, rot([local[0], -local[1]], self.rot))
     }
-    /// A board point in Forma footprint coordinates (bottom mirrored in x).
-    fn forma_local(&self, p: P) -> P {
+    /// A board point in Iṣẹ́ Studio footprint coordinates (bottom mirrored in x).
+    fn ise_local(&self, p: P) -> P {
         let q = rot(geom::sub(p, self.at), -self.rot);
         r6p(if self.bottom { [-q[0], q[1]] } else { q })
     }
@@ -440,11 +440,11 @@ fn custom_pad_outline(pad: &Sexp, size: [f64; 2]) -> Vec<P> {
     let union = CrossSection::batch_union(&parts);
     let mut contours = geom::contours(&union);
     contours.sort_by(|a, b| geom::polygon_area(b).total_cmp(&geom::polygon_area(a)));
-    // Back to y down (the caller turns pad coordinates into Forma's).
+    // Back to y down (the caller turns pad coordinates into Iṣẹ́ Studio's).
     contours.into_iter().next().map(|c| c.into_iter().map(|p| [p[0], -p[1]]).collect()).unwrap_or_default()
 }
 
-/// One footprint instance: its Forma footprint (local geometry), component and notes.
+/// One footprint instance: its Iṣẹ́ Studio footprint (local geometry), component and notes.
 fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<String>) -> Option<(Footprint, KComponent)> {
     let lib_id = e.arg_text(0).unwrap_or("Footprint").to_string();
     let bottom = layer_of(e) == Some("B.Cu");
@@ -477,7 +477,7 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
     let _ = side_layer;
     let mut pads = Vec::new();
     let mut pins = BTreeMap::new();
-    // Pads with no copper (KiCad's paste windows on an exposed pad): (centre, size, rotation) in Forma footprint coordinates.
+    // Pads with no copper (KiCad's paste windows on an exposed pad): (centre, size, rotation) in Iṣẹ́ Studio footprint coordinates.
     let mut windows: Vec<(P, [f64; 2], f64)> = Vec::new();
     for pe in e.find_all("pad") {
         let number = pe.arg_text(0).unwrap_or("").to_string();
@@ -492,7 +492,7 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
         if ptype == "smd" && !layer_names.is_empty() && !layer_names.iter().any(|l| l.ends_with(".Cu")) {
             if layer_names.iter().any(|l| l.ends_with("Paste")) {
                 let rotation = if bottom { norm_angle(place.rot - abs_rot) } else { norm_angle(abs_rot - place.rot) };
-                windows.push((place.forma_local(center), size, rotation));
+                windows.push((place.ise_local(center), size, rotation));
             }
             continue;
         }
@@ -520,7 +520,7 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
                 drill = Some(if oval { [w, *v.get(1).unwrap_or(&w)] } else { [w, w] });
             }
             if let Some(o) = d.find("offset").map(|o| o.args().iter().filter_map(|a| a.num()).collect::<Vec<f64>>()).filter(|o| o.iter().any(|x| x.abs() > 1e-9)) {
-                // KiCad moves the copper by the offset; Forma keeps the copper and moves the hole the other way.
+                // KiCad moves the copper by the offset; Iṣẹ́ Studio keeps the copper and moves the hole the other way.
                 let (ox, oy) = (o.first().copied().unwrap_or(0.0), o.get(1).copied().unwrap_or(0.0));
                 drill_offset = Some(if bottom { [r6(ox), r6(oy)] } else { [r6(-ox), r6(oy)] });
                 center_shift = [ox, oy];
@@ -601,7 +601,7 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
             polygon = q;
         } else if shape == PadShape::Custom {
             let outline = custom_pad_outline(pe, size);
-            // Pad coordinates (y down) → Forma pad coordinates: y up, mirrored on the bottom.
+            // Pad coordinates (y down) → Iṣẹ́ Studio pad coordinates: y up, mirrored on the bottom.
             let mut q: Vec<P> = outline.into_iter().map(|p| r6p(if bottom { [-p[0], -p[1]] } else { [p[0], -p[1]] })).collect();
             if geom::polygon_area(&q) < 0.0 {
                 q.reverse();
@@ -626,7 +626,7 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
             let (ox, oy) = (center_shift[0], center_shift[1]);
             place.board([local[0] + ox * c + oy * s, local[1] - ox * s + oy * c])
         };
-        pads.push(Pad { number, kind, shape, size: [r6(psize[0]), r6(psize[1])], at: place.forma_local(copper), rotation, drill: drill.map(|d| [r6(d[0]), r6(d[1])]), corner, paste: vec![], polygon, extra });
+        pads.push(Pad { number, kind, shape, size: [r6(psize[0]), r6(psize[1])], at: place.ise_local(copper), rotation, drill: drill.map(|d| [r6(d[0]), r6(d[1])]), corner, paste: vec![], polygon, extra });
     }
     if pads.is_empty() {
         // Logos and graphics: nothing to place.
@@ -647,7 +647,7 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
             None => notes.push(format!("{reference}: a paste opening at ({:.2}, {:.2}) with no pad under it was left out", c[0], c[1])),
         }
     }
-    // Silkscreen, courtyard and fabrication outline, in Forma footprint coordinates.
+    // Silkscreen, courtyard and fabrication outline, in Iṣẹ́ Studio footprint coordinates.
     let silk_layer = if bottom { "B.SilkS" } else { "F.SilkS" };
     let crt_layer = if bottom { "B.CrtYd" } else { "F.CrtYd" };
     let fab_layer = if bottom { "B.Fab" } else { "F.Fab" };
@@ -661,7 +661,7 @@ fn read_footprint(e: &Sexp, nets: &Nets, layers: &[String], notes: &mut Vec<Stri
         }
         let layer = layer_of(g).unwrap_or("");
         let lines = graphic(g);
-        let to_local = |l: &Vec<P>| -> Vec<P> { l.iter().map(|p| place.forma_local(place.board(*p))).collect() };
+        let to_local = |l: &Vec<P>| -> Vec<P> { l.iter().map(|p| place.ise_local(place.board(*p))).collect() };
         if layer == silk_layer || layer == "F.SilkS" && !bottom || layer == "F.Silkscreen" || layer == "B.Silkscreen" && bottom {
             for l in &lines {
                 silk.push(to_local(l));
@@ -757,9 +757,9 @@ pub(crate) fn chain_tracks(segs: Vec<(Option<String>, String, f64, P, P)>) -> Ve
     out
 }
 
-/// Reads a `.kicad_pcb` file into Forma's terms.
+/// Reads a `.kicad_pcb` file into Iṣẹ́ Studio's terms.
 /// A library footprint file (`.kicad_mod`: KiCad 6–10, or a KiCad 5 `module`)
-/// in Forma's terms: pads exactly as drawn (y flipped up), silkscreen,
+/// in Iṣẹ́ Studio's terms: pads exactly as drawn (y flipped up), silkscreen,
 /// courtyard and a body box from the fabrication outline, with notes on
 /// anything approximated. The kind and body height are guessed from the
 /// library name (`Resistor_SMD`, `Package_SO`, `Connector_JST` …) when given.
@@ -835,13 +835,13 @@ pub fn parse_board(text: &str) -> Result<KicadBoard, String> {
         cu = vec!["F.Cu".into(), "B.Cu".into()];
     }
     if cu.len() > 32 {
-        return Err(format!("the board has {} copper layers; Forma makes 2 to 32", cu.len()));
+        return Err(format!("the board has {} copper layers; ISE Studio makes 2 to 32", cu.len()));
     }
     let layers: u8 = (cu.len().max(2) + cu.len() % 2) as u8;
     if cu.len() % 2 == 1 {
         notes.push(format!("{} copper layers became a {layers}-layer stack", cu.len()));
     }
-    let forma_layers: Vec<String> = std::iter::once("top".to_string()).chain(crate::COPPER_NAMES[1..layers as usize - 1].iter().map(|s| s.to_string())).chain(std::iter::once("bottom".to_string())).collect();
+    let ise_layers: Vec<String> = std::iter::once("top".to_string()).chain(crate::COPPER_NAMES[1..layers as usize - 1].iter().map(|s| s.to_string())).chain(std::iter::once("bottom".to_string())).collect();
     let thickness = root.find("general").and_then(|g| g.value_num("thickness")).unwrap_or(1.6);
     let mut nets = Nets(HashMap::new());
     for e in root.find_all("net") {
@@ -853,7 +853,7 @@ pub fn parse_board(text: &str) -> Result<KicadBoard, String> {
     let revision = root.find("title_block").and_then(|t| t.value("rev")).map(str::to_string).filter(|t| !t.trim().is_empty());
     let mask_expansion = root.find("setup").and_then(|s| s.value_num("pad_to_mask_clearance"));
 
-    // Outline: Edge.Cuts graphics on the board and in footprints, in Forma coordinates.
+    // Outline: Edge.Cuts graphics on the board and in footprints, in ISE Studio coordinates.
     let mut open: Vec<Vec<P>> = Vec::new();
     let mut closed: Vec<Vec<P>> = Vec::new();
     let mut add_edge = |lines: Vec<Vec<P>>, map: &dyn Fn(P) -> P| {
@@ -909,7 +909,7 @@ pub fn parse_board(text: &str) -> Result<KicadBoard, String> {
     let mut components = Vec::new();
     let mut refs_seen: HashMap<String, usize> = HashMap::new();
     for f in &fps {
-        let Some((mut fp, mut c)) = read_footprint(f, &nets, &forma_layers, &mut notes) else { continue };
+        let Some((mut fp, mut c)) = read_footprint(f, &nets, &ise_layers, &mut notes) else { continue };
         // A footprint already defined the same way is reused; a different one under the same name gets a suffix.
         let base = fp.name.clone();
         let mut name = base.clone();
@@ -999,7 +999,7 @@ pub fn parse_board(text: &str) -> Result<KicadBoard, String> {
         }
     }
     if skipped_layers > 0 {
-        notes.push(format!("{skipped_layers} track segment(s) on layers Forma does not have were left out"));
+        notes.push(format!("{skipped_layers} track segment(s) on layers ISE Studio does not have were left out"));
     }
     if root.args().iter().any(|e| e.is("arc")) {
         notes.push("arc tracks came in as short straight segments (within 0.01 mm)".into());
@@ -1013,11 +1013,11 @@ pub fn parse_board(text: &str) -> Result<KicadBoard, String> {
     for z in root.find_all("zone") {
         if let Some(k) = z.find("keepout") {
             let no = |what: &str| k.value(what) == Some("not_allowed");
-            let mut ls: Vec<String> = z.value("layer").into_iter().chain(z.find("layers").map(|l| l.args().iter().filter_map(|a| a.text()).collect::<Vec<_>>()).unwrap_or_default()).flat_map(|l| if l.starts_with('*') || l.starts_with("F&B") { forma_layers.clone() } else { cu_layer(l).map(|x| vec![x.to_string()]).unwrap_or_default() }).collect();
+            let mut ls: Vec<String> = z.value("layer").into_iter().chain(z.find("layers").map(|l| l.args().iter().filter_map(|a| a.text()).collect::<Vec<_>>()).unwrap_or_default()).flat_map(|l| if l.starts_with('*') || l.starts_with("F&B") { ise_layers.clone() } else { cu_layer(l).map(|x| vec![x.to_string()]).unwrap_or_default() }).collect();
             ls.dedup();
             let poly: Vec<P> = z.find("polygon").map(pts_of).unwrap_or_default().into_iter().map(|p| mv(kf(p[0], p[1]))).collect();
             if poly.len() >= 3 {
-                areas.push(KArea { name: z.value("name").map(str::to_string).unwrap_or_else(|| format!("Keepout {}", areas.len() + 1)), outline: poly, layers: if ls.len() == forma_layers.len() { vec![] } else { ls }, no: [no("tracks"), no("vias"), no("pads"), no("copperpour"), no("footprints")] });
+                areas.push(KArea { name: z.value("name").map(str::to_string).unwrap_or_else(|| format!("Keepout {}", areas.len() + 1)), outline: poly, layers: if ls.len() == ise_layers.len() { vec![] } else { ls }, no: [no("tracks"), no("vias"), no("pads"), no("copperpour"), no("footprints")] });
             }
             continue;
         }
@@ -1040,7 +1040,7 @@ pub fn parse_board(text: &str) -> Result<KicadBoard, String> {
         }
         for n in names {
             match n.as_str() {
-                "*.Cu" => zl.extend(forma_layers.iter().map(|l| crate::COPPER_NAMES.iter().find(|x| **x == l.as_str()).copied().unwrap_or("top"))),
+                "*.Cu" => zl.extend(ise_layers.iter().map(|l| crate::COPPER_NAMES.iter().find(|x| **x == l.as_str()).copied().unwrap_or("top"))),
                 "F&B.Cu" => zl.extend(["top", "bottom"]),
                 other => {
                     if let Some(l) = cu_layer(other) {
@@ -1144,7 +1144,7 @@ pub fn parse_board(text: &str) -> Result<KicadBoard, String> {
 
 // ---- The command -------------------------------------------------------------------
 
-/// `pcb.board.import_kicad`: a `.kicad_pcb` file's text becomes a Forma board.
+/// `pcb.board.import_kicad`: a `.kicad_pcb` file's text becomes a Iṣẹ́ Studio board.
 #[derive(Deserialize, JsonSchema)]
 pub struct ImportKicad {
     /// The whole `.kicad_pcb` file.
@@ -1164,7 +1164,7 @@ impl Command for ImportKicad {
     }
 }
 
-/// A board read from any file (KiCad or another tool's, in Forma's terms) written into the
+/// A board read from any file (KiCad or another tool's, in Iṣẹ́ Studio's terms) written into the
 /// project in one change: the board, its footprints, components, tracks, vias, pours and 3D part.
 pub fn create_board(tx: &mut Tx, k: &KicadBoard, name: Option<String>, at: Option<[f64; 3]>) -> Result<Value, CommandError> {
     let name = name.filter(|n| !n.trim().is_empty()).or(k.title.clone()).unwrap_or_else(|| "Imported board".into()).trim().to_string();
@@ -1301,7 +1301,7 @@ fn u(seed: &str) -> Sexp {
     list("uuid", vec![s(uuid(seed))])
 }
 
-/// Forma board point → KiCad page point.
+/// Iṣẹ́ Studio board point → KiCad page point.
 struct Page {
     ox: f64,
     oy: f64,
@@ -1360,11 +1360,11 @@ pub fn export_with(view: &BoardView, board: &Board, zones: &BTreeMap<StableId, Z
     let four = view.layers.len() >= 4;
     let mut items: Vec<Sexp> = vec![
         list("version", vec![atom("20240108")]),
-        list("generator", vec![s("forma")]),
+        list("generator", vec![s("ise")]),
         list("generator_version", vec![s("8.0")]),
         list("general", vec![list("thickness", vec![n(view.thickness)]), list("legacy_teardrops", vec![atom("no")])]),
         list("paper", vec![s("A4")]),
-        list("title_block", vec![list("title", vec![s(view.name.clone())]), list("rev", vec![s(view.revision.clone())]), list("company", vec![s("Made with Forma")])]),
+        list("title_block", vec![list("title", vec![s(view.name.clone())]), list("rev", vec![s(view.revision.clone())]), list("company", vec![s("Made with ISE Studio")])]),
     ];
     let mut layer_table: Vec<Sexp> = vec![Sexp::List(vec![atom("0"), s("F.Cu"), atom("signal")])];
     let _ = four;
@@ -1456,7 +1456,7 @@ pub fn export_with(view: &BoardView, board: &Board, zones: &BTreeMap<StableId, Z
         let fp = board.footprint(&c.footprint);
         let at_k = page.k(c.at);
         let side = |f: &str, b: &str| if bottom { b.to_string() } else { f.to_string() };
-        let mut fv: Vec<Sexp> = vec![s(format!("Forma:{}", c.footprint)), list("layer", vec![s(side("F.Cu", "B.Cu"))]), u(&format!("fp {}", c.id)), at3("at", at_k, c.rotation)];
+        let mut fv: Vec<Sexp> = vec![s(format!("ISE Studio:{}", c.footprint)), list("layer", vec![s(side("F.Cu", "B.Cu"))]), u(&format!("fp {}", c.id)), at3("at", at_k, c.rotation)];
         if let Some(fp) = &fp {
             if !fp.description.is_empty() {
                 fv.push(list("descr", vec![s(fp.description.clone())]));

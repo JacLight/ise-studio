@@ -1,5 +1,5 @@
 //! IFC GlobalIds: 128 bits written as 22 characters of IFC's base-64
-//! alphabet. Forma derives them from a stable key (shape id and part name),
+//! alphabet. Iṣẹ́ Studio derives them from a stable key (shape id and part name),
 //! so exporting the same model twice gives the same ids and a model checker
 //! sees the same objects.
 

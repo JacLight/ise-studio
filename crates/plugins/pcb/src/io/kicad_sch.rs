@@ -1,17 +1,17 @@
 //! KiCad schematics (`.kicad_sch`, the documented S-expression format of
 //! KiCad 6 to 9) in and out.
 //!
-//! Both use the sheet's own coordinates (mm, y down) as Forma does. A symbol
-//! instance's `(at x y angle)` and `(mirror y)` are Forma's `rotation` and
+//! Both use the sheet's own coordinates (mm, y down) as Iṣẹ́ Studio does. A symbol
+//! instance's `(at x y angle)` and `(mirror y)` are Iṣẹ́ Studio's `rotation` and
 //! `mirror`; `(mirror x)` is `mirror` turned a further 180°. Library symbols
-//! travel inside the file (`lib_symbols`): Forma's built-in symbols are
-//! written as `forma:<name>` and come back as themselves; any other symbol
+//! travel inside the file (`lib_symbols`): Iṣẹ́ Studio's built-in symbols are
+//! written as `ise:<name>` and come back as themselves; any other symbol
 //! comes back carrying the definition the file holds. KiCad power symbols
-//! are Forma power ports (their Value is the net), and Forma writes each
+//! are Iṣẹ́ Studio power ports (their Value is the net), and Iṣẹ́ Studio writes each
 //! power net as a `power:<net>` symbol of its own drawing.
 //!
 //! Hierarchy: the root sheet is the file asked for; each `(sheet …)` box
-//! names its file, read from the companions given with it. Forma sheets after
+//! names its file, read from the companions given with it. Iṣẹ́ Studio sheets after
 //! the first are written as KiCad sub-sheets (boxes on their parent, or on
 //! the root sheet when they have none).
 
@@ -198,8 +198,8 @@ impl Reader<'_> {
         }
         let dnp = e.value("dnp") == Some("yes");
         let exclude_from_board = e.value("on_board") == Some("no");
-        // Forma's own symbols come back as themselves.
-        let builtin = lib_id.strip_prefix("forma:").and_then(crate::symbols::get);
+        // Iṣẹ́ Studio's own symbols come back as themselves.
+        let builtin = lib_id.strip_prefix("ise:").and_then(crate::symbols::get);
         let (symbol, definition) = match (builtin, def) {
             (Some(b), _) => (b.name.clone(), None),
             (None, Some(d)) => (lib_id.clone(), Some(Box::new(d))),
@@ -236,7 +236,7 @@ impl Reader<'_> {
         });
     }
 
-    /// KiCad's PWR_FLAG: Forma's built-in flag symbol.
+    /// KiCad's PWR_FLAG: Iṣẹ́ Studio's built-in flag symbol.
     fn flag(&mut self, at: P, rotation: f64, mirror: bool, sheet: &str, placeholder: StableId, reference: &str) {
         self.out.symbols.push(SchSymbol {
             schematic: placeholder,
@@ -317,7 +317,7 @@ impl SchIn {
     }
 }
 
-/// A `.kicad_sch` (and the sub-sheet files it names, from `files`) in Forma's terms.
+/// A `.kicad_sch` (and the sub-sheet files it names, from `files`) in Iṣẹ́ Studio's terms.
 pub fn read(text: &str, file: &str, files: &BTreeMap<String, String>) -> Result<SchIn, String> {
     let top = sexpr::parse(text)?;
     let root = top.iter().find(|e| e.is("kicad_sch")).ok_or("not a KiCad schematic (no kicad_sch)")?;
@@ -495,7 +495,7 @@ fn lib_symbol(lib_id: &str, d: &SymbolDef, pin_map: &BTreeMap<String, Vec<String
     list("symbol", v)
 }
 
-/// Forma's drawing of a power port as a KiCad power symbol: the pin at the origin, the body below.
+/// Iṣẹ́ Studio's drawing of a power port as a KiCad power symbol: the pin at the origin, the body below.
 fn power_symbol(lib_id: &str, net: &str) -> Sexp {
     let ground = schematic::is_ground(net);
     let mut body = vec![s(format!("{}_0_1", lib_id.split_once(':').map(|x| x.1).unwrap_or(lib_id)))];
@@ -569,7 +569,7 @@ pub fn write(stem: &str, sch: &schematic::Schematic, it: &schematic::SchItems) -
         let Some(d) = sym.def() else { continue };
         let builtin = sym.definition.is_none() && sym.pins.is_empty() && crate::symbols::get(&sym.symbol).is_some();
         let base = if builtin {
-            format!("forma:{}", sym.symbol)
+            format!("ise:{}", sym.symbol)
         } else if d.name.contains(':') {
             d.name.clone()
         } else {
@@ -600,7 +600,7 @@ pub fn write(stem: &str, sch: &schematic::Schematic, it: &schematic::SchItems) -
     for sh in &sheets {
         let mut items: Vec<Sexp> = vec![
             list("version", vec![atom("20231120")]),
-            list("generator", vec![s("forma")]),
+            list("generator", vec![s("ise")]),
             list("generator_version", vec![s("8.0")]),
             uuid(&format!("{stem}/file/{}", sh.id)),
             paper_sexp(sh),

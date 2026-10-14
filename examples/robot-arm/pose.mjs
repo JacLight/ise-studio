@@ -23,7 +23,7 @@ const flag = (name, dflt) => {
   const i = args.indexOf(name);
   return i >= 0 ? args.splice(i, 2)[1] : dflt;
 };
-const base = flag("--url", "ws://127.0.0.1:7420/ws?user=forma-ai");
+const base = flag("--url", "ws://127.0.0.1:7420/ws?user=ise-ai");
 const project = flag("--project", null);
 const pose = POSES[args[0]];
 if (!pose) {

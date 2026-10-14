@@ -234,7 +234,7 @@ pub(crate) mod tests {
     /// Stores a picture for programs to read (tests share one folder).
     pub(crate) fn stored(w: usize, h: usize, f: impl Fn(f64, f64) -> [u8; 4]) -> String {
         if crate::assets::dir().is_none() {
-            crate::assets::set_dir(std::env::temp_dir().join(format!("forma-test-assets-{}", std::process::id())));
+            crate::assets::set_dir(std::env::temp_dir().join(format!("ise-test-assets-{}", std::process::id())));
         }
         let mut px = Vec::new();
         for y in 0..h {
@@ -306,7 +306,7 @@ pub(crate) mod tests {
 
     #[test]
     fn text_engraves_embosses_and_wraps() {
-        let flat = evaluate("return box(60, 20, 3).engrave(text(\"FORMA\", { size: 8, weight: 700, align: \"center\", valign: \"middle\" }), { at: [30, 10, 3], depth: 0.6 });", &[], 0.01).unwrap();
+        let flat = evaluate("return box(60, 20, 3).engrave(text(\"ISE\", { size: 8, weight: 700, align: \"center\", valign: \"middle\" }), { at: [30, 10, 3], depth: 0.6 });", &[], 0.01).unwrap();
         assert!(flat.volume < 60.0 * 20.0 * 3.0 - 20.0);
         let round = evaluate("return cylinder(30, 12).emboss(text(\"12 V\", { size: 5, align: \"center\", valign: \"middle\" }), { cylinder: { radius: 12, z: 15 }, height: 0.8 });", &[], 0.01).unwrap();
         assert!((round.bounds_max[0] - 12.8).abs() < 0.05, "{:?}", round.bounds_max);

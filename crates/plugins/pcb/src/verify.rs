@@ -1,10 +1,10 @@
 //! Footprints checked pad by pad against KiCad's official library.
 //!
 //! Every built-in footprint has a KiCad equivalent (same package, same pin
-//! numbering). Both are read into Forma's coordinates (y up), the KiCad one
-//! moved and turned onto Forma's origin and zero orientation by the pads that
+//! numbering). Both are read into Iṣẹ́ Studio's coordinates (y up), the KiCad one
+//! moved and turned onto Iṣẹ́ Studio's origin and zero orientation by the pads that
 //! share numbers (KiCad puts some connectors' origins at pin 1 or a mounting
-//! peg; Forma at the package centre), then each pad is paired with the
+//! peg; Iṣẹ́ Studio at the package centre), then each pad is paired with the
 //! nearest one of the same number and compared: kind (SMD, plated, bare
 //! hole), position, size, shape and drill.
 //!
@@ -19,9 +19,9 @@
 //!   IPC-7351 or the maker's drawing; they round differently, and either
 //!   solders. Listed so the choice is visible.
 //! - **note**: where the origin or zero rotation differs (pick-and-place files
-//!   use Forma's, from the board), several pads against one (a thermal pad's
+//!   use Iṣẹ́ Studio's, from the board), several pads against one (a thermal pad's
 //!   squares and vias), and differences checked against the maker's drawing
-//!   where Forma follows the maker ([`REVIEWED`]).
+//!   where Iṣẹ́ Studio follows the maker ([`REVIEWED`]).
 
 use crate::footprints::{self, Footprint, Pad, PadKind, PadShape};
 use crate::geom;
@@ -94,7 +94,7 @@ pub struct Finding {
 pub struct FootprintReport {
     pub footprint: String,
     pub kicad: String,
-    /// Where KiCad's origin is in Forma's footprint (mm), and how far KiCad's is turned (° counter-clockwise).
+    /// Where KiCad's origin is in Iṣẹ́ Studio's footprint (mm), and how far KiCad's is turned (° counter-clockwise).
     pub offset: [f64; 2],
     pub rotation: f64,
     pub pads: usize,
@@ -117,7 +117,7 @@ pub struct Report {
     pub library: String,
 }
 
-/// Differences checked against the maker's own drawing, where Forma follows the maker and KiCad
+/// Differences checked against the maker's own drawing, where Iṣẹ́ Studio follows the maker and KiCad
 /// differs: (footprint, pad, start of the finding, why). They are reported as notes.
 const REVIEWED: [(&str, &str, &str, &str); 3] = [
     ("USB-C_16P", "S1", "hole 0.6 × 1.4", "HRO's TYPE-C-31-M-12 drawing (2020-12-08) recommends 0.6 × 1.4 mm rear slots in 1.7 mm pads; KiCad's footprint has 1.2"),
@@ -292,7 +292,7 @@ fn label(p: &Pad) -> String {
     if p.number.is_empty() { "hole".into() } else { p.number.clone() }
 }
 
-/// Compares one Forma footprint with a KiCad one (both in Forma coordinates).
+/// Compares one Iṣẹ́ Studio footprint with a KiCad one (both in Iṣẹ́ Studio coordinates).
 pub fn compare(ours_fp: &Footprint, kicad: &Footprint, kicad_id: &str) -> FootprintReport {
     let ours = lands(&ours_fp.pads, &kicad.pads);
     let theirs = lands(&kicad.pads, &ours_fp.pads);
@@ -380,7 +380,7 @@ pub fn compare(ours_fp: &Footprint, kicad: &Footprint, kicad_id: &str) -> Footpr
             severity: "note",
             pad: String::new(),
             message: format!(
-                "KiCad's origin is at ({}, {}) here{}; positions files use Forma's",
+                "KiCad's origin is at ({}, {}) here{}; positions files use ISE Studio's",
                 f3(shift[0]),
                 f3(shift[1]),
                 if deg != 0.0 { format!(", its zero orientation turned {deg}°") } else { String::new() }

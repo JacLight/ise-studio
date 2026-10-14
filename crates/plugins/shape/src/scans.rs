@@ -1,4 +1,4 @@
-//! Scans in Forma: point clouds and meshes from scanners, photogrammetry or
+//! Scans in Iṣẹ́ Studio: point clouds and meshes from scanners, photogrammetry or
 //! other programs, read once by content hash (as imported files are) and
 //! worked on with `de_scan`: checked and repaired, thinned, smoothed,
 //! remeshed, reconstructed into surfaces, fitted with the primitives and
@@ -7,7 +7,7 @@
 //!
 //! The shape programs reach all of it through the prelude (`scanMesh`,
 //! `fitScan`, `scanSection`, `reconstruct`, `fitSurface`, `.decimate()`,
-//! …); the engine's `/scans` routes and `./forma mesh|scan|inspect` reach it
+//! …); the engine's `/scans` routes and `./ise mesh|scan|inspect` reach it
 //! through the JSON operations here. Any producer of points or meshes plugs
 //! in at [`read`]: a scanner's export, COLMAP's fused PLY, Apple Object
 //! Capture's OBJ are all just a file of a kind listed in [`FORMATS`].
@@ -732,7 +732,7 @@ mod tests {
 
     fn store(bytes: &[u8], ext: &str) -> String {
         if crate::assets::dir().is_none() {
-            crate::assets::set_dir(std::env::temp_dir().join(format!("forma-scan-assets-{}", std::process::id())));
+            crate::assets::set_dir(std::env::temp_dir().join(format!("ise-scan-assets-{}", std::process::id())));
         }
         crate::assets::store_scan(bytes, ext).unwrap()
     }

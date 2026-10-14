@@ -66,7 +66,7 @@ fn an_iso_thread_measures_by_pappus() {
     assert!((mesh - want).abs() / want < 2.0 * TOL / 3.3);
     // Exact faces: the flanks are B-spline sweeps, not facets.
     let mut e = exact::evaluate_exact("Bolt", THREAD, &[], TOL).unwrap();
-    let path = std::env::temp_dir().join(format!("forma-thread-{}.step", std::process::id()));
+    let path = std::env::temp_dir().join(format!("ise-thread-{}.step", std::process::id()));
     let parts: Vec<(String, de_occt::Shape)> = e.parts.iter().map(|p| (p.name.clone(), p.shape)).collect();
     e.arena.write_step(&parts, &path).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();
@@ -165,7 +165,7 @@ fn offsets_defeaturing_and_checks() {
 fn paint_and_materials_colour_the_step_file() {
     let src = "return [part('Lid', box(30, 20, 4).paint('#c8372f', { normal: [0, 0, 1] }, { name: 'Sealing face' }), { material: 'PETG (black)' }), part('Base', box(30, 20, 10).translate(0, 0, -10), { material: 'Aluminium 6061' })];";
     let mut e = exact::evaluate_exact("Box", src, &[], TOL).unwrap();
-    let path = std::env::temp_dir().join(format!("forma-paint-{}.step", std::process::id()));
+    let path = std::env::temp_dir().join(format!("ise-paint-{}.step", std::process::id()));
     let parts: Vec<(String, de_occt::Shape)> = e.parts.iter().map(|p| (p.name.clone(), p.shape)).collect();
     e.arena.write_step(&parts, &path).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();

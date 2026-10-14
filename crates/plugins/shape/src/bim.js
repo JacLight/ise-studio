@@ -947,7 +947,7 @@ function group(name, cls, { level: lvl, predefined, type, tag, psets } = {}) {
 /**
  * The elements of an imported IFC file as parts, with their classes, levels, property sets,
  * quantities and materials; its site, building, levels, spaces, zones, grids and openings too.
- * The file is referred to by its content hash (Forma stores it on import).
+ * The file is referred to by its content hash (Iṣẹ́ Studio stores it on import).
  */
 function importIfc(sha, { material } = {}) {
   const d = JSON.parse(__n.ifcData(sha));

@@ -334,7 +334,7 @@ pub async fn ifc(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
         Ok(x) => x,
         Err(r) => return r,
     };
-    let author = std::env::var("USER").unwrap_or_else(|_| "Forma".into());
+    let author = std::env::var("USER").unwrap_or_else(|_| "ISE Studio".into());
     let text = de_bim::ifc_write::write(&m, &de_bim::ifc_write::Options { timestamp: format!("{}T00:00:00", today()), author });
     let name = if m.building.name.is_empty() { title } else { m.building.name.clone() };
     (StatusCode::OK, [(header::CONTENT_TYPE, "application/x-step".to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{}.ifc\"", fabricate::file_name(&name)))], text).into_response()
@@ -408,7 +408,7 @@ pub async fn plan(State(server): State<Arc<Server>>, Path(file): Path<String>, Q
     let t = de_shape::plan::Title {
         project: title.clone(),
         number: format!("{}-{}", q.get("project").cloned().unwrap_or_else(|| server.default.clone()).to_uppercase(), view.title().chars().filter(|c| c.is_alphanumeric()).take(8).collect::<String>().to_uppercase()),
-        drawn_by: std::env::var("USER").map(|u| u[..1].to_uppercase() + &u[1..]).unwrap_or_else(|_| "Forma".into()),
+        drawn_by: std::env::var("USER").map(|u| u[..1].to_uppercase() + &u[1..]).unwrap_or_else(|_| "ISE Studio".into()),
         date: today(),
     };
     let v2 = view.clone();
@@ -462,7 +462,7 @@ pub async fn import_ifc(server: &Server, query: &HashMap<String, String>, file: 
     }
 }
 
-/// An IFC file dropped on the view (or `./forma ifc import`): checked to
+/// An IFC file dropped on the view (or `./ise ifc import`): checked to
 /// read, stored by content like a STEP file (it is one: ISO 10303-21), and
 /// added as a shape whose program is `return importIfc("<sha>")`.
 pub fn ifc_source(file: &str, bytes: &[u8]) -> Result<(String, String, f64, usize, Vec<String>), String> {

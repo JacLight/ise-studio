@@ -523,7 +523,7 @@ pub fn read_pcd(data: &[u8]) -> Result<Cloud, String> {
 
 /// Binary little-endian PLY of the points (with normals and colours when present).
 pub fn write_ply(c: &Cloud) -> Vec<u8> {
-    let mut h = format!("ply\nformat binary_little_endian 1.0\ncomment Forma point cloud\nelement vertex {}\nproperty float x\nproperty float y\nproperty float z\n", c.len());
+    let mut h = format!("ply\nformat binary_little_endian 1.0\ncomment ISE Studio point cloud\nelement vertex {}\nproperty float x\nproperty float y\nproperty float z\n", c.len());
     if !c.normals.is_empty() {
         h.push_str("property float nx\nproperty float ny\nproperty float nz\n");
     }

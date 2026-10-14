@@ -16,7 +16,7 @@
 //! Engines (no commercial SDKs): Apple Object Capture through a small Swift
 //! helper built on first use (`tools/photogrammetry/ObjectCapture.swift`),
 //! and COLMAP (BSD) through its command line: structure from motion, then
-//! multi-view stereo where COLMAP has CUDA, else Forma's own on the CPU
+//! multi-view stereo where COLMAP has CUDA, else Iṣẹ́ Studio's own on the CPU
 //! (`de_scan::mvs`). The result is sized and levelled from the marker sheet
 //! when the photos show it (see `de_scan::photo`), cleaned (floor cut away,
 //! what stands in the field kept whole, holes filled; scenes walked through
@@ -177,7 +177,7 @@ pub async fn add_photo(State(server): State<Arc<Server>>, Path((set, file)): Pat
             added.push(base);
         }
         if added.is_empty() {
-            return Err(format!("no photos in {file} (Forma takes JPG, PNG and HEIC){}", if skipped.is_empty() { String::new() } else { format!("; skipped {}", skipped.join(", ")) }));
+            return Err(format!("no photos in {file} (ISE Studio takes JPG, PNG and HEIC){}", if skipped.is_empty() { String::new() } else { format!("; skipped {}", skipped.join(", ")) }));
         }
         sets[i].photos.sort_by(|a, b| a.name.cmp(&b.name));
         write_sets(&s, &project, &sets)?;
@@ -200,7 +200,7 @@ pub async fn list_photos(State(server): State<Arc<Server>>, Query(query): Query<
 pub async fn markers_pdf(Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
     let letter = query.get("paper").is_some_and(|p| p.eq_ignore_ascii_case("letter"));
     let pdf = de_scan::markers::Sheet::default().pdf(letter);
-    ([(header::CONTENT_TYPE, "application/pdf"), (header::CONTENT_DISPOSITION, "inline; filename=\"forma-scale-markers.pdf\"")], pdf).into_response()
+    ([(header::CONTENT_TYPE, "application/pdf"), (header::CONTENT_DISPOSITION, "inline; filename=\"ise-scale-markers.pdf\"")], pdf).into_response()
 }
 
 // ---- Engines --------------------------------------------------------------------
@@ -236,7 +236,7 @@ fn object_capture_helper(server: &Server) -> Result<PathBuf, String> {
     }
     let hash = &de_shape::assets::sha256(HELPER_SOURCE.as_bytes())[..12];
     let dir = server.dir.join(".tools");
-    let bin = dir.join(format!("forma-object-capture-{hash}"));
+    let bin = dir.join(format!("ise-object-capture-{hash}"));
     if bin.is_file() {
         return Ok(bin);
     }
@@ -245,7 +245,7 @@ fn object_capture_helper(server: &Server) -> Result<PathBuf, String> {
     if bin.is_file() {
         return Ok(bin);
     }
-    let swiftc = find_program("swiftc", "FORMA_SWIFTC").ok_or("Object Capture needs the Swift compiler to build Forma's helper: install the Xcode command line tools (xcode-select --install)")?;
+    let swiftc = find_program("swiftc", "ISE_SWIFTC").ok_or("Object Capture needs the Swift compiler to build ISE Studio's helper: install the Xcode command line tools (xcode-select --install)")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let src = dir.join(format!("ObjectCapture-{hash}.swift"));
     std::fs::write(&src, HELPER_SOURCE).map_err(|e| e.to_string())?;
@@ -282,7 +282,7 @@ fn object_capture_info(server: &Server) -> EngineInfo {
 }
 
 fn colmap_info() -> EngineInfo {
-    let Some(bin) = find_program("colmap", "FORMA_COLMAP") else {
+    let Some(bin) = find_program("colmap", "ISE_COLMAP") else {
         return EngineInfo { name: "colmap".into(), available: false, detail: "COLMAP is not installed: brew install colmap (macOS), apt install colmap (Linux), or the Windows release from colmap.github.io".into(), version: None, dense: None };
     };
     let text = Command::new(&bin).arg("help").output().map(|o| format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))).unwrap_or_default();
@@ -291,7 +291,7 @@ fn colmap_info() -> EngineInfo {
     EngineInfo {
         name: "colmap".into(),
         available: true,
-        detail: if cuda { "COLMAP: structure from motion, then dense multi-view stereo (CUDA) and a Poisson mesh".into() } else { "COLMAP: structure from motion; this build has no CUDA, so Forma's own dense matching runs on the CPU (slower than CUDA), then a Poisson mesh".into() },
+        detail: if cuda { "COLMAP: structure from motion, then dense multi-view stereo (CUDA) and a Poisson mesh".into() } else { "COLMAP: structure from motion; this build has no CUDA, so ISE Studio's own dense matching runs on the CPU (slower than CUDA), then a Poisson mesh".into() },
         version: line,
         dense: Some(cuda),
     }
@@ -572,7 +572,7 @@ pub fn colmap_progress(line: &str) -> Option<(usize, usize)> {
 fn decode_gray(path: &FsPath) -> Option<(Vec<f32>, usize, usize)> {
     let bytes = std::fs::read(path).ok()?;
     let bytes = if image_kind(&bytes) == Some("heic") {
-        let tmp = path.with_extension("forma-gray.jpg");
+        let tmp = path.with_extension("ise-gray.jpg");
         Command::new("sips").args(["-s", "format", "jpeg"]).arg(path).arg("--out").arg(&tmp).output().ok()?;
         let b = std::fs::read(&tmp).ok()?;
         let _ = std::fs::remove_file(&tmp);
@@ -720,7 +720,7 @@ fn run_object_capture(server: &Server, id: &str, job: &Job, images: &FsPath, wor
     update(server, id, |j| j.advance("reading the model", 0.85, 0.88, 0.0));
     let bytes = std::fs::read(&model).map_err(|e| e.to_string())?;
     let data = de_shape::scans::read(&bytes, "obj")?;
-    // Object Capture works in metres; Forma in millimetres.
+    // Object Capture works in metres; Iṣẹ́ Studio in millimetres.
     let mut mesh = data.mesh.ok_or("Object Capture's model has no triangles")?;
     for p in mesh.positions.iter_mut() {
         *p = p.map(|v| v * 1000.0);
@@ -734,7 +734,7 @@ fn run_object_capture(server: &Server, id: &str, job: &Job, images: &FsPath, wor
 }
 
 /// RealityKit's camera poses (column-major camera-to-world, metres; its camera
-/// x right, y up, looking −z) as Forma's cameras, millimetres.
+/// x right, y up, looking −z) as Iṣẹ́ Studio's cameras, millimetres.
 fn oc_cameras(poses: &Value, images: &FsPath) -> Vec<Camera> {
     let mut cameras = Vec::new();
     for p in poses.as_array().into_iter().flatten() {
@@ -837,7 +837,7 @@ fn shown(name: &str) -> &str {
 }
 
 /// A JPEG's pixel size from its frame header (no decoding), as stored
-/// (before any EXIF turn, which COLMAP and Forma both ignore).
+/// (before any EXIF turn, which COLMAP and Iṣẹ́ Studio both ignore).
 pub fn jpeg_size(bytes: &[u8]) -> Option<(u32, u32)> {
     let mut i = 2;
     while i + 9 < bytes.len() {
@@ -904,7 +904,7 @@ fn photo_names(images: &FsPath) -> Vec<String> {
 
 fn run_colmap(server: &Server, id: &str, job: &Job, images: &FsPath, work: &FsPath, flag: &AtomicBool) -> Result<Raw, String> {
     let info = colmap_info();
-    let bin = find_program("colmap", "FORMA_COLMAP").ok_or(info.detail.clone())?;
+    let bin = find_program("colmap", "ISE_COLMAP").ok_or(info.detail.clone())?;
     let v4 = info.version.as_deref().is_some_and(|v| v.trim_start_matches("COLMAP ").split('.').next().and_then(|m| m.parse::<u32>().ok()).unwrap_or(3) >= 4);
     let (fe, fm) = if v4 { ("FeatureExtraction", "FeatureMatching") } else { ("SiftExtraction", "SiftMatching") };
     let gpu = if info.dense == Some(true) { "1" } else { "0" };
@@ -936,7 +936,7 @@ fn run_colmap(server: &Server, id: &str, job: &Job, images: &FsPath, work: &FsPa
     };
     let s = |v: &str| v.to_string();
     let p = |v: &FsPath| v.to_string_lossy().to_string();
-    // Without CUDA, Forma's own dense matching follows the camera solve.
+    // Without CUDA, Iṣẹ́ Studio's own dense matching follows the camera solve.
     let cpu_dense = info.dense != Some(true);
     let (matching, solving, solved) = if cpu_dense { (0.12, 0.3, 0.5) } else { (0.2, 0.45, 0.8) };
     step(
@@ -1016,7 +1016,7 @@ fn run_colmap(server: &Server, id: &str, job: &Job, images: &FsPath, work: &FsPa
         let aspect = model.cameras.first().map(|c| c.width.max(c.height) as f64 / c.width.min(c.height).max(1) as f64).unwrap_or(1.5);
         match cpu_dense_cloud(server, id, job, (&bin, images, &best_dir, work), (model.cameras.len(), aspect), flag) {
             Ok((c, r)) => {
-                notes.push(format!("dense matching (Forma, on the CPU): {} points from {} of {} photos in {:.0} s", r.points, r.matched, r.photos, r.seconds));
+                notes.push(format!("dense matching (ISE Studio, on the CPU): {} points from {} of {} photos in {:.0} s", r.points, r.matched, r.photos, r.seconds));
                 if !r.skipped.is_empty() {
                     notes.push(format!("not matched: {}", r.skipped.join("; ")));
                 }
@@ -1042,7 +1042,7 @@ fn run_colmap(server: &Server, id: &str, job: &Job, images: &FsPath, work: &FsPa
     Ok(Raw { mesh, cloud, cameras: model.cameras, rejected, reprojection: Some(mean_error), depth: 0, version: info.version.unwrap_or_default(), notes, detections: None })
 }
 
-/// The longer side Forma's dense matching works at: by detail, made smaller
+/// The longer side Iṣẹ́ Studio's dense matching works at: by detail, made smaller
 /// for many photos so they all fit in memory together (about 11 bytes a
 /// pixel: grey, colour, depth and normal; 100 million pixels, ~1.1 GB).
 fn dense_size(detail: &str, photos: usize, aspect: f64) -> usize {
@@ -1057,9 +1057,9 @@ fn dense_size(detail: &str, photos: usize, aspect: f64) -> usize {
     wanted.min(fits).max(320)
 }
 
-/// Forma's dense matching (`de_scan::mvs`) on COLMAP's solved cameras, for
+/// Iṣẹ́ Studio's dense matching (`de_scan::mvs`) on COLMAP's solved cameras, for
 /// COLMAP builds without CUDA: COLMAP undistorts the photos (on the CPU),
-/// Forma matches them; an oriented, coloured cloud.
+/// Iṣẹ́ Studio matches them; an oriented, coloured cloud.
 fn cpu_dense_cloud(server: &Server, id: &str, job: &Job, (bin, images, model_dir, work): (&FsPath, &FsPath, &FsPath, &FsPath), (photos, aspect): (usize, f64), flag: &AtomicBool) -> Result<(Cloud, de_scan::mvs::Report), String> {
     let size = dense_size(&job.detail, photos, aspect);
     let dense = work.join("dense");
@@ -1085,7 +1085,7 @@ fn cpu_dense_cloud(server: &Server, id: &str, job: &Job, (bin, images, model_dir
         cameras.push(c.clone());
     }
     let sparse: Vec<V3> = (0..model.points.len()).filter(|&i| model.track[i] >= 3 && model.errors[i] < 2.0).map(|i| model.points[i]).collect();
-    de_scan::mvs::densify(&cameras, &photos, &sparse, &de_scan::mvs::Options::default(), &|p| update(server, id, |j| j.advance("dense matching (Forma, on the CPU)", 0.54, 0.88, p)), &|| flag.load(Ordering::Relaxed))
+    de_scan::mvs::densify(&cameras, &photos, &sparse, &de_scan::mvs::Options::default(), &|p| update(server, id, |j| j.advance("dense matching (ISE Studio, on the CPU)", 0.54, 0.88, p)), &|| flag.load(Ordering::Relaxed))
 }
 
 fn transform_camera(c: &Camera, s: &Similarity) -> Camera {
@@ -1144,7 +1144,7 @@ fn finish(server: &Server, id: &str, job: &Job, set: &PhotoSet, images: &FsPath,
                     method: "none".into(),
                     transform: levelled,
                     uncertainty: f64::NAN,
-                    detail: format!("no scale: no marker sheet was found{note} and the photos carry no depth. Give it one: ./forma scan scale <scan> --from x,y,z --to x,y,z --distance mm (two points whose distance you measured){on_floor}"),
+                    detail: format!("no scale: no marker sheet was found{note} and the photos carry no depth. Give it one: ./ise scan scale <scan> --from x,y,z --to x,y,z --distance mm (two points whose distance you measured){on_floor}"),
                 }
             }
         }
@@ -1173,7 +1173,7 @@ fn finish(server: &Server, id: &str, job: &Job, set: &PhotoSet, images: &FsPath,
     // A room, a street, a façade: the photos walk through it rather than round one object.
     let scene = scaling.method != "markers" && photo::is_scene(&cameras);
     let mut advice: Vec<String> = if scene {
-        vec!["the photos walk through a scene (a room, a street, a façade) rather than round one object: the scan is kept whole, not cut down to an object; cut out what you want with ./forma scan crop <scan> --box x0,y0,z0,x1,y1,z1".into()]
+        vec!["the photos walk through a scene (a room, a street, a façade) rather than round one object: the scan is kept whole, not cut down to an object; cut out what you want with ./ise scan crop <scan> --box x0,y0,z0,x1,y1,z1".into()]
     } else {
         coverage.gaps.clone()
     };
@@ -1188,7 +1188,7 @@ fn finish(server: &Server, id: &str, job: &Job, set: &PhotoSet, images: &FsPath,
         advice.push(format!("{} photo(s) could not be used (too little overlap with the others, or blurred)", raw.rejected.len()));
     }
     if scaling.method == "none" {
-        advice.push(if scene { "for true size, measure one distance in the scene (a door, a tile, a table) and give it with ./forma scan scale" } else { "print the marker sheet (./forma scan markers) and stand the object on it for true size" }.into());
+        advice.push(if scene { "for true size, measure one distance in the scene (a door, a tile, a table) and give it with ./ise scan scale" } else { "print the marker sheet (./ise scan markers) and stand the object on it for true size" }.into());
     }
     let mut provenance = json!({
         "engine": job.engine,
@@ -1584,7 +1584,7 @@ mod tests {
 
     #[test]
     fn photos_of_two_sizes_get_a_lens_each() {
-        let dir = std::env::temp_dir().join(format!("forma-sizes-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ise-sizes-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         for (name, w, h) in [("a.jpg", 2400, 1600), ("b.jpg", 2400, 1600)] {

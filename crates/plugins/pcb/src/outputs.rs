@@ -168,7 +168,7 @@ pub fn readme(view: &BoardView, board: &Board, fab: Option<&crate::fabs::Fab>) -
     let size = view.size();
     let mut s = String::new();
     let _ = writeln!(s, "{} — revision {}", view.name, view.revision);
-    let _ = writeln!(s, "Made with Forma. Gerber RS-274X with X2 attributes, Excellon drill, millimetres.\n");
+    let _ = writeln!(s, "Made with ISE Studio. Gerber RS-274X with X2 attributes, Excellon drill, millimetres.\n");
     let _ = writeln!(s, "Board: {:.2} × {:.2} mm, {} copper layers, {} mm FR4, {} oz outer copper", size[0], size[1], view.layers.len(), view.thickness, view.copper_oz);
     let _ = writeln!(s, "Finish: {}   Solder mask: {}   Silkscreen: {}", view.finish, view.mask, view.silk);
     let st = &view.stats;

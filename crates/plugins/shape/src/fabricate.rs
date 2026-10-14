@@ -67,7 +67,7 @@ impl StepMaker {
     pub fn file(&mut self, parts: &[(String, de_occt::Shape, Option<[f64; 3]>)], format: de_occt::CadFormat) -> Result<Vec<u8>, String> {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let ext = if format == de_occt::CadFormat::Iges { "igs" } else { "step" };
-        let path = std::env::temp_dir().join(format!("forma-{}-{}.{ext}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        let path = std::env::temp_dir().join(format!("ise-{}-{}.{ext}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
         let written = self.arena.write_cad(parts, &path, format);
         let bytes = written.and_then(|_| std::fs::read(&path).map_err(|e| e.to_string()));
         let _ = std::fs::remove_file(&path);
@@ -251,7 +251,7 @@ pub fn dxf(name: &str, solid: &Manifold) -> String {
     let mut pair = |code: i32, value: &str| {
         let _ = writeln!(out, "{code}\n{value}");
     };
-    pair(999, &format!("Forma {name}: layer DEPTH_d = outline at depth d mm below the top face"));
+    pair(999, &format!("ISE Studio {name}: layer DEPTH_d = outline at depth d mm below the top face"));
     pair(0, "SECTION");
     pair(2, "HEADER");
     pair(9, "$ACADVER");
@@ -355,7 +355,7 @@ pub fn package(
         let item = &items[*first];
         let base = format!("{dir}/{}", file_name(&item.name));
         let stl = format!("{base}.stl");
-        files.push((stl.clone(), stl_of(&at_origin(&item.solid), &format!("Forma {}", item.name), [0.0; 3])));
+        files.push((stl.clone(), stl_of(&at_origin(&item.solid), &format!("ISE Studio {}", item.name), [0.0; 3])));
         line.files.push(stl);
         if is_sheet(item.process.as_deref()) || item.flat.is_some() {
             let dxf_path = format!("{base}.dxf");
@@ -428,7 +428,7 @@ pub fn three_mf(name: &str, solid: &Manifold) -> Vec<u8> {
     let mut m = String::with_capacity(props.len() * 12 + idx.len() * 12 + 512);
     m.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>
 <model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
- <metadata name="Application">Forma</metadata>
+ <metadata name="Application">ISE Studio</metadata>
 "#);
     let _ = writeln!(m, r#" <metadata name="Title">{}</metadata>"#, esc(name));
     let _ = writeln!(m, r#" <resources>

@@ -39,7 +39,7 @@ pub async fn request(State(server): State<Arc<Server>>, Query(query): Query<Hash
     // `format=glb`: the view sends the shown model as a .glb for a website instead of a picture.
     let glb = query.get("format").is_some_and(|f| f == "glb");
     if app.sessions.load(Ordering::Relaxed) == 0 {
-        return fail(StatusCode::CONFLICT, "no view of this project is open to render in: open it in the browser (or let ./forma render start a headless one)".into());
+        return fail(StatusCode::CONFLICT, "no view of this project is open to render in: open it in the browser (or let ./ise render start a headless one)".into());
     }
     let job = de_core::StableId::new().to_string();
     let (tx, rx) = oneshot::channel();

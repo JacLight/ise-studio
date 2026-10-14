@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Writes steps.json: the robot arm from an empty project, part by part and
 // joint by joint. `node examples/robot-arm/build.mjs` regenerates it; then
-// `node tools/forma.mjs run examples/robot-arm/steps.json --project <name>`
+// `node tools/ise.mjs run examples/robot-arm/steps.json --project <name>`
 // builds it in a running engine.
 //
 // Every printed part is its own component (programs/*.js, own coordinates,

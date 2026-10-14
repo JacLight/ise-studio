@@ -48,7 +48,7 @@ fn scope_of(id: &str) -> Result<Scope, String> {
 }
 
 /// What a BOM is of, by name when not by id: an assembly, else an instance,
-/// else a shape called that (`./forma bom "Robot arm"`).
+/// else a shape called that (`./ise bom "Robot arm"`).
 fn named_scope(project: &Project, name: &str) -> Result<Scope, String> {
     let ids = project.entity_ids();
     let kinds: [&dyn Fn(StableId) -> bool; 3] = [
@@ -376,10 +376,10 @@ mod tests {
     /// says the day from the history, unchanged; a reference rate says where from.
     #[tokio::test(flavor = "multi_thread")]
     async fn exchange_rates_say_when_and_how_they_were_set() {
-        let dir = std::env::temp_dir().join(format!("forma-rates-{}", StableId::new()));
+        let dir = std::env::temp_dir().join(format!("ise-rates-{}", StableId::new()));
         std::fs::create_dir_all(&dir).unwrap();
         let line = json!({ "revision": 1, "base_revision": 0, "command_id": "01a1349b-83c8-7090-b86f-b624be2910b1", "operation": "sourcing.rates.set",
-            "actor": { "user_id": "forma-ai", "session_id": "01a1349b-8095-7220-9767-ed8cb646a3d9" },
+            "actor": { "user_id": "ise-ai", "session_id": "01a1349b-8095-7220-9767-ed8cb646a3d9" },
             "ops": [{ "op": "create", "id": "01a1349b-83c8-7090-b86f-b6257fccf216" }, { "op": "set", "id": "01a1349b-83c8-7090-b86f-b6257fccf216", "kind": "sourcing.rates", "before": null, "after": { "exchange": { "EUR": 1.15 } } }] });
         std::fs::write(dir.join("arm.jsonl"), format!("{line}\n")).unwrap();
         let server = crate::tests::server_in(&dir);
@@ -390,7 +390,7 @@ mod tests {
 
         let r: Value = serde_json::from_str(&body(rates(State(server.clone()), q(&[])).await).await).unwrap();
         assert_eq!(r["currency"], "USD");
-        assert_eq!(r["exchange"], json!([{ "currency": "EUR", "rate": 1.15, "set_on": "2026-10-13", "by": "forma-ai", "revision": 1, "source": null, "note": "rate set on 2026-10-13 by hand" }]));
+        assert_eq!(r["exchange"], json!([{ "currency": "EUR", "rate": 1.15, "set_on": "2026-10-13", "by": "ise-ai", "revision": 1, "source": null, "note": "rate set on 2026-10-13 by hand" }]));
         let csv = body(bom(State(server.clone()), Path("project".into()), q(&[("format", "csv")])).await).await;
         assert!(csv.contains("\"list (EUR at 1.15 to USD, rate set on 2026-10-13 by hand)\""), "{csv}");
         let json: Value = serde_json::from_str(&body(bom(State(server.clone()), Path("project".into()), q(&[])).await).await).unwrap();

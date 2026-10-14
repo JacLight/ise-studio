@@ -340,7 +340,7 @@ export function SimulateTab(props: { boardId: string; revision: number }) {
           {saved
             .filter((s) => s.schematic === schematic)
             .map((s) => (
-              <button key={s.id} type="button" className="secondary" onClick={() => run(s.request)} title="A saved simulation: ./forma check runs it">
+              <button key={s.id} type="button" className="secondary" onClick={() => run(s.request)} title="A saved simulation: ./ise check runs it">
                 {s.name}
               </button>
             ))}

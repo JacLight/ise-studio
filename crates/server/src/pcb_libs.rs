@@ -56,25 +56,25 @@ fn respond(r: Result<Value, axum::response::Response>) -> axum::response::Respon
 
 // ---- Global libraries (this computer) ---------------------------------------------
 
-/// Where libraries shared by every project on this computer live: `FORMA_LIBRARIES`, else the user's data folder.
+/// Where libraries shared by every project on this computer live: `ISE_LIBRARIES`, else the user's data folder.
 pub fn global_root() -> PathBuf {
-    if let Ok(p) = std::env::var("FORMA_LIBRARIES") {
+    if let Ok(p) = std::env::var("ISE_LIBRARIES") {
         if !p.trim().is_empty() {
             return PathBuf::from(p);
         }
     }
     let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| ".".into());
     if cfg!(target_os = "macos") {
-        return PathBuf::from(home).join("Library/Application Support/Forma/libraries");
+        return PathBuf::from(home).join("Library/Application Support/ISE Studio/libraries");
     }
     if cfg!(windows) {
         if let Ok(a) = std::env::var("APPDATA") {
-            return PathBuf::from(a).join("Forma/libraries");
+            return PathBuf::from(a).join("ISE Studio/libraries");
         }
     }
     match std::env::var("XDG_DATA_HOME") {
-        Ok(x) if !x.is_empty() => PathBuf::from(x).join("forma/libraries"),
-        _ => PathBuf::from(home).join(".local/share/forma/libraries"),
+        Ok(x) if !x.is_empty() => PathBuf::from(x).join("ise/libraries"),
+        _ => PathBuf::from(home).join(".local/share/ise/libraries"),
     }
 }
 
@@ -453,7 +453,7 @@ pub async fn assign(State(server): State<Arc<Server>>, Path(id): Path<String>, Q
         let sid: StableId = serde_json::from_value(json!(id)).map_err(|_| fail(StatusCode::NOT_FOUND, "not a schematic"))?;
         let sch = w.resource::<de_core::IdIndex>().get(sid).and_then(|e| w.get::<schematic::Schematic>(e)).cloned().ok_or_else(|| fail(StatusCode::NOT_FOUND, "not a schematic"))?;
         let board = sch.board.and_then(|b| w.resource::<de_core::IdIndex>().get(b).and_then(|e| w.get::<de_pcb::Board>(e)).cloned());
-        // Every footprint Forma has to hand: built-in, project libraries, the board's own.
+        // Every footprint Iṣẹ́ Studio has to hand: built-in, project libraries, the board's own.
         let mut fps: Vec<Value> = Vec::new();
         let mut push = |f: &Footprint, source: &str| {
             let pads: std::collections::BTreeSet<&str> = f.pads.iter().filter(|p| p.kind != PadKind::Npth && !p.number.is_empty()).map(|p| p.number.as_str()).collect();
@@ -562,7 +562,7 @@ pub async fn blocks_list(State(server): State<Arc<Server>>, Query(query): Q) -> 
     respond(with_world(&server, &query, |w| Ok(json!({ "blocks": blocks::blocks(w).into_iter().map(|(id, b)| json!({ "id": id, "block": b })).collect::<Vec<_>>() }))))
 }
 
-/// Library findings for `./forma check`: errors in project library parts.
+/// Library findings for `./ise check`: errors in project library parts.
 pub fn findings(project: &de_core::Project) -> Vec<Value> {
     let w = project.world();
     let mut out = Vec::new();

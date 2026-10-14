@@ -1,5 +1,5 @@
 //! Simulation checked against textbook answers: each test prints the case,
-//! the analytic value, Forma's and the error.
+//! the analytic value, Iṣẹ́ Studio's and the error.
 
 use de_shape::fea::{self, Face, Load, Study};
 use de_shape::runtime;

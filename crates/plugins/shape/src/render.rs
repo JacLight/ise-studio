@@ -1,4 +1,4 @@
-//! Pictures of the model, drawn by the engine itself: what `./forma look`
+//! Pictures of the model, drawn by the engine itself: what `./ise look`
 //! shows the AI, so it can compare what it built against a reference
 //! picture without a browser open.
 //!

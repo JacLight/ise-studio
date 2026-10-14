@@ -360,7 +360,7 @@ export function useDraftTool(props: { entities: ReadonlyMap<string, EntityView>;
         <button
           type="button"
           className="link-button"
-          title="Keep this plane by name, to draw and sketch on again (and for Forma AI)"
+          title="Keep this plane by name, to draw and sketch on again (and for Iṣẹ́ AI)"
           onClick={async () => {
             const name = `Plane ${planes.length + 1}`;
             const out = (await run("draft.plane.create", { name, origin: plane.origin, normal, x: plane.x })) as { output: { id: string } } | null;

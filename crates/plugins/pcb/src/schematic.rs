@@ -1142,7 +1142,7 @@ pub struct PlaceSymbol {
     #[serde(default)]
     pub exclude_from_board: bool,
     /// The symbol itself when it is not in the built-in library: a KiCad library symbol as
-    /// GET /pcb/kicad/symbol/<Library:Name> returns it (`./forma pcb add` does all of this).
+    /// GET /pcb/kicad/symbol/<Library:Name> returns it (`./ise pcb add` does all of this).
     pub definition: Option<SymbolDef>,
     /// Its footprint, defined on the schematic's board at the same time (as GET
     /// /pcb/kicad/footprint/<Library:Name> returns it; kept if the board has it already).
@@ -1225,7 +1225,7 @@ impl Command for PlaceSymbol {
             let it = items(tx.world(), self.schematic);
             sym.definition = it.symbols.iter().find(|(_, o)| o.symbol == sym.symbol && o.definition.is_some()).and_then(|(_, o)| o.definition.clone());
         }
-        let def = sym.def().ok_or_else(|| bad(format!("no symbol “{}” (GET /pcb/symbols lists them; a KiCad library part needs its `definition`, which `./forma pcb add` fetches; for another part give `pins`, a pin table)", sym.symbol)))?;
+        let def = sym.def().ok_or_else(|| bad(format!("no symbol “{}” (GET /pcb/symbols lists them; a KiCad library part needs its `definition`, which `./ise pcb add` fetches; for another part give `pins`, a pin table)", sym.symbol)))?;
         if sym.unit > def.unit_count() {
             return Err(bad(format!("{} has {} unit(s)", def.name, def.unit_count())));
         }

@@ -10,7 +10,7 @@
 //!
 //! Every calculator takes named numeric or word arguments and returns
 //! `{ title, results: [{ label, value, unit }], notes, source, … }`, so the UI
-//! and `./forma pcb calc` print any of them the same way.
+//! and `./ise pcb calc` print any of them the same way.
 
 use serde::Serialize;
 use serde_json::{Value, json};

@@ -1,5 +1,5 @@
 // A read-only look at a design: a past version on this computer, or a
-// view-only link opened by someone without Forma. The engine serves a session
+// view-only link opened by someone without Iṣẹ́ Studio. The engine serves a session
 // that refuses every change; this screen offers none: orbit, the parts list,
 // and the comments (read-only).
 
@@ -39,7 +39,7 @@ export function Viewer({ engine }: { engine: Engine }) {
   const threads = useThreads(state.entities);
   const title = ro?.title ?? "";
   useEffect(() => {
-    document.title = ro ? (ro.kind === "share" ? `${ro.title} · Forma viewer` : `${ro.label} · ${ro.title} · Forma`) : "Forma";
+    document.title = ro ? (ro.kind === "share" ? `${ro.title} · Iṣẹ́ Studio viewer` : `${ro.label} · ${ro.title} · Iṣẹ́ Studio`) : "Iṣẹ́ Studio";
   }, [ro]);
   // Frame the model once it first arrives.
   const framed = useRef(false);
@@ -168,7 +168,7 @@ export function Viewer({ engine }: { engine: Engine }) {
       <header className="viewer-bar floating">
         <span className="brand">
           <Icon name="cube" />
-          <b>forma</b>
+          <b>Iṣẹ́ Studio</b>
         </span>
         <span className="viewer-title">
           <b>{title || (version ? "" : "Shared model")}</b>

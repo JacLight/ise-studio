@@ -146,7 +146,7 @@ impl<'a> Files<'a> {
                     number: number.to_string(),
                     material: material.unwrap_or("—").to_string(),
                     mass: "—".into(),
-                    drawn_by: if self.context.from.is_empty() { "Forma".into() } else { self.context.from.clone() },
+                    drawn_by: if self.context.from.is_empty() { "ISE Studio".into() } else { self.context.from.clone() },
                     date: self.context.date.clone(),
                     parts: vec![],
                     page: 1,
@@ -162,7 +162,7 @@ impl<'a> Files<'a> {
                     None => items.first().ok_or("nothing to export")?,
                 };
                 Ok(match ext {
-                    "stl" => de_shape::stl_of(&fabricate::at_origin(&item.solid), &format!("Forma {name}"), [0.0; 3]),
+                    "stl" => de_shape::stl_of(&fabricate::at_origin(&item.solid), &format!("ISE Studio {name}"), [0.0; 3]),
                     "3mf" => fabricate::three_mf(name, &item.solid),
                     "dxf" => item.cut_file().into_bytes(),
                     other => return Err(format!("unknown file kind .{other}")),

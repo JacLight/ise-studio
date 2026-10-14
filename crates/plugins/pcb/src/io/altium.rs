@@ -8,7 +8,7 @@
 //! `|KEY=VALUE|…`). `Pads6`, `Vias6`, `Tracks6` and `Arcs6` are binary
 //! records: a type byte, then length-prefixed sub-records of little-endian
 //! fields. Lengths are in Altium's internal unit (1/10000 mil); y up as
-//! Forma. Copper layers: 1 top, 2–31 mid layers, 32 bottom; 74 is multi-layer.
+//! Iṣẹ́ Studio. Copper layers: 1 top, 2–31 mid layers, 32 bottom; 74 is multi-layer.
 //! Pads, tracks and arcs name their component and net by index (0xFFFF: none).
 //!
 //! Schematic: the `FileHeader` stream is property records (`RECORD=1`

@@ -1,5 +1,5 @@
 // Preferences (per viewer): the unit lengths show and are typed in,
-// decimals, and how a trackpad moves the view. Plus the project file: the whole project as one .forma file to
+// decimals, and how a trackpad moves the view. Plus the project file: the whole project as one .ise file to
 // hand to someone outside the team, and opening one as a new project.
 
 import { useEffect, useRef, useState } from "react";
@@ -46,14 +46,14 @@ export function PreferencesDialog(props: { onClose: () => void }) {
             type="checkbox"
             defaultChecked={(() => {
               try {
-                return localStorage.getItem("forma.trackpadPan") === "1";
+                return localStorage.getItem("ise.trackpadPan") === "1";
               } catch {
                 return false;
               }
             })()}
             onChange={(e) => {
               try {
-                localStorage.setItem("forma.trackpadPan", e.target.checked ? "1" : "0");
+                localStorage.setItem("ise.trackpadPan", e.target.checked ? "1" : "0");
               } catch {
                 /* private window */
               }
@@ -67,7 +67,7 @@ export function PreferencesDialog(props: { onClose: () => void }) {
         </p>
         <h3 className="panel-section">Keys</h3>
         <p className="muted small prefs-keys">
-          <kbd>`</kbd> console · <kbd>T</kbd> data (sheets, tables) · <kbd>G</kbd> draft on a plane · <kbd>K</kbd> sketch · <kbd>A</kbd> Forma AI · <kbd>F</kbd> focus · <kbd>⌘ ,</kbd> preferences
+          <kbd>`</kbd> console · <kbd>T</kbd> data (sheets, tables) · <kbd>G</kbd> draft on a plane · <kbd>K</kbd> sketch · <kbd>A</kbd> Iṣẹ́ AI · <kbd>F</kbd> focus · <kbd>⌘ ,</kbd> preferences
         </p>
       </div>
     </dialog>
@@ -97,14 +97,14 @@ export function ProjectFileRows(props: { onPrefs: () => void; onConsole: () => v
       </button>
       <a className="list-row" href={`/projects/${encodeURIComponent(name)}/bundle`} download title="The whole project, its history and imported files, as one file to send to someone outside the team">
         <Icon name="download" />
-        <span>Download project file (.forma)</span>
+        <span>Download project file (.ise)</span>
       </a>
-      <label className="list-row file-row" title="Opens a .forma project file as a new project">
+      <label className="list-row file-row" title="Opens a .ise project file as a new project">
         <Icon name="upload" />
         <span>{opening ? "Opening…" : "Open a project file…"}</span>
         <input
           type="file"
-          accept=".forma"
+          accept=".ise"
           aria-label="Open a project file"
           onChange={async (e) => {
             const f = e.target.files?.[0];

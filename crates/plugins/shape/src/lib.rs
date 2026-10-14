@@ -831,7 +831,7 @@ pub fn solid_at(program: &ShapeProgram, tolerance: f64) -> Result<Manifold, Stri
 
 /// Binary STL of a program's solid at a chosen accuracy, in millimeters.
 pub fn stl(program: &ShapeProgram, tolerance: f64, offset: [f64; 3]) -> Result<Vec<u8>, String> {
-    Ok(stl_of(&solid_at(program, tolerance)?, &format!("Forma {} (+/-{tolerance} mm)", program.name), offset))
+    Ok(stl_of(&solid_at(program, tolerance)?, &format!("ISE Studio {} (+/-{tolerance} mm)", program.name), offset))
 }
 
 /// Binary STL of any solid, translated by `offset` (mm).

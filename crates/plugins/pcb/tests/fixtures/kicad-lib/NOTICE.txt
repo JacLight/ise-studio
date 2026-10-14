@@ -6,5 +6,5 @@ footprint-verification and library-import tests:
 
 They are by the KiCad library contributors and licensed CC-BY-SA 4.0 with the
 KiCad libraries design exception (https://www.kicad.org/libraries/license/).
-Forma itself never ships the libraries: it downloads them on demand into a
+Iṣẹ́ Studio itself never ships the libraries: it downloads them on demand into a
 cache folder on the user's computer.

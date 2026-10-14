@@ -26,7 +26,7 @@ fn bounds(b: &MeshBody) -> [f64; 6] {
 fn stl_binary_and_text_round_trip() {
     let (p, vb, _) = parts();
     let solid = p[0].to_solid().unwrap();
-    let bin = crate::stl_of(&solid, "Forma Base plate", [0.0; 3]);
+    let bin = crate::stl_of(&solid, "ISE Studio Base plate", [0.0; 3]);
     assert_eq!(Kind::sniff(&bin), Some(Kind::Stl));
     let back = read_mesh(&bin, Kind::Stl).unwrap();
     assert_eq!(back.len(), 1);
@@ -259,7 +259,7 @@ fn dwg_and_unknown_files_say_why() {
 /// A file stored as an import would store it (the asset folder is set once per process).
 fn stored(bytes: &[u8], hint: Kind) -> String {
     if crate::assets::dir().is_none() {
-        crate::assets::set_dir(std::env::temp_dir().join(format!("forma-format-assets-{}", std::process::id())));
+        crate::assets::set_dir(std::env::temp_dir().join(format!("ise-format-assets-{}", std::process::id())));
     }
     // Not a real SHA-256: tests only need a stable 64-hex name per content.
     use std::hash::{Hash, Hasher};
@@ -291,7 +291,7 @@ fn programs_read_imported_mesh_and_iges_files() {
     // An IGES file through the same exact path as STEP, and meshed for the view.
     let mut a = de_occt::Arena::new();
     let cyl = a.cylinder(15.0, 4.0, 4.0, false).unwrap();
-    let path = std::env::temp_dir().join(format!("forma-format-iges-{}.igs", std::process::id()));
+    let path = std::env::temp_dir().join(format!("ise-format-iges-{}.igs", std::process::id()));
     a.write_cad(&[("Pin".into(), cyl, Some([0.2, 0.4, 0.8]))], &path, de_occt::CadFormat::Iges).unwrap();
     let bytes = std::fs::read(&path).unwrap();
     let _ = std::fs::remove_file(&path);

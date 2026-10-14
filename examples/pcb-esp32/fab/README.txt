@@ -1,5 +1,5 @@
 ESP32 USB-C board — revision A
-Made with Forma. Gerber RS-274X with X2 attributes, Excellon drill, millimetres.
+Made with Iṣẹ́ Studio. Gerber RS-274X with X2 attributes, Excellon drill, millimetres.
 
 Board: 54.00 × 40.00 mm, 2 copper layers, 1.6 mm FR4, 1 oz outer copper
 Finish: HASL lead-free   Solder mask: black   Silkscreen: white

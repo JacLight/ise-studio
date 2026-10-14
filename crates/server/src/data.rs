@@ -1,6 +1,6 @@
 //! Data in and out: tables (sheets, parameter sets, configuration tables)
 //! as CSV and XLSX, OpenSCAD files, and whole projects as one portable
-//! bundle file (`.forma`) to hand to someone outside the team.
+//! bundle file (`.ise`) to hand to someone outside the team.
 
 use super::*;
 use de_shape::{ParameterSet, ResolvedParams, ShapeConfigurations, paramtable, scad, sheet, table};
@@ -8,7 +8,7 @@ use de_shape::{ParameterSet, ResolvedParams, ShapeConfigurations, paramtable, sc
 /// A project bundle: a zip with `manifest.json`, `project.jsonl` (the whole
 /// log, so history and versions come along), `thumb.png` and the assets the
 /// log refers to (imported STEP files, pictures) under `assets/`.
-const BUNDLE_FORMAT: &str = "forma-bundle";
+const BUNDLE_FORMAT: &str = "ise-bundle";
 
 fn download(name: String, mime: &str, bytes: Vec<u8>) -> axum::response::Response {
     (StatusCode::OK, [(header::CONTENT_TYPE, mime.to_string()), (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}\""))], bytes).into_response()
@@ -63,7 +63,7 @@ pub fn scad_file(project: &Project, id: StableId, tolerance: f64) -> Result<(Str
         return Err("export an assembly's parts one at a time as .scad (or the whole as STEP)".into());
     }
     let items = s.items(tolerance)?;
-    let mut out = format!("// {} — exported from Forma as polyhedra (millimetres).\n// Forma keeps the exact model; this is its mesh at {tolerance} mm.\n\n", s.name);
+    let mut out = format!("// {} — exported from ISE Studio as polyhedra (millimetres).\n// ISE Studio keeps the exact model; this is its mesh at {tolerance} mm.\n\n", s.name);
     for it in &items {
         let (props, n, idx) = it.solid.to_mesh_f64();
         let n = n.max(3);
@@ -75,7 +75,7 @@ pub fn scad_file(project: &Project, id: StableId, tolerance: f64) -> Result<(Str
     Ok((format!("{}.scad", fabricate::file_name(&s.name)), out.into_bytes()))
 }
 
-/// Imports a .scad, .csv or .xlsx dropped on the view (or posted by `./forma import`).
+/// Imports a .scad, .csv or .xlsx dropped on the view (or posted by `./ise import`).
 pub async fn import_data(app: Arc<App>, file: &str, query: &HashMap<String, String>, body: &[u8]) -> axum::response::Response {
     let fail = |m: String| (StatusCode::UNPROCESSABLE_ENTITY, m).into_response();
     let lower = file.to_lowercase();
@@ -149,7 +149,7 @@ fn assets_of(dir: &std::path::Path, log: &str) -> Vec<(String, PathBuf)> {
     files.into_iter().filter(|(n, _)| n.len() >= 64 && hashes.contains(&n[..64])).collect()
 }
 
-/// `GET /projects/<name>/bundle`: the whole project as one `.forma` file.
+/// `GET /projects/<name>/bundle`: the whole project as one `.ise` file.
 pub async fn bundle(State(server): State<Arc<Server>>, Path(name): Path<String>) -> axum::response::Response {
     if !valid_name(&name) || !server.dir.join(format!("{name}.jsonl")).exists() {
         return bad_request(format!("no project called {name}"));
@@ -169,7 +169,7 @@ pub async fn bundle(State(server): State<Arc<Server>>, Path(name): Path<String>)
         for (file, path) in assets_of(&dir, &log) {
             files.push((format!("assets/{file}"), std::fs::read(&path).map_err(|e| e.to_string())?));
         }
-        Ok((format!("{}.forma", fabricate::file_name(&title)), table::zip_deflated(&files)))
+        Ok((format!("{}.ise", fabricate::file_name(&title)), table::zip_deflated(&files)))
     })
     .await
     .unwrap_or_else(|e| Err(e.to_string()));
@@ -179,17 +179,17 @@ pub async fn bundle(State(server): State<Arc<Server>>, Path(name): Path<String>)
     }
 }
 
-/// `POST /projects/import?name=<wanted>`: a `.forma` bundle as a new project
+/// `POST /projects/import?name=<wanted>`: a `.ise` bundle as a new project
 /// (named after the bundle, numbered if taken). Its log is checked by
 /// loading it before anything is written.
 pub async fn import_bundle(State(server): State<Arc<Server>>, Query(query): Query<HashMap<String, String>>, body: axum::body::Bytes) -> axum::response::Response {
     let files = match table::unzip(&body) {
         Ok(f) => f,
-        Err(e) => return bad_request(format!("not a Forma bundle: {e}")),
+        Err(e) => return bad_request(format!("not a ISE Studio bundle: {e}")),
     };
     let manifest: Value = files.get("manifest.json").and_then(|m| serde_json::from_slice(m).ok()).unwrap_or_default();
     if manifest["format"] != BUNDLE_FORMAT {
-        return bad_request("not a Forma bundle (no manifest.json saying forma-bundle)");
+        return bad_request("not a ISE Studio bundle (no manifest.json saying ise-bundle)");
     }
     let Some(log) = files.get("project.jsonl") else { return bad_request("the bundle has no project.jsonl") };
     let wanted = query.get("name").cloned().or_else(|| manifest["name"].as_str().map(str::to_string)).unwrap_or_else(|| "imported".into());

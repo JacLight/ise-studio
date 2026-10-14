@@ -1,7 +1,7 @@
-// `./forma pcb lib|logo|assign|variant|block …`: project and global symbol and
+// `./ise pcb lib|logo|assign|variant|block …`: project and global symbol and
 // footprint libraries, footprint wizards, image-to-logo, footprint assignment,
 // assembly variants and design blocks, through the same engine API the
-// Library view uses. Called from tools/forma.mjs with its engine connection.
+// Library view uses. Called from tools/ise.mjs with its engine connection.
 
 import { readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
@@ -143,18 +143,18 @@ export async function pcbLib(sub, args, { engine, get, http, q }) {
     if (!what || what === "list") {
       const l = await get(`/pcb/libs?${q()}`);
       console.log(`Project libraries${l.table.length ? ` (table: ${l.table.map((t) => `${t.name}[${t.kind}${t.enabled ? "" : ", off"}${t.pinned ? ", pinned" : ""}]`).join(" ")})` : ""}:`);
-      if (!l.project.length) console.log("  (none yet: copy a part in with `forma pcb lib copy`, or make one with a wizard)");
+      if (!l.project.length) console.log("  (none yet: copy a part in with `ise pcb lib copy`, or make one with a wizard)");
       for (const lib of l.project) {
         console.log(`  ${lib.name}: ${lib.symbols.length} symbols, ${lib.footprints.length} footprints`);
         for (const s of lib.symbols) console.log(`    sym ${s.full}${s.extends ? ` (derived from ${s.extends})` : ""}${s.power ? ` (power: ${s.power.net})` : ""}  ${s.pins} pins, ${s.units} unit(s)${s.demorgan ? ", De Morgan" : ""}${s.error ? `  ✗ ${s.error}` : ""}`);
         for (const f of lib.footprints) console.log(`    fp  ${f.full}  ${f.pads} pads${f.model ? `, 3D offset ${f.model.offset.join(",")}` : ""}`);
       }
       console.log(`Global libraries (${l.global.root}): ${l.global.libraries.map((g) => `${g.name} (${g.symbols.length}+${g.footprints.length})`).join(", ") || "none"}`);
-      console.log(`KiCad: footprints ${l.kicad.footprints ? "downloaded" : "not downloaded"}, symbols ${l.kicad.symbols ? "downloaded" : "not downloaded"} (forma pcb library update)`);
+      console.log(`KiCad: footprints ${l.kicad.footprints ? "downloaded" : "not downloaded"}, symbols ${l.kicad.symbols ? "downloaded" : "not downloaded"} (ise pcb library update)`);
       console.log(`Built-in: ${l.builtin.symbols.length} symbols, ${l.builtin.footprints.length} footprints; design blocks: ${l.blocks.map((b) => b.name).join(", ") || "none"}`);
     } else if (what === "symbol" || what === "footprint") {
       const id = args[3];
-      if (!id) throw new Error(`usage: forma pcb lib ${what} <Library:Name | built-in name>`);
+      if (!id) throw new Error(`usage: ise pcb lib ${what} <Library:Name | built-in name>`);
       const r = await get(`/pcb/libs/${what}/${encodeURIComponent(id)}?${q()}`);
       if (what === "symbol") {
         const d = r.definition;
@@ -194,7 +194,7 @@ export async function pcbLib(sub, args, { engine, get, http, q }) {
       const to = flagOf(args, "--to") ?? "Project";
       const name = flagOf(args, "--name");
       const from = args[3];
-      if (!from) throw new Error("usage: forma pcb lib copy <name | Library:Name> [--footprint] [--to Library] [--name New]");
+      if (!from) throw new Error("usage: ise pcb lib copy <name | Library:Name> [--footprint] [--to Library] [--name New]");
       const libs = await get(`/pcb/libs?${q()}`);
       const inProject = libs.project.some((l) => (isFp ? l.footprints : l.symbols).some((x) => x.full === from));
       const builtin = (isFp ? libs.builtin.footprints : libs.builtin.symbols).includes(from) || (!from.includes(":") && !inProject);
@@ -224,17 +224,17 @@ export async function pcbLib(sub, args, { engine, get, http, q }) {
       const r = await get("/pcb/libs/wizards");
       for (const p of r.presets) console.log(`  ${p.name.padEnd(28)} ${JSON.stringify(p.wizard)}`);
     } else if (what === "wizard") {
-      // A preset by name (forma pcb lib wizards), or JSON, with key=value overrides: pins=14 pitch=0.65 name=…
+      // A preset by name (ise pcb lib wizards), or JSON, with key=value overrides: pins=14 pitch=0.65 name=…
       const save = flagOf(args, "--save");
       const board = flagOf(args, "--board");
       const spec = args[3];
-      if (!spec) throw new Error("usage: forma pcb lib wizard <preset | json> [key=value…] [--save Library] [--board <id>]");
+      if (!spec) throw new Error("usage: ise pcb lib wizard <preset | json> [key=value…] [--save Library] [--board <id>]");
       let w;
       if (spec.trim().startsWith("{")) w = JSON.parse(spec);
       else {
         const r = await get("/pcb/libs/wizards");
         const p = r.presets.find((x) => x.name.toLowerCase().startsWith(spec.toLowerCase()));
-        if (!p) throw new Error(`no preset “${spec}” (forma pcb lib wizards lists them)`);
+        if (!p) throw new Error(`no preset “${spec}” (ise pcb lib wizards lists them)`);
         w = p.wizard;
       }
       for (const kv of args.slice(4)) {
@@ -265,13 +265,13 @@ export async function pcbLib(sub, args, { engine, get, http, q }) {
       const style = flagOf(args, "--style");
       const unit = flagOf(args, "--unit");
       const [, , , schematic, symbol] = args;
-      if (!schematic || !symbol) throw new Error("usage: forma pcb lib place <schematic> <Library:Name> [--at x,y] [--ref U3] [--unit 2] [--style 2]");
+      if (!schematic || !symbol) throw new Error("usage: ise pcb lib place <schematic> <Library:Name> [--at x,y] [--ref U3] [--unit 2] [--style 2]");
       const r = await commit("pcb.lib.place", { schematic, symbol, at, ...(ref ? { reference: ref } : {}), ...(style ? { body_style: Number(style) } : {}), ...(unit ? { unit: Number(unit) } : {}) });
       console.log(`✓ placed ${r.reference ?? `power port ${symbol}`}`);
     } else if (what === "push") {
       const isFp = boolOf(args, "--footprint");
       const id = args[3];
-      if (!id) throw new Error("usage: forma pcb lib push <Library:Name> [--footprint]");
+      if (!id) throw new Error("usage: ise pcb lib push <Library:Name> [--footprint]");
       const r = isFp ? await commit("pcb.lib.footprint.push", { footprint: id }) : await commit("pcb.lib.symbol.push", { symbol: id });
       console.log(isFp ? `✓ redefined on ${r.boards.length} board(s)` : `✓ updated ${r.updated.length} placed part(s): ${r.updated.join(", ")}`);
     } else if (what === "delete") {
@@ -305,9 +305,9 @@ export async function pcbLib(sub, args, { engine, get, http, q }) {
       } else if (act === "delete") {
         await post(`/pcb/libs/global/${encodeURIComponent(name)}`, {}, "DELETE");
         console.log(`✓ deleted global library ${name}`);
-      } else throw new Error("usage: forma pcb lib global list | export <name> [--library L] | import <name> [--to L] | delete <name>");
+      } else throw new Error("usage: ise pcb lib global list | export <name> [--library L] | import <name> [--to L] | delete <name>");
     } else if (what === "table") {
-      // forma pcb lib table Project:project MyGlobal:global:pinned KiCad:kicad:off
+      // ise pcb lib table Project:project MyGlobal:global:pinned KiCad:kicad:off
       const rows = args.slice(3).map((s) => {
         const [name, kind = "project", ...flags] = s.split(":");
         return { name, kind, enabled: !flags.includes("off"), pinned: flags.includes("pinned") };
@@ -315,7 +315,7 @@ export async function pcbLib(sub, args, { engine, get, http, q }) {
       await commit("pcb.lib.table.set", { libraries: rows });
       console.log(`✓ library table: ${rows.map((r) => r.name).join(", ")}`);
     } else {
-      throw new Error("usage: forma pcb lib [list] | symbol|footprint <id> | check | copy <from> [--footprint] [--to L] | wizards | wizard <preset> [k=v…] [--save L] [--board id] | place <schematic> <L:Name> [--at x,y] | push <L:Name> [--footprint] | delete <L:Name…> [--footprint] | svg <id> [--footprint] | global … | table …");
+      throw new Error("usage: ise pcb lib [list] | symbol|footprint <id> | check | copy <from> [--footprint] [--to L] | wizards | wizard <preset> [k=v…] [--save L] [--board id] | place <schematic> <L:Name> [--at x,y] | push <L:Name> [--footprint] | delete <L:Name…> [--footprint] | svg <id> [--footprint] | global … | table …");
     }
   } else if (sub === "logo") {
     // An image made into a silkscreen or copper logo (or a schematic graphic), saved to a library, optionally put on a board.
@@ -328,7 +328,7 @@ export async function pcbLib(sub, args, { engine, get, http, q }) {
     const board = flagOf(args, "--board");
     const at = flagOf(args, "--at");
     const path = args[2];
-    if (!path) throw new Error("usage: forma pcb logo <image.png|.pgm> [--size mm] [--layer silk|copper|symbol] [--threshold 128] [--negative] [--name N] [--save Library] [--board <id> --at x,y]");
+    if (!path) throw new Error("usage: ise pcb logo <image.png|.pgm> [--size mm] [--layer silk|copper|symbol] [--threshold 128] [--negative] [--name N] [--save Library] [--board <id> --at x,y]");
     const img = decodeImage(new Uint8Array(readFileSync(path)));
     const r = await post("/pcb/libs/bitmap", { width: img.width, height: img.height, pixels: Buffer.from(img.grey).toString("base64"), threshold, negative, size, layer, ...(name ? { name } : {}) });
     if (r.kind === "symbol") {
@@ -345,7 +345,7 @@ export async function pcbLib(sub, args, { engine, get, http, q }) {
     }
   } else if (sub === "assign") {
     const schematic = args[2];
-    if (!schematic) throw new Error("usage: forma pcb assign <schematic> [R1=R_0603 U2=Project:SOT-583 …] [--fits R1]");
+    if (!schematic) throw new Error("usage: ise pcb assign <schematic> [R1=R_0603 U2=Project:SOT-583 …] [--fits R1]");
     const pairs = args.slice(3).filter((a) => a.includes("="));
     if (pairs.length) {
       const footprints = Object.fromEntries(pairs.map((p) => p.split("=")));
@@ -365,7 +365,7 @@ export async function pcbLib(sub, args, { engine, get, http, q }) {
     const schematic = args[2];
     const act = args[3] ?? "list";
     const name = args[4];
-    if (!schematic) throw new Error("usage: forma pcb variant <schematic> list | add <name> [--dnp R1,R2] [--fit R5] [--copy Other] | set <name> R2.value=4k7 R7.dnp=true … | delete <name> | bom <name> [--format jlcpcb]");
+    if (!schematic) throw new Error("usage: ise pcb variant <schematic> list | add <name> [--dnp R1,R2] [--fit R5] [--copy Other] | set <name> R2.value=4k7 R7.dnp=true … | delete <name> | bom <name> [--format jlcpcb]");
     const list = await get(`/pcb/variants/${schematic}?${q()}`);
     const find = () => {
       const v = list.variants.find((x) => x.variant.name.toLowerCase() === String(name).toLowerCase());
@@ -413,7 +413,7 @@ export async function pcbLib(sub, args, { engine, get, http, q }) {
       const replace = boolOf(args, "--replace");
       const noLayout = boolOf(args, "--no-layout");
       const [, , , schematic, name, ...refs] = args;
-      if (!schematic || !name) throw new Error("usage: forma pcb block save <schematic> <name> R1 C2 U1 … | --sheet <sheet> [--description …] [--replace] [--no-layout]");
+      if (!schematic || !name) throw new Error("usage: ise pcb block save <schematic> <name> R1 C2 U1 … | --sheet <sheet> [--description …] [--replace] [--no-layout]");
       const r = await commit("pcb.block.save", { schematic, name, references: refs, ...(sheet ? { sheet } : {}), description, replace, layout: !noLayout });
       console.log(`✓ design block ${r.name}: ${r.symbols} symbols, ${r.wires} wires, ${r.labels} labels${r.layout ? `, layout ${r.layout.parts} parts + ${r.layout.copper} copper` : ""}`);
     } else if (act === "place") {
@@ -421,7 +421,7 @@ export async function pcbLib(sub, args, { engine, get, http, q }) {
       const boardAt = flagOf(args, "--board-at");
       const sheet = flagOf(args, "--sheet");
       const [, , , schematic, block] = args;
-      if (!schematic || !block) throw new Error("usage: forma pcb block place <schematic> <block> [--at x,y] [--board-at x,y] [--sheet s]");
+      if (!schematic || !block) throw new Error("usage: ise pcb block place <schematic> <block> [--at x,y] [--board-at x,y] [--sheet s]");
       const r = await commit("pcb.block.place", { schematic, block, at, ...(boardAt ? { board_at: xy(boardAt) } : {}), ...(sheet ? { sheet } : {}) });
       console.log(`✓ placed ${r.placed.join(", ")}${r.on_board ? `; ${r.on_board} parts on the board` : ""}`);
     } else if (act === "delete") {

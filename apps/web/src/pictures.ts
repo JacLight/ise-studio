@@ -57,7 +57,7 @@ export function pictureTexture(ref: string): THREE.Texture {
       listing = null;
       const again = await pictures();
       const late = [...again].reverse().find((e) => named(e, ref));
-      if (!late) return console.warn(`printed picture ${ref}: no picture of that name in the project (add it with ./forma image add)`);
+      if (!late) return console.warn(`printed picture ${ref}: no picture of that name in the project (add it with ./ise image add)`);
       return load(texture, late.id);
     }
     return load(texture, entry.id);

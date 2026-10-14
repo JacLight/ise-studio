@@ -835,7 +835,7 @@ fn esp32_wroom_32() -> Footprint {
     // Espressif ESP32-WROOM-32E datasheet v2.1, fig. 13: 18 × 25.5 mm, 38 pads 1.5 × 0.9 at 1.27 mm reaching 0.5 mm past
     // the module's edges (side pad rows 17.5 mm apart centre to centre), pin 1 7.49 mm below the top edge, GND pad
     // 3.7 × 3.7 mm (3 × 3 paste windows) 7.5 mm from the module's left edge and 10.29 mm above its bottom edge.
-    // Checked pad by pad against KiCad's RF_Module:ESP32-WROOM-32E (`./forma pcb verify-footprints`).
+    // Checked pad by pad against KiCad's RF_Module:ESP32-WROOM-32E (`./ise pcb verify-footprints`).
     let (w, l) = (18.0, 25.5);
     let pitch = 1.27;
     let pad = [1.5, 0.9];

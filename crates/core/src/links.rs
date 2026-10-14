@@ -782,7 +782,7 @@ pub(crate) fn guard(project: &crate::Project, ops: &[crate::Op], operation: &str
         return Err(CommandError::new(
             ErrorCode::LinkedReadOnly,
             format!(
-                "{name} is linked from {from} and follows it, so it cannot be changed here ({kind}).{placed} To change it: break the link (it becomes a local copy: `./forma links break {l}`), or edit it locally (`./forma links local {l} on`: updates then merge the source's changes with yours), or change it in {p}.",
+                "{name} is linked from {from} and follows it, so it cannot be changed here ({kind}).{placed} To change it: break the link (it becomes a local copy: `./ise links break {l}`), or edit it locally (`./ise links local {l} on`: updates then merge the source's changes with yours), or change it in {p}.",
                 l = mark.link,
                 p = link.project,
             ),

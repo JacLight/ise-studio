@@ -1,7 +1,7 @@
 // A bas-relief wall plaque carved from a picture: brightness becomes height,
 // so the moonlit pines and the near bank stand proudest and the night sky
 // sits deepest. The picture is valley.jpg (drawn for this example as
-// valley.svg), added to the project with `./forma image add valley.jpg`;
+// valley.svg), added to the project with `./ise image add valley.jpg`;
 // programs refer to it by its content hash.
 //
 // Printed face up in one piece: a raised frame all round, the relief inside

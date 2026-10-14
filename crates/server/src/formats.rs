@@ -1,4 +1,4 @@
-//! Files in and out beyond the fabrication package: every format Forma reads
+//! Files in and out beyond the fabrication package: every format Iṣẹ́ Studio reads
 //! becomes a part or a sketch (`POST /import/<file>`), and a design leaves as
 //! exact STEP or IGES, or as an OBJ, PLY or glTF mesh (`GET /export/<id>.<ext>`).
 
@@ -127,7 +127,7 @@ pub(crate) async fn import(State(server): State<Arc<Server>>, Path(file): Path<S
         (file, body)
     };
     let Some(kind) = Kind::sniff(&body).or(Kind::from_name(&file)) else {
-        return fail(StatusCode::BAD_REQUEST, format!("Forma imports {ACCEPTED} files"));
+        return fail(StatusCode::BAD_REQUEST, format!("ISE Studio imports {ACCEPTED} files"));
     };
     let app = match server.project(query.get("project")) {
         Ok(app) => app,
@@ -274,7 +274,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn files_come_in_as_parts_and_sketches_and_leave_in_every_format() {
         // Imported files live where programs read them (one folder per process).
-        let dir = std::env::temp_dir().join(format!("forma-formats-{}", StableId::new()));
+        let dir = std::env::temp_dir().join(format!("ise-formats-{}", StableId::new()));
         if de_shape::assets::dir().is_none() {
             de_shape::assets::set_dir(dir.join("assets"));
         }

@@ -1,10 +1,10 @@
-// `./forma pcb drc|setup|stackup|rules|teardrops|text|draw|image|keepout|stitch|fence|align|distribute|move|array|flip|swap|channel …`:
+// `./ise pcb drc|setup|stackup|rules|teardrops|text|draw|image|keepout|stitch|fence|align|distribute|move|array|flip|swap|channel …`:
 // board objects, zones, placement, the stackup and the custom rules language,
 // through the same engine commands the Electronics workspace uses. Called
-// from tools/forma.mjs with its engine connection.
+// from tools/ise.mjs with its engine connection.
 
 import { readFileSync } from "node:fs";
-import { decodeImage } from "./forma-pcblib.mjs";
+import { decodeImage } from "./ise-pcblib.mjs";
 
 export const BOARD_SUBS = ["drc", "setup", "stackup", "rules", "teardrops", "text", "draw", "image", "keepout", "stitch", "fence", "align", "distribute", "move", "array", "flip", "swap", "channel"];
 
@@ -52,7 +52,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
 
   if (sub === "drc") {
     const board = args[2];
-    if (!board) throw new Error("usage: forma pcb drc <board> [--code clearance]");
+    if (!board) throw new Error("usage: ise pcb drc <board> [--code clearance]");
     const code = flagOf(args, "--code");
     const v = await view(board);
     const list = show(v.violations, code);
@@ -61,7 +61,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
   }
   if (sub === "setup") {
     const board = args[2];
-    if (!board) throw new Error("usage: forma pcb setup <board>");
+    if (!board) throw new Error("usage: ise pcb setup <board>");
     const v = await view(board);
     console.log(`${v.name}: ${v.layers.length} copper layers (${v.layers.join(" ")}), ${v.thickness} mm, ${v.finish}`);
     console.log(`Stackup (${v.stackup.custom ? "custom" : "standard"}, adds up to ${v.stackup.total} mm):`);
@@ -72,7 +72,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
   }
   if (sub === "stackup") {
     const board = args[2];
-    if (!board) throw new Error("usage: forma pcb stackup <board> [--layers 6] [--thickness 1.6] [--standard] [--fit] [--file stackup.json ({dielectrics, copper_oz})]");
+    if (!board) throw new Error("usage: ise pcb stackup <board> [--layers 6] [--thickness 1.6] [--standard] [--fit] [--file stackup.json ({dielectrics, copper_oz})]");
     const params = { board };
     const layers = flagOf(args, "--layers");
     const thickness = flagOf(args, "--thickness");
@@ -89,7 +89,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
   }
   if (sub === "rules") {
     const board = args[2];
-    if (!board) throw new Error("usage: forma pcb rules <board> [file.kicad_dru | --clear]");
+    if (!board) throw new Error("usage: ise pcb rules <board> [file.kicad_dru | --clear]");
     const file = args[3];
     if (file || args.includes("--clear")) {
       const text = args.includes("--clear") ? "" : readFileSync(file, "utf8");
@@ -106,7 +106,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
   }
   if (sub === "teardrops") {
     const [board, onoff] = [args[2], args[3]];
-    if (!board || !["on", "off"].includes(onoff)) throw new Error("usage: forma pcb teardrops <board> on|off [--smd] [--no-vias] [--straight] [--length 0.5] [--width 1.0]");
+    if (!board || !["on", "off"].includes(onoff)) throw new Error("usage: ise pcb teardrops <board> on|off [--smd] [--no-vias] [--straight] [--length 0.5] [--width 1.0]");
     const params = { board, enabled: onoff === "on" };
     if (boolOf(args, "--smd")) params.smd = true;
     if (boolOf(args, "--no-vias")) params.vias = false;
@@ -122,7 +122,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
   }
   if (sub === "text") {
     const [board, layer, text, at] = [args[2], args[3], args[4], args[5]];
-    if (!board || !layer || !text || !at) throw new Error('usage: forma pcb text <board> <layer> "TEXT" x,y [--size 1.5] [--font Inter] [--weight 700] [--rotate 90] [--knockout] [--align left|center|right]');
+    if (!board || !layer || !text || !at) throw new Error('usage: ise pcb text <board> <layer> "TEXT" x,y [--size 1.5] [--font Inter] [--weight 700] [--rotate 90] [--knockout] [--align left|center|right]');
     const params = { board, layer, kind: "text", text, at: nums(at, 2, "x,y") };
     for (const [f, k, num] of [["--size", "size", true], ["--font", "font", false], ["--weight", "weight", true], ["--rotate", "rotation", true], ["--align", "align", false], ["--width", "width", true]]) {
       const v = flagOf(args, f);
@@ -135,7 +135,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
   }
   if (sub === "draw") {
     const [board, layer, kind, json] = [args[2], args[3], args[4], args[5]];
-    if (!board || !layer || !kind) throw new Error("usage: forma pcb draw <board> <layer> <line|arc|circle|rect|polygon|bezier|ellipse|dimension> '<json fields>' [--width 0.2] [--filled] [--net GND]");
+    if (!board || !layer || !kind) throw new Error("usage: ise pcb draw <board> <layer> <line|arc|circle|rect|polygon|bezier|ellipse|dimension> '<json fields>' [--width 0.2] [--filled] [--net GND]");
     const params = { board, layer, kind, ...(json ? JSON.parse(json) : {}) };
     const w = flagOf(args, "--width");
     const net = flagOf(args, "--net");
@@ -148,7 +148,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
   }
   if (sub === "image") {
     const [board, layer, path, at] = [args[2], args[3], args[4], args[5]];
-    if (!board || !layer || !path || !at) throw new Error("usage: forma pcb image <board> <layer> <image.png|pgm> x,y --size <width mm> [--threshold 128] [--negative]");
+    if (!board || !layer || !path || !at) throw new Error("usage: ise pcb image <board> <layer> <image.png|pgm> x,y --size <width mm> [--threshold 128] [--negative]");
     const size = Number(flagOf(args, "--size") ?? 10);
     const img = decodeImage(new Uint8Array(readFileSync(path)));
     const params = { board, layer, kind: "image", at: nums(at, 2, "x,y"), size, px: [img.width, img.height], pixels: Buffer.from(img.grey).toString("base64") };
@@ -164,7 +164,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
     const no = flagOf(args, "--no");
     const layers = flagOf(args, "--layers");
     const pts = args.slice(4).filter((a) => !a.startsWith("--")).map((p) => nums(p, 2, "x,y"));
-    if (!board || !name || pts.length < 3) throw new Error("usage: forma pcb keepout <board> <name> x,y x,y x,y … [--no tracks,vias,pads,pours,footprints] [--layers top,bottom]");
+    if (!board || !name || pts.length < 3) throw new Error("usage: ise pcb keepout <board> <name> x,y x,y x,y … [--no tracks,vias,pads,pours,footprints] [--layers top,bottom]");
     const params = { board, name, outline: pts };
     if (layers) params.layers = layers.split(",");
     if (no) for (const k of ["tracks", "vias", "pads", "pours", "footprints"]) params[`no_${k}`] = no.split(",").includes(k);
@@ -174,7 +174,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
   }
   if (sub === "stitch") {
     const [board, net] = [args[2], args[3]];
-    if (!board) throw new Error("usage: forma pcb stitch <board> [net] [--zone id] [--pitch 2.5] [--stagger] [--drill 0.3 --diameter 0.6]");
+    if (!board) throw new Error("usage: ise pcb stitch <board> [net] [--zone id] [--pitch 2.5] [--stagger] [--drill 0.3 --diameter 0.6]");
     const params = { board, ...(net && !net.startsWith("--") ? { net } : {}) };
     for (const [f, k, num] of [["--zone", "zone", false], ["--pitch", "pitch", true], ["--drill", "drill", true], ["--diameter", "diameter", true]]) {
       const v = flagOf(args, f);
@@ -187,7 +187,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
   }
   if (sub === "fence") {
     const [board, track, net] = [args[2], args[3], args[4]];
-    if (!board || !track || !net) throw new Error("usage: forma pcb fence <board> <track id> <net> [--pitch 1.5] [--offset mm] [--sides both|left|right]");
+    if (!board || !track || !net) throw new Error("usage: ise pcb fence <board> <track id> <net> [--pitch 1.5] [--offset mm] [--sides both|left|right]");
     const params = { board, track, net };
     for (const [f, k, num] of [["--pitch", "pitch", true], ["--offset", "offset", true], ["--sides", "sides", false]]) {
       const v = flagOf(args, f);
@@ -201,7 +201,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
     const to = args[2];
     const ref = flagOf(args, "--to");
     const targets = await resolve(args.slice(3));
-    if (!to || targets.length < 2) throw new Error("usage: forma pcb align <left|right|top|bottom|center_x|center_y> <ids or refs…> [--board id] [--to <reference item>]");
+    if (!to || targets.length < 2) throw new Error("usage: ise pcb align <left|right|top|bottom|center_x|center_y> <ids or refs…> [--board id] [--to <reference item>]");
     const r = await commit("pcb.align", { targets, to, ...(ref ? { reference: (await resolve([ref]))[0] } : {}) });
     console.log(`✓ ${r.moved} moved to ${to} ${r.at.toFixed(3)}`);
     return false;
@@ -210,7 +210,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
     const axis = args[2];
     const gaps = boolOf(args, "--gaps");
     const targets = await resolve(args.slice(3));
-    if (!axis || targets.length < 3) throw new Error("usage: forma pcb distribute <x|y> <ids or refs…> [--board id] [--gaps]");
+    if (!axis || targets.length < 3) throw new Error("usage: ise pcb distribute <x|y> <ids or refs…> [--board id] [--gaps]");
     const r = await commit("pcb.distribute", { targets, axis, ...(gaps ? { by: "gaps" } : {}) });
     console.log(`✓ ${r.moved} moved`);
     return false;
@@ -222,7 +222,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
     const offset = flagOf(args, "--offset");
     const rotate = flagOf(args, "--rotate");
     const targets = await resolve(args.slice(2));
-    if (!targets.length) throw new Error("usage: forma pcb move <ids or refs…> [--board id] (--by dx,dy | --to x,y | --rel <item> --offset dx,dy) [--rotate deg]");
+    if (!targets.length) throw new Error("usage: ise pcb move <ids or refs…> [--board id] (--by dx,dy | --to x,y | --rel <item> --offset dx,dy) [--rotate deg]");
     const params = { targets };
     if (by) params.by = nums(by, 2, "dx,dy");
     if (to) params.to = nums(to, 2, "x,y");
@@ -238,7 +238,7 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
     const circ = flagOf(args, "--circular");
     const keep = boolOf(args, "--keep-nets");
     const targets = await resolve(args.slice(2));
-    if (!targets.length || !(grid || circ)) throw new Error("usage: forma pcb array <ids or refs…> [--board id] (--grid nx,ny,dx,dy | --circular cx,cy,count[,angle]) [--keep-nets]");
+    if (!targets.length || !(grid || circ)) throw new Error("usage: ise pcb array <ids or refs…> [--board id] (--grid nx,ny,dx,dy | --circular cx,cy,count[,angle]) [--keep-nets]");
     const params = { targets, keep_nets: keep };
     if (grid) {
       const [nx, ny, dx, dy] = nums(grid, 4, "nx,ny,dx,dy");
@@ -254,14 +254,14 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
   }
   if (sub === "flip") {
     const targets = await resolve(args.slice(2));
-    if (!targets.length) throw new Error("usage: forma pcb flip <ids or refs…> [--board id]");
+    if (!targets.length) throw new Error("usage: ise pcb flip <ids or refs…> [--board id]");
     const r = await commit("pcb.flip", { targets });
     console.log(`✓ ${r.flipped} flipped to the other side`);
     return false;
   }
   if (sub === "swap") {
     const t = await resolve(args.slice(2, 4));
-    if (t.length !== 2) throw new Error("usage: forma pcb swap <a> <b> [--board id]");
+    if (t.length !== 2) throw new Error("usage: ise pcb swap <a> <b> [--board id]");
     await commit("pcb.swap", { a: t[0], b: t[1] });
     console.log("✓ swapped");
     return false;
@@ -274,10 +274,10 @@ export async function pcbBoard(sub, args, { engine, get, q }) {
     const noRouting = boolOf(args, "--no-routing");
     const channels = [];
     for (let to; (to = flagOf(args, "--to")); ) channels.push(to.split(","));
-    if (!board || !source || !channels.length) throw new Error("usage: forma pcb channel <board> --source U1,R1,C1 --to U2,R2,C2 [--to U3,R3,C3] [--step dx,dy] [--areas] [--no-routing]");
+    if (!board || !source || !channels.length) throw new Error("usage: ise pcb channel <board> --source U1,R1,C1 --to U2,R2,C2 [--to U3,R3,C3] [--step dx,dy] [--areas] [--no-routing]");
     const r = await commit("pcb.channel.repeat", { board, source: source.split(","), channels, ...(step ? { step: nums(step, 2, "dx,dy") } : {}), areas, routing: !noRouting });
     for (const c of r.channels) console.log(`✓ channel ${c.channel}: ${c.components} parts placed, ${c.tracks} tracks and ${c.vias} vias copied${c.replaced ? ` (${c.replaced} replaced)` : ""}`);
     return false;
   }
-  throw new Error(`unknown: forma pcb ${sub}`);
+  throw new Error(`unknown: ise pcb ${sub}`);
 }

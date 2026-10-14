@@ -313,7 +313,7 @@ pub fn pdf(v: &SchematicView) -> Vec<u8> {
     let kids: Vec<String> = (0..pages.len()).map(|i| format!("{} 0 R", 5 + i * 2)).collect();
     objs.push(format!("<< /Type /Pages /Kids [{}] /Count {} >>", kids.join(" "), pages.len()).into_bytes());
     objs.push(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec());
-    objs.push(format!("<< /Title ({}) /Producer (Forma) >>", esc(&v.name)).into_bytes());
+    objs.push(format!("<< /Title ({}) /Producer (ISE Studio) >>", esc(&v.name)).into_bytes());
     // Fonts F2–F4 and the pictures come after the pages.
     let after = 5 + pages.len() * 2;
     let fonts = format!("/F1 3 0 R /F2 {} 0 R /F3 {} 0 R /F4 {} 0 R", after, after + 1, after + 2);

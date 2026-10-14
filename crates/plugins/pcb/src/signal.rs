@@ -22,7 +22,7 @@
 //! The checks (`check`, run by DRC) report `impedance`, `diff_pair_gap`,
 //! `diff_pair_uncoupled`, `length`, `skew` and `via_count`, from the net
 //! classes, pairs and groups and from the custom rules' constraints of the
-//! same names (plus Forma's `impedance` constraint, in Ω).
+//! same names (plus Iṣẹ́ Studio's `impedance` constraint, in Ω).
 
 use crate::board::{BoardView, TrackView, Violation};
 use crate::calc;

@@ -1694,7 +1694,7 @@ function TableTab(props: { libs: any; commit: Commit; canEdit: boolean; reload: 
     ...libs.project.map((l: any) => ({ name: l.name, kind: "project", detail: `${l.symbols.length} symbols, ${l.footprints.length} footprints in this project` })),
     ...libs.global.libraries.map((l: any) => ({ name: l.name, kind: "global", detail: `${l.symbols.length} symbols, ${l.footprints.length} footprints on this computer` })),
     { name: "KiCad", kind: "kicad", detail: `official libraries: footprints ${libs.kicad.footprints ? "downloaded" : "not downloaded"}, symbols ${libs.kicad.symbols ? "downloaded" : "not downloaded"} (${libs.kicad.root})` },
-    { name: "Forma", kind: "builtin", detail: `${libs.builtin.symbols.length} symbols, ${libs.builtin.footprints.length} footprints (IPC-7351B)` },
+    { name: "ISE Studio", kind: "builtin", detail: `${libs.builtin.symbols.length} symbols, ${libs.builtin.footprints.length} footprints (IPC-7351B)` },
   ];
   const entry = (r: { name: string; kind: string }) => table.find((t) => t.name === r.name && t.kind === r.kind) ?? { name: r.name, kind: r.kind, enabled: true, pinned: false };
   const setEntry = (r: { name: string; kind: string }, patch: Record<string, unknown>) => {
@@ -1784,14 +1784,14 @@ const TAB_TIPS: Record<Section, string> = {
 export function LibraryPane(props: { boardId: string | null; revision: number; commit: Commit; notify: (m: string) => void; canEdit: boolean }) {
   const [section, setSection] = useState<Section>(() => {
     try {
-      return (localStorage.getItem("forma.pcb.lib.section") as Section) || "symbols";
+      return (localStorage.getItem("ise.pcb.lib.section") as Section) || "symbols";
     } catch {
       return "symbols";
     }
   });
   useEffect(() => {
     try {
-      localStorage.setItem("forma.pcb.lib.section", section);
+      localStorage.setItem("ise.pcb.lib.section", section);
     } catch {
       /* private window */
     }
@@ -1836,7 +1836,7 @@ export function LibraryPane(props: { boardId: string | null; revision: number; c
   // The library table: libraries switched off are not offered; pinned ones come first.
   const row = (name: string, kind: string) => (libs?.table ?? []).find((t: any) => t.name === name && t.kind === kind);
   const projectLibs: any[] = (libs?.project ?? []).filter((l: any) => row(l.name, "project")?.enabled !== false).sort((a: any, b: any) => Number(!!row(b.name, "project")?.pinned) - Number(!!row(a.name, "project")?.pinned));
-  const builtinOn = row("Forma", "builtin")?.enabled !== false;
+  const builtinOn = row("Iṣẹ́ Studio", "builtin")?.enabled !== false;
   const tabs: [Section, string][] = [
     ["symbols", "Symbols"],
     ["footprints", "Footprints"],

@@ -47,14 +47,14 @@ pub struct Gerber {
 impl Gerber {
     pub fn new(view: &BoardView, function: &str, negative: bool) -> Gerber {
         let mut header = String::new();
-        let _ = writeln!(header, "%TF.GenerationSoftware,Forma,PCB,{}*%", env!("CARGO_PKG_VERSION"));
+        let _ = writeln!(header, "%TF.GenerationSoftware,ISE Studio,PCB,{}*%", env!("CARGO_PKG_VERSION"));
         let _ = writeln!(header, "%TF.ProjectId,{},{},{}*%", field(&view.name).replace(' ', "_"), view.id, field(&view.revision));
         let _ = writeln!(header, "%TF.SameCoordinates,Original*%");
         let _ = writeln!(header, "%TF.FileFunction,{function}*%");
         let _ = writeln!(header, "%TF.FilePolarity,{}*%", if negative { "Negative" } else { "Positive" });
         let _ = writeln!(header, "%FSLAX46Y46*%");
         let _ = writeln!(header, "G04 Gerber Fmt 4.6, Leading zero omitted, Abs format (unit mm)*");
-        let _ = writeln!(header, "G04 {} rev {}, made by Forma*", field(&view.name), field(&view.revision));
+        let _ = writeln!(header, "G04 {} rev {}, made by ISE Studio*", field(&view.name), field(&view.revision));
         let _ = writeln!(header, "%MOMM*%");
         let _ = writeln!(header, "%LPD*%");
         let _ = writeln!(header, "G01*");
@@ -443,7 +443,7 @@ pub fn drill_span(view: &BoardView, plated: bool, span: Option<&[String; 2]>) ->
     let _ = writeln!(s, "M48");
     let _ = writeln!(s, "; DRILL file: {} rev {} ({})", view.name, view.revision, if plated { "plated" } else { "not plated" });
     let _ = writeln!(s, "; FORMAT={{-:-/ absolute / metric / decimal}}");
-    let _ = writeln!(s, "; #@! TF.GenerationSoftware,Forma,PCB,{}", env!("CARGO_PKG_VERSION"));
+    let _ = writeln!(s, "; #@! TF.GenerationSoftware,ISE Studio,PCB,{}", env!("CARGO_PKG_VERSION"));
     let (from, to, kind) = match span {
         Some(sp) => {
             let a = view.layers.iter().position(|l| *l == sp[0]).unwrap_or(0) + 1;

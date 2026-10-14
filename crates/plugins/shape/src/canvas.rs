@@ -43,7 +43,7 @@ use std::collections::BTreeMap;
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Canvas {
     pub name: String,
-    /// The stored picture's content hash (`./forma image add`).
+    /// The stored picture's content hash (`./ise image add`).
     pub image: String,
     /// The picture's size in pixels.
     pub pixels: [u32; 2],
@@ -690,14 +690,14 @@ fn fit_object(c: &mut Canvas, o: &ObjectSize, picture: &Picture) -> Result<(), C
 }
 
 fn load_picture(sha: &str) -> Result<std::sync::Arc<Picture>, CommandError> {
-    crate::image::load(sha).map_err(|e| CommandError::new(ErrorCode::UnresolvedReference, format!("the canvas's picture: {e} (add it with ./forma image add <file>)")))
+    crate::image::load(sha).map_err(|e| CommandError::new(ErrorCode::UnresolvedReference, format!("the canvas's picture: {e} (add it with ./ise image add <file>)")))
 }
 
 /// `canvas.create`: a reference picture on a plane of the model.
 #[derive(Deserialize, JsonSchema)]
 pub struct CreateCanvas {
     pub name: String,
-    /// A stored picture's id (`./forma image add <file>`).
+    /// A stored picture's id (`./ise image add <file>`).
     pub image: String,
     #[serde(flatten)]
     pub settings: Settings,
@@ -926,7 +926,7 @@ pub fn spans(loops: &[Vec<[f64; 2]>], c: f64, vertical: bool) -> Vec<[f64; 2]> {
 }
 
 /// A canvas's outline measured in plane mm: its bounds and area, and where
-/// it is at stations every `every` mm across and up (what `./forma canvas
+/// it is at stations every `every` mm across and up (what `./ise canvas
 /// measure` prints).
 pub fn measure(c: &Canvas, o: &TraceOptions, every: f64, tolerance: f64) -> Result<Value, String> {
     let loops = trace(c, o, tolerance)?;
@@ -1097,7 +1097,7 @@ pub fn resolve_uses(tx: &Tx, source: &str, existing: &BTreeMap<String, StableId>
             [id] => {
                 out.insert(key, *id);
             }
-            [] => return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("there is no canvas called “{name}” (./forma canvas list)"))),
+            [] => return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("there is no canvas called “{name}” (./ise canvas list)"))),
             _ => return Err(CommandError::new(ErrorCode::InvalidParameters, format!("more than one canvas is called “{name}”; rename one"))),
         }
     }
@@ -1253,12 +1253,12 @@ mod tests {
         assert!((0..3).all(|k| (before[k] - after[k]).abs() < 1e-6), "{before:?} → {after:?}");
     }
 
-    /// Timing on a real photo: FORMA_PHOTO=<file.jpg> cargo test … -- --ignored trace_timing --nocapture
+    /// Timing on a real photo: ISE_PHOTO=<file.jpg> cargo test … -- --ignored trace_timing --nocapture
     #[test]
     #[ignore]
     fn trace_timing() {
-        let Ok(path) = std::env::var("FORMA_PHOTO") else { return };
-        crate::assets::set_dir(std::env::temp_dir().join(format!("forma-timing-{}", std::process::id())));
+        let Ok(path) = std::env::var("ISE_PHOTO") else { return };
+        crate::assets::set_dir(std::env::temp_dir().join(format!("ise-timing-{}", std::process::id())));
         let sha = crate::assets::store(&std::fs::read(path).unwrap()).unwrap();
         let p = crate::image::load(&sha).unwrap();
         let mut c = canvas(p.width as u32, p.height as u32);

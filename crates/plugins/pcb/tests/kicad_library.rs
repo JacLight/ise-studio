@@ -42,14 +42,14 @@ fn built_in_footprints_match_kicad_pad_for_pad() {
     let esp = by("ESP32-WROOM-32");
     assert!(esp.worst_position < 0.005, "{}", esp.worst_position);
     assert!(esp.findings.iter().any(|x| x.pad == "39" && x.severity == "note"), "the thermal pad is compared as one land");
-    // KiCad numbers SOT-223's tab "2"; Forma "4": same copper, flagged.
+    // KiCad numbers SOT-223's tab "2"; Iṣẹ́ Studio "4": same copper, flagged.
     assert!(by("SOT-223").findings.iter().any(|x| x.pad == "4" && x.message.contains("numbered")));
     // Headers line up exactly, origin at pin 1 in both.
     let h = by("PinHeader_1x06_2.54");
     assert!(h.findings.is_empty(), "{:?}", h.findings);
     // The QFN's exposed pad paste windows are not copper.
     assert_eq!(by("QFN-32_5x5").kicad_pads, 33);
-    // The tactile switch's origin: KiCad's at pin 1, Forma's at the centre.
+    // The tactile switch's origin: KiCad's at pin 1, Iṣẹ́ Studio's at the centre.
     let sw = by("SW_Tactile_6x6");
     assert!((sw.offset[0] + 3.25).abs() < 1e-6 && (sw.offset[1] - 2.25).abs() < 1e-6, "{:?}", sw.offset);
 }

@@ -38,7 +38,7 @@ fn record(op: &str, net: &str, refdes: &str, pin: &str, drill: Option<(f64, bool
 
 pub fn write(v: &BoardView) -> String {
     let mut o = String::new();
-    let _ = writeln!(o, "C  IPC-D-356A netlist written by Forma");
+    let _ = writeln!(o, "C  IPC-D-356A netlist written by ISE Studio");
     let _ = writeln!(o, "C  {} rev {}", v.name, v.revision);
     let _ = writeln!(o, "P  JOB   {}", v.name);
     let _ = writeln!(o, "P  UNITS CUST 1");

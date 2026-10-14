@@ -53,7 +53,7 @@ export function pan(camera: THREE.PerspectiveCamera, target: THREE.Vector3, dx: 
 /** Whether two-finger trackpad scrolling pans (and a pinch zooms), from Preferences. */
 export const trackpadPans = () => {
   try {
-    return localStorage.getItem("forma.trackpadPan") === "1";
+    return localStorage.getItem("ise.trackpadPan") === "1";
   } catch {
     return false;
   }

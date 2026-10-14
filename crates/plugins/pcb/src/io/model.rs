@@ -153,7 +153,7 @@ fn normal(t: &[[f32; 3]; 3]) -> [f32; 3] {
 /// VRML 2.0, millimetres turned to metres and z up to y up by the outer transform.
 pub fn vrml(v: &BoardView, board: &Board, items: &Items) -> String {
     let mut s = String::new();
-    let _ = writeln!(s, "#VRML V2.0 utf8\nWorldInfo {{ title \"{}\" info [ \"Made with Forma\" \"Units: millimetres, scaled to metres; z up turned to VRML's y up\" ] }}", v.name.replace('"', "'"));
+    let _ = writeln!(s, "#VRML V2.0 utf8\nWorldInfo {{ title \"{}\" info [ \"Made with ISE Studio\" \"Units: millimetres, scaled to metres; z up turned to VRML's y up\" ] }}", v.name.replace('"', "'"));
     let _ = writeln!(s, "Transform {{\n  scale 0.001 0.001 0.001\n  rotation 1 0 0 -1.5707963\n  children [");
     for p in parts(v, board, items) {
         let _ = writeln!(s, "  DEF {} Shape {{", p.name.replace(|c: char| !c.is_ascii_alphanumeric() && c != '_', "_"));
@@ -223,7 +223,7 @@ pub fn glb(v: &BoardView, board: &Board, items: &Items) -> Vec<u8> {
         nodes.push(de_core::json!({ "name": p.name, "mesh": i }));
     }
     let json = de_core::json!({
-        "asset": { "version": "2.0", "generator": "Forma" },
+        "asset": { "version": "2.0", "generator": "ISE Studio" },
         "scene": 0,
         "scenes": [{ "name": v.name, "nodes": (0..ps.len()).collect::<Vec<_>>() }],
         "nodes": nodes,

@@ -198,10 +198,10 @@ export function App({ engine }: { engine: Engine }) {
   const [rendering, setRendering] = useState(false);
   // The room renders are made in: the grey studio, or the white sweep of a catalogue shot.
   const [studio, setStudio] = usePersisted<Studio>("renderStudio", "studio");
-  // ?studio=white wins (a headless render started by ./forma render --studio white).
+  // ?studio=white wins (a headless render started by ./ise render --studio white).
   const studioAsked = new URLSearchParams(location.search).get("studio");
   const studioNow = useRef(studio);
-  // Product photos laid onto the model in renders (canvas names), as ./forma render --skin asks.
+  // Product photos laid onto the model in renders (canvas names), as ./ise render --skin asks.
   const skinNow = useRef<string[]>([]);
   studioNow.current = studioAsked === "white" || studioAsked === "studio" ? studioAsked : studio;
   const renderSource = useCallback(() => viewport.current?.renderSource() ?? null, []);
@@ -302,7 +302,7 @@ export function App({ engine }: { engine: Engine }) {
     passing: requirements.filter((e) => (previews.get(e.id) ?? e.result)?.passed).length,
   };
 
-  // Forma AI can show things in this person's view.
+  // Iṣẹ́ AI can show things in this person's view.
   useEffect(
     () =>
       engine.onView(({ action, target, value }) => {
@@ -351,10 +351,10 @@ export function App({ engine }: { engine: Engine }) {
             }
             break;
           case "render": {
-            // A render asked for from ./forma render: made here, sent back to the engine.
+            // A render asked for from ./ise render: made here, sent back to the engine.
             const job = value ? (JSON.parse(value) as { job?: string; width?: number; height?: number; samples?: number; open?: boolean; studio?: Studio; format?: string; skin?: string[] }) : {};
             if (job.studio === "white" || job.studio === "studio") studioNow.current = job.studio;
-            // Photo skins (./forma render --skin "Left side,Top"): kept for the renders that follow; [] clears them.
+            // Photo skins (./ise render --skin "Left side,Top"): kept for the renders that follow; [] clears them.
             if (job.skin) skinNow.current = job.skin;
             if (job.studio) setStudio(studioNow.current);
             if (!job.job) {
@@ -376,7 +376,7 @@ export function App({ engine }: { engine: Engine }) {
               back("", "the view is not ready");
               break;
             }
-            // A model for a website (./forma render --glb) rather than a picture.
+            // A model for a website (./ise render --glb) rather than a picture.
             if (job.format === "glb") {
               modelForWeb(source)
                 .then((glb) => back(new Blob([glb], { type: "model/gltf-binary" })))
@@ -393,7 +393,7 @@ export function App({ engine }: { engine: Engine }) {
               setView(value as ViewName);
               viewport.current?.view(value as ViewName);
             } else if (value && /^\s*-?\d/.test(value)) {
-              // azimuth,elevation[,lens angle[,fill]] in degrees (fill 0–1), as ./forma look takes them.
+              // azimuth,elevation[,lens angle[,fill]] in degrees (fill 0–1), as ./ise look takes them.
               const [az, el, fov, fill] = value.split(",").map(Number);
               if (Number.isFinite(az) && Number.isFinite(el)) viewport.current?.lookFrom(az, el, Number.isFinite(fov) ? fov : undefined, Number.isFinite(fill) ? fill : undefined);
             }
@@ -1251,7 +1251,7 @@ export function App({ engine }: { engine: Engine }) {
   const importFile = useCallback(
     async (file: File) => {
       if (/\.dwg$/i.test(file.name)) return notify("DWG cannot be read here (closed format): save it as DXF and drop that");
-      if (/\.forma$/i.test(file.name)) {
+      if (/\.ise$/i.test(file.name)) {
         notify(`Opening ${file.name} as a new project…`);
         const res = await fetch("/projects/import", { method: "POST", body: file });
         if (!res.ok) return notify(await res.text());
@@ -1276,7 +1276,7 @@ export function App({ engine }: { engine: Engine }) {
         }
         return;
       }
-      if (!importable(file.name)) return notify(`Forma imports ${IMPORT_FORMATS} files`);
+      if (!importable(file.name)) return notify(`Iṣẹ́ Studio imports ${IMPORT_FORMATS} files`);
       notify(`Importing ${file.name}…`);
       try {
         const res = await fetch(projectUrl(`/import/${encodeURIComponent(file.name)}?user=${encodeURIComponent(state.userId)}`), { method: "POST", body: file });
@@ -1304,13 +1304,13 @@ export function App({ engine }: { engine: Engine }) {
       const f = e.dataTransfer?.files?.[0];
       if (!f) return;
       e.preventDefault();
-      // A picture (or a PDF drawing) goes to Forma AI, to talk about or build from.
+      // A picture (or a PDF drawing) goes to Iṣẹ́ AI, to talk about or build from.
       if (/\.(png|jpe?g|gif|webp|pdf)$/i.test(f.name) && state.ai.available) {
-        window.dispatchEvent(new CustomEvent("forma:attach", { detail: f }));
+        window.dispatchEvent(new CustomEvent("ise:attach", { detail: f }));
         setPrefs((p) => ({ ...p, aiMode: p.aiMode === "mini" || p.aiMode === "hidden" ? p.lastMode : p.aiMode }));
         return;
       }
-      // A board or schematic from another EDA tool becomes Forma's, opened in the Electronics workspace.
+      // A board or schematic from another EDA tool becomes Iṣẹ́ Studio's, opened in the Electronics workspace.
       if (EDA_DROP.test(f.name)) {
         void importEdaFile(f, (op, p, done) => run(op, p).then((out) => (out && done && notify(done), out))).then((made) => made && setPcbOpen(true));
         return;
@@ -1529,7 +1529,7 @@ export function App({ engine }: { engine: Engine }) {
         }));
         engine
           .askAi(text, { selected, picked_part: selectedPartName, isolated, hidden: [...hiddenItems], color_by: colorBy }, attachments.map((a) => a.id))
-          .catch((e) => notify(`Forma AI: ${(e as EngineError).message}`));
+          .catch((e) => notify(`Iṣẹ́ AI: ${(e as EngineError).message}`));
         return;
       }
       if (busy) return;
@@ -1611,7 +1611,7 @@ export function App({ engine }: { engine: Engine }) {
     if (!url) return;
     const a = document.createElement("a");
     a.href = url;
-    a.download = "forma-viewport.png";
+    a.download = "ise-viewport.png";
     a.click();
     notify("Exported viewport image");
   }, [notify]);
@@ -1722,7 +1722,7 @@ export function App({ engine }: { engine: Engine }) {
     const place = docks.places.get(id);
     return place ? <Splitter place={place} label={label} onSize={dockSize(id)} /> : null;
   };
-  const dockName = (id: string) => (id === "ai" ? "Forma AI" : id.startsWith("bench") ? "Bill of materials" : (DOCK_NAMES[id as PanelKind] ?? id));
+  const dockName = (id: string) => (id === "ai" ? "Iṣẹ́ AI" : id.startsWith("bench") ? "Bill of materials" : (DOCK_NAMES[id as PanelKind] ?? id));
   // Between two open panels of a column: share their height (every open panel's share is kept as its height then).
   const stackSplitter = (id: string) => {
     const edge = docks.edges.find((e) => e.below.id === id);
@@ -1877,7 +1877,7 @@ export function App({ engine }: { engine: Engine }) {
         </div>
         {state.connection === "online" && parts.length === 0 && !sketcher.editing && !planeMenu && (
           <div className="empty-hint">
-            <p>Start with a part, ask Forma AI, or drop a file here: STEP, IGES, STL, OBJ, PLY, glTF, 3MF, or a DXF/SVG drawing.</p>
+            <p>Start with a part, ask Iṣẹ́ AI, or drop a file here: STEP, IGES, STL, OBJ, PLY, glTF, 3MF, or a DXF/SVG drawing.</p>
             <div className="empty-actions">
               <button title="Add a box part to start shaping" type="button" className="primary" onClick={addPart}>
                 Add box part

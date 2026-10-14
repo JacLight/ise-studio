@@ -313,7 +313,7 @@ fn path_info_in(occ: &mut Occ, segs: &[f64]) -> Result<Vec<f64>, String> {
 }
 
 /// "#rrggbb" or a colour word, as sRGB 0–1 (the view's palette, so a STEP file
-/// shows parts as Forma does).
+/// shows parts as Iṣẹ́ Studio does).
 pub fn colour_of(text: &str) -> Option<[f64; 3]> {
     let key = text.to_lowercase();
     let hex = |h: &str| -> Option<[f64; 3]> {

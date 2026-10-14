@@ -68,7 +68,7 @@ fn class_entry(class: &str) -> Option<(&'static str, Tail, &'static str)> {
     CLASSES.iter().find(|(c, _, _)| c.eq_ignore_ascii_case(class)).copied()
 }
 
-/// Whether Forma writes this class as itself (others go as proxies).
+/// Whether Iṣẹ́ Studio writes this class as itself (others go as proxies).
 pub fn known_class(class: &str) -> bool {
     class_entry(class).is_some()
 }
@@ -116,7 +116,7 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Options { timestamp: "2026-01-01T00:00:00".into(), author: "Forma".into() }
+        Options { timestamp: "2026-01-01T00:00:00".into(), author: "ISE Studio".into() }
     }
 }
 
@@ -546,7 +546,7 @@ pub fn write(model: &Model, options: &Options) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "ISO-10303-21;\nHEADER;");
     let _ = writeln!(out, "FILE_DESCRIPTION(('ViewDefinition [ReferenceView_V1.2]'),'2;1');");
-    let _ = writeln!(out, "FILE_NAME({},{},({}),('Forma'),'Forma IFC writer','Forma','');", string(&format!("{}.ifc", model.project)), string(&options.timestamp), string(&options.author));
+    let _ = writeln!(out, "FILE_NAME({},{},({}),('ISE Studio'),'ISE Studio IFC writer','ISE Studio','');", string(&format!("{}.ifc", model.project)), string(&options.timestamp), string(&options.author));
     let _ = writeln!(out, "FILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;");
     out.push_str(&c.w.data);
     out.push_str("ENDSEC;\nEND-ISO-10303-21;\n");

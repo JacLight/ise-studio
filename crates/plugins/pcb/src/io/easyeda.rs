@@ -51,7 +51,7 @@ fn nf(s: &str) -> f64 {
     s.trim().parse().unwrap_or(0.0)
 }
 
-/// A point in Forma terms from EasyEDA standard units (y down).
+/// A point in Iṣẹ́ Studio terms from EasyEDA standard units (y down).
 fn sp(x: f64, y: f64) -> P {
     [x * U, -y * U]
 }
@@ -61,7 +61,7 @@ fn points(s: &str) -> Vec<P> {
     v.chunks(2).filter(|c| c.len() == 2).map(|c| sp(c[0], c[1])).collect()
 }
 
-/// An SVG path (M, L, H, V, A, Z; absolute) as polylines in EasyEDA units, flipped to Forma.
+/// An SVG path (M, L, H, V, A, Z; absolute) as polylines in EasyEDA units, flipped to Iṣẹ́ Studio.
 fn svg_path(d: &str) -> Vec<Vec<P>> {
     let mut toks: Vec<String> = Vec::new();
     let mut cur = String::new();
@@ -397,7 +397,7 @@ pub fn read_std_schematic(text: &str) -> Result<Draft, String> {
         Some(a) => a.iter().filter_map(|s| s.get("dataStr")).collect(),
         None => vec![doc],
     };
-    // Forma coordinates are y up here (sp flips); the draft is told so.
+    // Iṣẹ́ Studio coordinates are y up here (sp flips); the draft is told so.
     let mut d = Draft { y_up: true, ..Default::default() };
     for (si, sh) in sheets.iter().enumerate() {
         let sid = (si + 1).to_string();

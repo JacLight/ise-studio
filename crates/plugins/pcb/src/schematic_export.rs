@@ -103,7 +103,7 @@ fn kicad(v: &SchematicView) -> String {
     let list = parts(v);
     let mut o = String::new();
     let _ = writeln!(o, "(export (version \"E\")");
-    let _ = writeln!(o, "  (design\n    (source {})\n    (date {})\n    (tool \"Forma\")", q(&v.name), q(&stamp()));
+    let _ = writeln!(o, "  (design\n    (source {})\n    (date {})\n    (tool \"ISE Studio\")", q(&v.name), q(&stamp()));
     for sh in &v.sheets {
         let path = if sh.parent.is_some() { format!("/{}/", sh.name) } else { "/".to_string() };
         let _ = writeln!(o, "    (sheet (number {}) (name {}) (tstamps {})", q(&sh.page), q(&path), q(&path));
@@ -130,7 +130,7 @@ fn kicad(v: &SchematicView) -> String {
             }
             let _ = writeln!(o, "      )");
         }
-        let _ = writeln!(o, "      (libsource (lib \"forma\") (part {}) (description {}))", q(&s.symbol), q(&s.description));
+        let _ = writeln!(o, "      (libsource (lib \"ise\") (part {}) (description {}))", q(&s.symbol), q(&s.description));
         if s.dnp {
             let _ = writeln!(o, "      (property (name \"dnp\"))");
         }
@@ -157,7 +157,7 @@ fn plain(n: &str) -> String {
 fn orcad(v: &SchematicView) -> String {
     let list = parts(v);
     let mut o = String::new();
-    let _ = writeln!(o, "( {{ Forma netlist: {} {} }}", v.name, stamp());
+    let _ = writeln!(o, "( {{ ISE Studio netlist: {} {} }}", v.name, stamp());
     for (i, p) in list.iter().enumerate() {
         let s = p.first;
         let fp = if s.footprint.is_empty() { "$noname".to_string() } else { plain(&s.footprint) };
@@ -174,7 +174,7 @@ fn orcad(v: &SchematicView) -> String {
 fn cadstar(v: &SchematicView) -> String {
     let list = parts(v);
     let mut o = String::new();
-    let _ = writeln!(o, ".HEA\n.TIM {}\n.APP \"Forma\"\n\n.TYP FULL\n", stamp());
+    let _ = writeln!(o, ".HEA\n.TIM {}\n.APP \"ISE Studio\"\n\n.TYP FULL\n", stamp());
     for p in &list {
         let s = p.first;
         let _ = writeln!(o, ".ADD_COM {} {}", s.reference, q(if s.footprint.is_empty() { &s.value } else { &s.footprint }));
@@ -207,7 +207,7 @@ fn spice_node(n: &Option<String>, k: &mut usize) -> String {
 fn spice(v: &SchematicView) -> String {
     let list = parts(v);
     let mut o = String::new();
-    let _ = writeln!(o, "* {} — netlist from Forma ({})", v.name, stamp());
+    let _ = writeln!(o, "* {} — netlist from ISE Studio ({})", v.name, stamp());
     let mut nc = 0;
     for p in &list {
         let s = p.first;

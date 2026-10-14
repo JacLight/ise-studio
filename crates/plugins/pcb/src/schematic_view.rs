@@ -767,7 +767,7 @@ pub fn frame(s: &Schematic, sheet: &schematic::Sheet, index: usize) -> Vec<Draw>
     let _ = index;
     d.push(t([x0 + 2.0, y0 + 29.2], format!("{} / {}", s.page(&sheet.id), s.sheets.len()), 1.8, "start"));
     d.push(Draw::Text { at: [x0 + 38.0, y0 + 26.0], s: "Drawn with".into(), size: 1.3, angle: 0.0, anchor: "start", ink: "frame_label" });
-    d.push(t([x0 + 38.0, y0 + 29.2], "Forma".into(), 1.8, "start"));
+    d.push(t([x0 + 38.0, y0 + 29.2], "ISE Studio".into(), 1.8, "start"));
     for (i, c) in s.title.comments.iter().take(3).enumerate() {
         d.push(t([x0 + 84.0, y0 + 26.0 + i as f64 * 2.2], c.clone(), 1.2, "start"));
     }

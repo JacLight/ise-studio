@@ -109,7 +109,7 @@ pub fn dir() -> Option<PathBuf> {
 /// The format of a stored file.
 pub fn kind(sha: &str) -> Result<Kind, String> {
     let p = path(sha)?;
-    p.extension().and_then(|e| e.to_str()).and_then(|e| Kind::from_name(&format!(".{e}"))).ok_or_else(|| format!("{} is not a file Forma reads", p.display()))
+    p.extension().and_then(|e| e.to_str()).and_then(|e| Kind::from_name(&format!(".{e}"))).ok_or_else(|| format!("{} is not a file ISE Studio reads", p.display()))
 }
 
 /// Keeps a file by its hash (once), named by its format: what its bytes say,
@@ -120,7 +120,7 @@ pub fn store_import(sha: &str, bytes: &[u8], hint: Option<Kind>) -> Result<PathB
         return Ok(p);
     }
     let dir = DIR.get().ok_or("imported files are not available here")?;
-    let kind = Kind::sniff(bytes).or(hint).ok_or("not a file Forma reads")?;
+    let kind = Kind::sniff(bytes).or(hint).ok_or("not a file ISE Studio reads")?;
     let p = dir.join(format!("{sha}.{}", kind.ext()));
     std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&p, bytes)).map_err(|e| format!("could not store the file: {e}"))?;
     Ok(p)

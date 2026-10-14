@@ -58,7 +58,7 @@ pub struct Member {
 pub struct Peer {
     pub engine: String,
     pub name: String,
-    /// `ws://192.168.1.20:7420/peer`, `wss://forma.example.com/peer`, …
+    /// `ws://192.168.1.20:7420/peer`, `wss://ise.example.com/peer`, …
     pub addresses: Vec<String>,
     #[serde(default)]
     pub last_seen: u64,
@@ -73,7 +73,7 @@ pub struct Team {
     #[serde(default)]
     pub my_name: String,
     /// An internet address peers can reach this engine at (through a proxy or
-    /// an opened port), e.g. `https://forma.example.com`.
+    /// an opened port), e.g. `https://ise.example.com`.
     #[serde(default)]
     pub public_url: Option<String>,
     #[serde(default)]
@@ -500,13 +500,13 @@ impl Invite {
         use base64::Engine;
         let text = text.trim();
         let blob = text.rsplit(['=', '#']).next().unwrap_or(text);
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(blob.trim()).map_err(|_| "that is not a Forma invite".to_string())?;
-        serde_json::from_slice(&bytes).map_err(|_| "that is not a Forma invite".to_string())
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(blob.trim()).map_err(|_| "that is not a ISE Studio invite".to_string())?;
+        serde_json::from_slice(&bytes).map_err(|_| "that is not a ISE Studio invite".to_string())
     }
 }
 
 /// Creates an invite for one person: their own token, and a link that opens
-/// on their computer's Forma (which then joins from here).
+/// on their computer's Iṣẹ́ Studio (which then joins from here).
 pub fn invite(server: &Server, project: &str, app: &App, name: &str, email: &str, role: &str) -> Result<Value, String> {
     if name.trim().is_empty() {
         return Err("who is the invite for? (a name)".into());

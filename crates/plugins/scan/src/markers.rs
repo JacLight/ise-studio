@@ -4,7 +4,7 @@
 //!
 //! A marker is a 6 × 6 grid of cells: a one-cell black border around 4 × 4
 //! data bits (ArUco's layout), printed with a white margin. The codes are
-//! Forma's own dictionary, chosen once here (deterministically) so that no
+//! Iṣẹ́ Studio's own dictionary, chosen once here (deterministically) so that no
 //! code is within 3 bit flips of another or of a turn of itself: a
 //! detection names its marker and which way round it lies, and survives one
 //! misread cell. Detection follows the usual method (Garrido-Jurado et al.
@@ -137,7 +137,7 @@ impl Sheet {
                     }
                 }
             }
-            s.push_str(&format!("BT /F1 7 Tf {:.3} {:.3} Td (Forma marker {id}) Tj ET\n", (ox + c[0] - self.marker / 2.0) * pt, (oy + c[1] - self.marker / 2.0 - 4.0) * pt));
+            s.push_str(&format!("BT /F1 7 Tf {:.3} {:.3} Td (ISE Studio marker {id}) Tj ET\n", (ox + c[0] - self.marker / 2.0) * pt, (oy + c[1] - self.marker / 2.0 - 4.0) * pt));
         }
         // The check bar, with 10 mm ticks.
         let (bx, by) = (-120.0, -97.0);
@@ -147,7 +147,7 @@ impl Sheet {
         }
         let text = |s: &mut String, x: f64, y: f64, size: f64, t: &str| s.push_str(&format!("BT /F1 {size} Tf {:.3} {:.3} Td ({t}) Tj ET\n", (ox + x) * pt, (oy + y) * pt));
         text(&mut s, bx + self.bar + 3.0, by, 7.0, &format!("{} mm: check it measures {} mm (print at 100%, no fit to page)", self.bar, self.bar));
-        text(&mut s, -115.0, 92.0, 9.0, &format!("Forma photogrammetry scale sheet: {} mm markers. Stand the object in the middle; keep the markers in view.", self.marker));
+        text(&mut s, -115.0, 92.0, 9.0, &format!("ISE Studio photogrammetry scale sheet: {} mm markers. Stand the object in the middle; keep the markers in view.", self.marker));
         // A cross at the centre (the origin of the sheet's frame).
         rect(&mut s, -5.0, -0.15, 10.0, 0.3);
         rect(&mut s, -0.15, -5.0, 0.3, 10.0);

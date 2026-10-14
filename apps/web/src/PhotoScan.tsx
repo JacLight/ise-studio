@@ -74,7 +74,7 @@ export function PhotoScan(props: { active: string | null; onJob: (listener: (job
     call<{ engines: EngineInfo[] }>("GET", "/photogrammetry/engines")
       .then((r) => setEngines(r.engines))
       .catch((e) => setError(String(e.message ?? e)));
-    // A job already running (started from ./forma or another view).
+    // A job already running (started from ./ise or another view).
     call<Job[]>("GET", "/photogrammetry")
       .then((list) => setJob(list[0] ?? null))
       .catch(() => {});

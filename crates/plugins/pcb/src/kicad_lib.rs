@@ -5,14 +5,14 @@
 //!
 //! They are CC-BY-SA 4.0 with KiCad's design exception: a board made with
 //! them is the designer's own and carries no licence; the libraries
-//! themselves, redistributed, keep theirs. So Forma reads them where they
+//! themselves, redistributed, keep theirs. So Iṣẹ́ Studio reads them where they
 //! were downloaded and copies only what a board uses into that board (as
 //! `pcb.footprint.define` and a symbol instance's `definition` do with any
 //! part), each copy naming the library it came from.
 //!
 //! - [`Library::search`] finds parts by name, description and keywords in an
 //!   index built from the files once (kept next to them).
-//! - [`Library::footprint`] reads a `.kicad_mod` into a Forma footprint
+//! - [`Library::footprint`] reads a `.kicad_mod` into a Iṣẹ́ Studio footprint
 //!   (through the board importer's reader: pads exactly, y up).
 //! - [`Library::symbol`] reads a symbol into a [`SymbolDef`]: pins with their
 //!   numbers (which are the footprint's pad numbers in KiCad's libraries),
@@ -21,7 +21,7 @@
 //!
 //! The download is an archive of each repository (about 12 MB each, 180 and
 //! 270 MB unpacked), fetched with `curl` and unpacked with `tar`, both part of
-//! macOS, Windows 10+ and Linux; `FORMA_KICAD_LIBRARY` puts the cache
+//! macOS, Windows 10+ and Linux; `ISE_KICAD_LIBRARY` puts the cache
 //! elsewhere (or points at a KiCad library checkout already on disk).
 
 use crate::footprints::Footprint;
@@ -58,28 +58,28 @@ impl Repo {
     }
 }
 
-/// Where the libraries are cached: `FORMA_KICAD_LIBRARY`, else the user's cache folder.
+/// Where the libraries are cached: `ISE_KICAD_LIBRARY`, else the user's cache folder.
 pub fn cache_root() -> PathBuf {
-    if let Ok(p) = std::env::var("FORMA_KICAD_LIBRARY") {
+    if let Ok(p) = std::env::var("ISE_KICAD_LIBRARY") {
         if !p.trim().is_empty() {
             return PathBuf::from(p);
         }
     }
     let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| ".".into());
     if cfg!(target_os = "macos") {
-        return Path::new(&home).join("Library/Caches/Forma/kicad");
+        return Path::new(&home).join("Library/Caches/ISE Studio/kicad");
     }
     if let Ok(x) = std::env::var("XDG_CACHE_HOME") {
         if !x.is_empty() {
-            return Path::new(&x).join("forma/kicad");
+            return Path::new(&x).join("ise/kicad");
         }
     }
     if cfg!(windows) {
         if let Ok(x) = std::env::var("LOCALAPPDATA") {
-            return Path::new(&x).join("Forma/kicad");
+            return Path::new(&x).join("ISE Studio/kicad");
         }
     }
-    Path::new(&home).join(".cache/forma/kicad")
+    Path::new(&home).join(".cache/ise/kicad")
 }
 
 /// One library item in the index.
@@ -146,7 +146,7 @@ impl Library {
             if !self.present(r) {
                 return None;
             }
-            Some(std::fs::read_to_string(self.dir(r).join(".forma-source")).map(|s| s.trim().to_string()).unwrap_or_else(|_| "on disk".into()))
+            Some(std::fs::read_to_string(self.dir(r).join(".ise-source")).map(|s| s.trim().to_string()).unwrap_or_else(|_| "on disk".into()))
         };
         Status { root: self.root.display().to_string(), footprints: info(Repo::Footprints), symbols: info(Repo::Symbols), licence: LICENCE }
     }
@@ -177,7 +177,7 @@ impl Library {
         let _ = std::fs::remove_file(&archive);
         let unpacked = std::fs::read_dir(&stage).map_err(|e| e.to_string())?.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| p.is_dir()).ok_or("the archive held no folder")?;
         let when = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let _ = std::fs::write(unpacked.join(".forma-source"), format!("{} (downloaded {})\n{LICENCE}\n", repo.url(), iso_date(when)));
+        let _ = std::fs::write(unpacked.join(".ise-source"), format!("{} (downloaded {})\n{LICENCE}\n", repo.url(), iso_date(when)));
         let dest = self.dir(repo);
         let old = self.root.join(format!(".old-{}-{}", repo.folder(), std::process::id()));
         if dest.exists() {
@@ -203,10 +203,10 @@ impl Library {
         let (lib, name) = split_id(id)?;
         let dir = self.ensure(Repo::Footprints)?;
         let path = dir.join(format!("{lib}.pretty")).join(format!("{name}.kicad_mod"));
-        std::fs::read_to_string(&path).map_err(|_| format!("no footprint {id} in the KiCad library (search with `./forma pcb parts <words>`)"))
+        std::fs::read_to_string(&path).map_err(|_| format!("no footprint {id} in the KiCad library (search with `./ise pcb parts <words>`)"))
     }
 
-    /// A footprint in Forma's terms, named `Library:Name`, with notes on anything approximated.
+    /// A footprint in Iṣẹ́ Studio's terms, named `Library:Name`, with notes on anything approximated.
     pub fn footprint(&self, id: &str) -> Result<(Footprint, Vec<String>), String> {
         let text = self.footprint_text(id)?;
         let (lib, _) = split_id(id)?;
@@ -289,7 +289,7 @@ fn clean_field(s: &str) -> String {
 }
 
 fn write_index(v: &[Entry]) -> String {
-    let mut s = String::from("forma-kicad-index 1\n");
+    let mut s = String::from("ise-kicad-index 1\n");
     for e in v {
         s.push_str(&[e.library.as_str(), &e.name, &e.description, &e.keywords, &e.footprint, &e.filters, &e.datasheet, &e.count.to_string()].map(clean_field).join("\t"));
         s.push('\n');
@@ -299,7 +299,7 @@ fn write_index(v: &[Entry]) -> String {
 
 fn read_index(text: &str, repo: Repo) -> Option<Vec<Entry>> {
     let mut lines = text.lines();
-    if lines.next()? != "forma-kicad-index 1" {
+    if lines.next()? != "ise-kicad-index 1" {
         return None;
     }
     let mut out = Vec::new();
@@ -449,7 +449,7 @@ fn load_symbol(dir: &Path, lib: &str, name: &str) -> Result<(Sexp, Option<Sexp>)
     let read = |n: &str| -> Result<Sexp, String> {
         let per_symbol = dir.join(format!("{lib}.kicad_symdir")).join(format!("{n}.kicad_sym"));
         let single = dir.join(format!("{lib}.kicad_sym"));
-        let text = std::fs::read_to_string(&per_symbol).or_else(|_| std::fs::read_to_string(&single)).map_err(|_| format!("no symbol {lib}:{n} in the KiCad library (search with `./forma pcb parts <words>`)"))?;
+        let text = std::fs::read_to_string(&per_symbol).or_else(|_| std::fs::read_to_string(&single)).map_err(|_| format!("no symbol {lib}:{n} in the KiCad library (search with `./ise pcb parts <words>`)"))?;
         let top = sexpr::parse(&text)?;
         let root = top.iter().find(|e| e.is("kicad_symbol_lib")).ok_or("not a KiCad symbol library")?;
         root.find_all("symbol").find(|s| s.arg_text(0) == Some(n)).cloned().ok_or_else(|| format!("no symbol {lib}:{n} in the KiCad library"))
@@ -604,7 +604,7 @@ fn property<'a>(s: &'a Sexp, key: &str) -> Option<&'a str> {
 /// Libraries of generic parts, whose value is not a part number.
 const GENERIC: [&str; 8] = ["Device", "power", "Connector", "Connector_Generic", "Connector_Generic_MountingPin", "Switch", "Mechanical", "Jumper"];
 
-/// A KiCad symbol as a Forma library symbol named `Library:Name`. A derived symbol takes
+/// A KiCad symbol as a Iṣẹ́ Studio library symbol named `Library:Name`. A derived symbol takes
 /// its parent's pins and drawing and its own fields.
 pub fn symbol_def(lib: &str, sym: &Sexp, parent: Option<&Sexp>) -> SymbolDef {
     let name = sym.arg_text(0).unwrap_or("").to_string();

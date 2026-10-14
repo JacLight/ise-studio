@@ -12,8 +12,8 @@
         "datums": [{ "view": "front", "at": [60, 0], "letter": "A" }],
         "frames": [{ "view": "right", "at": [29, 50], "symbol": "perpendicularity", "tolerance": 0.02, "diameter_zone": true, "datums": ["A"] }],
         "notes": ["Remove all burrs and break sharp edges 0.2–0.5.", "Anodise clear to MIL-A-8625 Type II after machining; mask the ⌀22 H7 bore."],
-        "revisions": [{ "rev": "A", "description": "First issue", "date": "2026-10-12", "by": "Forma" }],
-        "title_block": { "company": "Forma examples", "finish": "Anodise clear" },
+        "revisions": [{ "rev": "A", "description": "First issue", "date": "2026-10-12", "by": "ISE Studio" }],
+        "title_block": { "company": "ISE Studio examples", "finish": "Anodise clear" },
         "sheets": [{ "views": ["front"], "section": 50, "scale": 1 }]
       }
     }
@@ -30,7 +30,7 @@
         "datums": [{ "view": "front", "at": [30, -10], "letter": "A" }],
         "frames": [{ "view": "front", "at": [74, -11], "symbol": "circular_runout", "tolerance": 0.01, "datums": ["A"] }],
         "notes": ["Through-harden 40–45 HRC.", "Undercut to DIN 76-1 form A."],
-        "title_block": { "company": "Forma examples", "finish": "Black oxide" }
+        "title_block": { "company": "ISE Studio examples", "finish": "Black oxide" }
       }
     }
   },

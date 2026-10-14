@@ -146,7 +146,7 @@ fn tables_come_in_from_csv_and_xlsx() {
     assert_eq!(shown(&p, s, "B3"), "300 mm");
     assert_eq!(shown(&p, s, "B4"), "900 mm");
 
-    // A workbook as Excel writes it: shared strings, a defined name, a formula Forma cannot read.
+    // A workbook as Excel writes it: shared strings, a defined name, a formula Iṣẹ́ Studio cannot read.
     let mut cells = std::collections::BTreeMap::new();
     cells.insert((0, 0), table::OutCell::Text("Span".into()));
     cells.insert((1, 0), table::OutCell::Number(2400.0));

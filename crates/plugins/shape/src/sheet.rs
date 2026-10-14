@@ -741,7 +741,7 @@ impl Command for SetSheet {
 }
 
 /// `sheet.import`: fills a sheet from a CSV or XLSX file (a new sheet unless
-/// `target` names one). Workbook formulas come in as formulas where Forma
+/// `target` names one). Workbook formulas come in as formulas where Iṣẹ́ Studio
 /// reads them, else as the value the workbook last worked out (listed in
 /// `notes`); the workbook's names for single cells become aliases.
 #[derive(Deserialize, JsonSchema)]

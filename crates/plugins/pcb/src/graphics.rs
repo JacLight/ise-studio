@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 /// Non-copper layers a graphic can be on (copper layers are the board's: top, in1 …, bottom).
 pub const LAYERS: [&str; 12] = ["silk_top", "silk_bottom", "fab_top", "fab_bottom", "mask_top", "mask_bottom", "paste_top", "paste_bottom", "courtyard_top", "courtyard_bottom", "user", "comments"];
 
-/// A layer name as Forma calls it, from Forma's or KiCad's ("F.SilkS", "B.Fab", "Dwgs.User", "F.Cu", "In2.Cu").
+/// A layer name as Iṣẹ́ Studio calls it, from Iṣẹ́ Studio's or KiCad's ("F.SilkS", "B.Fab", "Dwgs.User", "F.Cu", "In2.Cu").
 pub fn normalize_layer(l: &str) -> String {
     let t = l.trim();
     let k = t.to_ascii_lowercase();
@@ -984,7 +984,7 @@ mod tests {
 
     #[test]
     fn knockout_text_leaves_holes_in_a_box() {
-        let shape = |knockout| Shape::Text { text: "FORMA".into(), at: [10.0, 5.0], size: 2.0, rotation: 0.0, font: None, weight: 600.0, align: Align::Center, knockout, margin: 0.5, mirror: None };
+        let shape = |knockout| Shape::Text { text: "ISE".into(), at: [10.0, 5.0], size: 2.0, rotation: 0.0, font: None, weight: 600.0, align: Align::Center, knockout, margin: 0.5, mirror: None };
         let plain = resolve(StableId::default(), &g("silk_top", shape(false))).unwrap();
         assert!(plain.fills.is_empty() && !plain.strokes.is_empty());
         let ko = resolve(StableId::default(), &g("silk_top", shape(true))).unwrap();

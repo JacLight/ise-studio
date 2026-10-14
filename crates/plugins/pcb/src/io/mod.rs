@@ -1,4 +1,4 @@
-//! Interchange with other EDA tools: every file Forma reads from them or
+//! Interchange with other EDA tools: every file Iṣẹ́ Studio reads from them or
 //! writes for them, beyond the `.kicad_pcb` board in [`crate::kicad`].
 //!
 //! Reading (`pcb.import`, any of these, told apart by content):
@@ -63,7 +63,7 @@ pub fn register(r: &mut de_core::Registry) {
     r.command::<Import>();
 }
 
-/// What a file held, in Forma's terms.
+/// What a file held, in Iṣẹ́ Studio's terms.
 #[derive(Default)]
 pub struct Imported {
     /// The format read ("eagle_brd", "altium_pcb", …).
@@ -178,7 +178,7 @@ pub fn detect(name: &str, b: &[u8]) -> Result<&'static str, String> {
         return Ok("geda_pcb");
     }
     Err(format!(
-        "could not tell what {} is: Forma reads {}",
+        "could not tell what {} is: ISE Studio reads {}",
         if name.is_empty() { "the file" } else { name },
         FORMATS.iter().filter(|f| f.0 != "auto").map(|f| f.1).collect::<Vec<_>>().join(", ")
     ))
@@ -238,7 +238,7 @@ pub fn read(name: &str, b: &[u8], format: Option<&str>, files: &BTreeMap<String,
         "fabmaster" => out.board = Some(build::finish(fabmaster::read(&text_of(b))?)?),
         "pads" => out.board = Some(build::finish(pads::read(&text_of(b))?)?),
         "geda_pcb" => out.board = Some(build::finish(geda::read(&text_of(b))?)?),
-        f => return Err(format!("{f} is not a format Forma reads")),
+        f => return Err(format!("{f} is not a format ISE Studio reads")),
     }
     Ok(out)
 }
@@ -331,8 +331,8 @@ impl Command for Import {
 /// The board's custom rules as a `.kicad_dru` file.
 fn dru(board: &Board, view: &BoardView) -> String {
     let r = &board.rules;
-    // The board minima first (later rules win in KiCad, as in Forma), then the custom rules.
-    let mut out = String::from("(version 1)\n# Board minima (Forma board rules)\n");
+    // The board minima first (later rules win in KiCad, as in Iṣẹ́ Studio), then the custom rules.
+    let mut out = String::from("(version 1)\n# Board minima (ISE Studio board rules)\n");
     for (name, kind, v) in [("Minimum clearance", "clearance", r.min_space), ("Minimum track width", "track_width", r.min_track), ("Minimum hole", "hole_size", r.min_drill), ("Minimum annular ring", "annular_width", r.min_annular), ("Board edge clearance", "edge_clearance", r.edge_clearance), ("Hole to hole", "hole_to_hole", r.hole_to_hole)] {
         out.push_str(&format!("(rule \"{name}\"\n  (constraint {kind} (min {v}mm)))\n"));
     }
@@ -345,8 +345,8 @@ fn dru(board: &Board, view: &BoardView) -> String {
     let t = board.drc_rules.trim();
     if !t.is_empty() {
         out.push_str("# Custom rules\n");
-        // Forma's impedance constraint (Ω) is not KiCad's: kept as a comment.
-        out.push_str(&t.lines().filter(|l| !(l.trim().starts_with("(version") && l.matches('(').count() == 1)).map(|l| if l.contains("(constraint impedance") { format!("# Forma only: {}", l.trim()) } else { l.to_string() }).collect::<Vec<_>>().join("\n"));
+        // Iṣẹ́ Studio's impedance constraint (Ω) is not KiCad's: kept as a comment.
+        out.push_str(&t.lines().filter(|l| !(l.trim().starts_with("(version") && l.matches('(').count() == 1)).map(|l| if l.contains("(constraint impedance") { format!("# ISE Studio only: {}", l.trim()) } else { l.to_string() }).collect::<Vec<_>>().join("\n"));
         out.push('\n');
     }
     out

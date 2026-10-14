@@ -41,7 +41,7 @@ export function ProjectPill(props: {
     <div className="project-pill floating">
       <button type="button" className="brand" onClick={props.onMenu} title="Project and workspace" aria-label="Project menu">
         <Icon name="cube" />
-        <b>forma</b>
+        <b>Iṣẹ́ Studio</b>
         <Icon name="down" />
       </button>
       <span className="project-name">{projectTitle()}</span>

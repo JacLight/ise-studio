@@ -367,7 +367,7 @@ pub async fn settings_post(State(server): State<Arc<Server>>, axum::Json(body): 
     axum::Json(settings_view(&server)).into_response()
 }
 
-/// DRC errors as check findings (`./forma check` reports boards with everything else).
+/// DRC errors as check findings (`./ise check` reports boards with everything else).
 pub fn findings(project: &de_core::Project) -> Vec<Value> {
     let mut out = Vec::new();
     for (id, b) in de_pcb::boards(project.world()) {

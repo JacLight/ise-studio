@@ -36,7 +36,7 @@ export type UiPrefs = {
   dock: DockPrefs;
 };
 
-const KEY = "forma.ui.v1";
+const KEY = "ise.ui.v1";
 
 const DEFAULTS: UiPrefs = {
   hidden: {},

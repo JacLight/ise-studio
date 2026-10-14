@@ -125,7 +125,7 @@ class Solid {
    * on `radius` (+z outward). Build lettering, a traced logo or a relief
    * flat, then wrap it onto the cylinder it decorates (see emboss/engrave
    * with `cylinder`). Faceted in exact exports.
-   *   text("FORMA", { size: 6, align: "center" }).extrude(1).wrap(20)
+   *   text("ISE", { size: 6, align: "center" }).extrude(1).wrap(20)
    */
   wrap(radius) {
     if (typeof radius !== "number" || !(radius > 0)) throw new Error("wrap: the radius must be a positive number of mm");
@@ -911,7 +911,7 @@ function __result(out, p) {
 
 /**
  * The bodies of an imported STEP file, as parts named as in the file. The
- * file is referred to by its content hash (Forma stores it on import); the
+ * file is referred to by its content hash (Iṣẹ́ Studio stores it on import); the
  * view meshes it to `tolerance`, exact exports pass its own B-rep through.
  */
 function importStep(sha, { material, process } = {}) {
@@ -1093,7 +1093,7 @@ const __m3 = (m, p) => {
 
 /**
  * A canvas: a reference picture placed on a plane of the model and
- * calibrated (`./forma canvas add`). Its outlines come out in the plane's
+ * calibrated (`./ise canvas add`). Its outlines come out in the plane's
  * own millimetres, so they land exactly on the photo:
  *   const side = canvas("Side");      // .plane {origin, x, y}, .normal, .view, .mmPerPx, .pixels
  *   side.silhouette()                 // the object's outline (Profile, plane mm): what stands out from the backdrop
@@ -1176,11 +1176,11 @@ class CanvasRef {
   }
 }
 
-/** A canvas placed in the project, by name (`./forma canvas list`). */
+/** A canvas placed in the project, by name (`./ise canvas list`). */
 const __canvasRefs = new Map();
 function canvas(name) {
   const data = __canvases[name];
-  if (!data) throw new Error(`no canvas called “${name}” is linked to this program (./forma canvas list)`);
+  if (!data) throw new Error(`no canvas called “${name}” is linked to this program (./ise canvas list)`);
   if (!__canvasRefs.has(name)) __canvasRefs.set(name, new CanvasRef(name, data));
   return __canvasRefs.get(name);
 }
@@ -1457,7 +1457,7 @@ function __onto(solid, options, what) {
 
 /**
  * A picture stored in the project (PNG or JPEG; add one with
- * `./forma image add <file>`, which prints its id). Pictures have no size
+ * `./ise image add <file>`, which prints its id). Pictures have no size
  * of their own: reliefs and traces are given a width or height in mm.
  *   const photo = image("3f9a…");   // .width, .height (pixels), .aspect (h / w)
  *   photo.grid(200)                  // brightness, 200 columns × rows to keep the aspect, rows from the top, 0–1
@@ -1466,7 +1466,7 @@ function __onto(solid, options, what) {
 class Picture {
   constructor(id) {
     if (typeof id !== "string" || !/^[0-9a-fA-F]{64}$/.test(id)) {
-      throw new Error(`image: ${JSON.stringify(id)} is not a picture id (add the picture with ./forma image add <file> and use the id it prints)`);
+      throw new Error(`image: ${JSON.stringify(id)} is not a picture id (add the picture with ./ise image add <file> and use the id it prints)`);
     }
     const [w, h, bits, alpha] = __n.imageInfo(id);
     this.id = id;
@@ -1642,7 +1642,7 @@ function trace(img, options = {}) {
  *   size        height of a capital letter, mm (5)
  *   weight      100–900 (400 regular, 700 bold) for the built-in font
  *   font        "Inter" (built in, a clean sans), or a stored font's id
- *               (`./forma image add font.ttf` stores TrueType/OpenType too)
+ *               (`./ise image add font.ttf` stores TrueType/OpenType too)
  *   align       "left" | "center" | "right"       (about x = 0)
  *   valign      "baseline" | "top" | "middle" | "bottom"   (about y = 0)
  *   spacing     extra mm between letters; lineHeight: baseline to baseline,
@@ -1650,7 +1650,7 @@ function trace(img, options = {}) {
  *   arc         set along a circle of this radius (baseline on it), centred
  *               on +Y reading clockwise over the top; negative reads left to
  *               right along the bottom, tops toward the centre (a coin)
- *   text("Forma", { size: 8, weight: 700, align: "center", valign: "middle" })
+ *   text("Iṣẹ́ Studio", { size: 8, weight: 700, align: "center", valign: "middle" })
  *   text("EST. 2026", { size: 3, arc: -18, align: "center" })
  */
 function text(str, options = {}) {

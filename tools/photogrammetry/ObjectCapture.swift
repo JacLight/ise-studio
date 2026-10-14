@@ -1,13 +1,13 @@
-// Forma's bridge to Apple Object Capture (RealityKit's PhotogrammetrySession,
+// Iṣẹ́ Studio's bridge to Apple Object Capture (RealityKit's PhotogrammetrySession,
 // macOS 12+ on Apple silicon or a Mac with a capable GPU).
 //
 // The engine builds this file with `swiftc` the first time it is needed and
 // runs it on a folder of photos. Everything it says is one JSON object per
 // line on stdout, so the engine can follow along:
 //
-//   forma-object-capture --check
+//   ise-object-capture --check
 //       {"supported": true|false, "os": "…"}
-//   forma-object-capture <images> <out folder> [--detail preview|reduced|medium|full|raw] [--mask] [--no-poses]
+//   ise-object-capture <images> <out folder> [--detail preview|reduced|medium|full|raw] [--mask] [--no-poses]
 //       {"stage": "imageAlignment", "progress": 0.31}     (repeated)
 //       {"invalid": 3, "reason": "…"} / {"skipped": 4}     (photos it could not use)
 //       {"depth": 12}                                      (photos carrying depth: the model is metric)
@@ -17,7 +17,7 @@
 //       {"done": true} or {"error": "…"}
 //
 // The model and poses are in metres (Object Capture's units); without depth
-// data in the photos the size is only nominal and Forma scales it from the
+// data in the photos the size is only nominal and Iṣẹ́ Studio scales it from the
 // marker sheet or a known distance.
 
 import Foundation
@@ -42,7 +42,7 @@ if args.first == "--check" {
     say(["supported": PhotogrammetrySession.isSupported, "os": ProcessInfo.processInfo.operatingSystemVersionString])
     exit(0)
 }
-guard args.count >= 2 else { fail("usage: forma-object-capture <images> <out folder> [--detail medium] [--mask] [--no-poses]") }
+guard args.count >= 2 else { fail("usage: ise-object-capture <images> <out folder> [--detail medium] [--mask] [--no-poses]") }
 guard PhotogrammetrySession.isSupported else { fail("Object Capture is not supported on this Mac (it needs Apple silicon, or an AMD GPU with 4 GB and ray tracing)") }
 
 let input = URL(fileURLWithPath: args[0], isDirectory: true)

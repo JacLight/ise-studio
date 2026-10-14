@@ -1,5 +1,5 @@
 //! glTF 2.0: `.glb` (binary) and `.gltf` (JSON with embedded buffers) in,
-//! `.glb` out. glTF is metres and Y up; Forma is millimetres and Z up, so
+//! `.glb` out. glTF is metres and Y up; Iṣẹ́ Studio is millimetres and Z up, so
 //! both directions convert.
 
 use super::{Look, MeshBody};
@@ -173,7 +173,7 @@ pub fn read(data: &[u8]) -> Result<Vec<MeshBody>, String> {
         })
     };
     // Y up, metres → Z up, millimetres.
-    let to_forma: M4 = [MM_PER_M, 0.0, 0.0, 0.0, 0.0, 0.0, MM_PER_M, 0.0, 0.0, -MM_PER_M, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+    let to_ise: M4 = [MM_PER_M, 0.0, 0.0, 0.0, 0.0, 0.0, MM_PER_M, 0.0, 0.0, -MM_PER_M, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
     let mut out = Vec::new();
     let mut stack: Vec<(usize, M4, u32)> = Vec::new();
     let scene = &doc["scenes"][doc["scene"].as_u64().unwrap_or(0) as usize];
@@ -187,7 +187,7 @@ pub fn read(data: &[u8]) -> Result<Vec<MeshBody>, String> {
         }
     };
     for r in roots.into_iter().rev() {
-        stack.push((r, to_forma, 0));
+        stack.push((r, to_ise, 0));
     }
     while let Some((n, parent, depth)) = stack.pop() {
         if depth > 64 {
@@ -329,7 +329,7 @@ pub fn write_glb(parts: &[MeshBody]) -> Vec<u8> {
         bin.push(0);
     }
     let doc = json!({
-        "asset": { "version": "2.0", "generator": "Forma" },
+        "asset": { "version": "2.0", "generator": "ISE Studio" },
         "scene": 0,
         "scenes": [{ "nodes": (0..nodes.len()).collect::<Vec<_>>() }],
         "nodes": nodes,

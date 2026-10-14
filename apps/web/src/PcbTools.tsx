@@ -43,7 +43,7 @@ function download(blob: Blob, name: string) {
 
 /** The side panel's Tools tab: panelization and the calculators. */
 export function ToolsTab(props: { boardId: string; revision: number; fab: string | null }) {
-  const [which, setWhich] = useStored<{ tool: "panel" | "calc" }>("forma.pcb.tool", { tool: "panel" });
+  const [which, setWhich] = useStored<{ tool: "panel" | "calc" }>("ise.pcb.tool", { tool: "panel" });
   return (
     <div className="pt-calc">
       <div className="pt-switch" role="tablist">
@@ -69,7 +69,7 @@ type Answer = { title: string; results: Row[]; notes: string[]; source?: string;
 
 export function CalcTab() {
   const [list, setList] = useState<Calc[] | null>(null);
-  const [id, setId] = useStored<{ id: string }>("forma.pcb.calc", { id: "track" });
+  const [id, setId] = useStored<{ id: string }>("ise.pcb.calc", { id: "track" });
   const [values, setValues] = useState<Record<string, Record<string, string>>>({});
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -211,7 +211,7 @@ const SPEC: Spec = { rows: 2, cols: 2, gap: 2, separation: "mousebites", tab_wid
 const path = (contours: P[][]) => contours.map((c) => `M${c.map((p) => `${p[0]} ${p[1]}`).join("L")}Z`).join("");
 
 export function PanelTab(props: { boardId: string; revision: number; fab: string | null }) {
-  const [spec, setSpec] = useStored<Spec>("forma.pcb.panel", SPEC);
+  const [spec, setSpec] = useStored<Spec>("ise.pcb.panel", SPEC);
   const [result, setResult] = useState<PanelResult | null>(null);
   const [layers, setLayers] = useState<BoardLayers | null>(null);
   const [error, setError] = useState<string | null>(null);

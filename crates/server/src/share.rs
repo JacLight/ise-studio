@@ -6,7 +6,7 @@
 //!
 //! - a look at a past version on this computer (`/ws?project=…&version=…`);
 //! - a view-only link (`/view/<token>`), served on this engine's network
-//!   address (and its public URL, if one is set) to people without Forma.
+//!   address (and its public URL, if one is set) to people without Iṣẹ́ Studio.
 //!
 //! A link is a long random token naming one project (or one version of it).
 //! Everything a link opens answers with that project only: there is no
@@ -415,7 +415,7 @@ pub async fn revoke(State(server): State<Arc<Server>>, Query(q): Query<HashMap<S
 
 // ---- What the network reaches ----------------------------------------------
 
-const GONE: &str = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Link not available · Forma</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.5 system-ui,sans-serif;background:#fafbfc;color:#1d232b}main{max-width:340px;padding:24px;text-align:center}h1{font-size:18px;margin:0 0 6px}p{margin:0;color:#5d6773}@media(prefers-color-scheme:dark){body{background:#14171b;color:#e8ebef}p{color:#9aa4ae}}</style></head><body><main><h1>This link isn't available</h1><p>It was turned off or has expired. Ask whoever shared it for a new one.</p></main></body></html>";
+const GONE: &str = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Link not available · ISE Studio</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.5 system-ui,sans-serif;background:#fafbfc;color:#1d232b}main{max-width:340px;padding:24px;text-align:center}h1{font-size:18px;margin:0 0 6px}p{margin:0;color:#5d6773}@media(prefers-color-scheme:dark){body{background:#14171b;color:#e8ebef}p{color:#9aa4ae}}</style></head><body><main><h1>This link isn't available</h1><p>It was turned off or has expired. Ask whoever shared it for a new one.</p></main></body></html>";
 
 fn private_headers(mut r: axum::response::Response) -> axum::response::Response {
     let h = r.headers_mut();

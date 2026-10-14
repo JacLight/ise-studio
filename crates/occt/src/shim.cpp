@@ -1,4 +1,4 @@
-// A thin C layer over OpenCascade for Forma: shapes live in an arena and are
+// A thin C layer over OpenCascade for Iṣẹ́ Studio: shapes live in an arena and are
 // addressed by integer handles, so Rust (and the shape-program runtime) can
 // drive exact B-rep geometry with the same vocabulary it uses for meshes.
 //
@@ -245,7 +245,7 @@ void apply_paint(Arena* a, const Handle(XCAFDoc_ShapeTool) & tool, const Handle(
 extern "C" {
 
 void* occ_arena_new() {
-  // OpenCascade reports every STEP transfer on the console; Forma reports its own way.
+  // OpenCascade reports every STEP transfer on the console; Iṣẹ́ Studio reports its own way.
   static bool quiet = [] {
     Message::DefaultMessenger()->RemovePrinters(STANDARD_TYPE(Message_PrinterOStream));
     return true;
@@ -917,7 +917,7 @@ int occ_write_cad(void* p, const int* hs, const char* const* names, const double
     app->NewDocument("MDTV-XCAF", doc);
     Handle(XCAFDoc_ShapeTool) tool = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
     Handle(XCAFDoc_ColorTool) paint = XCAFDoc_DocumentTool::ColorTool(doc->Main());
-    // Parts carry the names Forma gives them, nothing auto-generated ("SOLID", "COMPOUND").
+    // Parts carry the names Iṣẹ́ Studio gives them, nothing auto-generated ("SOLID", "COMPOUND").
     XCAFDoc_ShapeTool::SetAutoNaming(false);
     for (int i = 0; i < n; i++) {
       const TopoDS_Shape* s = get(a, hs[i]);

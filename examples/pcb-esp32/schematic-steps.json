@@ -54,7 +54,7 @@
   "parameters": {
    "board": "$0.id",
    "title": "ESP32 USB-C board",
-   "company": "Forma example",
+   "company": "ISE Studio example",
    "revision": "A"
   }
  },

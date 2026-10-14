@@ -1076,7 +1076,7 @@ function Studies({ scope, entities, run, view }: StudioProps) {
           </div>
         </div>
       ) : (
-        <p className="aj-quiet">Save two or more poses to make a study through them (or ask Forma AI for one joint by joint).</p>
+        <p className="aj-quiet">Save two or more poses to make a study through them (or ask Iṣẹ́ AI for one joint by joint).</p>
       )}
     </div>
   );

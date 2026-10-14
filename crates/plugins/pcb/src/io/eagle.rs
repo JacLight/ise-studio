@@ -12,7 +12,7 @@
 //! sits; pins land on the pads the device's `connect`s name. Nets are
 //! drawn as their segments' wires, junctions and labels; a named net gets a
 //! label on each segment (Eagle joins same-named segments without one), and
-//! supply symbols become Forma power ports.
+//! supply symbols become Iṣẹ́ Studio power ports.
 
 use super::build::{self, BoardIn, PadIn, PartIn};
 use super::sch::{self, Draft, DraftSymbol};

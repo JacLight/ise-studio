@@ -1,6 +1,6 @@
-// The console: the same commands Forma AI runs with ./forma (list, tree,
+// The console: the same commands Iṣẹ́ AI runs with ./ise (list, tree,
 // get, commit, run, check, sheet, draft, measure, bom, export, view…),
-// typed here against the open project, and JavaScript with a `forma`
+// typed here against the open project, and JavaScript with a `ise`
 // object for people who script. Everything goes through the engine, so it
 // is saved, synced and undoable like any other change.
 
@@ -11,9 +11,9 @@ import "./data.css";
 
 type Line = { kind: "in" | "out" | "err" | "note"; text: string };
 
-const HISTORY_KEY = "forma.console.history";
+const HISTORY_KEY = "ise.console.history";
 
-const HELP = `Commands (as ./forma takes them; "./forma" in front is fine):
+const HELP = `Commands (as ./ise takes them; "./ise" in front is fine):
   list · tree · get <id|name> · ops [filter] · check
   commit <operation> <json>      e.g. commit sheet.set {"target":"…","cells":{"B2":"=B1*2"}}
   run <json steps>               [{"operation":…,"parameters":…}] — "$0.id" refers to step 0's output
@@ -22,9 +22,9 @@ const HELP = `Commands (as ./forma takes them; "./forma" in front is fine):
   view <select|frame|isolate|hide|show|show_all|camera|display|projection|section|explode|measure> [what]
   undo · redo · clear · help
 Anything else runs as JavaScript, with:
-  forma.entities · forma.get(idOrName) · forma.find(name) · forma.commit(op, params)
-  forma.run(steps) · forma.check() · forma.view(action, what?, value?) · forma.fetch(path)
-  print(…)  — e.g.  for (const e of forma.entities) if (e.draft?.value) print(e.id, e.draft.value)`;
+  ise.entities · ise.get(idOrName) · ise.find(name) · ise.commit(op, params)
+  ise.run(steps) · ise.check() · ise.view(action, what?, value?) · ise.fetch(path)
+  print(…)  — e.g.  for (const e of ise.entities) if (e.draft?.value) print(e.id, e.draft.value)`;
 
 const nameOf = (e: EntityView) => {
   const c = e.components as Record<string, { name?: string } | undefined>;
@@ -80,7 +80,7 @@ const COMMANDS = new Set(["help", "list", "tree", "get", "ops", "check", "commit
 
 export function Console(props: { engine: Engine; onClose: () => void }) {
   const { engine } = props;
-  const [lines, setLines] = useState<Line[]>([{ kind: "note", text: "Forma console · the commands Forma AI uses, and JavaScript. Type help." }]);
+  const [lines, setLines] = useState<Line[]>([{ kind: "note", text: "Iṣẹ́ Studio console · the commands Iṣẹ́ AI uses, and JavaScript. Type help." }]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const history = useRef<string[]>([]);
@@ -290,7 +290,7 @@ export function Console(props: { engine: Engine; onClose: () => void }) {
       }
       case "bundle":
         save(`/projects/${encodeURIComponent(projectName || "default")}/bundle`);
-        print("out", "✓ downloading the project file (.forma): its history and assets come along");
+        print("out", "✓ downloading the project file (.ise): its history and assets come along");
         return;
       case "view": {
         const [action, ...what] = rest;
@@ -324,18 +324,18 @@ export function Console(props: { engine: Engine; onClose: () => void }) {
     print("in", text);
     setBusy(true);
     try {
-      const line = text.replace(/^\.?\/?forma(\.mjs)?\s+/, "");
+      const line = text.replace(/^\.?\/?ise(\.mjs)?\s+/, "");
       const w = words(line);
       if (COMMANDS.has(w[0]) && !/^[a-z]+\s*[=(.]/.test(line)) await command(w);
       else {
         const show = (...a: unknown[]) => print("out", a.map((x) => (typeof x === "string" ? x : JSON.stringify(x, null, 2))).join(" "));
         const js = line.replace(/^js\s+/, "");
         // An expression shows its value; statements run as they are.
-        let fn: (forma: typeof api, print: typeof show) => Promise<unknown>;
+        let fn: (ise: typeof api, print: typeof show) => Promise<unknown>;
         try {
-          fn = new Function("forma", "print", `return (async () => (${js}))()`) as typeof fn;
+          fn = new Function("ise", "print", `return (async () => (${js}))()`) as typeof fn;
         } catch {
-          fn = new Function("forma", "print", `return (async () => { ${js} })()`) as typeof fn;
+          fn = new Function("ise", "print", `return (async () => { ${js} })()`) as typeof fn;
         }
         const v = await fn(api, show);
         if (v !== undefined) show(v);
@@ -354,7 +354,7 @@ export function Console(props: { engine: Engine; onClose: () => void }) {
       <header className="console-head">
         <Icon name="terminal" />
         <strong>Console</strong>
-        <span className="muted small">./forma commands and JavaScript · ↑ history · ` to close</span>
+        <span className="muted small">./ise commands and JavaScript · ↑ history · ` to close</span>
         <IconButton icon="close" label="Close console" onClick={props.onClose} />
       </header>
       <div className="console-out" ref={out} role="log" aria-live="polite">
@@ -373,7 +373,7 @@ export function Console(props: { engine: Engine; onClose: () => void }) {
           value={input}
           spellCheck={false}
           aria-label="Console input"
-          placeholder="list · get Bracket · commit sheet.create {…} · forma.entities.length"
+          placeholder="list · get Bracket · commit sheet.create {…} · ise.entities.length"
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             e.stopPropagation();

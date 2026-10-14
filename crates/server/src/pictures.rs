@@ -1,6 +1,6 @@
 //! Pictures in and out: pictures (and fonts) a project's shape programs read,
-//! pictures pasted into the Forma AI conversation, and the engine's own
-//! pictures of the model (`./forma look`).
+//! pictures pasted into the Iṣẹ́ AI conversation, and the engine's own
+//! pictures of the model (`./ise look`).
 //!
 //! Files programs read are kept by content in the folder's shared store (see
 //! `de_shape::assets`), so a part refers to them by hash and teammates fetch
@@ -61,7 +61,7 @@ fn check(bytes: &[u8]) -> Result<(&'static str, Option<(usize, usize)>), String>
             de_shape::text::check_font(bytes)?;
             Ok((k, None))
         }
-        _ => Err("Forma reads PNG and JPEG pictures, and TrueType or OpenType fonts".into()),
+        _ => Err("ISE Studio reads PNG and JPEG pictures, and TrueType or OpenType fonts".into()),
     }
 }
 
@@ -112,7 +112,7 @@ fn content_type(kind: &str) -> &'static str {
 }
 
 /// `GET /images/<id>`: a stored picture's bytes (for showing it).
-/// `?silhouette=<rows>` instead measures the object it shows (`./forma image
+/// `?silhouette=<rows>` instead measures the object it shows (`./ise image
 /// profile`): its outline row by row in pixels, and in mm given the object's
 /// real `height` or `width` (`threshold`: colour distance 0–1 from the background).
 pub async fn get(Path(id): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
@@ -259,7 +259,7 @@ pub async fn look(State(server): State<Arc<Server>>, Query(query): Query<HashMap
             let project = app.project.lock().unwrap();
             de_shape::canvas::find(project.world(), what)
         };
-        let Some((_, canvas)) = found else { return fail(StatusCode::NOT_FOUND, format!("no canvas called “{what}” (./forma canvas list)")) };
+        let Some((_, canvas)) = found else { return fail(StatusCode::NOT_FOUND, format!("no canvas called “{what}” (./ise canvas list)")) };
         let mut o = serde_json::Map::new();
         for key in ["channel", "threshold", "invert", "largest", "holes", "region", "smooth", "minArea"] {
             if let Some(v) = query.get(key) {
@@ -331,7 +331,7 @@ pub async fn look(State(server): State<Arc<Server>>, Query(query): Query<HashMap
             let project = app.project.lock().unwrap();
             de_shape::canvas::find(project.world(), what)
         };
-        let Some((_, canvas)) = found else { return fail(StatusCode::NOT_FOUND, format!("no canvas called “{what}” (./forma canvas list)")) };
+        let Some((_, canvas)) = found else { return fail(StatusCode::NOT_FOUND, format!("no canvas called “{what}” (./ise canvas list)")) };
         let json_only = query.get("format").is_some_and(|f| f == "json");
         let compared = tokio::task::spawn_blocking(move || -> Result<de_shape::silhouette::Comparison, String> {
             let mut meshes = Vec::new();
@@ -349,7 +349,7 @@ pub async fn look(State(server): State<Arc<Server>>, Query(query): Query<HashMap
                 if json_only {
                     ([(header::CONTENT_TYPE, "application/json")], numbers).into_response()
                 } else {
-                    ([(header::CONTENT_TYPE, "image/png".to_string()), (header::HeaderName::from_static("x-forma-match"), ascii_json(&numbers))], c.png).into_response()
+                    ([(header::CONTENT_TYPE, "image/png".to_string()), (header::HeaderName::from_static("x-ise-match"), ascii_json(&numbers))], c.png).into_response()
                 }
             }
             Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
@@ -393,7 +393,7 @@ pub async fn look(State(server): State<Arc<Server>>, Query(query): Query<HashMap
         return match drawn {
             Ok(p) => {
                 let camera = json!({ "focal": p.focal, "centre": p.centre, "rotation": p.rotation, "translation": p.translation, "width": w, "height": h }).to_string();
-                ([(header::CONTENT_TYPE, "image/png".to_string()), (header::HeaderName::from_static("x-forma-camera"), camera)], p.png).into_response()
+                ([(header::CONTENT_TYPE, "image/png".to_string()), (header::HeaderName::from_static("x-ise-camera"), camera)], p.png).into_response()
             }
             Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
         };
@@ -423,7 +423,7 @@ pub async fn look(State(server): State<Arc<Server>>, Query(query): Query<HashMap
             let b = p.bounds;
             let bounds = format!("{:.2},{:.2},{:.2},{:.2},{:.2},{:.2}", b[0], b[1], b[2], b[3], b[4], b[5]);
             (
-                [(header::CONTENT_TYPE, "image/png".to_string()), (header::HeaderName::from_static("x-forma-mm-per-px"), format!("{:.5}", p.mm_per_px)), (header::HeaderName::from_static("x-forma-bounds"), bounds), (header::HeaderName::from_static("x-forma-triangles"), p.triangles.to_string())],
+                [(header::CONTENT_TYPE, "image/png".to_string()), (header::HeaderName::from_static("x-ise-mm-per-px"), format!("{:.5}", p.mm_per_px)), (header::HeaderName::from_static("x-ise-bounds"), bounds), (header::HeaderName::from_static("x-ise-triangles"), p.triangles.to_string())],
                 p.png,
             )
                 .into_response()

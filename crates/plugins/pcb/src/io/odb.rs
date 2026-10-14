@@ -283,7 +283,7 @@ pub fn files(v: &BoardView, board: &Board) -> Vec<(String, Vec<u8>)> {
     }
     nets.push("$NONE$".into());
     let mut eda = String::new();
-    let _ = writeln!(eda, "HDR Forma\nUNITS=MM\nLYR {}\n#", cu_names.join(" "));
+    let _ = writeln!(eda, "HDR ISE Studio\nUNITS=MM\nLYR {}\n#", cu_names.join(" "));
     // Pin numbers within each component, and the (net, subnet) each pin is on.
     let mut pin_subnet: BTreeMap<(String, String), (usize, usize)> = BTreeMap::new();
     for (ni, name) in nets.iter().enumerate() {
@@ -371,7 +371,7 @@ pub fn files(v: &BoardView, board: &Board) -> Vec<(String, Vec<u8>)> {
     out.push((format!("{root}matrix/matrix"), m.into_bytes()));
     let (y, mo, d, h, mi, s) = super::now();
     let stamp = format!("{y:04}{mo:02}{d:02}.{h:02}{mi:02}{s:02}");
-    out.push((format!("{root}misc/info"), format!("UNITS=MM\nJOB_NAME={job}\nODB_VERSION_MAJOR=8\nODB_VERSION_MINOR=1\nODB_SOURCE=Forma\nCREATION_DATE={stamp}\nSAVE_DATE={stamp}\nSAVE_APP=Forma {}\nSAVE_USER=forma\n", env!("CARGO_PKG_VERSION")).into_bytes()));
+    out.push((format!("{root}misc/info"), format!("UNITS=MM\nJOB_NAME={job}\nODB_VERSION_MAJOR=8\nODB_VERSION_MINOR=1\nODB_SOURCE=ISE Studio\nCREATION_DATE={stamp}\nSAVE_DATE={stamp}\nSAVE_APP=ISE Studio {}\nSAVE_USER=ise\n", env!("CARGO_PKG_VERSION")).into_bytes()));
     out.push((format!("{root}steps/pcb/stephdr"), b"UNITS=MM\nX_DATUM=0\nY_DATUM=0\nX_ORIGIN=0\nY_ORIGIN=0\nTOP_ACTIVE=0\nBOTTOM_ACTIVE=0\nRIGHT_ACTIVE=0\nLEFT_ACTIVE=0\nAFFECTING_BOM=\nAFFECTING_BOM_CHANGED=0\n".to_vec()));
     let mut prof = Features::default();
     let mut contours = vec![v.outline.clone()];

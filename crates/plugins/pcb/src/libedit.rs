@@ -201,7 +201,7 @@ pub fn check_symbol(def: &SymbolDef, footprint: Option<&Footprint>) -> Vec<Findi
     for p in &def.pins {
         if p.hidden {
             if matches!(p.etype, PinType::PowerIn) {
-                out.push(finding("warning", "hidden_power_pin", format!("pin {} ({}) is a hidden power input: Forma joins no net to hidden pins, so it stays unconnected; show it and wire it", p.number, p.name), vec![p.number.clone()], Some(p.at)));
+                out.push(finding("warning", "hidden_power_pin", format!("pin {} ({}) is a hidden power input: ISE Studio joins no net to hidden pins, so it stays unconnected; show it and wire it", p.number, p.name), vec![p.number.clone()], Some(p.at)));
             }
             continue;
         }

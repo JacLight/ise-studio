@@ -123,7 +123,7 @@ fn layer_counts_up_to_32_and_the_stackup() {
 fn graphics_on_any_layer_join_copper_and_the_exports() {
     let mut p = project();
     let b = board(&mut p, 2);
-    ok(&mut p, "pcb.graphic.create", json!({ "board": b, "layer": "silk_top", "kind": "text", "text": "FORMA REV A", "at": [20, 25], "size": 1.5 }));
+    ok(&mut p, "pcb.graphic.create", json!({ "board": b, "layer": "silk_top", "kind": "text", "text": "ISE REV A", "at": [20, 25], "size": 1.5 }));
     ok(&mut p, "pcb.graphic.create", json!({ "board": b, "layer": "F.SilkS", "kind": "text", "text": "Inter", "at": [20, 20], "size": 2, "font": "Inter", "knockout": true }));
     ok(&mut p, "pcb.graphic.create", json!({ "board": b, "layer": "silk_bottom", "kind": "rect", "from": [2, 2], "to": [8, 6], "corner": 0.5 }));
     ok(&mut p, "pcb.graphic.create", json!({ "board": b, "layer": "fab_top", "kind": "dimension", "style": "aligned", "points": [[0, 0], [40, 0]], "offset": -3 }));

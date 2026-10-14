@@ -134,7 +134,7 @@ pub fn read_obj(data: &[u8]) -> Result<Vec<MeshBody>, String> {
 /// An OBJ file: each part an object, millimetres, Z up, with its colour on
 /// every vertex (the common `v x y z r g b` extension) when it has one.
 pub fn write_obj(parts: &[MeshBody]) -> Vec<u8> {
-    let mut s = String::from("# Forma export: millimetres, Z up\n");
+    let mut s = String::from("# ISE Studio export: millimetres, Z up\n");
     let mut base = 1;
     for p in parts {
         let _ = writeln!(s, "o {}", p.name.replace(['\n', '\r'], " "));
@@ -337,7 +337,7 @@ pub fn read_ply(data: &[u8]) -> Result<Vec<MeshBody>, String> {
 pub fn write_ply(parts: &[MeshBody]) -> Vec<u8> {
     let verts: usize = parts.iter().map(|p| p.positions.len() / 3).sum();
     let faces: usize = parts.iter().map(|p| p.triangles.len() / 3).sum();
-    let mut out = String::from("ply\nformat binary_little_endian 1.0\ncomment Forma export: millimetres, Z up\n");
+    let mut out = String::from("ply\nformat binary_little_endian 1.0\ncomment ISE Studio export: millimetres, Z up\n");
     for p in parts {
         let _ = writeln!(out, "comment part {}", p.name.replace(['\n', '\r'], " "));
     }

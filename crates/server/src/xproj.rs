@@ -498,7 +498,7 @@ fn find(state: &Entities, what: &str) -> Result<StableId, String> {
     match (top.as_slice(), named.as_slice()) {
         ([one], _) => Ok(*one),
         ([], [(one, _)]) => Ok(*one),
-        ([], []) => Err(format!("nothing called “{what}” in that project (see `./forma insert --from <project> --list`)")),
+        ([], []) => Err(format!("nothing called “{what}” in that project (see `./ise insert --from <project> --list`)")),
         _ => Err(format!(
             "“{what}” names {} things there: {}; pick one by id",
             named.len(),
@@ -831,7 +831,7 @@ fn tick(server: &Server, seen: &mut HashMap<(String, StableId), Option<(u64, u12
             if before.is_none() && !automatic {
                 let st = status(server, &app, id, &link);
                 if st["state"] == "update_available" {
-                    println!("{name}: the link to {} has an update available (forma links update)", link.project);
+                    println!("{name}: the link to {} has an update available (ise links update)", link.project);
                     if !told {
                         let _ = app.events.send(json!({ "type": "links" }).to_string().into());
                         told = true;
@@ -842,7 +842,7 @@ fn tick(server: &Server, seen: &mut HashMap<(String, StableId), Option<(u64, u12
             }
             // Automatic links catch up when first seen (the engine was off) and on every change.
             if automatic && (changed || before.is_none()) {
-                let who = Actor { user_id: "forma-links".into(), session_id: StableId::new().to_string() };
+                let who = Actor { user_id: "ise-links".into(), session_id: StableId::new().to_string() };
                 match update_link(server, &app, &who, id, &link) {
                     Ok(out) if out["up_to_date"] != true => {
                         println!("{name}: link to {} updated automatically", link.project);
@@ -1090,7 +1090,7 @@ mod tests {
     use std::net::SocketAddr;
 
     fn temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("forma-xproj-{}", StableId::new()));
+        let dir = std::env::temp_dir().join(format!("ise-xproj-{}", StableId::new()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

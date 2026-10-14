@@ -1888,7 +1888,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
     // over the DevTools protocol): one frame drawn and waited for, in ms.
     if (new URLSearchParams(location.search).has("perf")) {
       const px = new Uint8Array(4);
-      (window as unknown as { formaPerf: unknown }).formaPerf = {
+      (window as unknown as { isePerf: unknown }).isePerf = {
         renderer,
         scene,
         camera,

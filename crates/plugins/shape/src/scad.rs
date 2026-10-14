@@ -80,7 +80,7 @@ fn unit_for(name: &str) -> &'static str {
     }
 }
 
-pub fn forma_params(params: &[ScadParam]) -> Vec<Param> {
+pub fn ise_params(params: &[ScadParam]) -> Vec<Param> {
     params
         .iter()
         .map(|p| {
@@ -106,7 +106,7 @@ pub fn export_source(program_source: &str, values: &[(String, f64)]) -> Option<S
     let src = embedded(program_source)?;
     let mut out = src.trim_end().to_string();
     if !values.is_empty() {
-        out.push_str("\n\n// Values from Forma (OpenSCAD's last assignment wins)\n");
+        out.push_str("\n\n// Values from ISE Studio (OpenSCAD's last assignment wins)\n");
         for (k, v) in values {
             out.push_str(&format!("{k} = {};\n", fmt(*v)));
         }
@@ -120,7 +120,7 @@ fn fmt(v: f64) -> String {
     if s == "-0" { "0".into() } else { s.to_string() }
 }
 
-/// A part as an OpenSCAD polyhedron (Forma's counter-clockwise triangles
+/// A part as an OpenSCAD polyhedron (Iṣẹ́ Studio's counter-clockwise triangles
 /// turned clockwise, as OpenSCAD wants them seen from outside).
 pub fn polyhedron(name: &str, color: Option<&str>, positions: &[f32], indices: &[u32]) -> String {
     let pts: Vec<String> = positions.chunks_exact(3).map(|p| format!("[{},{},{}]", fmt(p[0] as f64), fmt(p[1] as f64), fmt(p[2] as f64))).collect();
@@ -173,7 +173,7 @@ impl Command for ImportScad {
             if s.is_empty() { "OpenSCAD model".into() } else { s }
         });
         let source = program(&file, &self.source, &ps, self.material.as_deref(), self.process.as_deref());
-        let params = forma_params(&ps);
+        let params = ise_params(&ps);
         let out = tx.run(
             "shape.create",
             json!({ "name": name, "description": format!("Imported from {file} (OpenSCAD)."), "source": source, "params": params, "definition": self.definition }),
@@ -203,7 +203,7 @@ mod tests {
         assert!(prog.contains("openscad(SCAD, { w: p.w, h: p.h })"));
         let out = export_source(&prog, &[("w".into(), 32.5), ("h".into(), 5.0)]).unwrap();
         assert!(out.ends_with("w = 32.5;\nh = 5;\n"));
-        let fp = forma_params(&ps);
+        let fp = ise_params(&ps);
         assert_eq!((fp[1].label.as_str(), fp[0].unit.as_str()), ("Height of the block", "mm"));
         assert_eq!(unit_for("tilt_angle"), "deg");
         assert_eq!(unit_for("teeth"), "count");

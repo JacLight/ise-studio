@@ -2,7 +2,7 @@
 //! prestressed), buckling, heat (steady or over time), convergence, beam
 //! frames, the material library, reading a solved study back (probes,
 //! sections, paths, CSV), CalculiX decks, and a part's saved study run as
-//! it is kept (what `./forma stress|modes|buckle|heat …` calls).
+//! it is kept (what `./ise stress|modes|buckle|heat …` calls).
 
 use crate::{App, Server};
 use axum::{
@@ -336,7 +336,7 @@ pub async fn materials(State(server): State<Arc<Server>>, Query(q): Query<HashMa
 }
 
 /// POST /simulate/{id}?part=&kind=stress|fatigue|modes|buckle|heat|converge|inp: the part's saved
-/// study run as it is kept (what the AI's `./forma stress` and friends call).
+/// study run as it is kept (what the AI's `./ise stress` and friends call).
 pub async fn simulate(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> Response {
     let part = q.get("part").filter(|p| !p.is_empty()).cloned();
     let kind = q.get("kind").cloned().unwrap_or_else(|| "stress".into());

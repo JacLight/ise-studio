@@ -147,7 +147,7 @@ pub struct ViewRequest {
     /// One file's text instead (the viewer's "show source").
     #[serde(default)]
     text_of: Option<String>,
-    /// Commands that rebuild a board of this name from the files (for `./forma run`).
+    /// Commands that rebuild a board of this name from the files (for `./ise run`).
     #[serde(default)]
     to_board: Option<String>,
 }

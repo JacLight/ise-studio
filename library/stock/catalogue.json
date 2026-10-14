@@ -1,5 +1,5 @@
 {
-  "about": "Forma stock library: real bought-in parts with true geometry, stock() metadata and connectors. Each family is <id>.json (manifest: sizes as configuration rows, materials with densities, checks) + its program files. Families are shown in this order and grouped by their category.",
+  "about": "Iṣẹ́ Studio stock library: real bought-in parts with true geometry, stock() metadata and connectors. Each family is <id>.json (manifest: sizes as configuration rows, materials with densities, checks) + its program files. Families are shown in this order and grouped by their category.",
   "categories": [
     "Fasteners",
     "Inserts & pins",

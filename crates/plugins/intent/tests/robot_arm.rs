@@ -1,11 +1,11 @@
-//! examples/robot-arm, built from its steps.json the way `forma.mjs run`
+//! examples/robot-arm, built from its steps.json the way `ise.mjs run`
 //! does, then verified: every requirement met (each joint clash-free over its
 //! limits, everything fits), the fit report with no failing item, and a BOM
 //! with no flags (every bought line with a part number and a source, every
 //! made line with material, process and estimate).
 //!
-//! `FORMA_ARM_QUICK=1` skips the motion requirements (minutes) for a quick look;
-//! `FORMA_ARM_REPORT=1` prints the fit report's warnings and failures.
+//! `ISE_ARM_QUICK=1` skips the motion requirements (minutes) for a quick look;
+//! `ISE_ARM_REPORT=1` prints the fit report's warnings and failures.
 
 use de_assembly::AssemblyPlugin;
 use de_assembly::fit::{self, FitOptions, FitStatus};
@@ -156,7 +156,7 @@ fn holding_torque(p: &Project, scope: StableId, hinge: StableId, payload: f64, a
     };
     for i in downstream(p, scope, hinge) {
         let (m, c) = mass_of(p, i);
-        if std::env::var("FORMA_ARM_MASSES").is_ok() {
+        if std::env::var("ISE_ARM_MASSES").is_ok() {
             println!("  {:>7.1} g at x {:>6.1}  {}", m * 1000.0, c[0] - o[0], p.get::<de_assembly::Instance>(i).unwrap().name);
         }
         add(m, c);
@@ -167,11 +167,11 @@ fn holding_torque(p: &Project, scope: StableId, hinge: StableId, payload: f64, a
 
 #[test]
 fn the_robot_arm_builds_fits_moves_clear_and_has_a_clean_bom() {
-    let quick = std::env::var("FORMA_ARM_QUICK").is_ok();
+    let quick = std::env::var("ISE_ARM_QUICK").is_ok();
     let (p, asm) = build(quick);
     let world = p.world();
     let r = fit::report(world, Some(asm), &FitOptions { motion: false, steps: 24 }).unwrap();
-    if std::env::var("FORMA_ARM_REPORT").is_ok() {
+    if std::env::var("ISE_ARM_REPORT").is_ok() {
         println!("fit: {} pass, {} warn, {} fail", r.pass, r.warn, r.fail);
         for i in r.items.iter().filter(|i| i.status != FitStatus::Pass) {
             println!("{:?} {}", i.status, i.title);

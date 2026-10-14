@@ -5,7 +5,7 @@
 import { type Dispatch, type SetStateAction, useCallback, useState } from "react";
 import { projectName } from "./engine";
 
-const key = (name: string) => `forma.ui.${projectName || "default"}.${name}`;
+const key = (name: string) => `ise.ui.${projectName || "default"}.${name}`;
 
 function read<T>(name: string, initial: T): T {
   try {

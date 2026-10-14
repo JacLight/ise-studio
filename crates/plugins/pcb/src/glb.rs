@@ -251,7 +251,7 @@ fn write(name: &str, list: Vec<(String, ([f64; 3], f64, f64), Mesh)>) -> Vec<u8>
     }
     let n = nodes.len();
     let doc: Value = json!({
-        "asset": { "version": "2.0", "generator": "Forma PCB" },
+        "asset": { "version": "2.0", "generator": "ISE Studio PCB" },
         "scene": 0,
         "scenes": [{ "name": name, "nodes": [n] }],
         "nodes": nodes.into_iter().chain(std::iter::once(json!({ "name": name, "children": (0..n).collect::<Vec<_>>() }))).collect::<Vec<_>>(),

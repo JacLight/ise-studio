@@ -247,7 +247,7 @@ pub fn read(data: &[u8]) -> Result<Cloud, String> {
             if invalid.is_some_and(|v| v[i] != 0.0) {
                 continue;
             }
-            // Scanners write metres: Forma works in millimetres.
+            // Scanners write metres: Iṣẹ́ Studio works in millimetres.
             cloud.positions.push(scale(add(mat_vec(&rot, p), tr), 1000.0));
             if let Some((r, g, b, lr, lg, lb)) = colour {
                 let c = |v: f64, (lo, hi): (f64, f64)| (((v - lo) / (hi - lo).max(1e-12)) * 255.0).round().clamp(0.0, 255.0) as u8;

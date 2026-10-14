@@ -186,7 +186,7 @@ pub fn pdf_pages(title: &str, pages: &[(f64, f64, String)]) -> Vec<u8> {
     let kids: Vec<String> = (0..pages.len()).map(|i| format!("{} 0 R", 5 + i * 2)).collect();
     objs.push(format!("<< /Type /Pages /Kids [{}] /Count {} >>", kids.join(" "), pages.len()).into_bytes());
     objs.push(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec());
-    objs.push(format!("<< /Title ({}) /Producer (Forma) >>", esc(title)).into_bytes());
+    objs.push(format!("<< /Title ({}) /Producer (ISE Studio) >>", esc(title)).into_bytes());
     for (i, (w, h, c)) in pages.iter().enumerate() {
         objs.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w:.2} {h:.2}] /Resources << /Font << /F1 3 0 R >> >> /Contents {} 0 R >>", 6 + i * 2).into_bytes());
         let mut st = format!("<< /Length {} >>\nstream\n", c.len()).into_bytes();

@@ -17,7 +17,7 @@ pub mod zip;
 
 use manifold_csg::Manifold;
 
-/// The kinds of file Forma reads.
+/// The kinds of file Iṣẹ́ Studio reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Step,
@@ -136,7 +136,7 @@ impl Kind {
 }
 
 /// Why a DWG cannot come in (the format is closed; its only open reader is GPL).
-pub const DWG: &str = "DWG files cannot be read here: the format is closed, and its only open-source reader (LibreDWG) is GPL, which Forma cannot include. Save the drawing as DXF (every CAD program can) and import that";
+pub const DWG: &str = "DWG files cannot be read here: the format is closed, and its only open-source reader (LibreDWG) is GPL, which ISE Studio cannot include. Save the drawing as DXF (every CAD program can) and import that";
 
 /// How a part looks in a file that carries colour (sRGB, 0…1).
 #[derive(Clone, Debug, PartialEq)]

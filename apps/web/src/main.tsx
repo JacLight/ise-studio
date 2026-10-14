@@ -20,7 +20,7 @@ if (location.pathname === "/join") {
     </StrictMode>,
   );
 } else if (link) {
-  // A view-only link: the model, read-only, for someone who may not have Forma.
+  // A view-only link: the model, read-only, for someone who may not have Iṣẹ́ Studio.
   const engine = new Engine(`/view/${link[1]}/ws`);
   engine.connect();
   root.render(

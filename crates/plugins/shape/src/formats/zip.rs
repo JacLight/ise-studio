@@ -217,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_stored_archives_forma_writes() {
+    fn reads_the_stored_archives_ise_writes() {
         let z = crate::fabricate::zip(&[("a.txt".into(), b"one".to_vec()), ("dir/b.txt".into(), b"two".to_vec())]);
         let files = read(&z).unwrap();
         assert_eq!(files, vec![("a.txt".to_string(), b"one".to_vec()), ("dir/b.txt".to_string(), b"two".to_vec())]);

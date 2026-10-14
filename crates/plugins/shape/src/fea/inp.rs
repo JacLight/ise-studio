@@ -1,6 +1,6 @@
-//! A study written as a CalculiX input deck (.inp), to cross-check Forma's
+//! A study written as a CalculiX input deck (.inp), to cross-check Iṣẹ́ Studio's
 //! answer in an independent solver: the same cubes as 8-node bricks with
-//! incompatible modes (C3D8I, the element Forma uses), the same holds and the
+//! incompatible modes (C3D8I, the element Iṣẹ́ Studio uses), the same holds and the
 //! same forces on the nodes. Only the file format is written; nothing of
 //! CalculiX is used here.
 
@@ -16,13 +16,13 @@ pub enum InpKind {
 }
 
 /// The deck for a study. Partly filled cubes get a material whose stiffness
-/// (and density) is scaled by how full they are, in tenths, as Forma counts them.
+/// (and density) is scaled by how full they are, in tenths, as Iṣẹ́ Studio counts them.
 pub fn calculix_inp(bodies: &[Body], study: &Study, kind: InpKind, count: usize) -> Result<String, String> {
     let s = Setup::build(bodies, study, kind != InpKind::Frequency)?;
     let m = &s.model;
     let mut out = String::new();
     let mut notes: Vec<String> = vec![];
-    out += "** Written by Forma: a stress study as a CalculiX deck, to cross-check.\n** Units: mm, N, MPa, tonne/mm³.\n*HEADING\nForma study\n";
+    out += "** Written by ISE Studio: a stress study as a CalculiX deck, to cross-check.\n** Units: mm, N, MPa, tonne/mm³.\n*HEADING\nForma study\n";
     // Nodes, numbered from 1.
     out += "*NODE, NSET=NALL\n";
     for n in (0..m.nodes).filter(|&n| m.used[n]) {
@@ -84,7 +84,7 @@ pub fn calculix_inp(bodies: &[Body], study: &Study, kind: InpKind, count: usize)
         notes.push(format!("{slanted} springs at a slant (sliding or elastic supports on slanted or round faces) are not written: add them as *EQUATION or SPRINGA by hand."));
     }
     if s.pairs.is_some() {
-        notes.push("The parts touch: contact is not written, so the parts are separate here (add *CONTACT PAIR or *TIE to match Forma).".into());
+        notes.push("The parts touch: contact is not written, so the parts are separate here (add *CONTACT PAIR or *TIE to match ISE Studio).".into());
     }
     if s.eps_heat.iter().any(|e| e[0] != 0.0) || !study.bolts.is_empty() || study.plastic {
         notes.push("Heat, bolt preload and plasticity are not written (only the loads on faces and the body forces).".into());

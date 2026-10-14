@@ -1,5 +1,5 @@
-// `forma files ls|rm|mv`: the files of one folder, and never anything outside
-// it. The Forma AI's `./forma` sets that folder to its own (FORMA_FILES_ROOT);
+// `ise files ls|rm|mv`: the files of one folder, and never anything outside
+// it. The Iṣẹ́ AI's `./ise` sets that folder to its own (ISE_FILES_ROOT);
 // run by hand, it is the current folder. Every path is resolved against the
 // folder; one that leads out of it (by `..`, an absolute path, or a symbolic
 // link to elsewhere) is refused, as are the files that keep the conversation.
@@ -8,12 +8,12 @@ import { lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync, renameSy
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /** What keeps the conversation and the tool itself: never removed or moved. */
-const KEPT = new Set(["forma", "chat.jsonl", "session.json", "transcript.jsonl", "attachments", "memory"]);
+const KEPT = new Set(["ise", "chat.jsonl", "session.json", "transcript.jsonl", "attachments", "memory"]);
 /** Folders whose contents are kept too (the pictures the conversation shows). */
 const KEPT_INSIDE = new Set(["attachments"]);
 
 export function filesRoot(env = process.env, cwd = process.cwd()) {
-  return realpathSync(env.FORMA_FILES_ROOT || cwd);
+  return realpathSync(env.ISE_FILES_ROOT || cwd);
 }
 
 const within = (root, p) => {
@@ -60,7 +60,7 @@ export function place(root, given, { existing = true } = {}) {
 function kept(rel) {
   const [first, ...rest] = rel.split(sep);
   if (rel === "") return "that is your folder itself";
-  if (!rest.length && KEPT.has(first)) return first === "forma" ? "that is your tool" : "it keeps the conversation";
+  if (!rest.length && KEPT.has(first)) return first === "ise" ? "that is your tool" : "it keeps the conversation";
   if (rest.length && KEPT_INSIDE.has(first)) return "the conversation shows it";
   return null;
 }
@@ -104,7 +104,7 @@ export function ls(root, given = ".") {
 
 /** `rm <path…> [-r]`: files, or folders with -r (links removed, never followed). */
 export function rm(root, paths, { recursive = false } = {}) {
-  if (!paths.length) throw new Error("say which files to remove: forma files rm <path…> [-r]");
+  if (!paths.length) throw new Error("say which files to remove: ise files rm <path…> [-r]");
   // Every path checked before anything is removed.
   const found = paths.map((p) => {
     const at = place(root, p);
@@ -122,7 +122,7 @@ export function rm(root, paths, { recursive = false } = {}) {
 
 /** `mv <from> <to> [-f]`: renames or moves into a folder; replaces a file only with -f. */
 export function mv(root, from, to, { force = false } = {}) {
-  if (!from || !to) throw new Error("say what to move and where: forma files mv <from> <to>");
+  if (!from || !to) throw new Error("say what to move and where: ise files mv <from> <to>");
   const src = place(root, from);
   const whySrc = kept(src.rel);
   if (whySrc) throw new Error(`${from}: ${whySrc}, so it is not moved`);
@@ -157,6 +157,6 @@ export function files(argv, env = process.env, cwd = process.cwd()) {
     case "move":
       return mv(root, rest[0], rest[1], { force: flags.has("f") });
     default:
-      throw new Error("forma files ls [path] | rm <path…> [-r] | mv <from> <to> [-f]   (inside your folder only)");
+      throw new Error("ise files ls [path] | rm <path…> [-r] | mv <from> <to> [-f]   (inside your folder only)");
   }
 }

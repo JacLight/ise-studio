@@ -1,6 +1,6 @@
 //! The worked example, `examples/pcb-esp32/steps.json`, built through the
 //! same commands the AI uses: it must route, pass DRC and write fab files
-//! that read back. `FORMA_WRITE_EXAMPLE=1` also writes the package to
+//! that read back. `ISE_WRITE_EXAMPLE=1` also writes the package to
 //! `examples/pcb-esp32/fab/`.
 
 use de_core::{Actor, Envelope, Project, Registry, SCHEMA_VERSION, StableId, Value};
@@ -62,7 +62,7 @@ fn the_esp32_example_routes_passes_drc_and_exports() {
     let model = b.model.unwrap();
     let solid = p.get::<de_shape::ShapeSolid>(model).unwrap_or_else(|| panic!("{:?}", p.status(model)));
     assert!(solid.stats.parts.len() >= 20);
-    if std::env::var("FORMA_WRITE_EXAMPLE").is_ok() {
+    if std::env::var("ISE_WRITE_EXAMPLE").is_ok() {
         let dir = root.join("fab");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

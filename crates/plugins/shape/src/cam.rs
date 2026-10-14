@@ -332,7 +332,7 @@ pub fn job(name: &str, solid: &Manifold, setup: &Setup) -> Result<Job, String> {
     let mut w = Writer { setup: s, g: String::new(), moves: Vec::new(), at: [0.0, 0.0, s.safe_z], cut: 0.0, seconds: 0.0 };
     let [sx, sy, _] = [hi[0] - lo[0], hi[1] - lo[1], top];
     let header = format!(
-        "(Forma: {name})\n(Stock {:.1} x {:.1} x {:.2} mm. Zero: X0 Y0 at the part's lower-left corner, Z0 on top of the stock.)\n(Tool: {:.3} mm flat end mill at {:.0} rpm, feed {:.0}, plunge {:.0} mm/min, {:.2} mm per pass.)\n",
+        "(ISE Studio: {name})\n(Stock {:.1} x {:.1} x {:.2} mm. Zero: X0 Y0 at the part's lower-left corner, Z0 on top of the stock.)\n(Tool: {:.3} mm flat end mill at {:.0} rpm, feed {:.0}, plunge {:.0} mm/min, {:.2} mm per pass.)\n",
         sx, sy, top, s.tool_diameter, s.spindle_rpm, s.feed, s.plunge, s.step_down
     );
     w.g.push_str(&header);

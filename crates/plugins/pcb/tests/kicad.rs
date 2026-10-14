@@ -1,8 +1,8 @@
 //! KiCad and IDF interop, checked without KiCad: the worked example goes
-//! Forma → .kicad_pcb → Forma and must come back with the same nets, pads,
+//! Iṣẹ́ Studio → .kicad_pcb → Iṣẹ́ Studio and must come back with the same nets, pads,
 //! copper and pours; hand-written files in the KiCad 8 and KiCad 6 styles
 //! (written from the format documentation) land where they should in
-//! Forma's coordinates; and the IDF files parse back with a small reader.
+//! Iṣẹ́ Studio's coordinates; and the IDF files parse back with a small reader.
 
 use de_core::{Actor, Envelope, Project, Registry, SCHEMA_VERSION, StableId, Value, json};
 use de_pcb::board::BoardView;
@@ -158,7 +158,7 @@ fn the_example_round_trips_through_kicad() {
         assert!((x.gap_thermal() - y.gap_thermal()).abs() < 1e-9 && (x.spoke_width() - y.spoke_width()).abs() < 1e-9);
         assert!((x.min_width - y.min_width).abs() < 1e-9);
     }
-    // And again: Forma's own import exports and re-imports to the same board.
+    // And again: ISE Studio's own import exports and re-imports to the same board.
     let text2 = kicad::export_world(p2.world(), id2).unwrap();
     let (p3, id3, _) = import(&text2);
     same_board(&b, &de_pcb::view(p3.world(), id3).unwrap());
@@ -168,7 +168,7 @@ fn the_example_round_trips_through_kicad() {
 }
 
 #[test]
-fn a_kicad8_file_lands_in_forma_coordinates() {
+fn a_kicad8_file_lands_in_ise_coordinates() {
     let text = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/kicad8_small.kicad_pcb")).unwrap();
     let k = kicad::parse_board(&text).unwrap();
     assert_eq!(k.title.as_deref(), Some("Fixture eight"));
@@ -182,7 +182,7 @@ fn a_kicad8_file_lands_in_forma_coordinates() {
     assert_eq!((z.net.as_str(), z.layer.as_str(), z.priority), ("GND", "bottom", 2));
     assert_eq!(z.connection, de_pcb::PadConnection::Solid);
     assert_eq!((z.clearance, z.min_width, z.thermal_gap, z.thermal_spoke), (Some(0.3), 0.2, Some(0.4), Some(0.35)));
-    // The arc and the segment after it are one track; every arc point is 3 mm from the arc's centre (KiCad 110, 113 → Forma 10, 7).
+    // The arc and the segment after it are one track; every arc point is 3 mm from the arc's centre (KiCad 110, 113 → Iṣẹ́ Studio 10, 7).
     assert_eq!(k.tracks.len(), 1);
     let t = &k.tracks[0];
     assert_eq!(t.net.as_deref(), Some("GND"));
@@ -201,7 +201,7 @@ fn a_kicad8_file_lands_in_forma_coordinates() {
     assert_eq!(out["components"], 3);
     let v = de_pcb::view(p.world(), id).unwrap();
     let pad = |r: &str, n: &str| v.pads.iter().find(|p| p.reference == r && p.number == n).unwrap_or_else(|| panic!("{r}.{n}"));
-    // R1 at (110, 105) turned 90°: pad 1 (x −0.825) goes down the screen, i.e. to Forma y − 0.825.
+    // R1 at (110, 105) turned 90°: pad 1 (x −0.825) goes down the screen, i.e. to Iṣẹ́ Studio y − 0.825.
     let p1 = pad("R1", "1");
     assert!(close(p1.at[0], 10.0) && close(p1.at[1], 15.0 - 0.825), "{:?}", p1.at);
     assert!(close(p1.rotation.rem_euclid(360.0), 90.0));
@@ -219,7 +219,7 @@ fn a_kicad8_file_lands_in_forma_coordinates() {
     assert_eq!(tp2.drill, Some([0.6, 1.6]));
     assert!(close(tp2.rotation.rem_euclid(360.0), 45.0), "{}", tp2.rotation);
     assert_eq!(v.components.iter().find(|c| c.reference == "TP1").unwrap().side, de_pcb::Side::Bottom);
-    // The custom L-shaped pad: its outline is the L plus the anchor square's corner in the notch (4 + 0.0625 mm²), the arm at KiCad (+1.5, −0.5) is above-right in Forma.
+    // The custom L-shaped pad: its outline is the L plus the anchor square's corner in the notch (4 + 0.0625 mm²), the arm at KiCad (+1.5, −0.5) is above-right in Iṣẹ́ Studio.
     let j = pad("J1", "1");
     assert_eq!(j.shape, PadShape::Custom);
     let poly = j.polygon.as_ref().expect("custom outline");

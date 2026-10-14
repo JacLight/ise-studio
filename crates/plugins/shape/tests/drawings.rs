@@ -33,7 +33,7 @@ fn program(dir: &str, name: &str) -> de_shape::ShapeProgram {
 }
 
 fn title(name: &str, material: &str) -> Title {
-    Title { title: name.into(), number: "FD-001".into(), material: material.into(), mass: "—".into(), drawn_by: "Forma".into(), date: "2026-10-12".into(), ..Default::default() }
+    Title { title: name.into(), number: "FD-001".into(), material: material.into(), mass: "—".into(), drawn_by: "ISE Studio".into(), date: "2026-10-12".into(), ..Default::default() }
 }
 
 fn write(d: &[Drawing], name: &str) {
@@ -60,8 +60,8 @@ fn a_machined_bracket_is_dimensioned_for_the_shop() {
         "roughness": { "ra": 3.2 },
         "finishes": [{ "view": "right", "at": [40, 61], "ra": 0.8, "process": "reamed" }],
         "notes": ["Remove all burrs and break sharp edges 0.2–0.5.", "Anodise clear to MIL-A-8625 Type II after machining; mask the ⌀22 H7 bore."],
-        "revisions": [{ "rev": "A", "description": "First issue", "date": "2026-10-12", "by": "Forma" }],
-        "title_block": { "company": "Forma examples", "finish": "Anodise clear" },
+        "revisions": [{ "rev": "A", "description": "First issue", "date": "2026-10-12", "by": "ISE Studio" }],
+        "title_block": { "company": "ISE Studio examples", "finish": "Anodise clear" },
     }))
     .unwrap();
     let d = drawing::drawing(&program, &options, &title("Bearing bracket", "Aluminium 6061-T6")).unwrap();

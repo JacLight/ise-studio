@@ -203,7 +203,7 @@ pub async fn simulations(State(server): State<Arc<Server>>, Query(query): Query<
     axum::Json(list).into_response()
 }
 
-/// Saved simulations that fail a datasheet check or an expectation, for `./forma check`.
+/// Saved simulations that fail a datasheet check or an expectation, for `./ise check`.
 pub fn findings(project: &de_core::Project) -> Vec<Value> {
     let mut out = Vec::new();
     for (id, s) in de_pcb::spice::saved(project.world()) {

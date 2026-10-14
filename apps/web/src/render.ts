@@ -830,7 +830,7 @@ async function trace(
       const now = Math.floor(tracer.samples);
       if (now !== last) onProgress?.((last = now));
       // Let the page (and the GPU) breathe between draws. A message, not a
-      // timer: a render asked for by ./forma often runs in a tab nobody is
+      // timer: a render asked for by ./ise often runs in a tab nobody is
       // looking at, where timers wait a second or more each (it never finished).
       await breathe();
     }

@@ -239,8 +239,8 @@ fn ldo_for(value: &str, mpn: &str) -> Ldo {
 }
 
 const LIBRARY: &str = r#"
-* --- Forma behavioural models (approximate; see each part's source) ---
-.subckt forma_ldo vin gnd en vout params: vset=3.3 vdo0=0 rdo=1 ilim=0.6 ishort=0.15 ro=0.1 iq=50u ven=0.9 tss=100u
+* --- Iṣẹ́ Studio behavioural models (approximate; see each part's source) ---
+.subckt ise_ldo vin gnd en vout params: vset=3.3 vdo0=0 rdo=1 ilim=0.6 ishort=0.15 ro=0.1 iq=50u ven=0.9 tss=100u
 Ben ena gnd V = 1/(1+exp(-(V(en,gnd)-ven)/0.02))
 Rss ena ss 1k
 Css ss gnd {tss/2.2/1000}
@@ -252,7 +252,7 @@ Vs s1 vout 0
 Fin vin gnd Vs 1
 Iq vin gnd {iq}
 .ends
-.subckt forma_load vdd gnd en params: ibase=0.08 iburst=0.5 tb=5m tl=2m ireset=2m
+.subckt ise_load vdd gnd en params: ibase=0.08 iburst=0.5 tb=5m tl=2m ireset=2m
 Bon on gnd V = (1/(1+exp(-(V(en,gnd)-0.75*V(vdd,gnd))/0.02))) * (1/(1+exp(-(V(vdd,gnd)-2.3)/0.02)))
 Bt gnd ton I = V(on,gnd) > 0.5 ? 1 : -V(ton,gnd)*1000
 Ct ton gnd 1
@@ -261,13 +261,13 @@ Bburst burst gnd V = 0.25*(1+tanh((V(ton,gnd)-tb)/2e-7))*(1+tanh((tb+tl-V(ton,gn
 Bload vi gnd I = (V(on,gnd)*(ibase + (iburst-ibase)*V(burst,gnd)) + (1-V(on,gnd))*ireset) * min(1, max(V(vdd,gnd),0)/2.0)
 Vsense vdd vi 0
 .ends
-.model forma_d D(Is=2.5n N=1.75 Rs=0.6 Cjo=4p Bv=100 Ibv=100u)
-.model forma_schottky D(Is=5u N=1.05 Rs=0.05 Cjo=100p Bv=40 Ibv=1m)
-.model forma_npn NPN(Is=1e-14 Bf=200 Vaf=100 Cje=4p Cjc=3p Tf=0.4n)
-.model forma_pnp PNP(Is=1e-14 Bf=150 Vaf=100 Cje=5p Cjc=4p Tf=0.5n)
-.model forma_nmos NMOS(Level=1 Vto=1.8 Kp=0.3 Lambda=0.02 Rd=1 Rs=1)
-.model forma_pmos PMOS(Level=1 Vto=-1.8 Kp=0.2 Lambda=0.02 Rd=1 Rs=1)
-.model forma_switch SW(Ron=0.05 Roff=1e9 Vt=0.5 Vh=0.1)
+.model ise_d D(Is=2.5n N=1.75 Rs=0.6 Cjo=4p Bv=100 Ibv=100u)
+.model ise_schottky D(Is=5u N=1.05 Rs=0.05 Cjo=100p Bv=40 Ibv=1m)
+.model ise_npn NPN(Is=1e-14 Bf=200 Vaf=100 Cje=4p Cjc=3p Tf=0.4n)
+.model ise_pnp PNP(Is=1e-14 Bf=150 Vaf=100 Cje=5p Cjc=4p Tf=0.5n)
+.model ise_nmos NMOS(Level=1 Vto=1.8 Kp=0.3 Lambda=0.02 Rd=1 Rs=1)
+.model ise_pmos PMOS(Level=1 Vto=-1.8 Kp=0.2 Lambda=0.02 Rd=1 Rs=1)
+.model ise_switch SW(Ron=0.05 Roff=1e9 Vt=0.5 Vh=0.1)
 "#;
 
 fn pin_net<'a>(s: &'a SymbolView, names: &[&str]) -> Option<&'a Option<String>> {
@@ -394,10 +394,10 @@ pub fn netlist(v: &SchematicView, req: &SimRequest) -> Netlist {
                 let _ = writeln!(body, ".model z_{r} D(Is=1n N=1.5 Rs=1 Bv={bv} Ibv=5m)\nD_{r} {ka} {kk} z_{r}");
                 model(&format!("Zener {bv} V"), true, "generic");
             } else if sym.contains("Schottky") || lower.contains("schottky") {
-                let _ = writeln!(body, "D_{r} {ka} {kk} forma_schottky");
+                let _ = writeln!(body, "D_{r} {ka} {kk} ise_schottky");
                 model("Schottky diode", true, "generic (SS34-like)");
             } else {
-                let _ = writeln!(body, "D_{r} {ka} {kk} forma_d");
+                let _ = writeln!(body, "D_{r} {ka} {kk} ise_d");
                 model("diode", true, "generic (1N4148-like)");
             }
         } else if sym.starts_with("Q_") {
@@ -405,13 +405,13 @@ pub fn netlist(v: &SchematicView, req: &SimRequest) -> Netlist {
             if sym.contains("MOS") {
                 let (Some(g), Some(sr), Some(d)) = (get(&["G"], "1"), get(&["S"], "2"), get(&["D"], "3")) else { continue };
                 let (dn, gn, sn) = (node(&d), node(&g), node(&sr));
-                let m = if sym.contains("PMOS") { "forma_pmos" } else { "forma_nmos" };
+                let m = if sym.contains("PMOS") { "ise_pmos" } else { "ise_nmos" };
                 let _ = writeln!(body, "M_{r} {dn} {gn} {sn} {sn} {m}");
                 model(&format!("MOSFET ({m})"), true, "generic level-1");
             } else {
                 let (Some(b), Some(e), Some(c)) = (get(&["B"], "1"), get(&["E"], "2"), get(&["C"], "3")) else { continue };
                 let (cn, bn, en) = (node(&c), node(&b), node(&e));
-                let m = if sym.contains("PNP") { "forma_pnp" } else { "forma_npn" };
+                let m = if sym.contains("PNP") { "ise_pnp" } else { "ise_npn" };
                 let _ = writeln!(body, "Q_{r} {cn} {bn} {en} {m}");
                 model(&format!("BJT ({m})"), true, "generic");
             }
@@ -421,7 +421,7 @@ pub fn netlist(v: &SchematicView, req: &SimRequest) -> Netlist {
             for p in req.presses.iter().filter(|p| p.part.eq_ignore_ascii_case(r)) {
                 let _ = write!(pwl, " {} 0 {} 1 {} 1 {} 0", p.at, p.at + 1e-6, p.at + p.hold, p.at + p.hold + 1e-6);
             }
-            let _ = writeln!(body, "V_{r}_ctl {r}_ctl 0 PWL({pwl})\nS_{r} {a} {b} {r}_ctl 0 forma_switch");
+            let _ = writeln!(body, "V_{r}_ctl {r}_ctl 0 PWL({pwl})\nS_{r} {a} {b} {r}_ctl 0 ise_switch");
             let pressed = req.presses.iter().any(|p| p.part.eq_ignore_ascii_case(r));
             model(if pressed { "push button, pressed as asked" } else { "push button, open" }, false, "switch 50 mΩ / 1 GΩ");
         } else if sym.starts_with("USB_C") || lower.contains("usb_c_receptacle") {
@@ -451,7 +451,7 @@ pub fn netlist(v: &SchematicView, req: &SimRequest) -> Netlist {
                 Some(e) => node(e),
                 None => ni.clone(),
             };
-            let _ = writeln!(body, "X_{r} {ni} {ng} {ne} {no} forma_ldo vset={} vdo0={} rdo={} ilim={} ishort={} ro={} iq={} ven={} tss={}", l.vset, l.vdo0, l.rdo, l.ilim, l.ishort, l.ro, l.iq, if l.ven < 0.0 { 0.0 } else { l.ven }, l.tss);
+            let _ = writeln!(body, "X_{r} {ni} {ng} {ne} {no} ise_ldo vset={} vdo0={} rdo={} ilim={} ishort={} ro={} iq={} ven={} tss={}", l.vset, l.vdo0, l.rdo, l.ilim, l.ishort, l.ro, l.iq, if l.ven < 0.0 { 0.0 } else { l.ven }, l.tss);
             nl.saves.push((format!("I({r})"), format!("i(v.x_{}.vs)", r.to_ascii_lowercase())));
             if let (Some(i), Some(o)) = (vin.clone(), vout.clone()) {
                 nl.rules.push(Rule::Regulator { part: r.clone(), vin: i, vout: o, imax: l.imax, pd: l.pd, why: l.source.into() });
@@ -463,7 +463,7 @@ pub fn netlist(v: &SchematicView, req: &SimRequest) -> Netlist {
             let b = req.bursts.iter().find(|b| b.part.eq_ignore_ascii_case(r));
             let (base, cur, at, len) = b.map(|b| (b.base.unwrap_or(0.08), b.current, b.at, b.length)).unwrap_or((0.08, 0.5, 5e-3, 2e-3));
             let (nv, ng, ne) = (node(vdd), node(&gnd), node(en));
-            let _ = writeln!(body, "X_{r} {nv} {ng} {ne} forma_load ibase={base} iburst={cur} tb={at} tl={len}");
+            let _ = writeln!(body, "X_{r} {nv} {ng} {ne} ise_load ibase={base} iburst={cur} tb={at} tl={len}");
             nl.saves.push((format!("I({r})"), format!("i(v.x_{}.vsense)", r.to_ascii_lowercase())));
             nl.loads.push(r.clone());
             if let Some(vd) = vdd.clone() {
@@ -487,15 +487,15 @@ pub fn netlist(v: &SchematicView, req: &SimRequest) -> Netlist {
         nl.saves.push((format!("{l}.on"), format!("v({x}.on)")));
         nl.saves.push((format!("{l}.burst"), format!("v({x}.burst)")));
     }
-    nl.text = format!("* {} — made by Forma\n.options rshunt=1e12 reltol=1e-4\n{LIBRARY}\n{body}", v.name);
+    nl.text = format!("* {} — made by ISE Studio\n.options rshunt=1e12 reltol=1e-4\n{LIBRARY}\n{body}", v.name);
     nl
 }
 
 // ---- Running ngspice ---------------------------------------------------------------------
 
-/// The ngspice program: `FORMA_NGSPICE`, else on the PATH or where Homebrew and Linux put it.
+/// The ngspice program: `ISE_NGSPICE`, else on the PATH or where Homebrew and Linux put it.
 pub fn ngspice() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("FORMA_NGSPICE") {
+    if let Ok(p) = std::env::var("ISE_NGSPICE") {
         return Some(PathBuf::from(p));
     }
     let mut dirs: Vec<PathBuf> = std::env::var("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
@@ -562,14 +562,14 @@ fn parse_raw(text: &str) -> Result<Raw, String> {
 }
 
 fn run(nl: &Netlist, req: &SimRequest) -> Result<(Raw, String), String> {
-    let exe = ngspice().ok_or("ngspice is not installed: `brew install ngspice` (macOS), `apt install ngspice` (Linux), or ngspice.sourceforge.io; FORMA_NGSPICE points at another copy")?;
+    let exe = ngspice().ok_or("ngspice is not installed: `brew install ngspice` (macOS), `apt install ngspice` (Linux), or ngspice.sourceforge.io; ISE_NGSPICE points at another copy")?;
     static N: Mutex<u64> = Mutex::new(0);
     let k = {
         let mut n = N.lock().unwrap_or_else(|e| e.into_inner());
         *n += 1;
         *n
     };
-    let dir = std::env::temp_dir().join(format!("forma-spice-{}-{k}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("ise-spice-{}-{k}", std::process::id()));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let out = dir.join("out.raw");
     let analysis = match &req.analysis {
@@ -590,7 +590,7 @@ fn run(nl: &Netlist, req: &SimRequest) -> Result<(Raw, String), String> {
     let o = std::process::Command::new(&exe).arg("-b").arg(dir.join("circuit.cir")).output().map_err(|e| format!("cannot run {}: {e}", exe.display()))?;
     let log = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
     let raw = std::fs::read_to_string(&out).map_err(|_| format!("ngspice did not finish: {}", log.lines().filter(|l| l.to_ascii_lowercase().contains("error") || l.contains("singular") || l.contains("aborted")).take(6).collect::<Vec<_>>().join(" | ")));
-    if raw.is_ok() || std::env::var("FORMA_SPICE_KEEP").is_err() {
+    if raw.is_ok() || std::env::var("ISE_SPICE_KEEP").is_err() {
         let _ = std::fs::remove_dir_all(&dir);
     }
     Ok((parse_raw(&raw?)?, deck))
@@ -1112,10 +1112,10 @@ fn evaluate(nl: &Netlist, req: &SimRequest, raw: &Raw, deck: String) -> SimResul
     SimResult { analysis: req.analysis.clone(), x_name: raw.x_name.clone(), x_unit, x, signals: sigs, windows, checks, expectations, measurements, parts: nl.parts.clone(), skipped: nl.skipped.clone(), assumptions: nl.assumptions.clone(), netlist: deck, ok }
 }
 
-// ---- Saved simulations: requirements `./forma check` runs ------------------------------------
+// ---- Saved simulations: requirements `./ise check` runs ------------------------------------
 
 /// `pcb.simulation`: a named simulation of a schematic, kept with the project; its datasheet
-/// checks and expectations are requirements (`./forma check` runs it).
+/// checks and expectations are requirements (`./ise check` runs it).
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SavedSimulation {
     pub schematic: de_core::StableId,

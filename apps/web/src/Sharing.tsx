@@ -89,7 +89,7 @@ export function ViewLinks(props: { entities: ReadonlyMap<string, EntityView>; ha
           </button>
         )}
       </div>
-      <p className="view-links-what">They see the model in a browser (orbit, parts, comments) without Forma, and cannot change anything. Program code, the AI chat and history stay private.</p>
+      <p className="view-links-what">They see the model in a browser (orbit, parts, comments) without Iṣẹ́ Studio, and cannot change anything. Program code, the AI chat and history stay private.</p>
       {adding && (
         <form className="view-link-form" onSubmit={create}>
           <label>
@@ -167,7 +167,7 @@ export function ViewLinks(props: { entities: ReadonlyMap<string, EntityView>; ha
         </ul>
       )}
       {links && links.length > 0 && !props.hasPublicUrl && (
-        <p className="demo-note">Links open on this network while this computer runs Forma. For people outside it, set an internet address below.</p>
+        <p className="demo-note">Links open on this network while this computer runs Iṣẹ́ Studio. For people outside it, set an internet address below.</p>
       )}
       {error && <p className="print-note bad">{error}</p>}
     </div>

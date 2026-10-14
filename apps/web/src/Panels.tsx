@@ -182,7 +182,7 @@ export function ProjectBody(props: {
     <>
       <div className="switch-app">
         <span className="app-row active">
-          <Icon name="cube" /> Forma · Design
+          <Icon name="cube" /> Iṣẹ́ Studio · Design
         </span>
       </div>
       <ProjectSwitcher />
@@ -738,7 +738,7 @@ export function PropertiesBody(props: PropertiesProps) {
       {prog && (
         <details className="source">
           <summary>
-            <Icon name="spark" /> Program · {prog.source.split("\n").length} lines · written by Forma AI
+            <Icon name="spark" /> Program · {prog.source.split("\n").length} lines · written by Iṣẹ́ AI
           </summary>
           <pre>
             <code>{prog.source}</code>
@@ -749,7 +749,7 @@ export function PropertiesBody(props: PropertiesProps) {
       <p className="props-hint">
         <Icon name="spark" />{" "}
         {prog ? (
-          <>Drag a parameter to reshape it live. Ask Forma AI for anything the parameters can’t do; it rewrites the program.</>
+          <>Drag a parameter to reshape it live. Ask Iṣẹ́ AI for anything the parameters can’t do; it rewrites the program.</>
         ) : (
           <>
             Drag the arrows on the part, drag a field label to scrub, or type math like <kbd>+10</kbd> <kbd>2in</kbd>

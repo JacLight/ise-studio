@@ -19,7 +19,7 @@ fn f(v: f64) -> String {
     super::num(v, 4)
 }
 
-/// IPC-2581 layer name for a Forma copper layer.
+/// IPC-2581 layer name for a Iṣẹ́ Studio copper layer.
 pub fn layer_name(l: &str) -> String {
     match l {
         "top" => "TOP".into(),
@@ -182,13 +182,13 @@ pub fn write(v: &BoardView, board: &Board) -> String {
 
     w.open("LogisticHeader", &[]);
     w.empty("Role", &[("id", "Owner".into()), ("roleFunction", "SENDER".into())]);
-    w.empty("Enterprise", &[("id", "Forma".into()), ("code", "NONE".into())]);
-    w.empty("Person", &[("name", "Forma".into()), ("enterpriseRef", "Forma".into()), ("roleRef", "Owner".into())]);
+    w.empty("Enterprise", &[("id", "ISE Studio".into()), ("code", "NONE".into())]);
+    w.empty("Person", &[("name", "ISE Studio".into()), ("enterpriseRef", "ISE Studio".into()), ("roleRef", "Owner".into())]);
     w.close();
     let now = super::now_iso();
-    w.open("HistoryRecord", &[("number", "1".into()), ("origination", now.clone()), ("software", "Forma".into()), ("lastChange", now)]);
+    w.open("HistoryRecord", &[("number", "1".into()), ("origination", now.clone()), ("software", "ISE Studio".into()), ("lastChange", now)]);
     w.open("FileRevision", &[("fileRevisionId", board.revision.clone()), ("comment", format!("{} rev {}", v.name, v.revision)), ("label", board.revision.clone())]);
-    w.open("SoftwarePackage", &[("name", "Forma".into()), ("revision", env!("CARGO_PKG_VERSION").into()), ("vendor", "Forma".into())]);
+    w.open("SoftwarePackage", &[("name", "ISE Studio".into()), ("revision", env!("CARGO_PKG_VERSION").into()), ("vendor", "ISE Studio".into())]);
     w.empty("Certification", &[("certificationStatus", "SELFTEST".into())]);
     w.close();
     w.close();
@@ -210,9 +210,9 @@ pub fn write(v: &BoardView, board: &Board) -> String {
             w.empty("RefDes", &[("name", c.reference.clone()), ("packageRef", c.footprint.clone()), ("populate", (!c.dnp).to_string()), ("layerRef", if c.side == Side::Top { copper[0].clone() } else { copper[copper.len() - 1].clone() })]);
         }
         w.open("Characteristics", &[("category", "ELECTRICAL".into())]);
-        w.empty("Textual", &[("definitionSource", "Forma".into()), ("textualCharacteristicName", "Value".into()), ("textualCharacteristicValue", val.clone())]);
+        w.empty("Textual", &[("definitionSource", "ISE Studio".into()), ("textualCharacteristicName", "Value".into()), ("textualCharacteristicValue", val.clone())]);
         if let Some(m) = &cs[0].mpn {
-            w.empty("Textual", &[("definitionSource", "Forma".into()), ("textualCharacteristicName", "MPN".into()), ("textualCharacteristicValue", m.clone())]);
+            w.empty("Textual", &[("definitionSource", "ISE Studio".into()), ("textualCharacteristicName", "MPN".into()), ("textualCharacteristicValue", m.clone())]);
         }
         w.close();
         w.close();

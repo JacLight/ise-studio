@@ -48,7 +48,7 @@ export function RenderView(props: { source: () => RenderSource | null; name: str
       const blob = await renderImage(source, { width, height, samples: quality, studio: props.studio }, setSaving);
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = `${props.name || "Forma"} render ${width}x${height}.png`;
+      a.download = `${props.name || "Iṣẹ́ Studio"} render ${width}x${height}.png`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
     } catch (e) {
@@ -69,7 +69,7 @@ export function RenderView(props: { source: () => RenderSource | null; name: str
       const glb = await modelForWeb(source);
       const a = document.createElement("a");
       a.href = URL.createObjectURL(new Blob([glb], { type: "model/gltf-binary" }));
-      a.download = `${props.name || "Forma"} 3D.glb`;
+      a.download = `${props.name || "Iṣẹ́ Studio"} 3D.glb`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
     } catch (e) {

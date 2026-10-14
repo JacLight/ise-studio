@@ -3,7 +3,7 @@
 //! size, a modelled mass within 10 % of the catalogue's, and the key
 //! dimensions each family's manifest asserts (`checks`).
 //!
-//! `FORMA_STOCK_FAMILY=iso4762,nema17` limits the run to some families.
+//! `ISE_STOCK_FAMILY=iso4762,nema17` limits the run to some families.
 
 use de_shape::library::{self, Family};
 use de_shape::{exact, runtime};
@@ -12,7 +12,7 @@ use serde_json::Value;
 
 fn families() -> Vec<&'static Family> {
     let cat = library::catalogue().expect("the catalogue loads");
-    let only: Option<Vec<String>> = std::env::var("FORMA_STOCK_FAMILY").ok().map(|s| s.split(',').map(|x| x.trim().to_string()).collect());
+    let only: Option<Vec<String>> = std::env::var("ISE_STOCK_FAMILY").ok().map(|s| s.split(',').map(|x| x.trim().to_string()).collect());
     cat.families.iter().filter(|f| only.as_ref().is_none_or(|o| o.contains(&f.id))).collect()
 }
 
@@ -148,7 +148,7 @@ static STEP_WRITER: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 fn every_size_evaluates_exactly_and_writes_step() {
-    let dir = std::env::temp_dir().join(format!("forma-stock-step-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("ise-stock-step-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut failures = Vec::new();
     let mut faceted = Vec::new();

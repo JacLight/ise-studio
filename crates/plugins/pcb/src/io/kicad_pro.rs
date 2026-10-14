@@ -46,7 +46,7 @@ pub fn read(text: &str) -> Result<(Vec<NetClass>, Vec<String>), String> {
     for p in ns.get("netclass_patterns").and_then(|p| p.as_array()).into_iter().flatten() {
         let (Some(class), Some(pat)) = (p.get("netclass").and_then(|x| x.as_str()), p.get("pattern").and_then(|x| x.as_str())) else { continue };
         if pat.contains(['*', '?', '[']) {
-            notes.push(format!("net class pattern “{pat}” → {class} is a wildcard; Forma classes list nets by name, so assign them after the import"));
+            notes.push(format!("net class pattern “{pat}” → {class} is a wildcard; ISE Studio classes list nets by name, so assign them after the import"));
             continue;
         }
         if let Some(c) = classes.iter_mut().find(|c| c.name == class) {

@@ -369,7 +369,7 @@ async fn thumbnail_put(State(server): State<Arc<Server>>, Path(name): Path<Strin
 }
 
 struct App {
-    /// This project's Forma AI session.
+    /// This project's Iṣẹ́ AI session.
     ai: Arc<ai::Ai>,
     project: Mutex<Project>,
     log: Mutex<Option<File>>,
@@ -396,7 +396,7 @@ struct App {
     looks: Mutex<Vec<(de_core::Vector, Arc<Mutex<Project>>)>>,
 }
 
-/// Messages for this project's Forma AI.
+/// Messages for this project's Iṣẹ́ AI.
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum AiMessage {
@@ -929,7 +929,7 @@ async fn session(app: Arc<App>, socket: WebSocket, user_id: String) {
                 peers::cursor(&app, selected, part, pointer);
                 continue;
             }
-            // Messages for Forma AI run alongside the engine, not on its lock.
+            // Messages for Iṣẹ́ AI run alongside the engine, not on its lock.
             if let Ok(m) = serde_json::from_str::<AiMessage>(text.as_str()) {
                 let reply = match m {
                     AiMessage::AiAsk { request_id, text, context, attachments } => {
@@ -948,7 +948,7 @@ async fn session(app: Arc<App>, socket: WebSocket, user_id: String) {
                         } else if !known {
                             reply(request_id, Err(CommandError::new(ErrorCode::UnresolvedReference, "nothing with that id in this project")))
                         } else {
-                            let to = to.or_else(|| app.ai.audience()).filter(|_| actor.user_id == "forma-ai").or(Some(actor.user_id.clone()));
+                            let to = to.or_else(|| app.ai.audience()).filter(|_| actor.user_id == "ise-ai").or(Some(actor.user_id.clone()));
                             let _ = app.events.send(json!({ "type": "view", "to": to, "action": action, "target": target, "value": value }).to_string().into());
                             reply(request_id, Ok(json!({ "shown_to": to })))
                         }
@@ -1013,7 +1013,7 @@ fn whole_solid(s: &Source, part: Option<&str>, tolerance: f64) -> Result<(String
 }
 
 /// `POST /slicer/<id>?project=…[&part=…]`: the part as a 3MF, saved in
-/// ~/Downloads/Forma prints and opened in Bambu Studio (the engine runs on
+/// ~/Downloads/ISE Studio prints and opened in Bambu Studio (the engine runs on
 /// this computer, so it can hand the file to the slicer directly).
 async fn send_to_slicer(State(server): State<Arc<Server>>, Path(stem): Path<String>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
     let fail = |code: StatusCode, message: String| (code, message).into_response();
@@ -1030,7 +1030,7 @@ async fn send_to_slicer(State(server): State<Arc<Server>>, Path(stem): Path<Stri
     let result = tokio::task::spawn_blocking(move || -> Result<Value, String> {
         // Fine enough that no facet shows in a print (a 0.4 mm nozzle draws far coarser).
         let (name, solid) = whole_solid(&source, part.as_deref(), 0.005)?;
-        let dir = std::env::var_os("HOME").map(PathBuf::from).ok_or("no home folder")?.join("Downloads").join("Forma prints");
+        let dir = std::env::var_os("HOME").map(PathBuf::from).ok_or("no home folder")?.join("Downloads").join("ISE Studio prints");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let path = dir.join(format!("{}.3mf", fabricate::file_name(&name)));
         std::fs::write(&path, fabricate::three_mf(&name, &solid)).map_err(|e| format!("could not save {}: {e}", path.display()))?;
@@ -1319,7 +1319,7 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
                             (None, Some([w, d, h])) => manifold_csg::Manifold::cube(w, d, h, false),
                             _ => return Err("not a part".into()),
                         };
-                        Ok((format!("{}.stl", fabricate::file_name(&s.name)), "model/stl", de_shape::stl_of(&solid, &format!("Forma {}", s.name), s.at)))
+                        Ok((format!("{}.stl", fabricate::file_name(&s.name)), "model/stl", de_shape::stl_of(&solid, &format!("ISE Studio {}", s.name), s.at)))
                     }
                     _ => {
                         let items = s.items(tolerance)?;
@@ -1331,7 +1331,7 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
                         if ext == "dxf" {
                             Ok((format!("{base}.dxf"), "image/vnd.dxf", item.cut_file().into_bytes()))
                         } else {
-                            Ok((format!("{base}.stl"), "model/stl", de_shape::stl_of(&fabricate::at_origin(&item.solid), &format!("Forma {}", item.name), [0.0; 3])))
+                            Ok((format!("{base}.stl"), "model/stl", de_shape::stl_of(&fabricate::at_origin(&item.solid), &format!("ISE Studio {}", item.name), [0.0; 3])))
                         }
                     }
                 }
@@ -1873,7 +1873,7 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
             let sheets = setup.sheet_options(&base);
             let pages = sheets.len();
             let number = format!("{}-{}", query.get("project").unwrap_or(&server.default).to_uppercase(), &sid.to_string().replace('-', "")[..6].to_uppercase());
-            let drawn_by = std::env::var("USER").map(|u| u[..1].to_uppercase() + &u[1..]).unwrap_or_else(|_| "Forma".into());
+            let drawn_by = std::env::var("USER").map(|u| u[..1].to_uppercase() + &u[1..]).unwrap_or_else(|_| "ISE Studio".into());
             let sheets: Vec<(de_shape::drawing::Options, de_shape::drawing::Title)> = sheets
                 .into_iter()
                 .enumerate()
@@ -2194,10 +2194,10 @@ async fn main() -> std::io::Result<()> {
     let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &de_draft::DraftPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
     let claude = ai::AiConfig::find_claude();
     match &claude {
-        Some(p) => println!("Forma AI: Claude Code at {}", p.display()),
-        None => println!("Forma AI: Claude Code not found (install it, or set FORMA_CLAUDE); the panel stays local"),
+        Some(p) => println!("ISE AI: Claude Code at {}", p.display()),
+        None => println!("ISE AI: Claude Code not found (install it, or set ISE_CLAUDE); the panel stays local"),
     }
-    let ai = Arc::new(ai::AiConfig { repo: root.canonicalize().unwrap_or(root.clone()), port, claude, model: std::env::var("FORMA_AI_MODEL").ok() });
+    let ai = Arc::new(ai::AiConfig { repo: root.canonicalize().unwrap_or(root.clone()), port, claude, model: std::env::var("ISE_AI_MODEL").ok() });
     // Imported files, stored by content, shared by every project in the folder.
     de_shape::assets::set_dir(dir.join("assets"));
     // Slow results (motion sweeps) kept between runs, by what they came from.
@@ -2434,7 +2434,7 @@ mod tests {
     use tokio_tungstenite::tungstenite::Message as Ws;
 
     fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("forma-{tag}-{}", StableId::new()));
+        let dir = std::env::temp_dir().join(format!("ise-{tag}-{}", StableId::new()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -2445,7 +2445,7 @@ mod tests {
         let ai = Arc::new(ai::AiConfig { repo: root.clone(), port: 0, claude: None, model: None });
         let web = dir.join("web");
         std::fs::create_dir_all(web.join("assets")).unwrap();
-        std::fs::write(web.join("index.html"), "<!doctype html><title>Forma</title>").unwrap();
+        std::fs::write(web.join("index.html"), "<!doctype html><title>ISE Studio</title>").unwrap();
         std::fs::write(web.join("assets/app.js"), "console.log(1)").unwrap();
         Arc::new(Server {
             engine: "engine-test".into(),

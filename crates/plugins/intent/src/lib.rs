@@ -1052,7 +1052,7 @@ fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
         }
         Rule::SilhouetteMatch { canvas, min_iou, max_deviation, .. } => {
             if tx.get::<de_shape::canvas::Canvas>(*canvas).is_none() {
-                return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{canvas} is not a canvas (forma canvas list)")));
+                return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{canvas} is not a canvas (ise canvas list)")));
             }
             if !(*min_iou > 0.0 && *min_iou <= 1.0) {
                 return Err(CommandError::new(ErrorCode::InvalidParameters, "min_iou is the overlap needed, above 0 and at most 1"));
@@ -1067,7 +1067,7 @@ fn validate(tx: &Tx, rule: &Rule) -> Result<(), CommandError> {
                 return Err(CommandError::new(ErrorCode::InvalidParameters, "within is the share of points that must pass, 0 to 1"));
             }
             if de_shape::assets::path(scan).is_err() {
-                return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{scan} is not a stored scan (add it with POST /scans or forma scan add)")));
+                return Err(CommandError::new(ErrorCode::UnresolvedReference, format!("{scan} is not a stored scan (add it with POST /scans or ise scan add)")));
             }
         }
     }

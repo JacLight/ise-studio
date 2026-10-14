@@ -39,11 +39,11 @@ function Attachments({ list }: { list: Attachment[] }) {
   );
 }
 
-/** What the AI did, in words: "./forma commit shape.update …" → "Changed the design (shape.update)". */
+/** What the AI did, in words: "./ise commit shape.update …" → "Changed the design (shape.update)". */
 function describeTool(text: string) {
-  const forma = text.match(/^\.\/forma\s+(\w+)\s*([\w.]*)/);
-  if (forma) {
-    const [, cmd, arg] = forma;
+  const ise = text.match(/^\.\/ise\s+(\w+)\s*([\w.]*)/);
+  if (ise) {
+    const [, cmd, arg] = ise;
     const verbs: Record<string, string> = {
       tree: "Looked over the project",
       list: "Listed everything",
@@ -127,8 +127,8 @@ export function AiPanel(props: {
   // A picture dropped anywhere on the canvas comes here.
   useEffect(() => {
     const take = (e: Event) => attach([(e as CustomEvent<File>).detail]);
-    window.addEventListener("forma:attach", take);
-    return () => window.removeEventListener("forma:attach", take);
+    window.addEventListener("ise:attach", take);
+    return () => window.removeEventListener("ise:attach", take);
   }, [attach]);
 
   const uploading = pending.some((p) => !p.attachment && !p.error);
@@ -181,11 +181,11 @@ export function AiPanel(props: {
         attach([...e.dataTransfer.files]);
       }}
     >
-      <header className="panel-handle" tabIndex={mode === "floating" ? 0 : -1} aria-label="Move AI panel using arrow keys" {...(mode === "floating" ? handle : stackHeader(docked?.stack, "Forma AI"))}>
-        {docked?.stack && <CollapseButton stack={docked.stack} name="Forma AI" />}
+      <header className="panel-handle" tabIndex={mode === "floating" ? 0 : -1} aria-label="Move AI panel using arrow keys" {...(mode === "floating" ? handle : stackHeader(docked?.stack, "Iṣẹ́ AI"))}>
+        {docked?.stack && <CollapseButton stack={docked.stack} name="Iṣẹ́ AI" />}
         <div className="ai-identity">
           <Icon name="spark" />
-          <strong>Forma AI</strong>
+          <strong>Iṣẹ́ AI</strong>
           <span className="ready-dot" />
         </div>
         <div className="panel-actions">
@@ -206,7 +206,7 @@ export function AiPanel(props: {
         <>
           <div className="ai-context">
             <span>{props.context}</span>
-            <button title={props.voice ? "Back to typing with Forma AI" : "Talk to Forma AI (preview)"} type="button" className={`voice-toggle ${props.voice ? "active" : ""}`} onClick={props.onVoice}>
+            <button title={props.voice ? "Back to typing with Iṣẹ́ AI" : "Talk to Iṣẹ́ AI (preview)"} type="button" className={`voice-toggle ${props.voice ? "active" : ""}`} onClick={props.onVoice}>
               <Icon name={props.voice ? "comment" : "mic"} />
               {props.voice ? "Chat" : "Voice"}
             </button>
@@ -218,7 +218,7 @@ export function AiPanel(props: {
                 <h2>Room to think out loud.</h2>
                 <p>Voice mode preview</p>
                 <span>Microphone off · No audio is recorded</span>
-                <button title="Back to typing with Forma AI" type="button" className="secondary" onClick={props.onVoice}>
+                <button title="Back to typing with Iṣẹ́ AI" type="button" className="secondary" onClick={props.onVoice}>
                   <Icon name="comment" /> Back to chat
                 </button>
               </div>
@@ -234,7 +234,7 @@ export function AiPanel(props: {
                     <div key={i} className={`message ${m.role}`}>
                       {m.role === "assistant" && props.messages[i - 1]?.role !== "assistant" && (
                         <div className="message-author">
-                          <Icon name="spark" /> Forma
+                          <Icon name="spark" /> Iṣẹ́ Studio
                         </div>
                       )}
                       {m.role === "user" && m.user && props.userId && m.user !== props.userId && <div className="message-author other">{m.user}</div>}
@@ -251,7 +251,7 @@ export function AiPanel(props: {
                     </div>
                   </div>
                 ) : (
-                  <div className="message working" aria-label="Forma AI is working">
+                  <div className="message working" aria-label="Iṣẹ́ AI is working">
                     <span className="working-dots" aria-hidden>
                       <i />
                       <i />
@@ -270,7 +270,7 @@ export function AiPanel(props: {
                 <p>Start with an idea. Shape it here, together.</p>
                 <div className="suggestions">
                   {SUGGESTIONS.map((s) => (
-                    <button title={`Ask Forma AI: ${s}`} type="button" key={s} onClick={() => props.onSubmit(s)}>
+                    <button title={`Ask Iṣẹ́ AI: ${s}`} type="button" key={s} onClick={() => props.onSubmit(s)}>
                       {s} <Icon name="chevron" />
                     </button>
                   ))}
@@ -317,7 +317,7 @@ export function AiPanel(props: {
           </div>
         )}
         <label className="sr-only" htmlFor="ai-input">
-          Ask Forma AI
+          Ask Iṣẹ́ AI
         </label>
         <textarea
           id="ai-input"
@@ -365,7 +365,7 @@ export function AiPanel(props: {
           )}
           <IconButton icon="mic" label="Preview voice mode" onClick={props.onVoice} />
           {working ? (
-            <button type="button" className="send stop" title="Stop" aria-label="Stop Forma AI" onClick={props.onStop}>
+            <button type="button" className="send stop" title="Stop" aria-label="Stop Iṣẹ́ AI" onClick={props.onStop}>
               <span className="stop-square" aria-hidden />
             </button>
           ) : (
@@ -376,7 +376,7 @@ export function AiPanel(props: {
         </div>
       </form>
       {docked && props.splitter}
-      {!full && <div className="mini-foot">{props.claude ? (working ? "Forma AI is working…" : "Claude on this computer") : "Local command interpreter · no AI model yet"}</div>}
+      {!full && <div className="mini-foot">{props.claude ? (working ? "Iṣẹ́ AI is working…" : "Claude on this computer") : "Local command interpreter · no AI model yet"}</div>}
     </section>
   );
 }

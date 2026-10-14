@@ -160,7 +160,7 @@ fn shapes_are_judged_by_exact_geometry_not_bounding_boxes() {
 fn a_part_matches_its_reference_picture_and_is_rechecked_when_it_changes() {
     let mut p = Project::new("p", Arc::new(Registry::with_plugins(&[&SolidPlugin, &de_shape::ShapePlugin, &IntentPlugin])));
     if de_shape::assets::dir().is_none() {
-        de_shape::assets::set_dir(std::env::temp_dir().join(format!("forma-intent-assets-{}", std::process::id())));
+        de_shape::assets::set_dir(std::env::temp_dir().join(format!("ise-intent-assets-{}", std::process::id())));
     }
     // A dark 200 × 100 px rectangle on white.
     let mut px: Vec<u8> = [250u8, 250, 250, 255].repeat(400 * 300);

@@ -335,7 +335,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
   // Schematic, board, or both side by side; keys go to the pane last clicked.
   const [pane, setPane] = useState<"schematic" | "split" | "board" | "library">(() => {
     try {
-      const v = localStorage.getItem("forma.pcb.pane");
+      const v = localStorage.getItem("ise.pcb.pane");
       return v === "schematic" || v === "split" || v === "library" ? v : "board";
     } catch {
       return "board";
@@ -345,7 +345,7 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
   const keyPane = useRef<"schematic" | "board" | "library">("board");
   useEffect(() => {
     try {
-      localStorage.setItem("forma.pcb.pane", pane);
+      localStorage.setItem("ise.pcb.pane", pane);
     } catch {
       /* private window */
     }
@@ -739,7 +739,7 @@ export const EDA_DROP = /\.(kicad_pcb|kicad_sch|brd|sch|pcbdoc|schdoc|epro|epcb|
 const BINARY = /\.(pcbdoc|schdoc|epro|zip)$/i;
 
 /** A board and/or schematic from another EDA tool (KiCad, Eagle, EasyEDA, Altium, CADSTAR, Fabmaster,
- * PADS, gEDA), read in the browser and made into Forma's by the engine. */
+ * PADS, gEDA), read in the browser and made into Iṣẹ́ Studio's by the engine. */
 export async function importEdaFile(file: File, run: (op: string, p: Record<string, unknown>, done?: string) => Promise<unknown>) {
   const name = file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ");
   const params: Record<string, unknown> = { file: file.name, name };
@@ -828,7 +828,7 @@ function NewBoard(props: { run: (op: string, p: Record<string, unknown>, done?: 
           <Icon name="chip" />
         </span>
         <h3>No board yet</h3>
-        <p>Ask Forma AI to design one (“a USB-C powered ESP32 board with a status LED and an I²C header”), or start an empty board and place parts.</p>
+        <p>Ask Iṣẹ́ AI to design one (“a USB-C powered ESP32 board with a status LED and an I²C header”), or start an empty board and place parts.</p>
         <form
           className="pcb-new-form"
           onSubmit={async (e) => {
@@ -909,8 +909,8 @@ function BoardCanvas(props: {
   const [drag, setDrag] = useState<{ id: string; start: P; at: P; delta: P; moved: boolean } | null>(null);
   const pan = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const [routing, setRouting] = useState(false);
-  const [routerMode, setRouterMode] = useState<RouterMode>(() => stored("forma.pcb.router", ROUTER_MODES, "walkaround"));
-  const [angle, setAngle] = useState<AngleMode>(() => stored("forma.pcb.angle", ANGLES, "45"));
+  const [routerMode, setRouterMode] = useState<RouterMode>(() => stored("ise.pcb.router", ROUTER_MODES, "walkaround"));
+  const [angle, setAngle] = useState<AngleMode>(() => stored("ise.pcb.angle", ANGLES, "45"));
   const [arcCorners, setArcCorners] = useState(false);
   const [width, setWidth] = useState<number | null>(null);
   // "/" flips which way a leg bends (diagonal first or straight first).
@@ -952,8 +952,8 @@ function BoardCanvas(props: {
       props.routingFlag.current = false;
     };
   }, [routing, props.routingFlag]);
-  useEffect(() => store("forma.pcb.router", routerMode), [routerMode]);
-  useEffect(() => store("forma.pcb.angle", angle), [angle]);
+  useEffect(() => store("ise.pcb.router", routerMode), [routerMode]);
+  useEffect(() => store("ise.pcb.angle", angle), [angle]);
 
   // The router's plan for each cursor position: one request at a time, the latest wins; nothing is changed until a click.
   const gen = useRef(0);

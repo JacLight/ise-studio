@@ -126,13 +126,13 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
   };
 
   const mail = created
-    ? `mailto:${encodeURIComponent(created.email)}?subject=${encodeURIComponent(`${created.by} invited you to “${projectTitle()}” in Forma`)}&body=${encodeURIComponent(
-        `${created.by} invited you to work on “${projectTitle()}” in Forma.\n\nWith Forma running on your computer, open this link:\n\n${created.link}\n\nThe invite is for you alone and works once. Your computer gets its own copy of the project and stays in sync with the team directly.`,
+    ? `mailto:${encodeURIComponent(created.email)}?subject=${encodeURIComponent(`${created.by} invited you to “${projectTitle()}” in Iṣẹ́ Studio`)}&body=${encodeURIComponent(
+        `${created.by} invited you to work on “${projectTitle()}” in Iṣẹ́ Studio.\n\nWith Iṣẹ́ Studio running on your computer, open this link:\n\n${created.link}\n\nThe invite is for you alone and works once. Your computer gets its own copy of the project and stays in sync with the team directly.`,
       )}`
     : "";
 
   // A text message: short, the link on its own line so phones make it tappable.
-  const sms = created ? `sms:?&body=${encodeURIComponent(`${created.by} invited you to “${projectTitle()}” in Forma. With Forma running, open:\n${created.link}`)}` : "";
+  const sms = created ? `sms:?&body=${encodeURIComponent(`${created.by} invited you to “${projectTitle()}” in Iṣẹ́ Studio. With Iṣẹ́ Studio running, open:\n${created.link}`)}` : "";
 
   const where = (addresses: string[]) =>
     addresses.map((a) => {
@@ -221,7 +221,7 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
           <div className="invite-share">
             {qr && <img className="invite-qr" src={qr} alt={`QR code of ${created.name}'s invite link`} width={180} height={180} />}
             <div className="invite-actions">
-              <p>Scan with their phone to pass the link on, or send it. It opens Forma on their computer and works once, for them alone.</p>
+              <p>Scan with their phone to pass the link on, or send it. It opens Iṣẹ́ Studio on their computer and works once, for them alone.</p>
               {created.email ? (
                 <a title={`Open your mail app with the invite to ${created.email}`} className="primary invite-mail" href={mail}>
                   <Icon name="mail" /> Email {created.name}
@@ -286,10 +286,10 @@ export function TeamDialog(props: { team: TeamStatus | null; entities: ReadonlyM
             </label>
             <label>
               Internet address <span>optional</span>
-              <input value={publicUrl} onChange={(e) => setPublicUrl(e.target.value)} placeholder="https://forma.yourstudio.com" />
+              <input value={publicUrl} onChange={(e) => setPublicUrl(e.target.value)} placeholder="https://ise.yourstudio.com" />
             </label>
             <p>
-              For teammates and view-only links outside this network: an address that reaches this computer's Forma (port 7420), through your proxy or an opened port. Connections use HTTPS
+              For teammates and view-only links outside this network: an address that reaches this computer's Iṣẹ́ Studio (port 7420), through your proxy or an opened port. Connections use HTTPS
               WebSockets, so they pass through proxies. Only teammates' engines and view-only links are answered from outside; the rest stays on this computer.
             </p>
             <button title="Save your name and internet address" type="button" className="secondary" onClick={saveSettings}>
@@ -365,7 +365,7 @@ export function JoinScreen() {
     <div className="join-screen">
       <div className="join-card">
         <div className="join-brand">
-          <Icon name="cube" /> forma
+          <Icon name="cube" /> Iṣẹ́ Studio
         </div>
         {invite ? (
           <>

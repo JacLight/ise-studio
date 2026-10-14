@@ -28,7 +28,7 @@ pub fn ascii(v: &BoardView) -> String {
     let o = [v.bounds[0], v.bounds[1]];
     let mut s = String::new();
     let _ = writeln!(s, "### Footprint positions - created on {} ###", super::now_iso());
-    let _ = writeln!(s, "### Printed by Forma");
+    let _ = writeln!(s, "### Printed by ISE Studio");
     let _ = writeln!(s, "## Unit = mm, Angle = deg.");
     let _ = writeln!(s, "## Side : All");
     let rows: Vec<[String; 7]> = parts(v)
@@ -75,7 +75,7 @@ fn c6(x: f64) -> i64 {
 pub fn gerber_x3(v: &BoardView, top: bool) -> String {
     let n = v.layers.len();
     let mut s = String::new();
-    let _ = writeln!(s, "%TF.GenerationSoftware,Forma,PCB,{}*%", env!("CARGO_PKG_VERSION"));
+    let _ = writeln!(s, "%TF.GenerationSoftware,ISE Studio,PCB,{}*%", env!("CARGO_PKG_VERSION"));
     let _ = writeln!(s, "%TF.CreationDate,{}*%", super::now_iso());
     let _ = writeln!(s, "%TF.ProjectId,{},{},{}*%", field(&v.name).replace(' ', "_"), v.id, field(&v.revision));
     let _ = writeln!(s, "%TF.SameCoordinates,Original*%");

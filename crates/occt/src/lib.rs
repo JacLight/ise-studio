@@ -739,7 +739,7 @@ mod tests {
         let mut a = Arena::new();
         let b = a.cube(30.0, 20.0, 10.0, false).unwrap();
         let c = a.cylinder(15.0, 4.0, 4.0, false).unwrap();
-        let path = std::env::temp_dir().join(format!("forma-occt-test-{}.step", std::process::id()));
+        let path = std::env::temp_dir().join(format!("ise-occt-test-{}.step", std::process::id()));
         a.write_step(&[("Base plate".into(), b), ("Pin".into(), c)], &path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("PRODUCT('Base plate'") && text.contains("PRODUCT('Pin'"));
@@ -764,7 +764,7 @@ mod tests {
             let c = a.cylinder(15.0, 4.0, 4.0, false).unwrap();
             let c = a.translate(c, [50.0, 0.0, 0.0]).unwrap();
             let red = [0.8, 0.2, 0.1];
-            let path = std::env::temp_dir().join(format!("forma-occt-cad-{}-{format:?}", std::process::id()));
+            let path = std::env::temp_dir().join(format!("ise-occt-cad-{}-{format:?}", std::process::id()));
             a.write_cad(&[("Base plate".into(), b, Some(red)), ("Pin".into(), c, None)], &path, format).unwrap();
             let mut r = Arena::new();
             let read = r.read_cad(&path, format).unwrap();

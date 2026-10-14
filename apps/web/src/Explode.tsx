@@ -147,7 +147,7 @@ export function useExplode(show: (id: string, bodies: TurnBody[] | null, options
           framedSpread.current = open ? spread : null;
           latest.current.settled?.(id);
         } else if (open && framedSpread.current !== spread) {
-          // A new spread (the slider, or Forma AI asking again): frame the
+          // A new spread (the slider, or Iṣẹ́ AI asking again): frame the
           // parts where they now are once it stops changing.
           timer = window.setTimeout(() => {
             framedSpread.current = spread;

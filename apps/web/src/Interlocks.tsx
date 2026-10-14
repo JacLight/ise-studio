@@ -2,7 +2,7 @@
 // held to a narrower range (a shoulder low keeps the elbow from folding the
 // gripper into the base). Listed in words with their joints' names; a zone
 // is added here in one line (when … then …), limit tables come from the
-// engine (Forma AI or the console). Sweeps, studies, robot moves and the
+// engine (Iṣẹ́ AI or the console). Sweeps, studies, robot moves and the
 // joint sliders all respect them.
 
 import { useState } from "react";

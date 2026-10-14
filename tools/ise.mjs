@@ -1,67 +1,67 @@
 #!/usr/bin/env node
-// Talk to a running Forma engine from the command line, through the same API
+// Talk to a running Iṣẹ́ Studio engine from the command line, through the same API
 // the UI and the AI use.
 //
-//   node tools/forma.mjs run steps.json [--from N] [--fresh] [--project name] [--url ws://127.0.0.1:7420/ws]
+//   node tools/ise.mjs run steps.json [--from N] [--fresh] [--project name] [--url ws://127.0.0.1:7420/ws]
 //        steps already applied (same step, same parameters) are skipped, so a rerun after a failure
 //        continues from it; --from N starts at step N; --fresh applies every step again
-//   node tools/forma.mjs check
-//   node tools/forma.mjs gears <id> [torque N·m] [rpm]   turn a gear train through a full turn; tooth strength with a load
-//   node tools/forma.mjs motion <joint id> [steps] [--set '{"Elbow":40}']   sweep a joint through its limits: what moves, closest approaches, clashes, where it binds
-//   node tools/forma.mjs fit <assembly or instance id | project> [--motion]   do screws, inserts, nuts, bearings and joined parts fit (and, with --motion, every joint's sweep)
-//   node tools/forma.mjs check-geometry <id> [part]   the exact kernel's check of each part: valid, self-intersections, tolerances
-//   node tools/forma.mjs surfaces <id> [part] [--pull x,y,z] [--min deg]   surface analysis: continuity across every seam (gap, crease, curvature jump), tightest bend, draft
-//   node tools/forma.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
-//   node tools/forma.mjs rates [refresh [EUR GBP…]]   the exchange and process rates in use, with when each exchange rate was set;
+//   node tools/ise.mjs check
+//   node tools/ise.mjs gears <id> [torque N·m] [rpm]   turn a gear train through a full turn; tooth strength with a load
+//   node tools/ise.mjs motion <joint id> [steps] [--set '{"Elbow":40}']   sweep a joint through its limits: what moves, closest approaches, clashes, where it binds
+//   node tools/ise.mjs fit <assembly or instance id | project> [--motion]   do screws, inserts, nuts, bearings and joined parts fit (and, with --motion, every joint's sweep)
+//   node tools/ise.mjs check-geometry <id> [part]   the exact kernel's check of each part: valid, self-intersections, tolerances
+//   node tools/ise.mjs surfaces <id> [part] [--pull x,y,z] [--min deg]   surface analysis: continuity across every seam (gap, crease, curvature jump), tightest bend, draft
+//   node tools/ise.mjs bom <assembly id | project> [qty]   the bill of materials as CSV: what is made (and how), what is bought, totals
+//   node tools/ise.mjs rates [refresh [EUR GBP…]]   the exchange and process rates in use, with when each exchange rate was set;
 //        refresh: today's ECB reference rates (fetched only then) for the currencies listed or already used
-//   node tools/forma.mjs set-study <shape id> study.json [--part X]   save a part's stress/heat study (faces as { normal, near: [x, y, z] })
-//   node tools/forma.mjs stress|fatigue|modes|buckle|heat|converge|inp <shape id> [--part X] [--count N] [--resolutions 32,48,64]
+//   node tools/ise.mjs set-study <shape id> study.json [--part X]   save a part's stress/heat study (faces as { normal, near: [x, y, z] })
+//   node tools/ise.mjs stress|fatigue|modes|buckle|heat|converge|inp <shape id> [--part X] [--count N] [--resolutions 32,48,64]
 //                                             run the part's saved study (inp: a CalculiX deck on stdout)
-//   node tools/forma.mjs probe <key> x,y,z · section <key> x,y,z nx,ny,nz · path <key> x,y,z x,y,z [n] · csv <key>
+//   node tools/ise.mjs probe <key> x,y,z · section <key> x,y,z nx,ny,nz · path <key> x,y,z x,y,z [n] · csv <key>
 //                                             read a stress result back (the key a stress run prints)
-//   node tools/forma.mjs frame frame.json     a frame of beams (joints, members with sections, supports, loads)
-//   node tools/forma.mjs plate <shape id> plate.json [--part X]   a flat sheet part as a plate (edges clamped or simply held, pressure)
-//   node tools/forma.mjs materials [search]   the material library with sources, and the project's materials
-//   node tools/forma.mjs dof <assembly | top>   what can still move (and how), mobility, redundant and conflicting joints
-//   node tools/forma.mjs interference <assembly | instance | top> [clearance mm]   parts that overlap (volume, where), touch, or come close
-//   node tools/forma.mjs exploded <view>      a saved exploded view's steps and trails
-//   node tools/forma.mjs study <study> [fps] [--out frames.json]   play a motion study: what moves, clashes, binding; frames to a file
-//   node tools/forma.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]' | controller [json|arduino] [--out f]] [--tool connector]
-//   node tools/forma.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
-//   node tools/forma.mjs render [--width 1920] [--height 1080] [--samples 256] [--studio white|studio] [--timeout minutes] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open); white: a seamless white sweep for product shots
-//   node tools/forma.mjs render ... --skin "Left side,Right side,Top"   lay the product's calibrated photos (canvases) onto the faces they saw (none: off)
-//   node tools/forma.mjs render --glb product.glb   the shown model as a .glb for a website (the render's materials and printed labels; metres, Y up, on the ground)
-//   node tools/forma.mjs flat [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
-//   node tools/forma.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
-//   node tools/forma.mjs pcb calc|panel|gerbview|glb …   board calculators, panelization, the Gerber viewer, the board as glTF
-//   node tools/forma.mjs pcb route|drag|cleanup|optimize …   the interactive router: pad to pad (walkaround/shove), drag a track or via, tidy copper
-//   node tools/forma.mjs pcb import <file> [--format f] [--name n] [--board id] [companions…]   a board/schematic from KiCad, Eagle, EasyEDA, Altium, CADSTAR, Fabmaster, PADS, gEDA
-//   node tools/forma.mjs pcb exports <id> | export <id> <file name | kicad_sch | ipc2581 | odb | d356 | …> [--out path]   files for other EDA tools
-//   node tools/forma.mjs sch export <schematic> netlist|bom|svg|pdf [--format kicad|orcad|cadstar|spice] [--out f]   schematic files; sch find|erc|buses|sheets <schematic>
-//   node tools/forma.mjs pcb lib|logo|assign|variant|block …   project/global libraries, wizards, logos, footprint assignment, variants, design blocks
-//   node tools/forma.mjs pcb drc|setup|stackup|rules|teardrops <board> …   checks, stackup (2–32 layers), custom rules (.kicad_dru), teardrops
-//   node tools/forma.mjs pcb netclass|pair|group|lengths|tune|route-pair|pad-to-die <board> …   impedance targets (widths per layer), diff pairs, length groups, meanders
-//   node tools/forma.mjs pcb text|draw|image|keepout|stitch|fence <board> …   board graphics, keepouts, via stitching and fences
-//   node tools/forma.mjs pcb align|distribute|move|array|flip|swap <items…> [--board id] · pcb channel <board> --source … --to …   placement, multichannel
-//   node tools/forma.mjs simulate <schematic> [--tran 30ms] [--expect "min(V(3V3), burst) > 3.0"] [--save name]   ngspice on a schematic
-//   node tools/forma.mjs list                 every entity, one line each
-//   node tools/forma.mjs tree                 what is placed, as a tree (instances, parts)
-//   node tools/forma.mjs get <id>             one entity in full (program source, params, results)
-//   node tools/forma.mjs commit <operation> '<json>'   one command (same $file inlining)
-//   node tools/forma.mjs image add <file> … [--name label.png]   store pictures (PNG, JPEG) or fonts (TTF, OTF) for programs; prints each id (--name: what one file is called in the project)
-//   node tools/forma.mjs image list           the pictures and fonts in the project
-//   node tools/forma.mjs image profile <file|id> --height mm   a photo's object measured: its outline as a profile to revolve
-//   node tools/forma.mjs look [what] [--view iso|front|top|…|az,el] [--size 1000x750] [--box x0,y0,z0,x1,y1,z1] [--out file.png]
+//   node tools/ise.mjs frame frame.json     a frame of beams (joints, members with sections, supports, loads)
+//   node tools/ise.mjs plate <shape id> plate.json [--part X]   a flat sheet part as a plate (edges clamped or simply held, pressure)
+//   node tools/ise.mjs materials [search]   the material library with sources, and the project's materials
+//   node tools/ise.mjs dof <assembly | top>   what can still move (and how), mobility, redundant and conflicting joints
+//   node tools/ise.mjs interference <assembly | instance | top> [clearance mm]   parts that overlap (volume, where), touch, or come close
+//   node tools/ise.mjs exploded <view>      a saved exploded view's steps and trails
+//   node tools/ise.mjs study <study> [fps] [--out frames.json]   play a motion study: what moves, clashes, binding; frames to a file
+//   node tools/ise.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]' | controller [json|arduino] [--out f]] [--tool connector]
+//   node tools/ise.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
+//   node tools/ise.mjs render [--width 1920] [--height 1080] [--samples 256] [--studio white|studio] [--timeout minutes] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open); white: a seamless white sweep for product shots
+//   node tools/ise.mjs render ... --skin "Left side,Right side,Top"   lay the product's calibrated photos (canvases) onto the faces they saw (none: off)
+//   node tools/ise.mjs render --glb product.glb   the shown model as a .glb for a website (the render's materials and printed labels; metres, Y up, on the ground)
+//   node tools/ise.mjs flat [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
+//   node tools/ise.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
+//   node tools/ise.mjs pcb calc|panel|gerbview|glb …   board calculators, panelization, the Gerber viewer, the board as glTF
+//   node tools/ise.mjs pcb route|drag|cleanup|optimize …   the interactive router: pad to pad (walkaround/shove), drag a track or via, tidy copper
+//   node tools/ise.mjs pcb import <file> [--format f] [--name n] [--board id] [companions…]   a board/schematic from KiCad, Eagle, EasyEDA, Altium, CADSTAR, Fabmaster, PADS, gEDA
+//   node tools/ise.mjs pcb exports <id> | export <id> <file name | kicad_sch | ipc2581 | odb | d356 | …> [--out path]   files for other EDA tools
+//   node tools/ise.mjs sch export <schematic> netlist|bom|svg|pdf [--format kicad|orcad|cadstar|spice] [--out f]   schematic files; sch find|erc|buses|sheets <schematic>
+//   node tools/ise.mjs pcb lib|logo|assign|variant|block …   project/global libraries, wizards, logos, footprint assignment, variants, design blocks
+//   node tools/ise.mjs pcb drc|setup|stackup|rules|teardrops <board> …   checks, stackup (2–32 layers), custom rules (.kicad_dru), teardrops
+//   node tools/ise.mjs pcb netclass|pair|group|lengths|tune|route-pair|pad-to-die <board> …   impedance targets (widths per layer), diff pairs, length groups, meanders
+//   node tools/ise.mjs pcb text|draw|image|keepout|stitch|fence <board> …   board graphics, keepouts, via stitching and fences
+//   node tools/ise.mjs pcb align|distribute|move|array|flip|swap <items…> [--board id] · pcb channel <board> --source … --to …   placement, multichannel
+//   node tools/ise.mjs simulate <schematic> [--tran 30ms] [--expect "min(V(3V3), burst) > 3.0"] [--save name]   ngspice on a schematic
+//   node tools/ise.mjs list                 every entity, one line each
+//   node tools/ise.mjs tree                 what is placed, as a tree (instances, parts)
+//   node tools/ise.mjs get <id>             one entity in full (program source, params, results)
+//   node tools/ise.mjs commit <operation> '<json>'   one command (same $file inlining)
+//   node tools/ise.mjs image add <file> … [--name label.png]   store pictures (PNG, JPEG) or fonts (TTF, OTF) for programs; prints each id (--name: what one file is called in the project)
+//   node tools/ise.mjs image list           the pictures and fonts in the project
+//   node tools/ise.mjs image profile <file|id> --height mm   a photo's object measured: its outline as a profile to revolve
+//   node tools/ise.mjs look [what] [--view iso|front|top|…|az,el] [--size 1000x750] [--box x0,y0,z0,x1,y1,z1] [--out file.png]
 //        a picture of the model (or one thing in it) drawn by the engine, saved to look/…png
-//   node tools/forma.mjs canvas add <photo|picture id> [--plane front|back|left|right|top|bottom] [--object WxH --align 'left bottom'
+//   node tools/ise.mjs canvas add <photo|picture id> [--plane front|back|left|right|top|bottom] [--object WxH --align 'left bottom'
 //        | --calibrate u1,v1,u2,v2,mm | --width mm | --scale mm/px] [--at x,y,z] [--anchor u,v] [--rotate deg | --level u1,v1,u2,v2]
 //        [--flip] [--aspect k] [--crop l,t,r,b] [--perspective u1,v1,…,u4,v4,WxH] [--opacity 0.5] [--through] [--name N]
 //        | list | update <canvas> [same] [--reset crop,…] | remove <canvas>   reference pictures placed and calibrated in the model
-//   node tools/forma.mjs canvas measure <canvas> [--every mm] [--channel brightness --threshold 0.35] [--region l,t,r,b] [--all]   the outline in mm: bounds, spans at stations
-//   node tools/forma.mjs canvas match [<canvas>|all] [--of <thing>] [--out f.png]  ·  look --overlay <canvas> [what]
+//   node tools/ise.mjs canvas measure <canvas> [--every mm] [--channel brightness --threshold 0.35] [--region l,t,r,b] [--all]   the outline in mm: bounds, spans at stations
+//   node tools/ise.mjs canvas match [<canvas>|all] [--of <thing>] [--out f.png]  ·  look --overlay <canvas> [what]
 //        the model drawn square to the canvas over its photo: silhouette IoU, outline distance, regions of extra/missing material
-//   node tools/forma.mjs ops [filter]         the commands the engine accepts, with schemas
-//   node tools/forma.mjs view <action> [what] show something in the person's view (not saved):
+//   node tools/ise.mjs ops [filter]         the commands the engine accepts, with schemas
+//   node tools/ise.mjs view <action> [what] show something in the person's view (not saved):
 //        select L26 · frame L26 · isolate L26 · show_all · hide L19 · show L19
 //        color status|material · camera iso|front|back|left|right|top|bottom · camera az,el[,lens°[,fill]]
 //        render [white|studio]   (render mode; white: the seamless white sweep)
@@ -69,38 +69,38 @@
 //        projection ortho|perspective · display shaded|edges|wireframe|hidden|xray
 //        section x 25 [flip] · section box x0 y0 z0 x1 y1 z1 · section off
 //        measure Bracket [Plate]   (part, or part to part, measured in their view)
-//   node tools/forma.mjs measure <part> [other part] [--part name]   volume, area, mass, centre of mass,
-//   node tools/forma.mjs drawing <id> [--sheet A3] [--part Name] [--page N] [--pdf f] [--svg f] [--dxf f] [--zip f]   the engineering drawing: sheets, dimensions, the checker's findings; saves files
+//   node tools/ise.mjs measure <part> [other part] [--part name]   volume, area, mass, centre of mass,
+//   node tools/ise.mjs drawing <id> [--sheet A3] [--part Name] [--page N] [--pdf f] [--svg f] [--dxf f] [--zip f]   the engineering drawing: sheets, dimensions, the checker's findings; saves files
 //        moments of inertia (kg·mm² about the centre of mass); with two: centre to centre and the gap per axis
-//   node tools/forma.mjs bim [id|project]     the building: levels and what stands on each, spaces, zones, grids
-//   node tools/forma.mjs schedule [id|project] [--class wall,door] [--level name] [--by level,class] [--csv] [--psets] [--out f.csv]
-//   node tools/forma.mjs ifc export [id|project] [file.ifc]  ·  ifc import <file.ifc>
-//   node tools/forma.mjs plan [id|project] --level name [--cut 1200] | --section x|y <mm> [--looking east] | --elevation south
+//   node tools/ise.mjs bim [id|project]     the building: levels and what stands on each, spaces, zones, grids
+//   node tools/ise.mjs schedule [id|project] [--class wall,door] [--level name] [--by level,class] [--csv] [--psets] [--out f.csv]
+//   node tools/ise.mjs ifc export [id|project] [file.ifc]  ·  ifc import <file.ifc>
+//   node tools/ise.mjs plan [id|project] --level name [--cut 1200] | --section x|y <mm> [--looking east] | --elevation south
 //        [--sheet A3] [--scale 100] [--pdf file.pdf] [--dxf file.dxf]
-//   node tools/forma.mjs sheet <sheet>        a spreadsheet as a grid: what each cell shows, aliases, errors
-//   node tools/forma.mjs draft                draft objects, dimensions with their values, layers, working planes, arrays
-//   node tools/forma.mjs import <file> [--name N] [--as sheet|parameters|configurations] [--target id] [--sheet name]
+//   node tools/ise.mjs sheet <sheet>        a spreadsheet as a grid: what each cell shows, aliases, errors
+//   node tools/ise.mjs draft                draft objects, dimensions with their values, layers, working planes, arrays
+//   node tools/ise.mjs import <file> [--name N] [--as sheet|parameters|configurations] [--target id] [--sheet name]
 //        STEP/IGES (exact, also .stpz, .brep) and STL/OBJ/PLY/glTF/GLB/3MF (mesh) become a shape, DXF/SVG a sketch,
-//        .scad a live parametric shape, .csv/.xlsx a sheet, parameter set or configurations, .forma a new project
-//   node tools/forma.mjs export <id|name|project> <file.ext> | --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]
-//   node tools/forma.mjs bundle [file.forma]   the whole project (history, assets) as one file
-//   node tools/forma.mjs insert --from <project> [ids or names…] [--all] [--copy] [--auto] [--at x,y,z | --origin] [--list] [--dry-run]
+//        .scad a live parametric shape, .csv/.xlsx a sheet, parameter set or configurations, .ise a new project
+//   node tools/ise.mjs export <id|name|project> <file.ext> | --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]
+//   node tools/ise.mjs bundle [file.ise]   the whole project (history, assets) as one file
+//   node tools/ise.mjs insert --from <project> [ids or names…] [--all] [--copy] [--auto] [--at x,y,z | --origin] [--list] [--dry-run]
 //        items of another project (parts, assemblies, sub-assemblies, boards… or --all), linked to follow it unless --copy
-//   node tools/forma.mjs links [update [id] | break <id> | auto <id> on|off | local <id> on|off]   this project's links: up to date or not;
+//   node tools/ise.mjs links [update [id] | break <id> | auto <id> on|off | local <id> on|off]   this project's links: up to date or not;
 //        take, cut, automate; local: edit the linked items here (else they are read-only, as their source made them)
-//   node tools/forma.mjs files ls [path] | rm <path…> [-r] | mv <from> <to> [-f]   files in your folder (the Forma AI's own), never outside it
-//   node tools/forma.mjs scan add <file> [--source colmap] | list | info | fit <scan> [kind] [--near x,y,z --within r] | detect
+//   node tools/ise.mjs files ls [path] | rm <path…> [-r] | mv <from> <to> [-f]   files in your folder (the Iṣẹ́ AI's own), never outside it
+//   node tools/ise.mjs scan add <file> [--source colmap] | list | info | fit <scan> [kind] [--near x,y,z --within r] | detect
 //        | downsample | outliers | normals | reconstruct [--depth 7] | surface [--poles 8] | shape | export | remove
 //                                            point clouds (XYZ/PLY/PCD/E57) and meshes: add, thin, fit primitives, rebuild surfaces
-//   node tools/forma.mjs mesh check|repair|decimate|smooth|remesh|fill-holes|split|merge|section|curvature|segment|unwrap <scan> …
+//   node tools/ise.mjs mesh check|repair|decimate|smooth|remesh|fill-holes|split|merge|section|curvature|segment|unwrap <scan> …
 //        | mesh from <part> [--tolerance] [--angle] [--max-edge]   mesh evaluation and repair, reworking, sections, flattening
-//   node tools/forma.mjs inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] [--require]
+//   node tools/ise.mjs inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] [--require]
 //                                            deviation of a scan from its CAD part: statistics, pass/fail, as a requirement
-//   node tools/forma.mjs scan photos <folder | photos.zip | photo …> [--engine auto|object-capture|colmap] [--detail preview|reduced|medium|full] [--mask] [--name N] [--detach]
+//   node tools/ise.mjs scan photos <folder | photos.zip | photo …> [--engine auto|object-capture|colmap] [--detail preview|reduced|medium|full] [--mask] [--name N] [--detach]
 //        photogrammetry: photos → a sized, levelled scan and a cleaned one, with quality (photos used, reprojection, scale, coverage)
-//   node tools/forma.mjs scan engines | jobs | cancel <job> | markers [--letter] [--out f.pdf] | quality <scan>
-//   node tools/forma.mjs scan scale <scan> --from x,y,z --to x,y,z --distance mm [--pick mm] | --factor f  ·  scan level <scan>
-//   node tools/forma.mjs scan render-photos <folder> [--count 40] [--rings 25,50] [--distance mm] [--fov 45] [--sheet]   a test photo set of the model
+//   node tools/ise.mjs scan engines | jobs | cancel <job> | markers [--letter] [--out f.pdf] | quality <scan>
+//   node tools/ise.mjs scan scale <scan> --from x,y,z --to x,y,z --distance mm [--pick mm] | --factor f  ·  scan level <scan>
+//   node tools/ise.mjs scan render-photos <folder> [--count 40] [--rings 25,50] [--distance mm] [--fov 45] [--sheet]   a test photo set of the model
 //
 // steps.json is an array of { "operation": "...", "parameters": { ... }, "id"?: "name" }.
 // Any string "$N.path" in parameters is replaced by step N's output at that
@@ -119,9 +119,9 @@ import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { request as httpRequest } from "node:http";
-import { pcbLib } from "./forma-pcblib.mjs";
-import { pcbBoard, BOARD_SUBS } from "./forma-pcbboard.mjs";
-import { pcbSignal, SIGNAL_SUBS } from "./forma-pcbsignal.mjs";
+import { pcbLib } from "./ise-pcblib.mjs";
+import { pcbBoard, BOARD_SUBS } from "./ise-pcbboard.mjs";
+import { pcbSignal, SIGNAL_SUBS } from "./ise-pcbsignal.mjs";
 
 // Every file a command writes (--pdf out/drawing.pdf, --dxf flat/base.dxf…)
 // gets its folder made first, wherever the command imports writeFileSync from.
@@ -136,7 +136,7 @@ import { pcbSignal, SIGNAL_SUBS } from "./forma-pcbsignal.mjs";
 
 const args = process.argv.slice(2);
 const urlFlag = args.indexOf("--url");
-const base = urlFlag >= 0 ? args.splice(urlFlag, 2)[1] : "ws://127.0.0.1:7420/ws?user=forma-ai";
+const base = urlFlag >= 0 ? args.splice(urlFlag, 2)[1] : "ws://127.0.0.1:7420/ws?user=ise-ai";
 const projectFlag = args.indexOf("--project");
 const project = projectFlag >= 0 ? args.splice(projectFlag, 2)[1] : null;
 const url = project ? `${base}${base.includes("?") ? "&" : "?"}project=${encodeURIComponent(project)}` : base;
@@ -205,9 +205,9 @@ function resolveRefs(value, outputs, base) {
   return value;
 }
 
-// Files in the folder (the Forma AI's own): no engine needed.
+// Files in the folder (the Iṣẹ́ AI's own): no engine needed.
 if (command === "files") {
-  const { files } = await import("./forma-files.mjs");
+  const { files } = await import("./ise-files.mjs");
   try {
     for (const line of files(args.slice(1))) console.log(line.startsWith("removed") || line.startsWith("moved") ? `✓ ${line}` : line);
   } catch (e) {
@@ -247,7 +247,7 @@ if (command === "run") {
   const fresh = freshAt >= 0 && rest.splice(freshAt, 1).length > 0;
   const path = rest[0];
   if (!path || !Number.isInteger(from) || from < 0) {
-    console.error("✗ forma run <steps.json> [--from N] [--fresh]");
+    console.error("✗ ise run <steps.json> [--from N] [--fresh]");
     process.exit(1);
   }
   const steps = JSON.parse(readFileSync(path, "utf8"));
@@ -346,7 +346,7 @@ if (command === "run") {
   };
   const show = (r) => {
     console.log(`Costs are in ${r.currency}.`);
-    if (!r.exchange.length) console.log("  no exchange rates: prices in other currencies are flagged, not converted (forma rates refresh EUR, or sourcing.rates.set { exchange: { EUR: … } })");
+    if (!r.exchange.length) console.log("  no exchange rates: prices in other currencies are flagged, not converted (ise rates refresh EUR, or sourcing.rates.set { exchange: { EUR: … } })");
     for (const e of r.exchange) console.log(`  1 ${e.currency} = ${e.rate} ${r.currency}   ${e.note}${e.by ? ` (by ${e.by}, revision ${e.revision})` : ""}`);
     const own = r.processes.filter((p) => !p.default);
     console.log(`Process rates: ${own.length ? own.map((p) => `${p.process} ${p.rate.per_hour}/h`).join(", ") : "the typical defaults"}${own.length < r.processes.length ? ` (${r.processes.length - own.length} at the defaults: GET /rates lists them)` : ""}`);
@@ -358,7 +358,7 @@ if (command === "run") {
       const r = await get();
       const asked = args.slice(2).map((c) => c.toUpperCase());
       const wanted = (asked.length ? asked : r.exchange.map((e) => e.currency)).filter((c) => c !== r.currency);
-      if (!wanted.length) throw new Error("no exchange rates to refresh: name the currencies (forma rates refresh EUR GBP)");
+      if (!wanted.length) throw new Error("no exchange rates to refresh: name the currencies (ise rates refresh EUR GBP)");
       const url = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml";
       const res = await fetch(url);
       if (!res.ok) throw new Error(`the ECB's reference rates could not be fetched (${res.status} ${res.statusText}): nothing changed`);
@@ -383,7 +383,7 @@ if (command === "run") {
       if (!out.ok) throw new Error(`${out.error.code} ${out.error.message}`);
       for (const [c, v] of Object.entries(exchange)) console.log(`✓ 1 ${c} = ${v} ${r.currency}${before[c] != null ? ` (was ${before[c]})` : ""}: ECB reference rate of ${day}`);
       show(await get());
-    } else throw new Error("forma rates [refresh [EUR GBP…]]");
+    } else throw new Error("ise rates [refresh [EUR GBP…]]");
   } catch (e) {
     console.error(`✗ ${e.message}`);
     failed = true;
@@ -424,7 +424,7 @@ if (command === "run") {
   if (motionFlag >= 0) args.splice(motionFlag, 1);
   const [, id, extra] = args;
   if (!id) {
-    console.error(`✗ say which: forma ${command} <id${command === "motion" ? "" : " | project"}>`);
+    console.error(`✗ say which: ise ${command} <id${command === "motion" ? "" : " | project"}>`);
     process.exit(1);
   }
   const q = new URLSearchParams(project ? { project } : {});
@@ -528,7 +528,7 @@ if (command === "run") {
       process.exit(1);
     }
     const page = `${http}/?${new URLSearchParams({ ...(project ? { project } : {}), ...(studio ? { studio } : {}) })}`;
-    chrome = spawn(exe, ["--headless=new", `--user-data-dir=${mkdtempSync(`${tmpdir()}/forma-render-`)}`, "--enable-unsafe-swiftshader", `--window-size=${Math.min(width, 1920)},${Math.min(height, 1080)}`, "--hide-scrollbars", page], { stdio: "ignore" });
+    chrome = spawn(exe, ["--headless=new", `--user-data-dir=${mkdtempSync(`${tmpdir()}/ise-render-`)}`, "--enable-unsafe-swiftshader", `--window-size=${Math.min(width, 1920)},${Math.min(height, 1080)}`, "--hide-scrollbars", page], { stdio: "ignore" });
     for (let i = 0; i < 30 && res.status === 409; i++) {
       await new Promise((r) => setTimeout(r, 1000));
       res = await ask();
@@ -618,7 +618,7 @@ if (command === "run") {
     });
   try {
     if (command === "set-study") {
-      // forma set-study <shape id> study.json [--part X]: save a study (faces as { normal, near: [x, y, z] }).
+      // ise set-study <shape id> study.json [--part X]: save a study (faces as { normal, near: [x, y, z] }).
       const study = JSON.parse(readFileSync(rest[0], "utf8"));
       const r = await engine.commit("shape.set_study", { target: id, study: { ...study, part: part ?? study.part ?? null } });
       if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
@@ -631,7 +631,7 @@ if (command === "run") {
       }
       for (const x of m.project) console.log(`project material ${x.id} “${x.name}”${x.set ? ` — set here: ${JSON.stringify(x.set)}` : ""}${x.properties ? "" : " — no figures (unknown name: set its properties)"}`);
     } else if (command === "plate") {
-      // forma plate <shape id> plate.json [--part X]: a flat sheet as a plate ({ supports: [{ face: { normal, near }, hold: "clamped" | "simple" }], pressure, loads, resolution }).
+      // ise plate <shape id> plate.json [--part X]: a flat sheet as a plate ({ supports: [{ face: { normal, near }, hold: "clamped" | "simple" }], pressure, loads, resolution }).
       const body = { ...JSON.parse(readFileSync(rest[0], "utf8")), ...(part ? { part } : {}) };
       const r = await (await get(`/plate/${id}?${q}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
       const x = r.result;
@@ -645,7 +645,7 @@ if (command === "run") {
       for (const [node, f] of r.reactions) console.log(`  support at joint ${node}: ${v3(f.slice(0, 3))} N, ${v3(f.slice(3))} N·mm`);
       for (const x of r.notes) console.log(`  ! ${x}`);
     } else if (["probe", "section", "path", "csv"].includes(command)) {
-      // forma probe <key> x,y,z · section <key> x,y,z nx,ny,nz · path <key> x,y,z x,y,z [points] · csv <key>
+      // ise probe <key> x,y,z · section <key> x,y,z nx,ny,nz · path <key> x,y,z x,y,z [points] · csv <key>
       const key = id;
       if (command === "csv") process.stdout.write(await (await get(`/results/${key}/csv`)).text());
       else if (command === "probe") {
@@ -660,7 +660,7 @@ if (command === "run") {
         for (const s of p.samples) console.log(`${n(s.distance, 2)},${n(s.probe.von_mises, 2)},${s.probe.displacement.map((x) => n(x * 1000, 2)).join(",")}`);
       }
     } else {
-      if (!id) throw new Error(`say which shape: forma ${command} <shape id> [--part Name]`);
+      if (!id) throw new Error(`say which shape: ise ${command} <shape id> [--part Name]`);
       q.set("kind", command);
       if (count) q.set("count", count);
       if (resolutions) q.set("resolutions", resolutions);
@@ -677,7 +677,7 @@ if (command === "run") {
           if (x.plastic) console.log(`  yielded: ${x.plastic.yielded} cubes, plastic strain up to ${n(x.plastic.max_strain, 5)} at ${v3(x.plastic.at)}${x.plastic.settled ? "" : " (not settled)"}`);
           if (r.fatigue) console.log(`  fatigue: Goodman ×${n(r.fatigue.min_factor)} at ${v3(r.fatigue.at)}, life ${r.fatigue.life === null || r.fatigue.life > 1e15 ? "unlimited" : r.fatigue.life.toExponential(2) + " cycles"} (σa ${n(r.fatigue.amplitude, 1)}, σm ${n(r.fatigue.mean, 1)} MPa, Se ${n(r.fatigue.strength, 1)} MPa)`);
           for (const t of [...x.notes, ...(r.fatigue?.notes ?? [])]) console.log(`  ! ${t}`);
-          console.log(`  result key ${r.key} (forma probe|section|path|csv ${r.key} …)`);
+          console.log(`  result key ${r.key} (ise probe|section|path|csv ${r.key} …)`);
           failed = x.safety < 1;
         } else if (command === "modes") {
           r.modes.forEach((m, i) => console.log(`  mode ${i + 1}: ${n(m.frequency, 1)} Hz (${n(m.frequency * 60, 0)} rpm), mostly ${m.direction}`));
@@ -708,7 +708,7 @@ if (command === "run") {
   // The exact kernel's check of every part (as FreeCAD's Check geometry).
   const [, id, part] = args;
   if (!id) {
-    console.error("✗ say which: forma check-geometry <id> [part]");
+    console.error("✗ say which: ise check-geometry <id> [part]");
     process.exit(1);
   }
   const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
@@ -739,7 +739,7 @@ if (command === "run") {
   const min = flag("--min");
   const [, id, part] = args;
   if (!id) {
-    console.error("✗ say which: forma surfaces <id> [part] [--pull x,y,z] [--min deg]");
+    console.error("✗ say which: ise surfaces <id> [part] [--pull x,y,z] [--min deg]");
     process.exit(1);
   }
   const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
@@ -779,7 +779,7 @@ if (command === "run") {
     if (sub === "parts") {
       const kind = args.includes("--footprints") ? "footprints" : "symbols";
       const words = args.slice(2).filter((a) => a !== "--footprints").join(" ");
-      if (!words) throw new Error("say what to look for: forma pcb parts <words> [--footprints]");
+      if (!words) throw new Error("say what to look for: ise pcb parts <words> [--footprints]");
       const r = await get(`/pcb/kicad/search?${q({ q: words, kind, limit: "30" })}`);
       if (!r.results.length) console.log(`nothing in the KiCad ${kind} matches “${words}”`);
       for (const e of r.results) console.log(`${e.id}  (${e.count} ${kind === "symbols" ? "pins" : "pads"})${e.footprint ? `  → ${e.footprint}` : e.filters ? `  footprints: ${e.filters}` : ""}\n    ${e.description || e.keywords}`);
@@ -791,11 +791,11 @@ if (command === "run") {
       const reference = flag("--ref");
       const value = flag("--value");
       const [, , schematic, symbolId] = args;
-      if (!schematic || !symbolId) throw new Error("usage: forma pcb add <schematic id> <Library:Symbol> [--footprint Library:Footprint] [--at x,y] [--ref U3] [--value …]");
+      if (!schematic || !symbolId) throw new Error("usage: ise pcb add <schematic id> <Library:Symbol> [--footprint Library:Footprint] [--at x,y] [--ref U3] [--value …]");
       const s = await get(`/pcb/kicad/symbol/${encodeURIComponent(symbolId)}`);
       let footprint = s.footprint;
       if (fpFlag) footprint = (await get(`/pcb/kicad/footprint/${encodeURIComponent(fpFlag)}`)).footprint;
-      if (!footprint) console.log(`! ${symbolId} names no footprint${s.definition.footprint ? ` it can read (${s.footprint_error ?? s.definition.footprint})` : ""}: give --footprint Library:Name (search with forma pcb parts <words> --footprints)`);
+      if (!footprint) console.log(`! ${symbolId} names no footprint${s.definition.footprint ? ` it can read (${s.footprint_error ?? s.definition.footprint})` : ""}: give --footprint Library:Name (search with ise pcb parts <words> --footprints)`);
       const missing = fpFlag ? s.definition.pins.filter((p) => !footprint.pads.some((x) => x.number === p.number)).map((p) => p.number) : s.unmapped_pins;
       if (missing?.length) console.log(`! pins ${missing.join(", ")} have no pad of that number on ${footprint.name}: give pin_map in pcb.schematic.place`);
       const params = { schematic, symbol: s.definition.name, definition: s.definition, at, ...(footprint ? { footprint_definition: footprint, footprint: footprint.name } : {}), ...(reference ? { reference } : {}), ...(value ? { value } : {}) };
@@ -806,7 +806,7 @@ if (command === "run") {
     } else if (sub === "footprint") {
       // Define a KiCad library footprint on a board (for pcb.component.create).
       const [, , board, fpId] = args;
-      if (!board || !fpId) throw new Error("usage: forma pcb footprint <board id> <Library:Name>");
+      if (!board || !fpId) throw new Error("usage: ise pcb footprint <board id> <Library:Name>");
       const f = await get(`/pcb/kicad/footprint/${encodeURIComponent(fpId)}`);
       const r = await engine.commit("pcb.footprint.define", { board, footprint: f.footprint });
       if (!r.ok) throw new Error(`${r.error.code} ${r.error.message}`);
@@ -830,7 +830,7 @@ if (command === "run") {
     } else if (sub === "gerber-check") {
       // The fab package read back by an independent reader and compared with the board.
       const board = args[2];
-      if (!board) throw new Error("usage: forma pcb gerber-check <board id>");
+      if (!board) throw new Error("usage: ise pcb gerber-check <board id>");
       const c = await get(`/pcb/${board}/gerber-check?${q()}`);
       console.log(`${c.ok ? "✓" : "✗"} ${c.summary}`);
       for (const l of c.layers) {
@@ -875,7 +875,7 @@ if (command === "run") {
       const out = flag("--out");
       const fab = flag("--fab");
       const [, , board, ...rest] = args;
-      if (!board) throw new Error("usage: forma pcb panel <board id> [rows=2 cols=3 separation=mousebites|vscore|tabs frame=rails-tb|rails-lr|frame|none gap=2 tab_width=3 tabs=1 rail=5 fiducials=true tooling=true …] [--fab jlcpcb] [--out panel.zip]");
+      if (!board) throw new Error("usage: ise pcb panel <board id> [rows=2 cols=3 separation=mousebites|vscore|tabs frame=rails-tb|rails-lr|frame|none gap=2 tab_width=3 tabs=1 rail=5 fiducials=true tooling=true …] [--fab jlcpcb] [--out panel.zip]");
       const params = { ...Object.fromEntries(rest.filter((w) => w.includes("=")).map((w) => [w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1)])), ...(fab ? { fab } : {}) };
       const r = await get(`/pcb/${board}/panel?${q(params)}`);
       const p = r.panel;
@@ -908,7 +908,7 @@ if (command === "run") {
         if (!zip.ok) throw new Error(await zip.text());
         files = [{ name: "board.zip", data: Buffer.from(await zip.arrayBuffer()).toString("base64") }];
       } else {
-        if (!paths.length) throw new Error("usage: forma pcb gerbview <files or zip…> | --board <id> [--compare <older files or zip>] [--pdf out.pdf]");
+        if (!paths.length) throw new Error("usage: ise pcb gerbview <files or zip…> | --board <id> [--compare <older files or zip>] [--pdf out.pdf]");
         files = upload(paths);
       }
       const post = async (path, body) => {
@@ -918,10 +918,10 @@ if (command === "run") {
       };
       const toBoard = flag("--to-board");
       if (toBoard) {
-        // Steps that rebuild a board (outline, tracks, vias) from the files: run them with ./forma run.
+        // Steps that rebuild a board (outline, tracks, vias) from the files: run them with ./ise run.
         const s = await (await post("/pcb/gerbview", { files, to_board: flag("--name") ?? "From Gerbers" })).json();
         writeFileSync(toBoard, JSON.stringify(s.steps, null, 1));
-        console.log(`wrote ${toBoard}: ${s.steps.length} steps (run them with ./forma run ${toBoard})`);
+        console.log(`wrote ${toBoard}: ${s.steps.length} steps (run them with ./ise run ${toBoard})`);
         for (const n of s.notes) console.log(`  · ${n}`);
       }
       const r = await (await post("/pcb/gerbview", { files, summary: true, ...(compare ? { against: upload(compare.split(",")) } : {}) })).json();
@@ -946,7 +946,7 @@ if (command === "run") {
     } else if (sub === "glb") {
       // The populated board as binary glTF.
       const board = args[2];
-      if (!board) throw new Error("usage: forma pcb glb <board id> [--out board.glb]");
+      if (!board) throw new Error("usage: ise pcb glb <board id> [--out board.glb]");
       const out = flag("--out") ?? "board.glb";
       const res = await fetch(`${http}/pcb/${board}/board.glb?${q()}`);
       if (!res.ok) throw new Error(await res.text());
@@ -960,7 +960,7 @@ if (command === "run") {
       const name = flag("--name");
       const board = flag("--board");
       const path = args[2];
-      if (!path) throw new Error("usage: forma pcb import <file> [--format eagle_brd|altium_pcb|…] [--name …] [--board <id>] [companion files…]");
+      if (!path) throw new Error("usage: ise pcb import <file> [--format eagle_brd|altium_pcb|…] [--name …] [--board <id>] [companion files…]");
       const { basename } = await import("node:path");
       const binary = /\.(pcbdoc|schdoc|epro|zip)$/i.test(path);
       const bytes = readFileSync(path);
@@ -975,14 +975,14 @@ if (command === "run") {
     } else if (sub === "exports") {
       // What a board or schematic can be written as.
       const id = args[2];
-      if (!id) throw new Error("usage: forma pcb exports <board or schematic id>");
+      if (!id) throw new Error("usage: ise pcb exports <board or schematic id>");
       const r = await get(`/pcb/${id}/exports?${q()}`);
       for (const f of r.files) console.log(`  ${f.name.padEnd(36)} ${f.what}`);
     } else if (sub === "export") {
       // Write one of those files here: by its name, or by what it is (kicad_sch, ipc2581, odb, d356, …).
       const out = flag("--out");
       const [, , id, what] = args;
-      if (!id || !what) throw new Error("usage: forma pcb export <board or schematic id> <file name | kicad_pcb | kicad_sch | kicad_pro | kicad_zip | net | xml_net | orcad | pads_net | allegro | cadstar_net | d356 | ipc2581 | odb | gbrjob | drill_map | drill_map_pdf | drill_report | svg | pdf | wrl | glb | pos | pos_csv | x3_top | x3_bottom | step | idf> [--out path]");
+      if (!id || !what) throw new Error("usage: ise pcb export <board or schematic id> <file name | kicad_pcb | kicad_sch | kicad_pro | kicad_zip | net | xml_net | orcad | pads_net | allegro | cadstar_net | d356 | ipc2581 | odb | gbrjob | drill_map | drill_map_pdf | drill_report | svg | pdf | wrl | glb | pos | pos_csv | x3_top | x3_bottom | step | idf> [--out path]");
       const list = (await get(`/pcb/${id}/exports?${q()}`)).files.map((f) => f.name);
       const suffix = { kicad_pcb: ".kicad_pcb", kicad_sch: ".kicad_sch", kicad_pro: ".kicad_pro", kicad_zip: "-kicad.zip", net: ".net", xml_net: "-netlist.xml", orcad: "-orcad.net", pads_net: "-pads.net", allegro: "-allegro.net", cadstar_net: "-cadstar.frp", d356: ".d356", ipc2581: "-ipc2581.xml", odb: "-odb.zip", gbrjob: "-job.gbrjob", drill_map: "-drill-map.gbr", drill_map_svg: "-drill-map.svg", drill_map_pdf: "-drill-map.pdf", drill_report: "-drill-report.txt", svg: "-board.svg", pdf: "-board.pdf", wrl: ".wrl", glb: ".glb", pos: "-both.pos", pos_csv: "-pos.csv", x3_top: "-top-pnp.gbr", x3_bottom: "-bottom-pnp.gbr", step: ".step", idf: ".emn" }[what];
       const name = list.includes(what) ? what : list.find((n) => suffix && n.endsWith(suffix));
@@ -1012,15 +1012,15 @@ if (command === "run") {
       let op;
       let params;
       if (sub === "route") {
-        if (!board || !a || !b) throw new Error("usage: forma pcb route <board> <from: U1.3 | x,y> <to: R4.1 | x,y> [--mode walkaround|shove|highlight] [--layer top]");
+        if (!board || !a || !b) throw new Error("usage: ise pcb route <board> <from: U1.3 | x,y> <to: R4.1 | x,y> [--mode walkaround|shove|highlight] [--layer top]");
         op = "pcb.route.interactive";
         params = { board, from: point(a), to: point(b), ...(mode ? { mode } : {}), ...(layer ? { layer } : {}) };
       } else if (sub === "drag") {
-        if (!board || !a || !b) throw new Error("usage: forma pcb drag <board> <track or via id> <x,y> [--index n] [--kind segment|corner|arc|via] [--mode shove|highlight]");
+        if (!board || !a || !b) throw new Error("usage: ise pcb drag <board> <track or via id> <x,y> [--index n] [--kind segment|corner|arc|via] [--mode shove|highlight]");
         op = "pcb.route.drag";
         params = { board, target: a, to: point(b), ...(index ? { index: Number(index) } : {}), ...(kind ? { kind } : {}), ...(mode ? { mode } : {}) };
       } else {
-        if (!board) throw new Error(`usage: forma pcb ${sub} <board>`);
+        if (!board) throw new Error(`usage: ise pcb ${sub} <board>`);
         op = sub === "cleanup" ? "pcb.route.cleanup" : "pcb.route.optimize";
         params = { board };
       }
@@ -1040,7 +1040,7 @@ if (command === "run") {
     } else if (BOARD_SUBS.includes(sub)) {
       failed = await pcbBoard(sub, args, { engine, get, q });
     } else {
-      throw new Error("usage: forma pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | import <file> [--format f] | exports <id> | export <id> <name|kind> [--out path] | calc [name key=value…] | panel <board> [key=value…] [--out panel.zip] | gerbview <files…>|--board <id> [--compare old] [--pdf out.pdf] [--to-board steps.json] | glb <board> [--out f.glb] | library [update] | lib … | logo <image> | assign <schematic> | variant <schematic> … | block … | route <board> <from> <to> [--mode shove] | drag <board> <item> <x,y> | cleanup <board> | optimize <board>");
+      throw new Error("usage: ise pcb parts <words> [--footprints] | add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] | footprint <board> <Library:Name> | verify-footprints [names…] | gerber-check <board> | import <file> [--format f] | exports <id> | export <id> <name|kind> [--out path] | calc [name key=value…] | panel <board> [key=value…] [--out panel.zip] | gerbview <files…>|--board <id> [--compare old] [--pdf out.pdf] [--to-board steps.json] | glb <board> [--out f.glb] | library [update] | lib … | logo <image> | assign <schematic> | variant <schematic> … | block … | route <board> <from> <to> [--mode shove] | drag <board> <item> <x,y> | cleanup <board> | optimize <board>");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
@@ -1059,7 +1059,7 @@ if (command === "run") {
     if (!res.ok) throw new Error(await res.text());
     return res;
   };
-  const usage = "usage: forma sch export <schematic> netlist [--format kicad|orcad|cadstar|spice] | bom [--group Value,Footprint] [--fields Reference,Qty,Value,…] [--dnp] | svg [--sheet 1] | pdf  [--out file]\n       forma sch find <schematic> <text> · forma sch erc <schematic> [--all] · forma sch buses <schematic> · forma sch sheets <schematic>";
+  const usage = "usage: ise sch export <schematic> netlist [--format kicad|orcad|cadstar|spice] | bom [--group Value,Footprint] [--fields Reference,Qty,Value,…] [--dnp] | svg [--sheet 1] | pdf  [--out file]\n       ise sch find <schematic> <text> · ise sch erc <schematic> [--all] · ise sch buses <schematic> · ise sch sheets <schematic>";
   try {
     const sub = file;
     const out = flag("--out");
@@ -1092,7 +1092,7 @@ if (command === "run") {
       } else throw new Error(usage);
     } else if (sub === "find") {
       const words = args.slice(3).join(" ").toLowerCase();
-      if (!words) throw new Error("say what to find: forma sch find <schematic> <text>");
+      if (!words) throw new Error("say what to find: ise sch find <schematic> <text>");
       const v = await detail();
       const hit = (s) => String(s ?? "").toLowerCase().includes(words);
       for (const s of v.symbols) if ([s.reference, s.value, s.footprint, s.mpn, ...Object.values(s.fields ?? {})].some(hit)) console.log(`symbol ${s.reference} ${s.value} (${s.footprint || "no footprint"}) sheet ${s.sheet}  id ${s.id}`);
@@ -1146,7 +1146,7 @@ if (command === "run") {
     const derate = all("--derate")[0];
     const step = all("--step")[0];
     const schematic = args[1];
-    if (!schematic) throw new Error('usage: forma simulate <schematic id> [--tran 30ms] [--dc NET:0:6:0.1] [--ac NET:10:1e6] [--source NET=5V,r=0.2,rise=1ms] [--press SW2@20ms:5ms] [--burst U1@5ms:2ms:0.5A] [--expect "min(V(3V3), burst) > 3.0"]… [--derate 0.6] [--save name] [--csv out.csv]');
+    if (!schematic) throw new Error('usage: ise simulate <schematic id> [--tran 30ms] [--dc NET:0:6:0.1] [--ac NET:10:1e6] [--source NET=5V,r=0.2,rise=1ms] [--press SW2@20ms:5ms] [--burst U1@5ms:2ms:0.5A] [--expect "min(V(3V3), burst) > 3.0"]… [--derate 0.6] [--save name] [--csv out.csv]');
     let analysis = { kind: "tran", stop: tran ? time(tran) : 0.03, step: step ? time(step) : null };
     if (dc) {
       const [net, from, to, st] = dc.split(":");
@@ -1202,7 +1202,7 @@ if (command === "run") {
     if (save) {
       const c = await engine.commit("pcb.simulation.save", { schematic, name: save, request });
       if (!c.ok) throw new Error(`${c.error.code} ${c.error.message}`);
-      console.log(`✓ saved as “${save}”: ./forma check runs it from now on`);
+      console.log(`✓ saved as “${save}”: ./ise check runs it from now on`);
     }
     failed = !r.ok;
   } catch (e) {
@@ -1226,7 +1226,7 @@ if (command === "run") {
   const only = flag("--page");
   const id = args[1];
   if (!id) {
-    console.error("✗ say which: forma drawing <shape or instance id> [--sheet A3] [--part Name] [--page N] [--pdf out.pdf] [--svg out.svg] [--dxf out.dxf] [--zip out.zip]");
+    console.error("✗ say which: ise drawing <shape or instance id> [--sheet A3] [--part Name] [--page N] [--pdf out.pdf] [--svg out.svg] [--dxf out.dxf] [--zip out.zip]");
     process.exit(1);
   }
   const sheet = async (page) => {
@@ -1311,7 +1311,7 @@ if (command === "run") {
 } else if (command === "insert" || command === "links") {
   // Items from another project, copied or linked; this project's links.
   const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
-  const q = (extra = {}) => `?${new URLSearchParams({ ...(project ? { project } : {}), user: "forma-ai", ...extra })}`;
+  const q = (extra = {}) => `?${new URLSearchParams({ ...(project ? { project } : {}), user: "ise-ai", ...extra })}`;
   const call = async (method, path, body) => {
     const res = await fetch(`${http}${path}`, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
     const text = await res.text();
@@ -1335,12 +1335,12 @@ if (command === "run") {
         : `${l.state}: ${l.message ?? ""}`;
   try {
     if (command === "insert") {
-      // forma insert --from <project> [ids or names…] [--all] [--copy] [--auto] [--at x,y,z | --origin] [--list] [--dry-run]
+      // ise insert --from <project> [ids or names…] [--all] [--copy] [--auto] [--at x,y,z | --origin] [--list] [--dry-run]
       const from = flag("--from");
       const at = flag("--at");
       const [copy, all, auto, origin, list, dry] = ["--copy", "--all", "--auto", "--origin", "--list", "--dry-run"].map(has);
       const items = args.slice(1);
-      if (!from) throw new Error("say where from: forma insert --from <project> [ids or names…] [--all] [--copy] [--at x,y,z | --origin]");
+      if (!from) throw new Error("say where from: ise insert --from <project> [ids or names…] [--all] [--copy] [--at x,y,z | --origin]");
       if (list || (!items.length && !all)) {
         const t = await call("GET", `/link/tree${q({ from })}`);
         console.log(`${t.title} (${t.project}) · revision ${t.revision} · ${t.entities} items in all`);
@@ -1349,7 +1349,7 @@ if (command === "run") {
           for (const c of it.children ?? []) walk(c, depth + 1);
         };
         for (const it of t.items) walk(it, 0);
-        if (!list) console.log(`\nPick by name or id: forma insert --from ${from} "${t.items[0]?.name ?? "Name"}" [--copy] [--at x,y,z], or --all for the whole project`);
+        if (!list) console.log(`\nPick by name or id: ise insert --from ${from} "${t.items[0]?.name ?? "Name"}" [--copy] [--at x,y,z], or --all for the whole project`);
       } else {
         const point = at ? at.split(",").map(Number) : null;
         if (point && (point.length !== 3 || point.some((v) => !Number.isFinite(v)))) throw new Error("--at takes x,y,z in mm");
@@ -1369,15 +1369,15 @@ if (command === "run") {
         }
       }
     } else {
-      // forma links | links update [id] | links break <id> | links auto <id> on|off | links local <id> on|off
+      // ise links | links update [id] | links break <id> | links auto <id> on|off | links local <id> on|off
       const sub = args[1] ?? "list";
       const id = args[2];
       if (sub === "list") {
         const links = await call("GET", `/links${q()}`);
-        if (!links.length) console.log("no links: insert with `forma insert --from <project> …` (linked unless --copy)");
+        if (!links.length) console.log("no links: insert with `ise insert --from <project> …` (linked unless --copy)");
         for (const l of links) {
           console.log(`${l.id}  from ${l.project} (“${l.title}”) · ${l.whole ? "the whole project" : l.names.join(", ") || "items"} · ${l.items} items · at its revision ${l.revision}${l.source_revision != null ? ` (source at ${l.source_revision})` : ""}`);
-          console.log(`  ${state(l)}${l.auto_update ? " · updates by itself" : ""}${l.local_edits ? " · edited locally (updates merge)" : " · read-only here (forma links local <id> on to edit)"}`);
+          console.log(`  ${state(l)}${l.auto_update ? " · updates by itself" : ""}${l.local_edits ? " · edited locally (updates merge)" : " · read-only here (ise links local <id> on to edit)"}`);
         }
       } else if (sub === "update") {
         const out = await call("POST", `/links/update${q()}`, id ? { link: id } : {});
@@ -1396,20 +1396,20 @@ if (command === "run") {
           }
         }
       } else if (sub === "break") {
-        if (!id) throw new Error("say which link (or an item it brought): forma links break <id>");
+        if (!id) throw new Error("say which link (or an item it brought): ise links break <id>");
         const o = await call("POST", `/links/break${q()}`, { link: id });
         console.log(`✓ the ${o.items} items from ${o.project} are a local copy now`);
       } else if (sub === "auto") {
         const on = args[3];
-        if (!id || !["on", "off"].includes(on)) throw new Error("forma links auto <id> on|off");
+        if (!id || !["on", "off"].includes(on)) throw new Error("ise links auto <id> on|off");
         await call("POST", `/links/settings${q()}`, { link: id, auto_update: on === "on" });
-        console.log(`✓ ${on === "on" ? "updates by itself when its source changes" : "updates when asked (forma links update)"}`);
+        console.log(`✓ ${on === "on" ? "updates by itself when its source changes" : "updates when asked (ise links update)"}`);
       } else if (sub === "local") {
         const on = args[3];
-        if (!id || !["on", "off"].includes(on)) throw new Error("forma links local <id> on|off");
+        if (!id || !["on", "off"].includes(on)) throw new Error("ise links local <id> on|off");
         await call("POST", `/links/settings${q()}`, { link: id, local_edits: on === "on" });
         console.log(`✓ ${on === "on" ? "its items can be edited here; updates merge the source's changes with yours (the source's wins where both changed the same thing)" : "its items are read-only here again, as the source makes them (where they are placed stays yours)"}`);
-      } else throw new Error("forma links [list] | update [id] | break <id> | auto <id> on|off | local <id> on|off");
+      } else throw new Error("ise links [list] | update [id] | break <id> | auto <id> on|off | local <id> on|off");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
@@ -1426,11 +1426,11 @@ if (command === "run") {
     const given = at > 0 ? args[at + 1] : undefined;
     const files = args.slice(2).filter((_, i) => at < 0 || (i + 2 !== at && i + 2 !== at + 1));
     if (at > 0 && (files.length !== 1 || !given || given.includes("/"))) {
-      console.error("✗ --name names one file: forma image add <file> --name <name.png>");
+      console.error("✗ --name names one file: ise image add <file> --name <name.png>");
       failed = true;
       files.length = 0;
     } else if (!files.length) {
-      console.error("✗ say which file: forma image add <photo.png|logo.jpg|font.ttf> …");
+      console.error("✗ say which file: ise image add <photo.png|logo.jpg|font.ttf> …");
       failed = true;
     }
     for (const f of files) {
@@ -1457,7 +1457,7 @@ if (command === "run") {
   } else if (sub === "list" || !sub) {
     const res = await fetch(`${http}/images${q}`);
     const list = await res.json();
-    if (!list.length) console.log("no pictures or fonts in this project yet (forma image add <file>)");
+    if (!list.length) console.log("no pictures or fonts in this project yet (ise image add <file>)");
     for (const e of list) console.log(`${e.id}  ${e.name} (${e.kind.toUpperCase()}${e.width ? `, ${e.width} × ${e.height} px` : ""})`);
   } else if (sub === "profile") {
     // Measure the object a photo or drawing shows: its outline row by row,
@@ -1486,7 +1486,7 @@ if (command === "run") {
       }
     }
     if (!what) {
-      console.error("usage: forma image profile <file|id> [--height mm | --width mm] [--rows 40] [--threshold 0.12] [--rim] [--json]");
+      console.error("usage: ise image profile <file|id> [--height mm | --width mm] [--rows 40] [--threshold 0.12] [--rim] [--json]");
       failed = true;
     } else if (!failed) {
       const params = new URLSearchParams({ silhouette: flag("--rows") ?? "40" });
@@ -1519,7 +1519,7 @@ if (command === "run") {
       }
     }
   } else {
-    console.error("usage: forma image add <file> … | forma image list | forma image profile <file|id> [--height mm]");
+    console.error("usage: ise image add <file> … | ise image list | ise image profile <file|id> [--height mm]");
     failed = true;
   }
 } else if (command === "canvas" || (command === "look" && args.includes("--overlay"))) {
@@ -1556,7 +1556,7 @@ if (command === "run") {
   const pick = async (what) => {
     const all = await canvases();
     const hit = all.filter((c) => c.id === what || c.name === what || c.name.toLowerCase() === String(what).toLowerCase());
-    if (hit.length !== 1) throw new Error(hit.length ? `“${what}” matches ${hit.length} canvases: use an id` : `no canvas called “${what}” (forma canvas list)`);
+    if (hit.length !== 1) throw new Error(hit.length ? `“${what}” matches ${hit.length} canvases: use an id` : `no canvas called “${what}” (ise canvas list)`);
     return hit[0];
   };
   // The settings shared by add and update, from flags.
@@ -1634,7 +1634,7 @@ if (command === "run") {
     const q = new URLSearchParams({ ...(project ? { project } : {}), canvas: c.id, ...(of ? { id: of } : {}) });
     const res = await fetch(`${http}/look?${q}`);
     if (!res.ok) throw new Error(await res.text());
-    const m = JSON.parse(res.headers.get("x-forma-match"));
+    const m = JSON.parse(res.headers.get("x-ise-match"));
     const { mkdirSync, writeFileSync } = await import("node:fs");
     const slug = c.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "canvas";
     const path = outPath ?? `look/match-${slug}.png`;
@@ -1653,7 +1653,7 @@ if (command === "run") {
   try {
     if (sub === "add") {
       const src = rest.shift();
-      if (!src) throw new Error("say which picture: forma canvas add <photo.jpg | picture id> --plane front …");
+      if (!src) throw new Error("say which picture: ise canvas add <photo.jpg | picture id> --plane front …");
       const s = settings();
       let image = src;
       if (!/^[0-9a-f]{64}$/i.test(src)) {
@@ -1681,7 +1681,7 @@ if (command === "run") {
       console.log(`✓ removed canvas “${c.name}”`);
     } else if (sub === "list" || !sub) {
       const all = await canvases();
-      if (!all.length) console.log("no canvases yet (forma canvas add <photo> --plane front --object-width 165)");
+      if (!all.length) console.log("no canvases yet (ise canvas add <photo> --plane front --object-width 165)");
       for (const c of all) {
         const o = c.plane.origin.map((v) => Math.round(v * 100) / 100).join(", ");
         const cal = c.perspective ? `squared up to ${c.perspective.width} × ${c.perspective.height} mm` : c.calibration ? `calibrated ${c.calibration.distance} mm between (${c.calibration.a}) and (${c.calibration.b})` : c.sized ? `${(Math.round(c.scale * 10000) / 10000)} mm/px${c.aspect !== undefined && c.aspect !== 1 ? `, aspect ${Math.round(c.aspect * 1000) / 1000}` : ""}` : "NOT SIZED";
@@ -1726,7 +1726,7 @@ if (command === "run") {
       if (!list.length) throw new Error("no canvases to compare with");
       for (const c of list) await match(c, ofId, list.length > 1 ? undefined : out);
     } else {
-      throw new Error("usage: forma canvas add <photo|id> [--plane front|back|left|right|top|bottom] [--object WxH --align 'left bottom' | --calibrate u1,v1,u2,v2,mm | --width mm | --scale mm/px] [--at x,y,z] [--anchor u,v] [--rotate deg | --level u1,v1,u2,v2] [--flip] [--aspect k] [--crop l,t,r,b] [--perspective u1,v1,…,u4,v4,WxH] [--opacity 0.5] [--through] [--name N]\n       | list | update <canvas> [same flags] [--reset crop,perspective,…] | remove <canvas> | measure <canvas> [--every mm] [--channel c --threshold t] [--region l,t,r,b] | match [<canvas>|all] [--of <thing>] [--out f.png]");
+      throw new Error("usage: ise canvas add <photo|id> [--plane front|back|left|right|top|bottom] [--object WxH --align 'left bottom' | --calibrate u1,v1,u2,v2,mm | --width mm | --scale mm/px] [--at x,y,z] [--anchor u,v] [--rotate deg | --level u1,v1,u2,v2] [--flip] [--aspect k] [--crop l,t,r,b] [--perspective u1,v1,…,u4,v4,WxH] [--opacity 0.5] [--through] [--name N]\n       | list | update <canvas> [same flags] [--reset crop,perspective,…] | remove <canvas> | measure <canvas> [--every mm] [--channel c --threshold t] [--region l,t,r,b] | match [<canvas>|all] [--of <thing>] [--out f.png]");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
@@ -1773,8 +1773,8 @@ if (command === "run") {
       const path = out ?? `look/${slug}-${viewName.replace(/[^a-z0-9]+/gi, "_")}.png`;
       if (path.includes("/")) mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, Buffer.from(await res.arrayBuffer()));
-      const b = res.headers.get("x-forma-bounds").split(",").map(Number);
-      console.log(`✓ ${path}  (${viewName} view; read the file to see it)\n  ${res.headers.get("x-forma-mm-per-px")} mm per pixel; bounds x ${b[0]}…${b[3]}, y ${b[1]}…${b[4]}, z ${b[2]}…${b[5]} mm; ${res.headers.get("x-forma-triangles")} triangles`);
+      const b = res.headers.get("x-ise-bounds").split(",").map(Number);
+      console.log(`✓ ${path}  (${viewName} view; read the file to see it)\n  ${res.headers.get("x-ise-mm-per-px")} mm per pixel; bounds x ${b[0]}…${b[3]}, y ${b[1]}…${b[4]}, z ${b[2]}…${b[5]} mm; ${res.headers.get("x-ise-triangles")} triangles`);
     }
   }
 } else if (command === "list") {
@@ -1902,7 +1902,7 @@ if (command === "run") {
   const part = partFlag >= 0 ? args.splice(partFlag, 2)[1] : null;
   const [, a, b] = args;
   if (!a) {
-    console.error("✗ say what: forma measure <part or instance> [other] [--part name]");
+    console.error("✗ say what: ise measure <part or instance> [other] [--part name]");
     process.exit(1);
   }
   const get = async (id) => {
@@ -2025,22 +2025,22 @@ if (command === "run") {
   try {
     if (command === "import") {
       // STEP/IGES (exact), STL/OBJ/PLY/glTF/GLB/3MF (mesh) become a shape; DXF/SVG a sketch;
-      // .scad a live shape; .csv/.xlsx a sheet, parameter set or configurations; .forma a project.
+      // .scad a live shape; .csv/.xlsx a sheet, parameter set or configurations; .ise a project.
       const as = flag("--as");
       const target = flag("--target");
       const sheet = flag("--sheet");
       const named = flag("--name");
       const path = args[1];
-      if (!path) throw new Error("say which file: forma import <file> [--name N] [--as sheet|parameters|configurations]");
+      if (!path) throw new Error("say which file: ise import <file> [--name N] [--as sheet|parameters|configurations]");
       const bytes = read(path);
       const name = named ? `${named}${extname(path)}` : basename(path);
-      if (name.toLowerCase().endsWith(".forma")) {
+      if (name.toLowerCase().endsWith(".ise")) {
         const res = await fetch(`${http}/projects/import`, { method: "POST", body: bytes });
         if (!res.ok) throw new Error(await res.text());
         const r = await res.json();
         console.log(`✓ imported as project “${r.name}”${r.assets ? ` (${r.assets} asset files)` : ""}: open it with --project ${r.name}`);
       } else {
-        const q = new URLSearchParams({ project: projectName, user: "forma-ai", ...(as ? { as } : {}), ...(target ? { target } : {}), ...(sheet ? { sheet } : {}) });
+        const q = new URLSearchParams({ project: projectName, user: "ise-ai", ...(as ? { as } : {}), ...(target ? { target } : {}), ...(sheet ? { sheet } : {}) });
         const res = await fetch(`${http}/import/${encodeURIComponent(name)}?${q}`, { method: "POST", body: bytes });
         if (!res.ok) throw new Error(await res.text());
         const r = await res.json();
@@ -2053,7 +2053,7 @@ if (command === "run") {
         } else console.log(`✓ ${r.operation ?? "import"} → ${JSON.stringify(r.output ?? r)}`);
       }
     } else if (command === "export") {
-      // forma export <id|name|project> <file.ext>, or --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]
+      // ise export <id|name|project> <file.ext>, or --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]
       const format = flag("--format");
       const part = flag("--part");
       const outFlag = flag("--out");
@@ -2061,7 +2061,7 @@ if (command === "run") {
       const tolerance = flag("--tolerance");
       const [, what, given] = args;
       const ext = (format ?? given?.split(".").pop() ?? "").toLowerCase().replace(/^\./, "");
-      if (!what || !ext) throw new Error("forma export <id|name|project> <file.step|…> | --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]");
+      if (!what || !ext) throw new Error("ise export <id|name|project> <file.step|…> | --format step|iges|stl|obj|ply|glb|3mf|dxf|stpz|brep|scad|zip|csv|xlsx [--part P] [--out path]");
       const name = (e) => {
         const c = e.components;
         return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["shape.sheet"]?.name ?? c["shape.parameter_set"]?.name ?? c["assembly.definition"]?.name;
@@ -2078,19 +2078,19 @@ if (command === "run") {
       const bytes = Buffer.from(await res.arrayBuffer());
       const suggested = res.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? `${found[0].id}.${ext}`;
       const out = given && !format ? given : outFlag;
-      const target = out ? resolve(out) : join(homedir(), "Downloads", "Forma exports", suggested);
+      const target = out ? resolve(out) : join(homedir(), "Downloads", "ISE Studio exports", suggested);
       const path = out && existsSync(target) && statSync(target).isDirectory() ? join(target, suggested) : target;
       mkdirSync(dirname(path), { recursive: true });
       write(path, bytes);
       const size = bytes.length >= 1048576 ? `${(bytes.length / 1048576).toFixed(1)} MB` : `${(bytes.length / 1024).toFixed(1)} KB`;
       console.log(`✓ ${path} (${size})`);
     } else {
-      const out = args[1] ?? `${projectName}.forma`;
+      const out = args[1] ?? `${projectName}.ise`;
       const res = await fetch(`${http}/projects/${encodeURIComponent(projectName)}/bundle`);
       if (!res.ok) throw new Error(await res.text());
       const bytes = Buffer.from(await res.arrayBuffer());
       write(out, bytes);
-      console.log(`✓ wrote ${out} (${(bytes.length / 1024).toFixed(0)} KB): the whole project with its history and assets; import it elsewhere with forma import ${out}`);
+      console.log(`✓ wrote ${out} (${(bytes.length / 1024).toFixed(0)} KB): the whole project with its history and assets; import it elsewhere with ise import ${out}`);
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
@@ -2153,7 +2153,7 @@ if (command === "run") {
   try {
     if (command === "scan" && sub === "add") {
       const path = args[2];
-      if (!path) throw new Error("forma scan add <file> [--name N] [--source colmap|object-capture|scanner]");
+      if (!path) throw new Error("ise scan add <file> [--name N] [--source colmap|object-capture|scanner]");
       const name = flag("--name");
       const source = flag("--source");
       const qs = new URLSearchParams({ ...(name ? { name } : {}), ...(source ? { source } : {}) });
@@ -2161,20 +2161,20 @@ if (command === "run") {
       console.log(`✓ ${sayScan(e)}\n  in a program: fitScan("${e.id}", …), ${e.kind === "mesh" ? `importMesh("${e.id}", { repair: true })` : `reconstruct("${e.id}")`}`);
     } else if (command === "scan" && (sub === "list" || !sub)) {
       const list = await call("GET", "/scans");
-      if (!list.length) console.log("no scans in this project yet (forma scan add <file>)");
+      if (!list.length) console.log("no scans in this project yet (ise scan add <file>)");
       for (const e of list) console.log(`${e.id}  ${sayScan(e)}${e.parent ? `  ← ${e.parent.slice(0, 12)}` : ""}`);
     } else if (command === "scan" && sub === "engines") {
       const { engines } = await call("GET", "/photogrammetry/engines");
       for (const e of engines) console.log(`${e.available ? "✓" : "✗"} ${e.name}${e.version ? ` (${e.version})` : ""}: ${e.detail}`);
     } else if (command === "scan" && sub === "markers") {
-      const out = flag("--out") ?? "forma-scale-markers.pdf";
+      const out = flag("--out") ?? "ise-scale-markers.pdf";
       const res = await fetch(`${http}/photogrammetry/markers.pdf${has("--letter") ? "?paper=letter" : ""}`);
       if (!res.ok) throw new Error(await res.text());
       writeFileSync(out, Buffer.from(await res.arrayBuffer()));
       console.log(`✓ ${out}: six 30 mm markers round a 250 × 170 mm field. Print at 100 % (check the 100 mm bar), lay it flat, stand the object in the middle, keep markers in every photo.`);
     } else if (command === "scan" && (sub === "jobs" || sub === "cancel")) {
       if (sub === "cancel") {
-        if (!id) throw new Error("forma scan cancel <job id>");
+        if (!id) throw new Error("ise scan cancel <job id>");
         await call("POST", `/photogrammetry/${id}/cancel`);
         console.log(`✓ cancelling ${id}`);
       } else {
@@ -2185,7 +2185,7 @@ if (command === "run") {
     } else if (command === "scan" && sub === "render-photos") {
       // A photo set of the model drawn by the engine from many angles (a known shape to test photogrammetry on).
       const dir = args[2];
-      if (!dir) throw new Error("forma scan render-photos <folder> [--count 40] [--rings 25,50] [--distance mm] [--fov 45] [--size 1600x1200] [--sheet] [--light 30]");
+      if (!dir) throw new Error("ise scan render-photos <folder> [--count 40] [--rings 25,50] [--distance mm] [--fov 45] [--size 1600x1200] [--sheet] [--light 30]");
       const count = num(flag("--count")) ?? 40;
       const rings = nums(flag("--rings")) ?? [25, 50];
       const distance = flag("--distance");
@@ -2206,7 +2206,7 @@ if (command === "run") {
           if (!res.ok) throw new Error(await res.text());
           const name = `photo_${String(n + 1).padStart(3, "0")}.png`;
           writeFileSync(`${dir}/${name}`, Buffer.from(await res.arrayBuffer()));
-          cameras.push({ image: name, azimuth: az, elevation: el, ...JSON.parse(res.headers.get("x-forma-camera")) });
+          cameras.push({ image: name, azimuth: az, elevation: el, ...JSON.parse(res.headers.get("x-ise-camera")) });
           process.stdout.write(`\r  ${n + 1}/${count} photos`);
         }
       }
@@ -2221,7 +2221,7 @@ if (command === "run") {
       const noClean = has("--no-clean");
       const detach = has("--detach");
       const paths = args.slice(2).filter((a) => !a.startsWith("--"));
-      if (!paths.length) throw new Error("forma scan photos <folder | photos.zip | photo …> [--engine auto|object-capture|colmap] [--detail preview|reduced|medium|full] [--mask] [--name N] [--no-clean] [--detach]");
+      if (!paths.length) throw new Error("ise scan photos <folder | photos.zip | photo …> [--engine auto|object-capture|colmap] [--detail preview|reduced|medium|full] [--mask] [--name N] [--no-clean] [--detach]");
       const { statSync, readdirSync } = await import("node:fs");
       let files = [];
       for (const p of paths) {
@@ -2240,7 +2240,7 @@ if (command === "run") {
       const job = await call("POST", `/photogrammetry?${qs}`);
       console.log(`\n✓ job ${job.id}: ${job.engine}, ${job.images} photos, detail ${job.detail}`);
       if (detach) {
-        console.log(`  running in the background: forma scan jobs · forma scan cancel ${job.id}`);
+        console.log(`  running in the background: ise scan jobs · ise scan cancel ${job.id}`);
       } else {
         let last = "";
         let j = job;
@@ -2264,10 +2264,10 @@ if (command === "run") {
         console.log(`  scale: ${sc.method}${sc.uncertainty != null ? ` (±${(sc.uncertainty * 100).toFixed(2)} %)` : ""} — ${sc.detail}`);
         console.log(`  coverage by 30° sector: ${qa.coverage.sectors.join(" ")}; elevations ${Math.round(qa.coverage.lowest_elevation)}°…${Math.round(qa.coverage.highest_elevation)}°${qa.holes != null ? `; ${qa.holes} open hole(s) in the raw surface` : ""}`);
         for (const a of qa.advice) console.log(`  ! ${a}`);
-        console.log(`  next: forma mesh check ${(r.clean ?? r.scan).id.slice(0, 12)} · forma scan fit … · forma inspect ${(r.clean ?? r.scan).id.slice(0, 12)} <part> --tolerance 0.5 --align best`);
+        console.log(`  next: ise mesh check ${(r.clean ?? r.scan).id.slice(0, 12)} · ise scan fit … · ise inspect ${(r.clean ?? r.scan).id.slice(0, 12)} <part> --tolerance 0.5 --align best`);
       }
     } else if (command === "scan" && (sub === "scale" || sub === "level")) {
-      if (!id) throw new Error("forma scan scale <scan> --from x,y,z --to x,y,z --distance mm [--pick mm] | --factor f  ·  forma scan level <scan>");
+      if (!id) throw new Error("ise scan scale <scan> --from x,y,z --to x,y,z --distance mm [--pick mm] | --factor f  ·  ise scan level <scan>");
       const body =
         sub === "scale" ? (args.includes("--factor") ? { factor: num(flag("--factor")) } : { from: nums(flag("--from")), to: nums(flag("--to")), distance: num(flag("--distance")), pick: num(flag("--pick")) }) : { tolerance: num(flag("--tolerance")) };
       const name = flag("--name");
@@ -2280,7 +2280,7 @@ if (command === "run") {
       if (!p) console.log(`${sayScan(e)}: no record beyond “${e.source}”`);
       else console.log(JSON.stringify({ ...p, cameras: p.cameras ? `${p.cameras.length} camera poses` : undefined }, null, 1));
     } else if (!id && !(command === "mesh" && sub === "from")) {
-      throw new Error(`say which scan: forma ${command} ${command === "inspect" ? "<scan> <part> --tolerance mm" : `${sub ?? "<what>"} <scan>`}`);
+      throw new Error(`say which scan: ise ${command} ${command === "inspect" ? "<scan> <part> --tolerance mm" : `${sub ?? "<what>"} <scan>`}`);
     } else if (command === "scan" && sub === "info") {
       const r = await call("POST", `/scans/${id}/query/info`, {});
       console.log(`${r.kind}: ${r.points} points, spacing ${r3(r.spacing)} mm, ${p3(r.bounds.slice(0, 3))} to ${p3(r.bounds.slice(3))}${r.normals ? ", with normals" : ""}${r.colors ? ", coloured" : ""}`);
@@ -2321,7 +2321,7 @@ if (command === "run") {
       if (!res.ok) throw new Error(await res.text());
       const bytes = Buffer.from(await res.arrayBuffer());
       const suggested = res.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? `${id}.ply`;
-      const target = out ? resolve(out) : join(homedir(), "Downloads", "Forma exports", suggested);
+      const target = out ? resolve(out) : join(homedir(), "Downloads", "ISE Studio exports", suggested);
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, bytes);
       console.log(`✓ ${target} (${(bytes.length / 1024).toFixed(1)} KB)`);
@@ -2412,13 +2412,13 @@ if (command === "run") {
       }
     } else if (command === "mesh" && sub === "from") {
       const part = args[2];
-      if (!part) throw new Error("forma mesh from <part id> [--tolerance 0.01] [--angle 20] [--max-edge 2] [--name N]");
+      if (!part) throw new Error("ise mesh from <part id> [--tolerance 0.01] [--angle 20] [--max-edge 2] [--name N]");
       const r = await call("POST", `/mesh-from/${part}`, { tolerance: num(flag("--tolerance")), angle: num(flag("--angle")), maxEdge: num(flag("--max-edge")), name: flag("--name") ?? undefined });
       console.log(`✓ ${r.triangles} triangles, ${r.solid ? "closed" : "NOT closed"}\n  new scan ${sayScan(r.scan)}${r.faceted.length ? `\n  faceted already: ${r.faceted.join("; ")}` : ""}`);
     } else if (command === "inspect") {
       const target = args[2];
       const tolerance = num(flag("--tolerance"));
-      if (!target || !tolerance) throw new Error("forma inspect <scan> <part id or name> --tolerance mm [--required 0.99] [--align icp|best] [--part P] [--require]");
+      if (!target || !tolerance) throw new Error("ise inspect <scan> <part id or name> --tolerance mm [--required 0.99] [--align icp|best] [--part P] [--require]");
       const align = flag("--align");
       const part = flag("--part");
       const required = num(flag("--required"));
@@ -2442,9 +2442,9 @@ if (command === "run") {
       }
       failed = !r.passed;
     } else {
-      throw new Error(`forma scan add|list|info|fit|detect|downsample|outliers|normals|reconstruct|surface|shape|export|remove …
-forma mesh check|repair|decimate|smooth|remesh|fill-holes|flip|harmonize|largest|split|merge|sample|section|curvature|segment|boundaries|unwrap <scan> … · forma mesh from <part>
-forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] [--require]`);
+      throw new Error(`ise scan add|list|info|fit|detect|downsample|outliers|normals|reconstruct|surface|shape|export|remove …
+ise mesh check|repair|decimate|smooth|remesh|fill-holes|flip|harmonize|largest|split|merge|sample|section|curvature|segment|boundaries|unwrap <scan> … · ise mesh from <part>
+ise inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] [--require]`);
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
@@ -2461,7 +2461,7 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
   const q = new URLSearchParams(project ? { project } : {});
   const write = async (res, out) => {
     const { writeFileSync } = await import("node:fs");
-    const name = out ?? decodeURIComponent((res.headers.get("content-disposition") ?? "").match(/filename="([^"]+)"/)?.[1] ?? "forma-output");
+    const name = out ?? decodeURIComponent((res.headers.get("content-disposition") ?? "").match(/filename="([^"]+)"/)?.[1] ?? "ise-output");
     writeFileSync(name, Buffer.from(await res.arrayBuffer()));
     return name;
   };
@@ -2523,7 +2523,7 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
         if (!res.ok) throw new Error(await res.text());
         const r = await res.json();
         console.log(`✓ imported ${a} as shape ${r.id}`);
-      } else throw new Error("forma ifc export [id|project] [file.ifc] | forma ifc import <file.ifc>");
+      } else throw new Error("ise ifc export [id|project] [file.ifc] | ise ifc import <file.ifc>");
     } else if (command === "plan") {
       const lvl = flag("--level"), cut = flag("--cut"), sheet = flag("--sheet"), scale = flag("--scale"), pdf = flag("--pdf"), dxf = flag("--dxf"), looking = flag("--looking"), side = flag("--elevation");
       const si = args.indexOf("--section");
@@ -2648,7 +2648,7 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
   const vec = (s) => `[${String(s).split(/[,\s]+/).filter(Boolean).map(Number).join(",")}]`;
   const r1 = (v) => Math.round(v * 10) / 10;
   try {
-    if (!id) throw new Error(`say which: forma ${command} <${command === "robot" ? "tip instance" : command === "study" || command === "exploded" ? "id or name" : "assembly | top"}>`);
+    if (!id) throw new Error(`say which: ise ${command} <${command === "robot" ? "tip instance" : command === "study" || command === "exploded" ? "id or name" : "assembly | top"}>`);
     if (command === "dof") {
       const r = await get(`assembly-dof/${encodeURIComponent(id)}`);
       console.log(`${r.groups.some((g) => !g.solved) ? "✗" : "✓"} ${r.summary}`);
@@ -2698,7 +2698,7 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
       } else if (sub === "ik") {
         const r = await get(`robot/${t}/ik?${toolQ}to=${vec(extra)}${axis ? `&axis=${vec(axis)}` : ""}`);
         console.log(`${r.reached ? "✓ reaches" : `✗ out of reach: ${r.error_mm} mm short`}${r.error_deg ? `, axis ${r.error_deg}° off` : ""}: ${Object.entries(r.values).map(([k, v]) => `${k} ${v}`).join(", ")}`);
-        if (r.reached) console.log(`  set them: forma commit assembly.robot.move_to '{"tip":"${id}","to":${vec(extra)}${axis ? `,"axis":${vec(axis)}` : ""}${tool ? `,"tool":"${tool}"` : ""}}'`);
+        if (r.reached) console.log(`  set them: ise commit assembly.robot.move_to '{"tip":"${id}","to":${vec(extra)}${axis ? `,"axis":${vec(axis)}` : ""}${tool ? `,"tool":"${tool}"` : ""}}'`);
         failed = !r.reached;
       } else if (sub === "reach") {
         const r = await get(`robot/${t}/reach?${toolQ}samples=${extra ?? 2000}`);
@@ -2730,14 +2730,14 @@ forma inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] 
           fs.writeFileSync(out, cfg ? JSON.stringify(cfg, null, 1) : text);
           console.log(`  written to ${out}`);
         } else if (!cfg) console.log(text);
-      } else throw new Error("forma robot <tip> [fk '{json}' | ik x,y,z [--axis x,y,z] | reach [samples] | path '<waypoints json>' | controller [json|arduino] [--out file]] [--tool connector]");
+      } else throw new Error("ise robot <tip> [fk '{json}' | ik x,y,z [--axis x,y,z] | reach [samples] | path '<waypoints json>' | controller [json|arduino] [--out file]] [--tool connector]");
     }
   } catch (e) {
     console.error(`✗ ${e.message}`);
     failed = true;
   }
 } else {
-  console.error("usage: forma.mjs run steps.json | commit <op> <json> | stock [search] | flat [id] [part] | render [--width] | get <id> | tree | list | check | ops | bim | schedule | ifc export|import | plan | check-geometry <id> [part] | surfaces <id> [part] | measure <part> [other] | sheet <name> | draft | view <action> [what] | import <file> [--name N] | export <id> <file> | --format <fmt> [--part P] [--out path] | bundle [file] | image add <file> | image list | look [what] [--view v]  [--project name] [--url ws://…]");
+  console.error("usage: ise.mjs run steps.json | commit <op> <json> | stock [search] | flat [id] [part] | render [--width] | get <id> | tree | list | check | ops | bim | schedule | ifc export|import | plan | check-geometry <id> [part] | surfaces <id> [part] | measure <part> [other] | sheet <name> | draft | view <action> [what] | import <file> [--name N] | export <id> <file> | --format <fmt> [--part P] [--out path] | bundle [file] | image add <file> | image list | look [what] [--view v]  [--project name] [--url ws://…]");
   failed = true;
 }
 

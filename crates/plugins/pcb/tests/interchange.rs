@@ -3,9 +3,9 @@
 //! netlists, IPC-D-356, IPC-2581, ODB++, Gerber job, drill map and report,
 //! plots, mesh models, position files), and every importer reads a small
 //! board (and, where the format has one, a schematic) written here from the
-//! format's documented structure, landing where it should in Forma terms.
+//! format's documented structure, landing where it should in Iṣẹ́ Studio terms.
 //!
-//! The board every importer fixture describes (Forma coordinates, mm, y up):
+//! The board every importer fixture describes (Iṣẹ́ Studio coordinates, mm, y up):
 //! a 30 × 20 mm outline; R1 (0603: pads 0.9 × 1.0 at ±0.8 mm) at (10, 10)
 //! turned 90°; R2 (the same) at (20, 10) on the bottom; J1 (two through-hole
 //! pins, 1.0 mm drill, 1.7 mm pads) at (5, 5) and (5, 7.54); nets VCC

@@ -65,7 +65,7 @@ fn font_bytes(font: Option<&str>) -> Result<std::borrow::Cow<'static, [u8]>, Str
 
 /// Whether these bytes are a font text() can set: it parses and draws a capital.
 pub fn check_font(bytes: &[u8]) -> Result<(), String> {
-    let face = Face::parse(bytes, 0).map_err(|e| format!("not a font Forma reads ({e})"))?;
+    let face = Face::parse(bytes, 0).map_err(|e| format!("not a font ISE Studio reads ({e})"))?;
     let g = face.glyph_index('H').ok_or("the font has no Latin capitals")?;
     struct Count(usize);
     impl OutlineBuilder for Count {
@@ -190,7 +190,7 @@ pub fn outlines(spec: &Spec) -> Result<(Vec<Vec<[f64; 2]>>, [f64; 2]), String> {
         return Err("text: size must be a positive number of mm (the height of a capital)".into());
     }
     let bytes = font_bytes(spec.font.as_deref())?;
-    let mut face = Face::parse(&bytes, 0).map_err(|e| format!("text: not a font Forma reads ({e})"))?;
+    let mut face = Face::parse(&bytes, 0).map_err(|e| format!("text: not a font ISE Studio reads ({e})"))?;
     if face.is_variable() {
         let w = spec.weight.clamp(100.0, 900.0) as f32;
         face.set_variation(Tag::from_bytes(b"wght"), w);
@@ -298,8 +298,8 @@ mod tests {
 
     #[test]
     fn bold_is_heavier_and_kerning_tightens_pairs() {
-        let regular = profile(&spec("FORMA")).area();
-        let mut b = spec("FORMA");
+        let regular = profile(&spec("ISE")).area();
+        let mut b = spec("ISE");
         b.weight = 700.0;
         assert!(profile(&b).area() > regular * 1.2);
         // "AV" kerns tighter than the two letters' advances.
@@ -311,7 +311,7 @@ mod tests {
 
     #[test]
     fn alignment_and_arcs_place_the_block() {
-        let mut s = spec("Forma");
+        let mut s = spec("Studio");
         s.align = Align::Center;
         s.baseline = Baseline::Middle;
         let b = profile(&s).bounds();

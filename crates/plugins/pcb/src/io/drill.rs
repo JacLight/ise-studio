@@ -164,7 +164,7 @@ pub fn report(v: &BoardView) -> String {
     let stem = crate::gerber::file_stem(&v.name);
     let mut s = String::new();
     let _ = writeln!(s, "Drill report for {}", v.name);
-    let _ = writeln!(s, "Created on {} by Forma", super::now_iso());
+    let _ = writeln!(s, "Created on {} by ISE Studio", super::now_iso());
     let _ = writeln!(s, "\nCopper Layer Stackup:\n    =============================================================");
     for (i, l) in v.layers.iter().enumerate() {
         let k = match l.as_str() {

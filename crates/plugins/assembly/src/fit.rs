@@ -902,7 +902,7 @@ impl Segment {
         ds.sort_by(f64::total_cmp);
         let dfit = ds[ds.len() / 2];
         let off = hs.iter().map(|s| (s.center[0].powi(2) + s.center[1].powi(2)).sqrt()).fold(0.0, f64::max);
-        if std::env::var("FORMA_FIT_DEBUG").is_ok() && off > 0.5 {
+        if std::env::var("ISE_FIT_DEBUG").is_ok() && off > 0.5 {
             for s in &hs {
                 eprintln!("  z {:.2} rmin {:.2} r {:.2} c {:?} cover {:.2}", s.z, s.rmin, s.radius, s.center, s.cover);
             }

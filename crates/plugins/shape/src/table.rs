@@ -268,7 +268,7 @@ pub fn unzip(data: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, String> {
         let bytes = match method {
             0 => body.to_vec(),
             8 => miniz_oxide::inflate::decompress_to_vec_with_limit(body, size.max(1) + 64).map_err(|e| format!("{name}: cannot unpack ({e:?})"))?,
-            m => return Err(format!("{name}: packed with method {m}, which Forma does not read")),
+            m => return Err(format!("{name}: packed with method {m}, which ISE Studio does not read")),
         };
         files.insert(name, bytes);
     }

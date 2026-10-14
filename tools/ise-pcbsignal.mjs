@@ -1,8 +1,8 @@
-// `./forma pcb netclass|pair|group|lengths|tune|route-pair|pad-to-die …`: routing
+// `./ise pcb netclass|pair|group|lengths|tune|route-pair|pad-to-die …`: routing
 // constraints — impedance-targeted net classes (widths per layer from the
 // stackup), differential pairs, length-matching groups, net lengths, length
 // tuning and pair routing — through the same engine commands the Electronics
-// workspace uses. Called from tools/forma.mjs with its engine connection.
+// workspace uses. Called from tools/ise.mjs with its engine connection.
 
 export const SIGNAL_SUBS = ["netclass", "pair", "group", "lengths", "tune", "route-pair", "pad-to-die"];
 
@@ -47,14 +47,14 @@ export async function pcbSignal(sub, args, { engine, get, http, q }) {
   const violations = (v) => v.violations.filter((x) => ["impedance", "diff_pair_gap", "diff_pair_uncoupled", "length", "skew", "via_count"].includes(x.code));
 
   const board = args[2];
-  if (!board) throw new Error(`usage: forma pcb ${sub} <board> …`);
+  if (!board) throw new Error(`usage: ise pcb ${sub} <board> …`);
 
   if (sub === "netclass") {
     const name = args[3];
     if (!name) {
       const v = await view(board);
       for (const c of v.signal.classes) showClass(c);
-      if (!v.signal.classes.length) console.log("no net class has an impedance target (forma pcb netclass <board> <name> --impedance 50 | --diff 90)");
+      if (!v.signal.classes.length) console.log("no net class has an impedance target (ise pcb netclass <board> <name> --impedance 50 | --diff 90)");
       return false;
     }
     const params = { board, name };
@@ -103,7 +103,7 @@ export async function pcbSignal(sub, args, { engine, get, http, q }) {
   }
   if (sub === "group") {
     const name = args[3];
-    if (!name) throw new Error("usage: forma pcb group <board> <name> <net,net,… | D? | pair> [--target mm] [--tol mm] [--max-skew mm] [--min mm] [--max mm] | --delete");
+    if (!name) throw new Error("usage: ise pcb group <board> <name> <net,net,… | D? | pair> [--target mm] [--tol mm] [--max-skew mm] [--min mm] [--max mm] | --delete");
     const params = { board, name };
     if (boolOf(args, "--delete")) params.delete = true;
     for (const [f, k] of Object.entries({ "--target": "target", "--tol": "tolerance", "--max-skew": "max_skew", "--min": "min", "--max": "max" })) {
@@ -142,7 +142,7 @@ export async function pcbSignal(sub, args, { engine, get, http, q }) {
   }
   if (sub === "tune") {
     const what = args[3];
-    if (!what) throw new Error("usage: forma pcb tune <board> <net | pair | group> [--target mm] [--skew] [--amplitude mm] [--spacing mm] [--radius mm] [--style trombone|sawtooth] [--corner round|chamfer|square] [--side left|right] [--tol mm] [--track id] [--segment n] [--dry]");
+    if (!what) throw new Error("usage: ise pcb tune <board> <net | pair | group> [--target mm] [--skew] [--amplitude mm] [--spacing mm] [--radius mm] [--style trombone|sawtooth] [--corner round|chamfer|square] [--side left|right] [--tol mm] [--track id] [--segment n] [--dry]");
     const v = await view(board);
     const params = { board };
     if (v.signal.groups.some((g) => g.name.toLowerCase() === what.toLowerCase())) params.group = what;
@@ -166,7 +166,7 @@ export async function pcbSignal(sub, args, { engine, get, http, q }) {
   }
   if (sub === "route-pair") {
     const pair = args[3];
-    if (!pair) throw new Error("usage: forma pcb route-pair <board> <pair> [--from J1.A6,J1.A7] [--to U1.3,U1.4] [--step x,y[:layer]]… [--mode walkaround|shove] [--width mm] [--gap mm] [--via-pitch mm] [--arc] [--dry]");
+    if (!pair) throw new Error("usage: ise pcb route-pair <board> <pair> [--from J1.A6,J1.A7] [--to U1.3,U1.4] [--step x,y[:layer]]… [--mode walkaround|shove] [--width mm] [--gap mm] [--via-pitch mm] [--arc] [--dry]");
     const params = { board, pair, steps: [] };
     const from = flagOf(args, "--from");
     const to = flagOf(args, "--to");
@@ -199,5 +199,5 @@ export async function pcbSignal(sub, args, { engine, get, http, q }) {
     for (const n of r.notes) console.log(`  · ${n}`);
     return !r.ok;
   }
-  throw new Error(`unknown: forma pcb ${sub}`);
+  throw new Error(`unknown: ise pcb ${sub}`);
 }

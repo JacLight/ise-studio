@@ -95,7 +95,7 @@ const isRef = (m: unknown): m is MeshRef => !!m && typeof (m as MeshRef).ref ===
 /** Reads one mesh from its binary form (see crates/server/src/meshes.rs). */
 function decodeMesh(ref: string, buf: ArrayBuffer): MeshData {
   const head = new Uint32Array(buf, 0, 4);
-  if (head[0] !== 0x31304d46) throw new Error(`mesh ${ref}: not a Forma mesh`);
+  if (head[0] !== 0x31304d46) throw new Error(`mesh ${ref}: not a Iṣẹ́ Studio mesh`);
   const [np, nn, ni] = [head[1], head[2], head[3]];
   let at = 16;
   const positions = new Float32Array(buf, at, np);
@@ -248,10 +248,10 @@ export type Connection = "connecting" | "online" | "offline";
 
 export type HistoryEntry = { revision: number; operation: string; user_id: string; at?: number };
 
-/** One line of the Forma AI conversation, shared by every view of the project. */
+/** One line of the Iṣẹ́ AI conversation, shared by every view of the project. */
 export type ChatRecord = { role: "user" | "assistant" | "tool" | "error"; text: string; user?: string; at: number; attachments?: Attachment[] };
 
-/** A picture (or PDF) sent to Forma AI with a message, kept with the conversation. */
+/** A picture (or PDF) sent to Iṣẹ́ AI with a message, kept with the conversation. */
 export type Attachment = { id: string; kind: "png" | "jpg" | "gif" | "webp" | "pdf"; name: string; width?: number; height?: number };
 
 /** Keeps a picture or PDF for the conversation; answers what to send with the message. */
@@ -264,7 +264,7 @@ export async function attachToAi(file: Blob, name: string): Promise<Attachment> 
 /** Where an attachment can be shown from. */
 export const attachmentUrl = (id: string) => projectUrl(`/ai/attachments/${id}`);
 
-/** A view command (from Forma AI) for this person: select, frame, isolate, hide, paint, camera. */
+/** A view command (from Iṣẹ́ AI) for this person: select, frame, isolate, hide, paint, camera. */
 export type ViewCommand = { action: string; target: string | null; value: string | null };
 
 export type AiState = {
@@ -305,10 +305,10 @@ type Pending = {
 function sessionUser(): string {
   const make = () => `user-${Math.random().toString(36).slice(2, 7)}`;
   try {
-    const saved = sessionStorage.getItem("forma.user");
+    const saved = sessionStorage.getItem("ise.user");
     if (saved) return saved;
     const user = make();
-    sessionStorage.setItem("forma.user", user);
+    sessionStorage.setItem("ise.user", user);
     return user;
   } catch {
     return make();
@@ -539,13 +539,13 @@ export class Engine {
     };
   }
 
-  /** Sends a message to Forma AI, with what the person is looking at. */
+  /** Sends a message to Iṣẹ́ AI, with what the person is looking at. */
   private viewListeners = new Set<(v: ViewCommand) => void>();
 
   /** The commands the engine accepts, with their parameter schemas (from the snapshot). */
   commands: CommandInfo[] = [];
 
-  /** Shows something in this person's view, as Forma AI's view commands do (the console uses it). */
+  /** Shows something in this person's view, as Iṣẹ́ AI's view commands do (the console uses it). */
   emitView(v: ViewCommand) {
     for (const l of this.viewListeners) l(v);
   }

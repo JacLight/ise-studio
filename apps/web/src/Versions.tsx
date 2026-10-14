@@ -60,7 +60,7 @@ async function post(path: string, body: unknown) {
 
 const user = () => {
   try {
-    return sessionStorage.getItem("forma.user") ?? "local";
+    return sessionStorage.getItem("ise.user") ?? "local";
   } catch {
     return "local";
   }

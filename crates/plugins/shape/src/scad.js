@@ -1,4 +1,4 @@
-// OpenSCAD in Forma: a parser and evaluator for .scad source, loaded next to
+// OpenSCAD in Iṣẹ́ Studio: a parser and evaluator for .scad source, loaded next to
 // the prelude when a program calls openscad(). Imported files stay live:
 // `return openscad(SOURCE, { width: p.width })` re-runs the file with the
 // top-level values replaced by the shape's parameters, building with the
@@ -17,7 +17,7 @@
 // rotate (angles or axis-angle), scale, resize, mirror, multmatrix, color,
 // offset, hull, minkowski, union, difference, intersection, linear_extrude,
 // rotate_extrude, render. $fn between 3 and 16 makes true polygons (a hex
-// nut trap stays six-sided); otherwise curves are round, meshed to Forma's
+// nut trap stays six-sided); otherwise curves are round, meshed to Iṣẹ́ Studio's
 // tolerance. import(), surface() and projection() are refused with a reason.
 
 const __scad = (() => {
@@ -208,7 +208,7 @@ const __scad = (() => {
       if (t.t === "id" && (t.v === "include" || t.v === "use")) {
         next();
         const p = peek().t === "path" ? next().v : "";
-        fail(`${t.v} <${p}>: Forma imports one file; paste the library's modules into it`, t.line);
+        fail(`${t.v} <${p}>: Iṣẹ́ Studio imports one file; paste the library's modules into it`, t.line);
       }
       if (isId("module")) {
         next();
@@ -1068,7 +1068,7 @@ const __scad = (() => {
       const tris = [];
       for (const f of faces) {
         if (!isList(f) || f.length < 3) continue;
-        // OpenSCAD faces run clockwise seen from outside; Forma's run counter-clockwise.
+        // OpenSCAD faces run clockwise seen from outside; Iṣẹ́ Studio's run counter-clockwise.
         for (let i = 1; i + 1 < f.length; i++) tris.push([f[0], f[i + 1], f[i]]);
       }
       return [g3(fromMesh(pts.map((p) => vecArg(p, 3, 0, "a point")), tris))];
@@ -1101,18 +1101,18 @@ const __scad = (() => {
     text(a, env) {
       if (typeof globalThis.text !== "function") fail("text(): this engine has no fonts yet; turn the lettering into polygons or leave it out");
       const o = named(a, ["text", "size", "font", "halign", "valign", "spacing", "direction", "language", "script"]);
-      // OpenSCAD's size is about the cap height; Forma's text() takes the same em-ish size.
+      // OpenSCAD's size is about the cap height; Iṣẹ́ Studio's text() takes the same em-ish size.
       const valign = { top: "top", center: "middle", bottom: "bottom", baseline: "baseline" }[o.valign] ?? "baseline";
       return [g2(globalThis.text(str(o.text ?? ""), { size: isNum(o.size) ? o.size : 10, align: ["left", "center", "right"].includes(o.halign) ? o.halign : "left", valign }))];
     },
     import() {
-      fail("import(): Forma reads one .scad file; bring the STL or DXF in as its own part");
+      fail("import(): Iṣẹ́ Studio reads one .scad file; bring the STL or DXF in as its own part");
     },
     surface() {
       fail("surface(): height maps are not read from .scad files");
     },
     projection() {
-      fail("projection(): use a sketch's projection in Forma instead (sketch.project)");
+      fail("projection(): use a sketch's projection in Iṣẹ́ Studio instead (sketch.project)");
     },
   };
 
@@ -1229,7 +1229,7 @@ const __scad = (() => {
         for (const g of p.slice(1)) {
           if (g.circle) acc = g2(acc.p.offset(g.circle, { join: "round" }), acc.color);
           else if (acc.circle) acc = g2(g.p.offset(acc.circle, { join: "round" }), g.color);
-          else fail("minkowski() of 2D shapes: Forma sums with a circle only (it is an offset)");
+          else fail("minkowski() of 2D shapes: Iṣẹ́ Studio sums with a circle only (it is an offset)");
         }
         out.push(acc);
       }
