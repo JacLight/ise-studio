@@ -229,7 +229,7 @@ ${guideIndex}
 
 # Working in this repository
 
-This is the source of **Iṣẹ́ Studio**, an agent-native engineering app: a Rust engine (\`crates/\`) and a React + three.js app (\`apps/web\`).
+This is the source of **Iṣẹ́ Studio**, an agent-native engineering app: a Rust engine (\`crates/\`) and a React + three.js app (\`apps/web\`). People's documentation is in [docs/](docs/README.md): getting started, AI assistants, renders and web 3D, architecture, contributing.
 
 ## To use the app (design, model, render)
 
