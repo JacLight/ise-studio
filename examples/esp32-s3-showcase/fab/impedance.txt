@@ -1,0 +1,21 @@
+IMPEDANCE CONTROL
+
+Build to the stackup below and hold these impedances; adjust track widths (and pair gaps) by up to ±10 % to meet them, and report the as-built values. Test coupons per IPC-2141 / IPC-6012.
+
+Stackup (top down):
+  Top silkscreen      0.0000 mm  white ink
+  Top mask            0.0100 mm  green solder mask
+  top                 0.0350 mm  Copper  1 oz
+  Dielectric 1        0.2104 mm  7628 prepreg  εr 4.4
+  in1                 0.0175 mm  Copper  0.5 oz
+  Dielectric 2        1.0650 mm  FR4 core  εr 4.6
+  in2                 0.0175 mm  Copper  0.5 oz
+  Dielectric 3        0.2104 mm  7628 prepreg  εr 4.4
+  bottom              0.0350 mm  Copper  1 oz
+  Bottom mask         0.0100 mm  green solder mask
+  Bottom silkscreen   0.0000 mm  white ink
+
+Controlled lines:
+  USB        top     differential    90 Ω ±10 %  width 0.268 mm, gap 0.150 mm  (microstrip over in1; computed 90 Ω)  nets: USB_D+, USB_D-
+
+Widths from closed-form models (Hammerstad–Jensen microstrip, Cohn/Wheeler stripline, IPC-2141 coupling), solder mask not counted; the fab's field solver is final.

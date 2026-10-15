@@ -12,9 +12,10 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { projectUrl } from "./engine";
+import { splitHoles } from "./boardHoles";
 
 type P = [number, number];
-type Side = { pads: P[][]; openings: P[][]; tracks: { w: number; p: P[] }[]; zones: P[][][]; silk: P[][] };
+type Side = { pads: P[][]; openings: P[][]; tracks: { w: number; p: P[] }[]; zones: P[][][]; silk: P[][]; silk_fill?: P[][][] };
 type Solid = { shape: "box" | "cyl" | "hcyl" | "sphere"; at: [number, number, number]; size: [number, number, number]; rot: number; mat: string };
 export type Scene3D = {
   id: string;
@@ -44,7 +45,7 @@ export const SHOW_ALL: BoardShow = { mask: true, silk: true, copper: true, bodie
 function shown(scene: Scene3D, o: BoardShow): Scene3D {
   const kind = new Map((scene.parts ?? []).map((p) => [p.reference, p.kind]));
   const keep = (r: string) => o.bodies && o[kind.get(r) ?? "other"];
-  const side = (x: Side): Side => ({ pads: o.copper ? x.pads : [], openings: x.openings, tracks: o.copper ? x.tracks : [], zones: o.copper ? x.zones : [], silk: o.silk ? x.silk : [] });
+  const side = (x: Side): Side => ({ pads: o.copper ? x.pads : [], openings: x.openings, tracks: o.copper ? x.tracks : [], zones: o.copper ? x.zones : [], silk: o.silk ? x.silk : [], silk_fill: o.silk ? x.silk_fill : [] });
   return {
     ...scene,
     mask: o.mask ? scene.mask : "none",
@@ -231,15 +232,12 @@ function holePath(h: Scene3D["holes"][number]) {
   return path;
 }
 
+/** The board's outline with its cutouts and the holes that go through it (vias and small
+ * plated holes are painted instead: see boardHoles.ts). */
 function boardShape(scene: Scene3D) {
   const shape = new THREE.Shape(scene.outline.map(([x, y]) => new THREE.Vector2(x, y)));
   for (const c of scene.cutouts) shape.holes.push(new THREE.Path(c.map(([x, y]) => new THREE.Vector2(x, y))));
-  for (const h of scene.holes) shape.holes.push(holePath(h));
-  for (const v of scene.vias) {
-    const p = new THREE.Path();
-    p.absarc(v[0], v[1], v[3] / 2, 0, Math.PI * 2, true);
-    shape.holes.push(p);
-  }
+  for (const h of splitHoles(scene.holes, scene.vias).cut) shape.holes.push(holePath(h));
   return shape;
 }
 
@@ -263,7 +261,10 @@ function paint(scene: Scene3D, side: Side, px: number) {
   const mask = bare ? "#a39468" : (MASK[scene.mask.toLowerCase().replace(/\s+/g, "_")] ?? MASK.green);
   const fin = finishColor(scene.finish);
   const silkColor = scene.silk.toLowerCase() === "black" ? "#151515" : "#f4f3ee";
-  const underMask = bare ? "#c98b52" : mix(mix(mask, "#c27a3c", scene.mask.toLowerCase() === "black" ? 0.1 : 0.22), "#ffffff", scene.mask.toLowerCase() === "white" ? 0 : 0.06);
+  // Copper under the mask: as boards look, a lighter shade of the mask (raised and glossier),
+  // only a little warmer; under black it barely shows, under white it shows its colour.
+  const m = scene.mask.toLowerCase();
+  const underMask = bare ? "#c98b52" : m.includes("black") ? mix(mix(mask, "#c27a3c", 0.05), "#ffffff", 0.05) : m === "white" ? mix(mask, "#c27a3c", 0.18) : mix(mix(mask, "#c27a3c", 0.08), "#ffffff", 0.14);
   const polyPath = (g: CanvasRenderingContext2D, pts: P[]) => {
     g.moveTo(pts[0][0], pts[0][1]);
     for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
@@ -297,6 +298,17 @@ function paint(scene: Scene3D, side: Side, px: number) {
     }
     g.fill();
   };
+  // Drills not cut through the mesh: a dark mark the size of the hole.
+  const drilled = splitHoles(scene.holes, scene.vias).painted;
+  const drills = (g: CanvasRenderingContext2D, style: string) => {
+    g.fillStyle = style;
+    g.beginPath();
+    for (const d of drilled) {
+      g.moveTo(d.at[0] + d.d / 2, d.at[1]);
+      g.arc(d.at[0], d.at[1], d.d / 2, 0, Math.PI * 2);
+    }
+    g.fill();
+  };
   const silk = (g: CanvasRenderingContext2D, style: string) => {
     g.strokeStyle = style;
     g.lineWidth = Math.max(scene.silk_width, 0.12);
@@ -306,6 +318,13 @@ function paint(scene: Scene3D, side: Side, px: number) {
       for (const q of l.slice(1)) g.lineTo(q[0], q[1]);
     }
     g.stroke();
+    // Filled legend (outline-font lettering, logos): each island with its holes (counters).
+    g.fillStyle = style;
+    for (const island of side.silk_fill ?? []) {
+      g.beginPath();
+      for (const c of island) if (c.length >= 3) polyPath(g, c);
+      g.fill("evenodd");
+    }
   };
   // Colour.
   const col = make();
@@ -314,6 +333,7 @@ function paint(scene: Scene3D, side: Side, px: number) {
   copper(col.g, underMask);
   fillPolys(col.g, side.openings, "#b9a77a");
   fillPolys(col.g, side.pads, fin.color);
+  drills(col.g, "#0c0c0c");
   silk(col.g, silkColor);
   // Roughness (green) and metalness (blue).
   const rm = make();
@@ -323,6 +343,7 @@ function paint(scene: Scene3D, side: Side, px: number) {
   copper(rm.g, bare ? rgb(0.3, 1) : rgb(0.34, 0));
   fillPolys(rm.g, side.openings, rgb(0.85, 0));
   fillPolys(rm.g, side.pads, rgb(fin.rough, 1));
+  drills(rm.g, rgb(0.9, 0));
   silk(rm.g, rgb(0.85, 0));
   // Height: copper stands proud under the mask, silk above it.
   const bump = make();
@@ -331,6 +352,7 @@ function paint(scene: Scene3D, side: Side, px: number) {
   copper(bump.g, "#7a7a7a");
   fillPolys(bump.g, side.openings, "#202020");
   fillPolys(bump.g, side.pads, "#8a8a8a");
+  drills(bump.g, "#000");
   silk(bump.g, "#b0b0b0");
   return { color: col.c, rm: rm.c, bump: bump.c };
 }
@@ -397,11 +419,10 @@ export function buildBoard(full: Scene3D, show: BoardShow = SHOW_ALL): THREE.Gro
   edges.castShadow = true;
   // Plated barrels inside round plated holes and vias.
   const barrels: THREE.BufferGeometry[] = [];
-  for (const h of scene.holes) {
+  for (const h of splitHoles(scene.holes, scene.vias).cut) {
     if (!h.plated || Math.abs(h.size[0] - h.size[1]) > 1e-6) continue;
     barrels.push(new THREE.CylinderGeometry(h.size[0] / 2 - 0.01, h.size[0] / 2 - 0.01, t + 0.02, 24, 1, true).rotateX(Math.PI / 2).translate(h.at[0], h.at[1], t / 2));
   }
-  for (const v of scene.vias) barrels.push(new THREE.CylinderGeometry(v[3] / 2 - 0.01, v[3] / 2 - 0.01, t + 0.02, 16, 1, true).rotateX(Math.PI / 2).translate(v[0], v[1], t / 2));
   group.add(top, bottom, edges);
   if (barrels.length) {
     const fin = finishColor(scene.finish);
@@ -444,6 +465,8 @@ class PcbLooks {
     this.paints.set(model, how);
     const e = this.entries.get(model);
     if (e?.look) this.apply(e.look, how);
+    // The view has just set the plain mesh's pieces visible from the tree: the drawing stands in for them.
+    if (e) this.hideEngine(e);
   }
 
   private apply(look: THREE.Group, how: BoardPaint) {
@@ -515,6 +538,13 @@ class PcbLooks {
   subscribe(fn: () => void) {
     this.listeners.add(fn);
     return () => void this.listeners.delete(fn);
+  }
+
+  /** Every mesh of the boards' looks (for a section to cut them like the bodies). */
+  meshes(): THREE.Mesh[] {
+    const out: THREE.Mesh[] = [];
+    for (const e of this.entries.values()) e.look?.traverse((o) => o instanceof THREE.Mesh && out.push(o));
+    return out;
   }
 
   /** The boards drawn now: model id, board id and its look. */

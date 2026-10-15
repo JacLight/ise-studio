@@ -251,3 +251,75 @@ fn on_the_example_board_optimise_cleanup_unroute_and_fanout_keep_it_clean() {
     assert!(!out["fanned"].as_array().unwrap().is_empty(), "{out}");
     assert_eq!(errors(&p, b), before, "fan-out breaks nothing");
 }
+
+/// A board whose straight way from R1 to R2 crosses a keepout, with a ground via-fan-out candidate beside it.
+fn keepout_board() -> (Project, StableId) {
+    let mut p = project();
+    let b = id(&ok(&mut p, "pcb.board.create", json!({ "name": "k", "width": 40, "height": 20, "layers": 2, "rules": { "hole_to_hole": 0.5 } })));
+    for (r, at, pins) in [("R1", [5.0, 10.0], json!({ "1": "GND", "2": "A" })), ("R2", [35.0, 10.0], json!({ "1": "A", "2": "GND" }))] {
+        ok(&mut p, "pcb.component.create", json!({ "board": b, "reference": r, "footprint": "R_0603", "value": "1k", "at": at, "pins": pins }));
+    }
+    // A keepout across the middle (tracks, vias and pours), leaving a way round below it.
+    ok(&mut p, "pcb.area.create", json!({ "board": b, "name": "Antenna", "outline": [[15, 4], [25, 4], [25, 20], [15, 20]] }));
+    (p, b)
+}
+
+#[test]
+fn the_autorouter_and_the_router_keep_out_of_keepouts() {
+    let (mut p, b) = keepout_board();
+    let out = ok(&mut p, "pcb.autoroute", json!({ "board": b, "nets": ["A"] }));
+    assert_eq!(out["failed"].as_array().unwrap().len(), 0, "{out}");
+    let v = de_pcb::view(p.world(), b).unwrap();
+    assert!(v.nets.iter().find(|n| n.name == "A").unwrap().routed);
+    let keepouts: Vec<_> = v.violations.iter().filter(|x| x.code == "keepout").map(|x| x.message.clone()).collect();
+    assert!(keepouts.is_empty(), "autorouted through the keepout: {keepouts:?}");
+    // The router goes round it too.
+    ok(&mut p, "pcb.route.unroute", json!({ "board": b, "nets": ["A"] }));
+    let r = ok(&mut p, "pcb.route.interactive", json!({ "board": b, "from": "R1.2", "to": "R2.1", "layer": "top", "mode": "walkaround" }));
+    assert_eq!(r["reached"], json!(true), "{r}");
+    let errs = errors(&p, b);
+    assert!(errs.iter().all(|e| !e.starts_with("keepout")), "{errs:?}");
+}
+
+#[test]
+fn fanout_keeps_out_of_keepouts_and_keeps_hole_spacing() {
+    let mut p = project();
+    let b = id(&ok(&mut p, "pcb.board.create", json!({ "name": "f", "width": 20, "height": 20, "layers": 2, "rules": { "hole_to_hole": 0.5 } })));
+    // Two ground pads side by side: their fan-out vias must keep 0.5 mm between holes.
+    for (r, at) in [("C1", [10.0, 10.0]), ("C2", [10.0, 11.2])] {
+        ok(&mut p, "pcb.component.create", json!({ "board": b, "reference": r, "footprint": "C_0603", "value": "100nF", "at": at, "pins": { "1": "GND", "2": "V" } }));
+    }
+    // A keepout to the left of the ground pads: no via there.
+    ok(&mut p, "pcb.area.create", json!({ "board": b, "name": "Keep", "outline": [[0, 0], [8.5, 0], [8.5, 20], [0, 20]], "no_vias": true }));
+    let v = de_pcb::view(p.world(), b).unwrap();
+    for c in v.components.clone() {
+        ok(&mut p, "pcb.fanout", json!({ "component": c.id, "nets": ["GND"] }));
+    }
+    let errs = errors(&p, b);
+    assert!(errs.iter().all(|e| !e.starts_with("keepout") && !e.starts_with("hole_to_hole")), "{errs:?}");
+    let v = de_pcb::view(p.world(), b).unwrap();
+    assert!(!v.vias.is_empty(), "the ground pads are fanned out somewhere");
+    assert!(v.vias.iter().all(|x| x.at[0] > 8.5 + x.diameter / 2.0 - 1e-9), "{:?}", v.vias.iter().map(|x| x.at).collect::<Vec<_>>());
+}
+
+
+#[test]
+fn fanout_and_stitching_vias_stay_out_of_smd_pads_of_their_own_net() {
+    let mut p = project();
+    let b = id(&ok(&mut p, "pcb.board.create", json!({ "name": "s", "width": 20, "height": 20, "layers": 2 })));
+    // A large ground pad (a connector's mounting tab) right where C1's ground fan-out would go.
+    ok(&mut p, "pcb.footprint.define", json!({ "board": b, "footprint": { "name": "Tab", "pads": [{ "number": "MP", "kind": "smd", "shape": "rect", "size": [2.0, 2.0], "at": [0.0, 0.0] }], "source": "test" } }));
+    ok(&mut p, "pcb.component.create", json!({ "board": b, "reference": "J1", "footprint": "Tab", "value": "tab", "at": [7.6, 10.0], "pins": { "MP": "GND" } }));
+    let c1 = id(&ok(&mut p, "pcb.component.create", json!({ "board": b, "reference": "C1", "footprint": "C_0603", "value": "100nF", "at": [10.0, 10.0], "pins": { "1": "GND", "2": "V" } })));
+    ok(&mut p, "pcb.zone.create", json!({ "board": b, "net": "GND", "layer": "bottom" }));
+    ok(&mut p, "pcb.fanout", json!({ "component": c1, "nets": ["GND"] }));
+    ok(&mut p, "pcb.via.stitch", json!({ "board": b, "net": "GND", "pitch": 1.0 }));
+    let v = de_pcb::view(p.world(), b).unwrap();
+    assert!(v.vias.len() > 10, "{} vias", v.vias.len());
+    for via in &v.vias {
+        for pad in v.pads.iter().filter(|x| x.kind == de_pcb::footprints::PadKind::Smd) {
+            let g = de_pcb::geom::gap(&de_pcb::geom::Prim::circle(via.at, via.diameter / 2.0), &pad.prim);
+            assert!(g >= 0.049, "via at {:?} is in {}.{} (gap {g})", via.at, pad.reference, pad.number);
+        }
+    }
+}

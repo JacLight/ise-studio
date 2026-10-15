@@ -247,6 +247,29 @@ fn teardrops_follow_the_tracks() {
 }
 
 #[test]
+fn a_teardrop_keeps_the_wider_clearance_of_the_other_net() {
+    // A USB-C's CC line (0.13 mm class) leaving its pin beside a data pin of a 0.2 mm class: the
+    // teardrop on the CC pin would come 0.19 mm from the data pin, so it is left off and the board
+    // stays clean (it was made against the CC line's own 0.13 mm before).
+    let mut p = project();
+    let b = id(&ok(&mut p, "pcb.board.create", json!({ "name": "t", "width": 50, "height": 30, "layers": 2,
+        "net_classes": [
+            { "name": "Default", "nets": [], "track_width": 0.15, "clearance": 0.13 },
+            { "name": "USB", "nets": ["D+", "D-"], "track_width": 0.27, "clearance": 0.2 },
+        ] })));
+    ok(&mut p, "pcb.component.create", json!({ "board": b, "reference": "J1", "footprint": "USB-C_16P", "value": "USB-C", "at": [25.0, 3.3], "pins": { "A5": "CC1", "B7": "D-", "A7": "D-", "A6": "D+", "B6": "D+" } }));
+    let v = de_pcb::view(p.world(), b).unwrap();
+    let a5 = v.pads.iter().find(|x| x.reference == "J1" && x.number == "A5").unwrap().clone();
+    // From the top end of A5 straight up, then away from the data pins.
+    let top = [a5.at[0] + 0.05, a5.at[1] + a5.size[1] / 2.0 - 0.05];
+    ok(&mut p, "pcb.track.create", json!({ "board": b, "layer": "top", "net": "CC1", "width": 0.15, "points": [top, [top[0], top[1] + 0.4], [top[0] - 0.4, top[1] + 0.8], [top[0] - 3.0, top[1] + 0.8]] }));
+    assert!(!codes(&p, b).iter().any(|(c, _)| c == "clearance"), "clean before: {:?}", codes(&p, b));
+    ok(&mut p, "pcb.teardrops.set", json!({ "board": b, "smd": true }));
+    let v = de_pcb::view(p.world(), b).unwrap();
+    assert!(!v.violations.iter().any(|x| x.code == "clearance"), "{:?}", codes(&p, b));
+}
+
+#[test]
 fn stitching_and_fences_place_vias_clear_of_everything() {
     let mut p = project();
     let b = board(&mut p, 2);

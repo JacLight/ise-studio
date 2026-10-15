@@ -93,8 +93,13 @@ pub struct ComponentView {
     pub silk: Vec<Vec<P>>,
     /// Body blocks: outline in board coordinates and z range above its surface.
     pub bodies: Vec<BodyView>,
-    /// Where the reference designator is printed.
+    /// Where the reference designator is printed (the centre of its text).
     pub label: P,
+    /// Its turn: 0 reads left to right, 90 bottom to top (degrees).
+    pub label_rot: f64,
+    /// Placed by hand (`label_at`), not by the board.
+    #[serde(skip)]
+    pub label_fixed: bool,
     pub pins: BTreeMap<String, String>,
     pub pin_names: BTreeMap<String, String>,
     /// The footprint was found (otherwise it shows as a violation, with no pads).
@@ -484,6 +489,8 @@ pub fn resolve(world: &World, id: StableId, board: &Board) -> Result<BoardView, 
         }
     }
     let areas: Vec<crate::areas::AreaView> = items.areas.iter().map(|(id, a)| crate::areas::view(*id, a, &layers)).collect();
+    place_labels(&mut components, &pads, &graphics, &outline, &cutouts, &board.rules);
+    violations.extend(silk_checks(&components, &pads, &graphics, &board.rules));
 
     // Teardrops where tracks meet pads and vias.
     let mut teardrops = Vec::new();
@@ -715,6 +722,157 @@ fn stats(v: &BoardView, items: &crate::Items) -> Stats {
     }
 }
 
+/// A reference's text box (centre `at`, turned `rot`) at cap height `h`.
+pub fn label_box(text: &str, at: P, rot: f64, h: f64) -> [f64; 4] {
+    let w = crate::font::width(text, h);
+    let (bw, bh) = if ((rot / 90.0).round() as i64).rem_euclid(2) == 1 { (h, w) } else { (w, h) };
+    [at[0] - bw / 2.0, at[1] - bh / 2.0, at[0] + bw / 2.0, at[1] + bh / 2.0]
+}
+
+fn overlap_area(a: &[f64; 4], b: &[f64; 4], m: f64) -> f64 {
+    let w = a[2].min(b[2] + m) - a[0].max(b[0] - m);
+    let h = a[3].min(b[3] + m) - a[1].max(b[1] - m);
+    if w > 0.0 && h > 0.0 { w * h } else { 0.0 }
+}
+
+/// What a reference must keep off on its side of the board: exposed copper (pads, THT on both
+/// sides), other text, part bodies (it would be hidden), other parts' outlines and the edge.
+struct SilkObstacles {
+    pads: Vec<[f64; 4]>,
+    text: Vec<[f64; 4]>,
+    bodies: Vec<[f64; 4]>,
+    courts: Vec<[f64; 4]>,
+    lines: Vec<[f64; 4]>,
+}
+
+/// Reference designators where they can be read. One placed by hand (`label_at`) stays put;
+/// the rest are tried beside their part (above first, then below, right and left, along each
+/// side, close in then a little further out, level or turned a quarter) and each takes the
+/// spot that covers the least exposed copper, other text, part bodies and other parts'
+/// outlines, and stays on the board. The larger parts choose first.
+fn place_labels(components: &mut [ComponentView], pads: &[PadView], graphics: &[crate::graphics::GraphicView], outline: &[P], cutouts: &[Vec<P>], rules: &Rules) {
+    let h = if rules.silk_height > 0.0 { rules.silk_height } else { 1.0 };
+    let mask = rules.mask_expansion.max(0.0) + 0.1;
+    let mut obs: BTreeMap<bool, SilkObstacles> = BTreeMap::new();
+    for top in [true, false] {
+        let side = if top { Side::Top } else { Side::Bottom };
+        let silk = if top { "silk_top" } else { "silk_bottom" };
+        let grow = |b: [f64; 4], m: f64| [b[0] - m, b[1] - m, b[2] + m, b[3] + m];
+        let o = SilkObstacles {
+            pads: pads.iter().filter(|p| p.side == side || p.kind != PadKind::Smd).map(|p| grow(p.prim.bbox(), mask)).collect(),
+            text: graphics.iter().filter(|g| g.layer == silk && g.kind == "text").map(|g| g.bbox).collect(),
+            bodies: components.iter().filter(|c| c.side == side).flat_map(|c| c.bodies.iter().map(|b| bbox(&b.outline))).collect(),
+            courts: components.iter().filter(|c| c.side == side && !c.courtyard.is_empty()).map(|c| bbox(&c.courtyard)).collect(),
+            lines: components
+                .iter()
+                .filter(|c| c.side == side)
+                .flat_map(|c| c.silk.iter().flat_map(|l| l.windows(2).map(|w| grow([w[0][0].min(w[1][0]), w[0][1].min(w[1][1]), w[0][0].max(w[1][0]), w[0][1].max(w[1][1])], 0.1)).collect::<Vec<_>>()))
+                .chain(graphics.iter().filter(|g| g.layer == silk && g.kind != "text").map(|g| g.bbox))
+                .collect(),
+        };
+        obs.insert(top, o);
+    }
+    let mut placed: Vec<(Side, [f64; 4])> = Vec::new();
+    for c in components.iter().filter(|c| c.label_fixed) {
+        placed.push((c.side, label_box(&c.reference, c.label, c.label_rot, h)));
+    }
+    let mut order: Vec<usize> = (0..components.len()).filter(|&i| !components[i].label_fixed && !components[i].courtyard.is_empty() && components[i].kind != "hole").collect();
+    let area = |c: &ComponentView| {
+        let b = bbox(&c.courtyard);
+        (b[2] - b[0]) * (b[3] - b[1])
+    };
+    order.sort_by(|&a, &b| area(&components[b]).total_cmp(&area(&components[a])));
+    let inside = |b: &[f64; 4]| {
+        let corners = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]];
+        let edge = 0.25;
+        corners.iter().all(|p| geom::in_polygon(*p, outline) && geom::dist_to_loop(*p, outline) >= edge && !cutouts.iter().any(|c| geom::in_polygon(*p, c) || geom::dist_to_loop(*p, c) < edge))
+    };
+    let first_gap = (0.75 - h / 2.0).max(0.1);
+    for i in order {
+        let c = &components[i];
+        let o = &obs[&(c.side == Side::Top)];
+        let cb = bbox(&c.courtyard);
+        let own_body: Vec<[f64; 4]> = c.bodies.iter().map(|b| bbox(&b.outline)).collect();
+        let w = crate::font::width(&c.reference, h);
+        let (cx, cy) = ((cb[0] + cb[2]) / 2.0, (cb[1] + cb[3]) / 2.0);
+        let mut best: Option<(f64, P, f64)> = None;
+        for (rot, rot_cost) in [(0.0, 0.0), (90.0, 0.6)] {
+            let (bw, bh) = if rot == 0.0 { (w, h) } else { (h, w) };
+            for (k, d) in [first_gap, first_gap + 0.4, first_gap + 0.9].iter().enumerate() {
+                let far = k as f64 * 0.35;
+                // Along each side: centred, then toward either end.
+                let along_x: Vec<(f64, f64)> = [0.0, -0.5, 0.5, -1.0, 1.0].iter().map(|f| (cx + f * ((cb[2] - cb[0]) / 2.0 + bw / 2.0), f64::abs(*f) * 0.3)).collect();
+                let along_y: Vec<(f64, f64)> = [0.0, -0.5, 0.5, -1.0, 1.0].iter().map(|f| (cy + f * ((cb[3] - cb[1]) / 2.0 + bh / 2.0), f64::abs(*f) * 0.3)).collect();
+                let mut spots: Vec<(P, f64)> = Vec::new();
+                for (x, a) in &along_x {
+                    spots.push(([*x, cb[3] + d + bh / 2.0], 0.0 + a));
+                    spots.push(([*x, cb[1] - d - bh / 2.0], 0.15 + a));
+                }
+                for (y, a) in &along_y {
+                    spots.push(([cb[2] + d + bw / 2.0, *y], 0.3 + a));
+                    spots.push(([cb[0] - d - bw / 2.0, *y], 0.35 + a));
+                }
+                for (p, pref) in spots {
+                    let t = [p[0] - bw / 2.0, p[1] - bh / 2.0, p[0] + bw / 2.0, p[1] + bh / 2.0];
+                    let mut cost = pref + far + rot_cost;
+                    if !inside(&t) {
+                        cost += 1000.0;
+                    }
+                    cost += 300.0 * o.pads.iter().map(|b| overlap_area(&t, b, 0.0)).sum::<f64>();
+                    cost += 300.0 * placed.iter().filter(|(s, _)| *s == c.side).map(|(_, b)| overlap_area(&t, b, 0.12)).sum::<f64>();
+                    cost += 300.0 * o.text.iter().map(|b| overlap_area(&t, b, 0.12)).sum::<f64>();
+                    cost += 40.0 * o.bodies.iter().map(|b| overlap_area(&t, b, 0.0)).sum::<f64>();
+                    cost += 40.0 * own_body.iter().map(|b| overlap_area(&t, b, 0.0)).sum::<f64>();
+                    cost += 8.0 * o.courts.iter().filter(|b| **b != cb).map(|b| overlap_area(&t, b, 0.0)).sum::<f64>();
+                    cost += 15.0 * o.lines.iter().map(|b| overlap_area(&t, b, 0.0)).sum::<f64>();
+                    if best.as_ref().is_none_or(|(bc, _, _)| cost < *bc) {
+                        best = Some((cost, p, rot));
+                    }
+                }
+            }
+        }
+        if let Some((_, at, rot)) = best {
+            placed.push((c.side, label_box(&c.reference, at, rot, h)));
+            components[i].label = at;
+            components[i].label_rot = rot;
+        }
+    }
+}
+
+/// Silkscreen text that will not read: references and board text printed over one another, or
+/// over exposed copper (the fab clips ink from pads, so the letters lose pieces).
+fn silk_checks(components: &[ComponentView], pads: &[PadView], graphics: &[crate::graphics::GraphicView], rules: &Rules) -> Vec<Violation> {
+    let h = if rules.silk_height > 0.0 { rules.silk_height } else { 1.0 };
+    let mut out = Vec::new();
+    for top in [true, false] {
+        let side = if top { Side::Top } else { Side::Bottom };
+        let silk = if top { "silk_top" } else { "silk_bottom" };
+        let layer = if top { "silk_top" } else { "silk_bottom" };
+        // (name, box, object)
+        let mut texts: Vec<(String, [f64; 4], StableId)> = components.iter().filter(|c| c.side == side && c.kind != "hole").map(|c| (c.reference.clone(), label_box(&c.reference, c.label, c.label_rot, h), c.id)).collect();
+        texts.extend(graphics.iter().filter(|g| g.layer == silk && g.kind == "text").map(|g| (format!("“{}”", g.text.clone().unwrap_or_default()), g.bbox, g.id)));
+        for i in 0..texts.len() {
+            for j in i + 1..texts.len() {
+                let a = overlap_area(&texts[i].1, &texts[j].1, 0.0);
+                if a > 0.02 {
+                    let b = &texts[i].1;
+                    out.push(Violation { code: "silk_overlap", severity: "warning", message: format!("Silkscreen {} and {} are printed over each other ({a:.2} mm²)", texts[i].0, texts[j].0), at: [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0], layer: Some(layer.into()), objects: vec![texts[i].2, texts[j].2], refs: vec![texts[i].0.clone(), texts[j].0.clone()] });
+                }
+            }
+            let t = &texts[i].1;
+            let hits: Vec<String> = pads.iter().filter(|p| (p.side == side || p.kind != PadKind::Smd) && overlap_area(t, &p.prim.bbox(), 0.0) > 0.02).map(|p| format!("{}.{}", p.reference, p.number)).collect();
+            if !hits.is_empty() {
+                out.push(Violation { code: "silk_overlap", severity: "warning", message: format!("Silkscreen {} is printed over exposed copper ({}): the fab clips it", texts[i].0, hits.join(", ")), at: [(t[0] + t[2]) / 2.0, (t[1] + t[3]) / 2.0], layer: Some(layer.into()), objects: vec![texts[i].2], refs: vec![texts[i].0.clone()] });
+            }
+        }
+    }
+    out
+}
+
+fn bbox(pts: &[P]) -> [f64; 4] {
+    pts.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |b, p| [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])])
+}
+
 fn component_view(id: StableId, c: &PcbComponent, fp: Option<&crate::Footprint>) -> ComponentView {
     let bottom = c.side == Side::Bottom;
     let pl = |p: P| place(c.at, c.rotation, bottom, p);
@@ -743,8 +901,11 @@ fn component_view(id: StableId, c: &PcbComponent, fp: Option<&crate::Footprint>)
         }
         None => (vec![], vec![], vec![], 0.0, String::new()),
     };
-    // The reference sits just above the courtyard (in board coordinates).
-    let label = if courtyard.is_empty() {
+    // The reference sits just above the courtyard (in board coordinates) until the board places
+    // it (place_labels), or where it was put by hand.
+    let label = if let Some(l) = c.label_at {
+        [c.at[0] + l[0], c.at[1] + l[1]]
+    } else if courtyard.is_empty() {
         c.at
     } else {
         let top = courtyard.iter().map(|p: &P| p[1]).fold(f64::NEG_INFINITY, f64::max);
@@ -770,6 +931,8 @@ fn component_view(id: StableId, c: &PcbComponent, fp: Option<&crate::Footprint>)
         silk,
         bodies,
         label,
+        label_rot: c.label_rotation.unwrap_or(0.0),
+        label_fixed: c.label_at.is_some(),
         pins: c.pins.clone(),
         pin_names: c.pin_names.clone(),
         known: fp.is_some(),

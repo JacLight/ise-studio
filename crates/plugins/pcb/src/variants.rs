@@ -313,6 +313,8 @@ mod tests {
             silk: vec![],
             bodies: vec![],
             label: [0.0, 0.0],
+            label_rot: 0.0,
+            label_fixed: false,
             pins: BTreeMap::new(),
             pin_names: BTreeMap::new(),
             known: true,

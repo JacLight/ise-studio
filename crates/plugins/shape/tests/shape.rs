@@ -472,7 +472,8 @@ fn gear_trains_turn_cleanly_through_a_full_turn() {
 
 #[test]
 fn the_print_in_place_gearbox_turns_without_touching_its_housing() {
-    let (src, params) = example("gearbox-print", "print-in-place.js");
+    // The herringbone redesign declares its train, so the gear check turns it (the printed one is examples/gearbox-print).
+    let (src, params) = example("gearbox-herringbone", "print-in-place.js");
     let e = runtime::evaluate(&src, &params, 0.05).unwrap();
     let c = de_shape::gears::check(&e, Some((0.3, 60.0)), None).unwrap();
     assert!(c.sweep.clashes.is_empty(), "clashes: {:?}", c.sweep.clashes);

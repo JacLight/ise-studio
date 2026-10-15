@@ -4,12 +4,12 @@
 
 *Iṣẹ́* (ee-sheh) is Yoruba for "work".
 
-<img src="docs/images/pcb-in-app.jpg" width="900" alt="Iṣẹ́ Studio with an ESP32 circuit board open: the routed board in 3D with its parts, the tools on the left and Iṣẹ́ AI on the right">
+<img src="docs/images/pcb-in-app.jpg" width="900" alt="Iṣẹ́ Studio with a 4-layer ESP32-S3 board open in 3D: the module, USB-C, power, sensors and buttons, routed with ground pours; the tools on the left and Iṣẹ́ AI on the right">
 
 <table>
 <tr>
 <td align="center"><img src="docs/images/robot-arm.jpg" width="280" alt="A 3D-printable robot arm with servos, joints and a gripper"><br><sub>Robot arm: printed parts, bought servos, joints, reach and torque checks</sub></td>
-<td align="center"><img src="docs/images/esp32-board.jpg" width="280" alt="An ESP32 circuit board with its parts, routed in Iṣẹ́ Studio"><br><sub>ESP32 board: schematic, layout, routing and checks, then the enclosure around it</sub></td>
+<td align="center"><img src="docs/images/esp32-s3-handheld.jpg" width="280" alt="A handheld ESP32-S3 device: black case, display window, three orange buttons, USB-C"><br><sub>ESP32-S3 handheld: a 4-layer, 95-part board and the case designed around it</sub></td>
 <td align="center"><img src="docs/images/tower.jpg" width="280" alt="A high-rise tower with levels, glazing and a podium"><br><sub>A tower: levels, rooms, schedules and IFC</sub></td>
 </tr>
 </table>
@@ -36,6 +36,23 @@ A two-stage **print-in-place gear reducer** (1 : 7.5), designed in Iṣẹ́ Stu
 - **Nothing for the slicer to support**: the housing never overhangs.
 
 The AI didn't pick features from a menu. It wrote the gearbox as a program, with the gear teeth, the clearances and the housing as parameters you can change. [`examples/gearbox-print`](examples/gearbox-print/) is this exact design, and its [3MF is ready to print](examples/gearbox-print/print/). There are more [printable examples](examples/README.md#ready-to-print): a lithophane lamp, a relief plaque made from a photo, and the robot arm's 17 parts.
+
+## Electronics, start to finish
+
+<table>
+<tr>
+<td align="center"><img src="docs/images/pcb-layout-in-app.jpg" width="440" alt="The board's layout in Iṣẹ́ Studio: 4 layers, 95 parts, 59 nets, DRC passes"><br><sub>The layout: 4 layers, 95 parts, 59 nets, DRC passes</sub></td>
+<td align="center"><img src="docs/images/handheld-exploded-in-app.jpg" width="440" alt="The handheld opened in Iṣẹ́ Studio: lens, light pipes, top shell with button caps, the board in the bottom shell"><br><sub>The same board in the case built around it, opened</sub></td>
+</tr>
+</table>
+
+An **ESP32-S3 handheld**: a 50 × 72 mm, 4-layer board (signal, ground plane, 3.3 V plane, signal) with 95 parts on both sides, every symbol and footprint from KiCad's libraries. It has the ESP32-S3 module with its antenna over a keep-out; USB-C with ESD protection; a Li-ion charger and a 3.3 V buck-boost; a fuel gauge, IMU, environment and light sensors; an amplifier and microphone; microSD; a display connector; Qwiic and three buttons.
+
+- **Routed and checked**: all 59 nets routed, ground pours and stitching vias on both sides, 0 DRC errors against JLCPCB's 4-layer limits. The USB data lines are a 90 Ω differential pair, matched in length.
+- **Read back**: the Gerbers and drill files are read back and compared with the board: every pad, hole and net matches.
+- **In its case**: two printed shells, button caps, light pipes, a lens and heat-set inserts for the screws, with the fit checked against the board.
+
+[`examples/esp32-s3-showcase`](examples/esp32-s3-showcase/) rebuilds it, and its [`fab/`](examples/esp32-s3-showcase/fab/) folder has the Gerbers, drills, BOM and placement files.
 
 ## What it does
 

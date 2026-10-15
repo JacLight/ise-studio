@@ -667,6 +667,7 @@ pub fn symbol_def(lib: &str, sym: &Sexp, parent: Option<&Sexp>) -> SymbolDef {
             }
         }
     }
+    let mut pins = join_stacked(pins);
     let n_units = units.keys().copied().max().unwrap_or(1).max(pins.iter().map(|p| p.unit).max().unwrap_or(1)).max(1);
     let drawn: Vec<Vec<Gfx>> = (1..=n_units).map(|u| common.iter().cloned().chain(units.get(&u).cloned().unwrap_or_default()).collect()).collect();
     if n_units == 1 {
@@ -706,6 +707,40 @@ pub fn symbol_def(lib: &str, sym: &Sexp, parent: Option<&Sexp>) -> SymbolDef {
         body_style: 1,
         fields: datasheet_field.into_iter().map(|d| ("Datasheet".to_string(), d)).collect(),
     }
+}
+
+/// KiCad joins pins stacked on one spot of a unit: a USB-C receptacle's four VBUS
+/// contacts, a module's ground pins and thermal pad under one visible pin. They
+/// come in as that one pin with every pad (`pads`), the visible pin standing for
+/// them, so each pad gets the pin's net; read pin by pin, the hidden ones would
+/// join nothing and their pads would be left off the netlist.
+fn join_stacked(pins: Vec<PinDef>) -> Vec<PinDef> {
+    let mut out: Vec<PinDef> = Vec::new();
+    for p in pins {
+        let same = out.iter_mut().find(|q| q.unit == p.unit && (q.at[0] - p.at[0]).abs() < 1e-6 && (q.at[1] - p.at[1]).abs() < 1e-6 && !q.number.is_empty() && !p.number.is_empty());
+        match same {
+            Some(q) => {
+                if q.pads.is_empty() {
+                    q.pads.push(q.number.clone());
+                }
+                if !q.pads.contains(&p.number) {
+                    q.pads.push(p.number.clone());
+                }
+                // The visible pin is the one drawn and named.
+                if q.hidden && !p.hidden {
+                    let pads = std::mem::take(&mut q.pads);
+                    *q = PinDef { pads, ..p };
+                }
+            }
+            None => out.push(p),
+        }
+    }
+    for q in &mut out {
+        if !q.pads.is_empty() {
+            q.pads.sort_by(|a, b| (a != &q.number).cmp(&(b != &q.number)).then(crate::natural(a, b)));
+        }
+    }
+    out
 }
 
 /// KiCad's pin graphic style.

@@ -248,6 +248,61 @@ pub fn in_convex(p: P, poly: &[P]) -> bool {
     true
 }
 
+/// A simple polygon as convex pieces that cover it exactly: itself when it is
+/// convex, else triangles by ear clipping (for obstacles that must be convex).
+pub fn convex_pieces(poly: &[P]) -> Vec<Vec<P>> {
+    let mut pts: Vec<P> = poly.to_vec();
+    pts.dedup_by(|a, b| dist(*a, *b) < 1e-9);
+    if pts.len() > 1 && dist(pts[0], pts[pts.len() - 1]) < 1e-9 {
+        pts.pop();
+    }
+    if pts.len() < 3 {
+        return vec![];
+    }
+    if polygon_area(&pts) < 0.0 {
+        pts.reverse();
+    }
+    let n = pts.len();
+    if (0..n).all(|i| cross(sub(pts[(i + 1) % n], pts[i]), sub(pts[(i + 2) % n], pts[(i + 1) % n])) >= -1e-12) {
+        return vec![pts];
+    }
+    let mut idx: Vec<usize> = (0..n).collect();
+    let mut out = Vec::new();
+    let mut guard = 0;
+    while idx.len() > 3 && guard < 10 * n * n {
+        guard += 1;
+        let m = idx.len();
+        let mut clipped = false;
+        for k in 0..m {
+            let (a, b, c) = (pts[idx[(k + m - 1) % m]], pts[idx[k]], pts[idx[(k + 1) % m]]);
+            if cross(sub(b, a), sub(c, b)) <= 1e-12 {
+                continue;
+            }
+            let tri = [a, b, c];
+            let blocked = idx.iter().any(|&j| {
+                let p = pts[j];
+                ![a, b, c].iter().any(|q| dist(*q, p) < 1e-12) && in_convex(p, &tri)
+            });
+            if !blocked {
+                out.push(tri.to_vec());
+                idx.remove(k);
+                clipped = true;
+                break;
+            }
+        }
+        if !clipped {
+            break;
+        }
+    }
+    if idx.len() == 3 {
+        out.push(idx.iter().map(|&j| pts[j]).collect());
+    } else if idx.len() > 3 {
+        // Not simple: fall back to the hull rather than leave a hole in the obstacle.
+        out.push(convex_hull(&idx.iter().map(|&j| pts[j]).collect::<Vec<_>>()));
+    }
+    out
+}
+
 /// Inside a simple polygon (even-odd).
 pub fn in_polygon(p: P, poly: &[P]) -> bool {
     let mut inside = false;
@@ -412,6 +467,28 @@ mod tests {
         let p = Prim::circle([2.0, 2.0], 0.0);
         let want = (0.5f64.hypot(0.5) + 1.0f64.hypot(1.0)) - 0.5 - 0.5f64.hypot(0.5);
         assert!((gap(&rr, &p) - (2.0f64.hypot(2.0) - 0.5f64.hypot(0.5) - 0.5)).abs() < 1e-9, "{} {want}", gap(&rr, &p));
+    }
+
+    #[test]
+    fn convex_pieces_cover_the_polygon() {
+        // A convex outline stays one piece.
+        let sq = vec![[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]];
+        assert_eq!(convex_pieces(&sq).len(), 1);
+        // An L: convex pieces whose areas add up to the L's, each convex, none outside it.
+        let l = vec![[0.0, 0.0], [4.0, 0.0], [4.0, 1.0], [1.0, 1.0], [1.0, 4.0], [0.0, 4.0]];
+        let pieces = convex_pieces(&l);
+        assert!(pieces.len() >= 2);
+        let total: f64 = pieces.iter().map(|p| polygon_area(p).abs()).sum();
+        assert!((total - 7.0).abs() < 1e-9, "{total}");
+        for p in &pieces {
+            assert_eq!(convex_hull(p).len(), p.len());
+            assert!(in_polygon(p.iter().fold([0.0, 0.0], |a, q| add(a, *q)).map(|v| v / p.len() as f64), &l));
+        }
+        // Clockwise input is the same polygon.
+        let mut cw = l.clone();
+        cw.reverse();
+        let t: f64 = convex_pieces(&cw).iter().map(|p| polygon_area(p).abs()).sum();
+        assert!((t - 7.0).abs() < 1e-9);
     }
 
     #[test]

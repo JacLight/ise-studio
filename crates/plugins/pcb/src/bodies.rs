@@ -56,6 +56,10 @@ fn cyl(at: P, d: f64, z0: f64, z1: f64, mat: &str) -> L {
 
 fn led_colour(value: &str) -> String {
     let v = value.to_ascii_lowercase();
+    // Addressable RGB LEDs (WS2812, SK6812, APA102) are a clear lens over three dies.
+    if ["rgb", "ws281", "sk681", "apa10"].iter().any(|k| v.contains(k)) {
+        return "led_white".into();
+    }
     let c = ["red", "green", "blue", "yellow", "orange", "white", "amber"].into_iter().find(|c| v.contains(c)).unwrap_or("red");
     format!("led_{}", if c == "amber" { "orange" } else { c })
 }
@@ -212,6 +216,24 @@ fn tactile(fp: &Footprint) -> Vec<L> {
     v
 }
 
+/// A surface-mount tactile switch from its body blocks: dark base, steel cover,
+/// the plunger (the footprint's cylinder, else a round button) and tinned legs.
+fn tactile_smd(fp: &Footprint) -> Vec<L> {
+    let Some(b) = main_body(fp) else { return vec![] };
+    let (w, l, h) = (b.size[0], b.size[1], b.z[1]);
+    let mut v = vec![bx(b.at, w, l, 0.0, h * 0.72, "black"), bx(b.at, w, l, h * 0.72, h, "steel")];
+    // The plunger starts a little inside the cover: a face shared with the cover's top flickers.
+    match fp.body.iter().find(|p| p.shape == BodyShape::Cylinder) {
+        Some(p) => v.push(cyl(p.at, p.size[0], p.z[0].max(h) - 0.05, p.z[1], "black")),
+        None => v.push(cyl(b.at, w.min(l) * 0.55, h - 0.05, h + 0.3 * h.min(1.5), "black")),
+    }
+    for p in fp.pads.iter().filter(|p| p.kind == PadKind::Smd) {
+        let (sx, sy) = if (p.rotation / 90.0).round() as i64 % 2 == 0 { (p.size[0], p.size[1]) } else { (p.size[1], p.size[0]) };
+        v.push(bx(p.at, sx * 0.7, sy * 0.45, 0.0, 0.15, "tin"));
+    }
+    v
+}
+
 fn led_tht(fp: &Footprint, value: &str) -> Vec<L> {
     let lens = led_colour(value);
     let flange = fp.body.first();
@@ -293,15 +315,18 @@ fn generic(fp: &Footprint, value: &str) -> Vec<L> {
 }
 
 fn local(fp: &Footprint, c: &PcbComponent, t: f64) -> Vec<L> {
-    let n = fp.name.as_str();
-    let chip_code = |p: &str| n.strip_prefix(p).is_some_and(|r| r.len() == 4 && r.chars().all(|ch| ch.is_ascii_digit()));
-    if chip_code("R_") || chip_code("C_") || chip_code("LED_") {
+    // KiCad library footprints are named "Library:Name" (R_0402_1005Metric, SOT-23-6,
+    // USB_C_Receptacle_…): the package is the name after the library.
+    let (lib, n) = fp.name.split_once(':').unwrap_or(("", fp.name.as_str()));
+    let chip_code = |p: &str| n.strip_prefix(p).is_some_and(|r| r.len() >= 4 && r.as_bytes()[..4].iter().all(|ch| ch.is_ascii_digit()) && (r.len() == 4 || r[4..].starts_with('_')));
+    let no_leads = n.starts_with("QFN") || n.starts_with("DFN") || ["Package_DFN_QFN", "Package_SON", "Package_LGA", "Package_CSP"].contains(&lib);
+    if chip_code("R_") || chip_code("C_") || chip_code("LED_") || chip_code("L_") || chip_code("Fuse_") {
         chip(fp, &c.value, t)
-    } else if n.starts_with("SOT-") || n.starts_with("SOIC") || n.starts_with("TSSOP") || n.starts_with("SSOP") || n.starts_with("MSOP") {
+    } else if ["SOT-", "SOIC", "TSSOP", "SSOP", "MSOP", "TSOT-", "SC-70", "SOD-123", "SOD-323"].iter().any(|k| n.starts_with(k)) {
         gull(fp)
-    } else if n.starts_with("QFN") || n.starts_with("DFN") {
+    } else if no_leads {
         qfn(fp)
-    } else if n.starts_with("USB-C") {
+    } else if n.starts_with("USB-C") || n.starts_with("USB_C_Receptacle") {
         usb_c(fp)
     } else if n.starts_with("JST_") {
         jst(fp)
@@ -309,6 +334,8 @@ fn local(fp: &Footprint, c: &PcbComponent, t: f64) -> Vec<L> {
         header(fp)
     } else if n.starts_with("SW_Tactile") {
         tactile(fp)
+    } else if fp.kind == "switch" && lib == "Button_Switch_SMD" && (n.starts_with("SW_SPST") || n.starts_with("SW_Push")) {
+        tactile_smd(fp)
     } else if n == "LED_3mm" || n == "LED_5mm" {
         led_tht(fp, &c.value)
     } else if fp.kind == "module" {
@@ -346,4 +373,61 @@ pub fn bodies(board: &Board, components: &[(de_core::StableId, PcbComponent)]) -
         out.push(Body { reference: c.reference.clone(), solids });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::footprints::{BodyPart, Pad};
+
+    fn fp(name: &str, kind: &str, pads: Vec<([f64; 2], [f64; 2])>, body: Vec<BodyPart>) -> Footprint {
+        Footprint {
+            name: name.into(),
+            description: String::new(),
+            source: String::new(),
+            pads: pads.into_iter().enumerate().map(|(i, (at, size))| serde_json::from_value::<Pad>(serde_json::json!({ "number": (i + 1).to_string(), "kind": "smd", "shape": "rect", "size": size, "at": at })).unwrap()).collect(),
+            courtyard: None,
+            silk: vec![],
+            body,
+            kind: kind.into(),
+        }
+    }
+    fn part(value: &str) -> PcbComponent {
+        serde_json::from_value(serde_json::json!({ "board": de_core::StableId::new(), "reference": "X1", "value": value, "footprint": "x", "at": [0.0, 0.0] })).unwrap()
+    }
+    fn block(at: [f64; 2], size: [f64; 2], z: [f64; 2], material: &str) -> BodyPart {
+        BodyPart { shape: BodyShape::Box, at, size, z, material: material.into() }
+    }
+    fn mats(v: &[L]) -> Vec<String> {
+        v.iter().map(|s| s.mat.clone()).collect()
+    }
+
+    #[test]
+    fn kicad_library_footprints_get_their_package_models() {
+        // A KiCad 0402 resistor: a chip with a black top and tinned ends, not a plain box.
+        let r = fp("Resistor_SMD:R_0402_1005Metric", "resistor", vec![([-0.51, 0.0], [0.54, 0.64]), ([0.51, 0.0], [0.54, 0.64])], vec![block([0.0, 0.0], [1.0, 0.5], [0.0, 0.35], "Epoxy")]);
+        let m = mats(&local(&r, &part("10k"), 1.6));
+        assert!(m.contains(&"res_top".to_string()) && m.iter().filter(|x| *x == "tin").count() == 2, "{m:?}");
+        // A KiCad SOT-23-6 has gull-wing leads.
+        let pads: Vec<([f64; 2], [f64; 2])> = [-1.0, 1.0].iter().flat_map(|s| [0.95, 0.0, -0.95].map(|y| ([s * 1.14, y], [1.325, 0.6]))).collect();
+        let sot = fp("Package_TO_SOT_SMD:SOT-23-6", "ic", pads, vec![block([0.0, 0.0], [1.6, 2.9], [0.0, 1.2], "Epoxy")]);
+        let m = mats(&local(&sot, &part("USBLC6"), 1.6));
+        assert!(m.iter().filter(|x| *x == "tin").count() >= 12, "{m:?}");
+        // A KiCad QFN/SON/LGA package shows its terminations.
+        let q = fp("Package_SON:Texas_DRC0010J_ThermalVias", "ic", vec![([-1.4, 1.0], [0.6, 0.24]), ([1.4, 1.0], [0.6, 0.24])], vec![block([0.0, 0.0], [3.0, 3.0], [0.0, 1.0], "Epoxy")]);
+        assert!(mats(&local(&q, &part("TPS63001"), 1.6)).contains(&"tin".to_string()));
+        // A KiCad USB-C receptacle is the steel shell with its mouth.
+        let u = fp("Connector_USB:USB_C_Receptacle_HRO_TYPE-C-31-M-12", "connector", vec![([0.0, 4.0], [0.3, 1.45])], vec![block([0.0, 0.0], [8.94, 7.3], [0.0, 3.16], "Steel")]);
+        let s = local(&u, &part("USB-C"), 1.6);
+        assert!(s.iter().any(|x| x.shape == "hcyl") && mats(&s).contains(&"dark".to_string()));
+        // An SMD tactile switch: base, cover, plunger and legs; an RGB LED is a clear lens.
+        let sw = fp("Button_Switch_SMD:SW_SPST_PTS810", "switch", vec![([-2.08, 1.07], [1.05, 0.65])], vec![block([0.0, 0.0], [4.2, 3.2], [0.0, 2.0], "Steel")]);
+        let s = local(&sw, &part("BOOT"), 1.6);
+        assert!(s.iter().any(|x| x.shape == "cyl") && mats(&s).contains(&"tin".to_string()) && mats(&s).contains(&"steel".to_string()));
+        let led = fp("LED_SMD:LED_WS2812B-2020_PLCC4_2.0x2.0mm", "led", vec![], vec![block([0.0, 0.0], [2.0, 2.0], [0.0, 0.84], "LED")]);
+        assert_eq!(mats(&local(&led, &part("WS2812B-2020"), 1.6)), vec!["led_white".to_string()]);
+        // Built-in names keep their models.
+        let b = fp("R_0603", "resistor", vec![([-0.8, 0.0], [0.9, 0.95]), ([0.8, 0.0], [0.9, 0.95])], vec![block([0.0, 0.0], [1.6, 0.8], [0.0, 0.45], "Epoxy")]);
+        assert!(mats(&local(&b, &part("1k"), 1.6)).contains(&"res_top".to_string()));
+    }
 }

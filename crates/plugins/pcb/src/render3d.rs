@@ -50,12 +50,24 @@ pub fn scene_of(view: &BoardView, board: &Board, items: &crate::Items) -> Value 
                 silk.push(poly(l));
             }
             if c.kind != "hole" {
-                for l in crate::font::strokes(&c.reference, c.label, view.rules.silk_height, s == Side::Bottom) {
+                for l in crate::font::strokes_turned(&c.reference, c.label, view.rules.silk_height, s == Side::Bottom, c.label_rot) {
                     silk.push(poly(&l));
                 }
             }
         }
-        sides.insert(side.into(), json!({ "pads": pads, "openings": openings, "tracks": tracks, "zones": zones, "silk": silk }));
+        // The board's own legend (names, labels, logos) as the Gerber has it: strokes, and filled
+        // shapes (outline-font lettering, images) as islands of contours.
+        let legend = if side == "top" { "silk_top" } else { "silk_bottom" };
+        let mut silk_fill: Vec<Value> = Vec::new();
+        for gv in view.graphics.iter().filter(|g| g.layer == legend) {
+            for l in &gv.strokes {
+                silk.push(poly(l));
+            }
+            for island in &gv.fills {
+                silk_fill.push(Value::Array(island.iter().map(|c| poly(c)).collect()));
+            }
+        }
+        sides.insert(side.into(), json!({ "pads": pads, "openings": openings, "tracks": tracks, "zones": zones, "silk": silk, "silk_fill": silk_fill }));
     }
     let bodies = crate::bodies::bodies(board, &items.components);
     // Parts not placed (DNP) drawn on request: their bodies apart.

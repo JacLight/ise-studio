@@ -38,3 +38,18 @@ These folders also carry a `print/` folder of files exported from the design, so
 | Flat washer ISO 7089, M2 | 12 |
 
 Load the design (`node tools/ise.mjs run examples/robot-arm/steps.json --project robot-arm`) to see where every part goes, in the exploded view, and to get every part's STEP as well: **Export → Fabrication package** (`node tools/ise.mjs export "Robot arm" --format zip`).
+
+## Electronics: ESP32-S3 handheld
+
+[`esp32-s3-showcase/`](esp32-s3-showcase/) is a product mainboard and the case around it, in one project:
+
+- **Board**: 50 × 72 mm, 4 layers (JLCPCB JLC04161H-7628 stackup: signal, solid GND, 3V3 plane, signal), 1.6 mm, ENIG, 95 parts on both sides, all KiCad library symbols and footprints. ESP32-S3-WROOM-1 (antenna over a keepout at the top edge), USB-C with USBLC6 ESD and a 90 Ω D+/D− pair (skew 0.000 mm), BQ24074 charger with power path, TPS63001 3.3 V buck-boost, LC709203F fuel gauge, LSM6DS3TR-C IMU, BME280 on a slotted island, LTR-303 light sensor, MAX98357A amplifier and ICS-43434 microphone (I²S), 4-bit microSD, 1.54" TFT on an FPC, Qwiic, RGB status LED, three buttons, power switch, Tag-Connect, test points, fiducials.
+- **Checks**: ERC 0, DRC 0 errors (59/59 nets routed; 11 thermal-relief warnings on crowded passive pads), Gerber read-back matches the board, JLCPCB's 4-layer limits met. `fab/` is the JLCPCB package (Gerbers, drills, BOM, positions, impedance notes).
+- **Case**: two printed shells joined by four M2 × 12 screws into heat-set inserts that clamp the board, button caps, light pipes, a printed cover lens, the display module, a 503040 cell and a 13 mm speaker. Set the case's `explode` parameter (e.g. 18) to open it.
+
+```sh
+node tools/ise.mjs run examples/esp32-s3-showcase/steps.json --project esp32-s3-showcase
+```
+
+![Board](esp32-s3-showcase/board-3d.jpg)
+![Case opened](esp32-s3-showcase/case-exploded.jpg)

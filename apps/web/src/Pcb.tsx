@@ -52,6 +52,8 @@ type Comp = {
   silk: P[][];
   bodies: Body[];
   label: P;
+  /** The reference's turn (degrees, counter-clockwise). */
+  label_rot?: number;
   pins: Record<string, string>;
   pin_names: Record<string, string>;
   known: boolean;
@@ -1609,7 +1611,7 @@ function BoardCanvas(props: {
                       <polyline key={i} points={pts(l)} fill="none" strokeWidth={b.rules.silk_width} strokeLinecap="round" strokeLinejoin="round" />
                     ))}
                     {c.kind !== "hole" && (
-                      <text transform={`translate(${c.label[0]} ${c.label[1]}) scale(${sx} -1)`} fontSize={b.rules.silk_height * 1.35} textAnchor="middle" dominantBaseline="central" className="pcb-ref" fill={b.silk.toLowerCase() === "black" ? "#111" : "#f4f2ea"} stroke="none">
+                      <text transform={`translate(${c.label[0]} ${c.label[1]}) rotate(${c.label_rot ?? 0}) scale(${sx} -1)`} fontSize={b.rules.silk_height * 1.35} textAnchor="middle" dominantBaseline="central" className="pcb-ref" fill={b.silk.toLowerCase() === "black" ? "#111" : "#f4f2ea"} stroke="none">
                         {c.reference}
                       </text>
                     )}

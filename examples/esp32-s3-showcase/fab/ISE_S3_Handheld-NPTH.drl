@@ -1,0 +1,32 @@
+M48
+; DRILL file: ISE S3 Handheld rev A (not plated)
+; FORMAT={-:-/ absolute / metric / decimal}
+; #@! TF.GenerationSoftware,ISE Studio,PCB,0.1.0
+; #@! TF.FileFunction,NonPlated,1,4,NPTH
+FMAT,2
+METRIC
+; #@! TA.AperFunction,NonPlated,NPTH,ComponentDrill
+T1C0.500
+; #@! TA.AperFunction,NonPlated,NPTH,ComponentDrill
+T2C0.650
+; #@! TA.AperFunction,NonPlated,NPTH,ComponentDrill
+T3C0.900
+; #@! TA.AperFunction,NonPlated,NPTH,ComponentDrill
+T4C0.991
+%
+G90
+G05
+T1
+X36.000Y15.290
+T2
+X22.110Y5.900
+X27.890Y5.900
+T3
+X3.070Y46.500
+X3.070Y43.500
+T4
+X13.040Y40.500
+X7.960Y41.516
+X7.960Y39.484
+T0
+M30

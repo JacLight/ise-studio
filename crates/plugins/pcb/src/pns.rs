@@ -629,6 +629,8 @@ pub struct Node {
     reach: f64,
     /// Two nets of one differential pair: the clearance their gap allows.
     pair_gaps: HashMap<(String, String), f64>,
+    /// Rule areas that keep vias out but let tracks through (outline, name).
+    pub via_keepouts: Vec<(Vec<P>, String)>,
 }
 
 impl Node {
@@ -650,6 +652,18 @@ impl Node {
         // Unplated holes: copper keeps clear of them on every layer.
         for h in v.holes.iter().filter(|h| !h.plated) {
             fixed.push(Fixed { shape: Shape::of(&Prim::rect(h.at, h.size[0], h.size[1], h.rotation, h.size[0].min(h.size[1]) / 2.0)), mask: all, net: None, label: format!("hole {}", h.owner) });
+        }
+        // Keepouts: a no-tracks area is an obstacle on its layers (in convex pieces, as every
+        // obstacle here is convex); a no-vias area only stops vias.
+        let mut via_keepouts = Vec::new();
+        for a in v.areas.iter().filter(|a| a.outline.len() >= 3 && a.mask != 0) {
+            if a.no_tracks {
+                for piece in geom::convex_pieces(&a.outline) {
+                    fixed.push(Fixed { shape: Shape::of(&Prim { pts: piece, r: 0.0 }), mask: a.mask & all, net: None, label: format!("keepout “{}”", a.name) });
+                }
+            } else if a.no_vias {
+                via_keepouts.push((a.outline.clone(), a.name.clone()));
+            }
         }
         let lines = v
             .tracks
@@ -675,7 +689,7 @@ impl Node {
                 pair_gaps.insert((p.n.clone(), p.p.clone()), g);
             }
         }
-        Node { layers, fixed, lines, vias, outline: v.outline.clone(), cutouts: v.cutouts.clone(), edge: board.rules.edge_clearance, clearances, default_clearance, min_space: board.rules.min_space, reach, pair_gaps }
+        Node { layers, fixed, lines, vias, outline: v.outline.clone(), cutouts: v.cutouts.clone(), edge: board.rules.edge_clearance, clearances, default_clearance, min_space: board.rules.min_space, reach, pair_gaps, via_keepouts }
     }
 
     pub fn all_layers(&self) -> u32 {
@@ -1201,7 +1215,15 @@ impl Node {
     pub fn via_report(&self, at: P, diameter: f64, net: &Option<String>, skip: &dyn Fn(Ref) -> bool) -> Vec<Collision> {
         let s = Shape::circle(at, diameter / 2.0);
         let hits: Vec<(Ref, f64, f64, Shape)> = self.collisions(&s, self.all_layers(), net, skip).into_iter().map(|(r, g, n)| (r, g, n, s.clone())).collect();
-        self.report(&hits, None)
+        let mut out = self.report(&hits, None);
+        for (outline, name) in &self.via_keepouts {
+            let inside = geom::in_polygon(at, outline);
+            let d = geom::dist_to_loop(at, outline);
+            if inside || d < diameter / 2.0 {
+                out.push(Collision { at, layer: None, with: format!("keepout “{name}”"), gap: if inside { -d - diameter / 2.0 } else { d - diameter / 2.0 }, need: 0.0 });
+            }
+        }
+        out
     }
 }
 
@@ -1227,6 +1249,7 @@ mod tests {
             min_space: 0.15,
             reach: 0.3,
             pair_gaps: HashMap::new(),
+            via_keepouts: vec![],
         }
     }
 

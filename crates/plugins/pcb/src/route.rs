@@ -87,6 +87,7 @@ fn depth(prim: &Prim, p: P) -> f64 {
 
 const DIRS: [(i32, i32); 8] = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)];
 const MARGIN: f64 = 0.01;
+
 /// How often one net may be ripped up for others in one pass.
 const MAX_RIPS: usize = 3;
 
@@ -267,6 +268,36 @@ impl Ctx<'_> {
                 for i in i0..=i1 {
                     if -depth(h, self.grid.at(i, j)) - wd.class.via_drill / 2.0 < rules.hole_to_hole {
                         via_hard[j * self.grid.nx + i] = true;
+                    }
+                }
+            }
+        }
+        // Keepouts: no track (full or necked) whose copper reaches into a no-tracks area on its
+        // layers, no via whose pad reaches into a no-vias area.
+        for a in self.view.areas.iter().filter(|a| (a.no_tracks || a.no_vias) && a.outline.len() >= 3) {
+            let reach = wd.w.max(2.0 * wd.via_r) / 2.0 + MARGIN + g;
+            let b = a.outline.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |b, p| [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]);
+            let (i0, j0, i1, j1) = self.grid.range([b[0] - reach, b[1] - reach, b[2] + reach, b[3] + reach]);
+            for j in j0..=j1 {
+                for i in i0..=i1 {
+                    let k = j * self.grid.nx + i;
+                    let p = self.grid.at(i, j);
+                    // Depth into the area (positive inside), as `depth` measures a pad.
+                    let d = if geom::in_polygon(p, &a.outline) { geom::dist_to_loop(p, &a.outline) } else { -geom::dist_to_loop(p, &a.outline) };
+                    if a.no_tracks {
+                        for &l in &self.use_layers {
+                            if a.mask & (1 << l) != 0 {
+                                if d > -(wd.w / 2.0 + MARGIN) {
+                                    block[l][k] |= HARD_W;
+                                }
+                                if d > -(wd.neck / 2.0 + MARGIN) {
+                                    block[l][k] |= HARD_N;
+                                }
+                            }
+                        }
+                    }
+                    if a.no_vias && a.mask != 0 && d > -(wd.via_r + MARGIN) {
+                        via_hard[k] = true;
                     }
                 }
             }

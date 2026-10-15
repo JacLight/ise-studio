@@ -189,7 +189,7 @@ pub fn glb(view: &BoardView, board: &Board, items: &crate::Items) -> Vec<u8> {
                 }
             }
             if c.kind != "hole" {
-                for l in crate::font::strokes(&c.reference, c.label, view.rules.silk_height, side == Side::Bottom) {
+                for l in crate::font::strokes_turned(&c.reference, c.label, view.rules.silk_height, side == Side::Bottom, c.label_rot) {
                     for w in l.windows(2) {
                         strokes.push(Prim::capsule(w[0], w[1], view.rules.silk_width / 2.0).outline(0.05));
                     }

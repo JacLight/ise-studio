@@ -414,3 +414,96 @@ fn the_project_bom_lists_board_parts_to_buy_and_the_board_to_make() {
     assert!(!b.make.iter().any(|m| m.name.contains("copper")), "copper is part of the board, not a line of its own");
     assert!(b.buy.iter().all(|l| l.stock.is_some()), "every bought part has its part number");
 }
+
+#[test]
+fn references_of_packed_parts_do_not_print_over_one_another() {
+    // Three 0603 resistors side by side, 1.4 mm apart and turned upright: every reference above
+    // its courtyard would overlap the next; they find free spots round their parts instead.
+    let mut p = project();
+    let b = id(&ok(&mut p, "pcb.board.create", json!({ "name": "Labels", "width": 30, "height": 20, "rules": { "silk_height": 1.0 } })));
+    for (i, r) in ["R10", "R11", "R12"].iter().enumerate() {
+        ok(&mut p, "pcb.component.create", json!({ "board": b, "reference": r, "footprint": "R_0603", "value": "1k", "at": [10.0 + 1.4 * i as f64, 10.0], "rotation": 90 }));
+    }
+    let v = de_pcb::view(p.world(), b).unwrap();
+    let boxes: Vec<[f64; 4]> = v.components.iter().map(|c| de_pcb::board::label_box(&c.reference, c.label, c.label_rot, 1.0)).collect();
+    for i in 0..boxes.len() {
+        for j in i + 1..boxes.len() {
+            let (a, c) = (boxes[i], boxes[j]);
+            let apart = a[2] <= c[0] || c[2] <= a[0] || a[3] <= c[1] || c[3] <= a[1];
+            assert!(apart, "{} and {} overlap: {a:?} {c:?}", v.components[i].reference, v.components[j].reference);
+        }
+    }
+    // A part on its own keeps its reference just above its courtyard.
+    let mut q = project();
+    let b2 = id(&ok(&mut q, "pcb.board.create", json!({ "name": "One", "width": 30, "height": 20 })));
+    ok(&mut q, "pcb.component.create", json!({ "board": b2, "reference": "R1", "footprint": "R_0603", "value": "1k", "at": [10.0, 10.0] }));
+    let v = de_pcb::view(q.world(), b2).unwrap();
+    let top = v.components[0].courtyard.iter().map(|p| p[1]).fold(f64::MIN, f64::max);
+    assert!((v.components[0].label[1] - (top + 0.75)).abs() < 1e-9 && (v.components[0].label[0] - 10.0).abs() < 1e-9, "{:?}", v.components[0].label);
+}
+
+#[test]
+fn the_3d_scene_carries_the_board_legend() {
+    // Lettering drawn on the silkscreen layers shows on the 3D board as it prints: stroke text as
+    // strokes, outline-font text as filled shapes, each on its side.
+    let mut p = project();
+    let b = id(&ok(&mut p, "pcb.board.create", json!({ "name": "Legend", "width": 30, "height": 20 })));
+    ok(&mut p, "pcb.graphic.create", json!({ "board": b, "layer": "silk_top", "kind": "text", "text": "REV A", "at": [10, 10], "size": 1.2 }));
+    ok(&mut p, "pcb.graphic.create", json!({ "board": b, "layer": "silk_bottom", "kind": "text", "text": "Iṣẹ́ Studio", "at": [15, 10], "size": 2.0, "font": "Inter" }));
+    let scene = de_pcb::render3d::scene(p.world(), b).unwrap();
+    let top = &scene["sides"]["top"];
+    let bottom = &scene["sides"]["bottom"];
+    assert!(top["silk"].as_array().unwrap().len() >= 5, "stroke letters on top: {}", top["silk"]);
+    assert!(bottom["silk_fill"].as_array().unwrap().len() >= 6, "filled letters on the bottom: {}", bottom["silk_fill"].as_array().unwrap().len());
+    assert!(top["silk_fill"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn references_keep_off_pads_and_board_text_and_can_be_placed_by_hand() {
+    let mut p = project();
+    let b = id(&ok(&mut p, "pcb.board.create", json!({ "name": "Refs", "width": 30, "height": 20, "rules": { "silk_height": 1.0 } })));
+    // Board text right where R1's reference would go (above it): the reference goes elsewhere.
+    ok(&mut p, "pcb.component.create", json!({ "board": b, "reference": "R1", "footprint": "R_0603", "value": "1k", "at": [10.0, 10.0] }));
+    let v = de_pcb::view(p.world(), b).unwrap();
+    let natural = v.components[0].label;
+    ok(&mut p, "pcb.graphic.create", json!({ "board": b, "layer": "silk_top", "kind": "text", "text": "LOGO", "at": natural, "size": 1.0, "align": "center" }));
+    // A pad just below it too.
+    ok(&mut p, "pcb.component.create", json!({ "board": b, "reference": "R2", "footprint": "R_0603", "value": "1k", "at": [10.0, 8.4] }));
+    let v = de_pcb::view(p.world(), b).unwrap();
+    let r1 = v.components.iter().find(|c| c.reference == "R1").unwrap();
+    let t = de_pcb::board::label_box("R1", r1.label, r1.label_rot, 1.0);
+    let logo = v.graphics.iter().find(|g| g.text.as_deref() == Some("LOGO")).unwrap().bbox;
+    let apart = |a: [f64; 4], c: [f64; 4]| a[2] <= c[0] || c[2] <= a[0] || a[3] <= c[1] || c[3] <= a[1];
+    assert!(apart(t, logo), "R1's reference {t:?} is on the board text {logo:?}");
+    for pad in &v.pads {
+        assert!(apart(t, pad.prim.bbox()), "R1's reference {t:?} is on {}.{}", pad.reference, pad.number);
+    }
+    assert!(!v.violations.iter().any(|x| x.code == "silk_overlap"), "{:?}", v.violations.iter().filter(|x| x.code == "silk_overlap").map(|x| &x.message).collect::<Vec<_>>());
+    // By hand: an offset from the part and a quarter turn, kept as given.
+    let r2 = v.components.iter().find(|c| c.reference == "R2").unwrap().id;
+    ok(&mut p, "pcb.component.update", json!({ "target": r2, "label_at": [2.5, 0.0], "label_rotation": 90 }));
+    let v = de_pcb::view(p.world(), b).unwrap();
+    let c = v.components.iter().find(|c| c.reference == "R2").unwrap();
+    assert_eq!((c.label, c.label_rot), ([12.5, 8.4], 90.0));
+    let gerber = de_pcb::gerber::silk(&v, true);
+    assert!(gerber.contains("G01") || gerber.contains("D01"), "the turned reference is drawn");
+    // And back to the board's choice.
+    ok(&mut p, "pcb.component.update", json!({ "target": r2, "label_auto": true }));
+    let v = de_pcb::view(p.world(), b).unwrap();
+    assert_eq!(v.components.iter().find(|c| c.reference == "R2").unwrap().label_rot, 0.0);
+}
+
+#[test]
+fn drc_warns_about_silkscreen_text_printed_over_text_or_copper() {
+    let mut p = project();
+    let b = id(&ok(&mut p, "pcb.board.create", json!({ "name": "Silk", "width": 30, "height": 20, "rules": { "silk_height": 1.0 } })));
+    ok(&mut p, "pcb.component.create", json!({ "board": b, "reference": "R1", "footprint": "R_0603", "value": "1k", "at": [10.0, 10.0], "label_at": [0.0, 2.0] }));
+    // Board text over R1's reference, and a label laid across R1's own pads.
+    ok(&mut p, "pcb.graphic.create", json!({ "board": b, "layer": "silk_top", "kind": "text", "text": "OVER", "at": [10.0, 12.0], "size": 1.0, "align": "center" }));
+    ok(&mut p, "pcb.graphic.create", json!({ "board": b, "layer": "silk_top", "kind": "text", "text": "PADS", "at": [10.0, 10.0], "size": 1.0, "align": "center" }));
+    let v = de_pcb::view(p.world(), b).unwrap();
+    let silk: Vec<&str> = v.violations.iter().filter(|x| x.code == "silk_overlap").map(|x| x.message.as_str()).collect();
+    assert!(silk.iter().any(|m| m.contains("R1") && m.contains("OVER") && m.contains("over each other")), "{silk:?}");
+    assert!(silk.iter().any(|m| m.contains("PADS") && m.contains("exposed copper") && m.contains("R1.1")), "{silk:?}");
+    assert!(v.violations.iter().filter(|x| x.code == "silk_overlap").all(|x| x.severity == "warning"));
+}

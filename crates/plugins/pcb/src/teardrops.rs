@@ -188,9 +188,14 @@ pub fn make(s: &Teardrops, view_layers: &[String], tracks: &[(StableId, crate::T
             };
             let Some(poly) = shape(&host.prim, c, size, end, next, t.width, s) else { continue };
             let pieces = crate::graphics::triangles(&[poly.clone()]);
-            // Kept only where it stays clear of other nets' copper.
-            let gap = board.class_of(t.net.as_deref()).clearance.max(board.rules.min_space);
-            let clash = cu.iter().any(|o| o.layers & (1 << li) != 0 && o.net != t.net && pieces.iter().any(|p| geom::bbox_overlap(&p.bbox(), &o.bbox, gap) && geom::gap(p, &o.prim) < gap - 1e-6));
+            // Kept only where it stays clear of other nets' copper: the larger of the two nets'
+            // clearances, as the design-rule check measures it (a USB pad's 0.2 mm beside a
+            // signal's 0.13 mm).
+            let own = board.class_of(t.net.as_deref()).clearance.max(board.rules.min_space);
+            let clash = cu.iter().any(|o| {
+                let gap = own.max(board.class_of(o.net.as_deref()).clearance);
+                o.layers & (1 << li) != 0 && o.net != t.net && pieces.iter().any(|p| geom::bbox_overlap(&p.bbox(), &o.bbox, gap) && geom::gap(p, &o.prim) < gap - 1e-6)
+            });
             if clash {
                 continue;
             }

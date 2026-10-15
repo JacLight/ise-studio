@@ -139,12 +139,22 @@ pub struct Spot<'a> {
     pub cu: &'a [Cu],
 }
 
+/// Stitching and fan-out vias keep this far from any surface-mount pad's copper (mm), their
+/// own net's too.
+pub const VIA_PAD_GAP: f64 = 0.05;
+
 impl Spot<'_> {
     pub fn free(&self, p: P, r: f64, drill: f64, m: u32, net: &str, placed: &[P]) -> bool {
         let class = self.board.class_of(Some(net));
         let gap = class.clearance.max(self.board.rules.min_space);
         let me = Prim::circle(p, r);
         for c in self.cu {
+            // Never in a surface-mount pad, whatever its net: solder would wick down the hole.
+            if let crate::board::Owner::Pad(i) = &c.owner {
+                if self.view.pads[*i].kind == crate::footprints::PadKind::Smd && c.layers & m != 0 && geom::gap(&me, &c.prim) < VIA_PAD_GAP {
+                    return false;
+                }
+            }
             if c.layers & m == 0 || c.net.as_deref() == Some(net) {
                 continue;
             }

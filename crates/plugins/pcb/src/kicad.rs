@@ -1222,6 +1222,8 @@ pub fn create_board(tx: &mut Tx, k: &KicadBoard, name: Option<String>, at: Optio
                 pins: c.pins.clone(),
                 pin_names: BTreeMap::new(),
                 dnp: c.dnp,
+                label_at: None,
+                label_rotation: None,
             },
         )?;
         tx.add_dependency(id, cid)?;
@@ -1463,7 +1465,7 @@ pub fn export_with(view: &BoardView, board: &Board, zones: &BTreeMap<StableId, Z
             }
         }
         let lab = k_local(c.at, c.rotation, c.label);
-        fv.push(list("property", vec![s("Reference"), s(c.reference.clone()), at3("at", lab, c.rotation), list("layer", vec![s(side("F.SilkS", "B.SilkS"))]), u(&format!("ref {}", c.id)), effects(bottom, false)]));
+        fv.push(list("property", vec![s("Reference"), s(c.reference.clone()), at3("at", lab, c.label_rot), list("layer", vec![s(side("F.SilkS", "B.SilkS"))]), u(&format!("ref {}", c.id)), effects(bottom, false)]));
         let below = [lab[0], lab[1] + 2.0 * (k_local(c.at, c.rotation, c.at)[1] - lab[1]).max(1.0).min(3.0)];
         fv.push(list("property", vec![s("Value"), s(c.value.clone()), at3("at", below, c.rotation), list("layer", vec![s(side("F.Fab", "B.Fab"))]), u(&format!("val {}", c.id)), effects(bottom, false)]));
         for (key, val) in [("MPN", &c.mpn), ("Manufacturer", &c.manufacturer), ("LCSC", &c.lcsc)] {

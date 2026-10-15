@@ -87,6 +87,20 @@ pub fn strokes(text: &str, at: P, h: f64, mirror: bool) -> Vec<Vec<P>> {
     out
 }
 
+/// `strokes`, turned `rot` degrees counter-clockwise about the text's centre `at` (a reference
+/// printed reading bottom to top beside a part).
+pub fn strokes_turned(text: &str, at: P, h: f64, mirror: bool, rot: f64) -> Vec<Vec<P>> {
+    let lines = strokes(text, at, h, mirror);
+    if rot.rem_euclid(360.0).abs() < 1e-9 {
+        return lines;
+    }
+    let (s, c) = rot.to_radians().sin_cos();
+    lines.into_iter().map(|l| l.into_iter().map(|p| {
+        let (dx, dy) = (p[0] - at[0], p[1] - at[1]);
+        [at[0] + dx * c - dy * s, at[1] + dx * s + dy * c]
+    }).collect()).collect()
+}
+
 /// Width of `text` at height `h` (mm).
 pub fn width(text: &str, h: f64) -> f64 {
     let n = text.chars().count() as f64;

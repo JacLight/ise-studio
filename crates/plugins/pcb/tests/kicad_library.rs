@@ -121,6 +121,34 @@ fn kicad_symbols_read_with_pins_and_parents() {
 }
 
 #[test]
+fn stacked_kicad_pins_become_one_pin_with_every_pad() {
+    // KiCad's USB-C (USB 2.0) receptacle: VBUS on A4, A9, B4, B9 and GND on A1, A12, B1, B12,
+    // one visible pin each with the rest hidden under it; KiCad joins them.
+    let usb = lib().symbol("Connector:USB_C_Receptacle_USB2.0_16P").unwrap();
+    let pin = |n: &str| usb.pins.iter().find(|p| p.number == n).unwrap_or_else(|| panic!("no pin {n}: {:?}", usb.pins.iter().map(|p| &p.number).collect::<Vec<_>>()));
+    assert_eq!(pin("A4").pads(), vec!["A4", "A9", "B4", "B9"]);
+    assert_eq!(pin("A1").pads(), vec!["A1", "A12", "B1", "B12"]);
+    assert!(!pin("A4").hidden && !pin("A1").hidden);
+    assert!(usb.pins.iter().all(|p| p.number != "A9" && p.number != "B12"), "the hidden ones are folded in");
+    // Pins on their own spots stay as they are: D+ is two pins (A6, B6), each its own pad.
+    assert_eq!(pin("A6").pads(), vec!["A6"]);
+    assert_eq!(pin("B6").pads(), vec!["B6"]);
+    // Placed and synced, every contact gets its net.
+    let mut p = Project::new("p", Arc::new(de_core::Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &PcbPlugin])));
+    let board = serde_json::from_value::<StableId>(ok(&mut p, "pcb.board.create", json!({ "name": "b", "width": 30, "height": 20 }))["id"].clone()).unwrap();
+    let sch = serde_json::from_value::<StableId>(ok(&mut p, "pcb.schematic.create", json!({ "board": board }))["id"].clone()).unwrap();
+    ok(&mut p, "pcb.schematic.from_netlist", json!({ "schematic": sch, "parts": [{ "reference": "J1", "value": "USB-C", "footprint": "USB-C_16P", "definition": usb }], "nets": { "VBUS": ["J1.A4", "J1.A9", "J1.B4", "J1.B9"], "GND": ["J1.A1", "J1.A12", "J1.B1", "J1.B12"] } }));
+    ok(&mut p, "pcb.schematic.update_board", json!({ "schematic": sch, "place": { "J1": { "at": [15, 5] } } }));
+    let v = de_pcb::view(p.world(), board).unwrap();
+    for pad in ["A4", "A9", "B4", "B9"] {
+        assert!(v.pads.iter().filter(|x| x.reference == "J1" && x.number == pad).all(|x| x.net.as_deref() == Some("VBUS")), "J1.{pad}");
+    }
+    for pad in ["A1", "A12", "B1", "B12"] {
+        assert!(v.pads.iter().filter(|x| x.reference == "J1" && x.number == pad).all(|x| x.net.as_deref() == Some("GND")), "J1.{pad}");
+    }
+}
+
+#[test]
 fn the_index_finds_parts_by_name_and_words() {
     let l = lib();
     let hits = l.search("esp32 wroom", Repo::Footprints, 5).unwrap();

@@ -1396,6 +1396,7 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       target: () => controls.target,
       scene,
       bodies: () => visibleBodies(),
+      drawnOnly: () => pcbLooks.meshes(),
       materialsOf: bodyMaterials,
       extent: () => three.current?.extent ?? new THREE.Sphere(new THREE.Vector3(), 100),
       invalidate: () => (dirty = true),

@@ -1204,7 +1204,14 @@ impl Command for Fanout {
                 while dist <= start + reach {
                     let q = [p.at[0] + u[0] * dist, p.at[1] + u[1] * dist];
                     let stub = vec![p.at, q];
-                    let via_ok = node.via_report(q, class.via_diameter, &net, &|_| false).is_empty() && node.in_board(&Shape::circle(q, class.via_diameter / 2.0));
+                    // Drilled holes keep the board's hole-to-hole spacing (pads' holes, vias, the ones laid here).
+                    let h2h = b.rules.hole_to_hole;
+                    let holes_ok = v.holes.iter().all(|h| geom::dist(h.at, q) - h.size[0].max(h.size[1]) / 2.0 - class.via_drill / 2.0 >= h2h - 1e-9)
+                        && node.vias.iter().all(|w| geom::dist(w.at, q) - (w.drill + class.via_drill) / 2.0 >= h2h - 1e-9);
+                    // Not in another surface-mount pad either, even one of its own net (solder would wick down).
+                    let disc = geom::Prim::circle(q, class.via_diameter / 2.0);
+                    let off_pads = v.pads.iter().all(|o| o.kind != crate::footprints::PadKind::Smd || !o.layers.iter().any(|l| p.layers.contains(l)) || geom::gap(&disc, &o.prim) >= crate::vias::VIA_PAD_GAP);
+                    let via_ok = holes_ok && off_pads && node.via_report(q, class.via_diameter, &net, &|_| false).is_empty() && node.in_board(&Shape::circle(q, class.via_diameter / 2.0));
                     let stub_ok = node.path_clear(&stub, class.track_width, layer, &net, &|_| false);
                     if via_ok && stub_ok {
                         node.lines.push(pns::Line { id: None, net: net.clone(), layer, width: class.track_width, points: stub.clone(), locked: true, arcs: false, moved: false });

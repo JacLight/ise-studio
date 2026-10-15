@@ -44,6 +44,8 @@ export type ViewHost = {
   nameOf?: (id: string) => string;
   /** Rubber-band selection result. */
   onSelectMany: (ids: string[], add: boolean) => void;
+  /** Meshes drawn in place of bodies (a board's own look): a section cuts them too, uncapped. */
+  drawnOnly?: () => THREE.Mesh[];
 };
 
 /** Whether a box from `a` to `b` (screen px) selects what it fully contains (left to right) or what it touches (right to left). */
@@ -238,6 +240,8 @@ export class ViewTools {
     // Detail still being found on a big model: another frame finishes it.
     if (this.display.detail.pending) requestAnimationFrame(() => this.host.invalidate());
     this.section.clip(bodies, this.host.materialsOf);
+    const drawn = this.host.drawnOnly?.() ?? [];
+    if (drawn.length) this.section.clip(drawn, (m) => (Array.isArray(m.material) ? m.material : [m.material]) as THREE.MeshStandardMaterial[]);
     return camera;
   }
 

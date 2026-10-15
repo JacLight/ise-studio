@@ -314,6 +314,8 @@ place a component.
 | `description` | string |  |  |
 | `dnp` | boolean |  |  |
 | `footprint` | string | yes |  |
+| `label_at` | number[] |  | Where the reference is printed, from the part's origin (mm); default: a free place beside it. |
+| `label_rotation` | number |  | The reference's turn with `label_at` (degrees, 0 or 90 usually). |
 | `lcsc` | string |  |  |
 | `manufacturer` | string |  |  |
 | `mpn` | string |  |  |
@@ -342,6 +344,9 @@ move, turn, flip, re-value or re-net a component (what is left out stays).
 | `dnp` | boolean |  |  |
 | `drag_tracks` | boolean |  | Track ends on its pads follow a move, turn or flip (default true); dragged tracks are marked `reroute`. |
 | `footprint` | string |  |  |
+| `label_at` | number[] |  | Where the reference is printed, from the part's origin (mm). |
+| `label_auto` | boolean |  | true: the board places the reference again by itself (clears `label_at` and `label_rotation`). |
+| `label_rotation` | number |  | The reference's turn (degrees) with `label_at`. |
 | `lcsc` | string |  |  |
 | `manufacturer` | string |  |  |
 | `mpn` | string |  | "" clears. |

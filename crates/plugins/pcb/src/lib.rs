@@ -416,6 +416,13 @@ pub struct PcbComponent {
     /// Do not populate (kept on the board and in the BOM as DNP, not assembled).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dnp: bool,
+    /// Where the reference designator is printed, from the part's origin (board axes, mm);
+    /// left out, the board finds it a free place beside the part.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_at: Option<[f64; 2]>,
+    /// The reference's turn with `label_at` (degrees counter-clockwise: 0 reads left to right, 90 bottom to top).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_rotation: Option<f64>,
 }
 
 impl Persist for PcbComponent {
@@ -970,6 +977,10 @@ pub struct CreateComponent {
     pub pin_names: BTreeMap<String, String>,
     #[serde(default)]
     pub dnp: bool,
+    /// Where the reference is printed, from the part's origin (mm); default: a free place beside it.
+    pub label_at: Option<[f64; 2]>,
+    /// The reference's turn with `label_at` (degrees, 0 or 90 usually).
+    pub label_rotation: Option<f64>,
 }
 
 fn clean(s: Option<String>) -> Option<String> {
@@ -985,6 +996,16 @@ fn check_component(tx: &Tx, board: &Board, id: Option<StableId>, c: &PcbComponen
     finite(c.at[0], "at")?;
     finite(c.at[1], "at")?;
     finite(c.rotation, "rotation")?;
+    if let Some(l) = c.label_at {
+        finite(l[0], "label_at")?;
+        finite(l[1], "label_at")?;
+        if l[0].abs() > 100.0 || l[1].abs() > 100.0 {
+            return Err(bad(format!("{}: label_at is an offset from the part (mm), within 100 mm", c.reference)));
+        }
+    }
+    if let Some(r) = c.label_rotation {
+        finite(r, "label_rotation")?;
+    }
     for (pad, net) in &c.pins {
         if !fp.pads.iter().any(|p| &p.number == pad) {
             let mut nums: Vec<&str> = fp.pads.iter().map(|p| p.number.as_str()).filter(|n| !n.is_empty()).collect();
@@ -1023,6 +1044,8 @@ impl Command for CreateComponent {
             pins: self.pins.into_iter().map(|(k, v)| (k, v.trim().to_string())).collect(),
             pin_names: self.pin_names,
             dnp: self.dnp,
+            label_at: self.label_at,
+            label_rotation: self.label_rotation.map(|r| r.rem_euclid(360.0)),
         };
         check_component(tx, &board, None, &c)?;
         let id = tx.create();
@@ -1054,6 +1077,12 @@ pub struct UpdateComponent {
     pub dnp: Option<bool>,
     /// Track ends on its pads follow a move, turn or flip (default true); dragged tracks are marked `reroute`.
     pub drag_tracks: Option<bool>,
+    /// Where the reference is printed, from the part's origin (mm).
+    pub label_at: Option<[f64; 2]>,
+    /// The reference's turn (degrees) with `label_at`.
+    pub label_rotation: Option<f64>,
+    /// true: the board places the reference again by itself (clears `label_at` and `label_rotation`).
+    pub label_auto: Option<bool>,
 }
 
 impl Command for UpdateComponent {
@@ -1104,6 +1133,16 @@ impl Command for UpdateComponent {
         }
         if let Some(v) = self.dnp {
             c.dnp = v;
+        }
+        if self.label_auto == Some(true) {
+            c.label_at = None;
+            c.label_rotation = None;
+        }
+        if let Some(v) = self.label_at {
+            c.label_at = Some(v);
+        }
+        if let Some(v) = self.label_rotation {
+            c.label_rotation = Some(v.rem_euclid(360.0));
         }
         check_component(tx, &board, Some(self.target), &c)?;
         let board_id = c.board;
