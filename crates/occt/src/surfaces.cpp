@@ -365,7 +365,7 @@ Handle(Geom2d_Curve) pcurve_by_projection(const Handle(Geom_Curve)& c, double f,
   Geom2dAPI_Interpolate in(pts, par, closed, 1e-12);
   in.Perform();
   if (!in.IsDone()) throw Standard_Failure("could not lay the boundary on the surface");
-  return in.Curve();
+  return Handle(Geom2d_Curve)(in.Curve());
 }
 
 TopoDS_Face face_of_surface(const Handle(Geom_Surface)& s) {
