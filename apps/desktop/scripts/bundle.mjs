@@ -149,6 +149,8 @@ if (mac) {
   // Installed as /usr/bin/de-server, next to /usr/lib/ise-studio/.
   run("patchelf", ["--set-rpath", "$ORIGIN/../lib/ise-studio", sidecar]);
   settings = {
+    // Debian package names are ASCII (ise-studio); the launcher still shows Iṣẹ́ Studio.
+    productName: "ISE Studio",
     bundle: {
       targets: ["deb"],
       externalBin: ["stage/binaries/de-server"],
@@ -156,6 +158,7 @@ if (mac) {
       linux: {
         deb: {
           depends: ["libfreetype6", "libgl1", "libx11-6", "libfontconfig1"],
+          desktopTemplate: "linux/ise-studio.desktop",
           files: Object.fromEntries([...libs.keys()].map((n) => [`/usr/lib/ise-studio/${n}`, `stage/lib/${n}`])),
         },
       },
