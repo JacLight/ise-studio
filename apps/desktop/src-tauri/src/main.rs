@@ -65,16 +65,47 @@ fn probe() -> Answer {
     }
 }
 
-/// The engine program: `ISE_ENGINE`, one beside this app, or the checkout's release build.
-fn engine_binary() -> Option<PathBuf> {
+/// How to start an engine: the program, the folder holding its files (the
+/// web app, the AI's tools, examples) and the project it opens first.
+struct Setup {
+    binary: PathBuf,
+    root: PathBuf,
+    project: PathBuf,
+}
+
+/// The engine to start: `ISE_ENGINE` (with this checkout's files), the one
+/// installed with the app (its files in the app's resources, projects in
+/// Documents/ISE Studio), or this checkout's release build.
+fn engine_setup(app: &AppHandle) -> Result<Setup, String> {
     let name = if cfg!(windows) { "de-server.exe" } else { "de-server" };
+    let project = |default: PathBuf| std::env::var_os("ISE_PROJECT").map(PathBuf::from).unwrap_or(default);
+    let repo = repo();
+    if let Some(binary) = std::env::var_os("ISE_ENGINE").map(PathBuf::from) {
+        return Ok(Setup { binary, project: project(repo.join("projects/default.jsonl")), root: repo });
+    }
     let beside = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(name)));
-    std::env::var_os("ISE_ENGINE")
-        .map(PathBuf::from)
-        .into_iter()
-        .chain(beside)
-        .chain([repo().join("target/release").join(name)])
-        .find(|p| p.is_file())
+    let resources = app.path().resource_dir().ok().map(|r| r.join("engine"));
+    if let (Some(binary), Some(root)) = (beside, resources)
+        && binary.is_file()
+        && root.join("apps/web/dist/index.html").is_file()
+    {
+        let documents = app.path().document_dir().unwrap_or_else(|_| std::env::temp_dir());
+        return Ok(Setup { binary, root, project: project(documents.join("ISE Studio/default.jsonl")) });
+    }
+    let binary = repo.join("target/release").join(name);
+    if !binary.is_file() {
+        return Err(format!(
+            "The engine isn't built yet. In a terminal:\n\ncd {}\ncargo build --release -p de-server\n\nThen try again (or set ISE_ENGINE to the de-server program).",
+            repo.display()
+        ));
+    }
+    if !repo.join("apps/web/dist/index.html").is_file() {
+        return Err(format!(
+            "The web app isn't built yet. In a terminal:\n\ncd {}\nnpm install && npm run build\n\nThen try again.",
+            repo.join("apps/web").display()
+        ));
+    }
+    Ok(Setup { binary, project: project(repo.join("projects/default.jsonl")), root: repo })
 }
 
 /// The PATH a terminal would have. Apps opened from the Finder get a bare one,
@@ -123,21 +154,7 @@ fn ensure_engine(app: &AppHandle, say: &dyn Fn(&str)) -> Result<(), String> {
         }
         Answer::Nothing => {}
     }
-    let repo = repo();
-    let Some(binary) = engine_binary() else {
-        return Err(format!(
-            "The engine isn't built yet. In a terminal:\n\ncd {}\ncargo build --release -p de-server\n\nThen try again (or set ISE_ENGINE to the de-server program).",
-            repo.display()
-        ));
-    };
-    let web = repo.join("apps/web/dist");
-    if !web.join("index.html").is_file() {
-        return Err(format!(
-            "The web app isn't built yet. In a terminal:\n\ncd {}\nnpm install && npm run build\n\nThen try again.",
-            repo.join("apps/web").display()
-        ));
-    }
-    let project = std::env::var_os("ISE_PROJECT").map(PathBuf::from).unwrap_or_else(|| repo.join("projects/default.jsonl"));
+    let Setup { binary, root, project } = engine_setup(app)?;
     say("Starting the engine…");
     let logs = app.path().app_log_dir().unwrap_or_else(|_| std::env::temp_dir());
     let _ = std::fs::create_dir_all(&logs);
@@ -146,9 +163,10 @@ fn ensure_engine(app: &AppHandle, say: &dyn Fn(&str)) -> Result<(), String> {
     let mut command = Command::new(&binary);
     command
         .args(["--project", &project.to_string_lossy()])
-        .args(["--web", &web.to_string_lossy()])
+        .args(["--web", &root.join("apps/web/dist").to_string_lossy()])
         .args(["--port", &port().to_string()])
-        .current_dir(&repo)
+        .env("ISE_ROOT", &root)
+        .current_dir(&root)
         .stdin(Stdio::null())
         .stdout(log.try_clone().map_err(|e| e.to_string())?)
         .stderr(log);

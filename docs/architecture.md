@@ -40,7 +40,7 @@ React 19 and three.js, built with Vite. The live view draws thousands of parts w
 
 ## The desktop app: `apps/desktop`
 
-An optional window around the same app (Tauri, the system's web view). It opens the engine at 127.0.0.1:7420, starting it if nothing answers there, so the window and the browser are two views of one engine. `src-tauri/src/main.rs` is all of it: finding or starting the engine, links, new windows, downloads, the menus.
+An optional window around the same app (Tauri, the system's web view). It opens the engine at 127.0.0.1:7420, starting it if nothing answers there, so the window and the browser are two views of one engine. `src-tauri/src/main.rs` is all of it: finding or starting the engine, links, new windows, downloads, the menus. `scripts/bundle.mjs` makes the installers (.dmg, .deb) with the engine inside; the engine finds its files through `ISE_ROOT` there.
 
 ## Tools: `tools/`
 

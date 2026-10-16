@@ -1,0 +1,157 @@
+# The desktop installers: a .dmg for Apple silicon Macs and a .deb for Linux,
+# each with its own engine inside (apps/desktop/scripts/bundle.mjs, the same
+# script that builds them locally). Every run installs what it built and checks
+# the engine inside answers; a version tag (v0.2.0) also publishes a release.
+name: Desktop installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  OCCT_VERSION: 7.9.3
+
+jobs:
+  macos:
+    name: macOS (.dmg)
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: apps/web/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: OpenCascade
+        run: brew install opencascade
+      - name: Web app
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile && pnpm build
+      - name: Installer
+        working-directory: apps/desktop
+        env:
+          # Set these secrets to sign and notarize; without them the app is signed ad hoc.
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Unset secrets are empty strings here; Tauri would read those as a blank identity.
+          for v in APPLE_SIGNING_IDENTITY APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!v}" ] || unset "$v"
+          done
+          npm ci && node scripts/bundle.mjs
+      - name: Check the installed engine
+        run: |
+          dmg=$(ls apps/desktop/dist/*.dmg)
+          hdiutil attach -nobrowse -readonly -mountpoint /tmp/ise "$dmg"
+          app=$(ls -d /tmp/ise/*.app)/Contents
+          mkdir -p /tmp/ise-projects
+          DYLD_PRINT_LIBRARIES=1 ISE_ROOT="$app/Resources/engine" "$app/MacOS/de-server" \
+            --project /tmp/ise-projects/default.jsonl --web "$app/Resources/engine/apps/web/dist" --port 7499 > /tmp/engine.log 2>&1 &
+          engine=$!
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:7499/projects > /dev/null && break; sleep 1; done
+          curl -sf http://127.0.0.1:7499/projects
+          curl -sf -o /dev/null http://127.0.0.1:7499/
+          # Every library from inside the app, none from Homebrew.
+          if grep "^dyld" /tmp/engine.log | grep -q /opt/homebrew; then grep /opt/homebrew /tmp/engine.log; exit 1; fi
+          kill $engine
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: apps/desktop/dist/*.dmg
+
+  linux:
+    name: Linux (.deb)
+    # The oldest supported Ubuntu, so the package installs on it and everything newer.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build patchelf file \
+            libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev \
+            libfreetype-dev libfontconfig1-dev libgl-dev libegl-dev libx11-dev libxext-dev libxi-dev
+      # Linux distributions ship OpenCascade 7.6; the engine needs 7.8 or newer. Built once, then cached.
+      - uses: actions/cache@v6
+        id: occt
+        with:
+          path: /opt/occt
+          key: occt-${{ env.OCCT_VERSION }}-ubuntu-22.04
+      - name: OpenCascade (from source)
+        if: steps.occt.outputs.cache-hit != 'true'
+        run: |
+          tag=V$(echo "$OCCT_VERSION" | tr . _)
+          curl -sL "https://github.com/Open-Cascade-SAS/OCCT/archive/refs/tags/$tag.tar.gz" | tar xz -C /tmp
+          cmake -S /tmp/OCCT-$tag -B /tmp/occt-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DINSTALL_DIR=/opt/occt -DBUILD_LIBRARY_TYPE=Shared \
+            -DBUILD_MODULE_Draw=OFF -DBUILD_DOC_Overview=OFF -DUSE_TK=OFF -DUSE_FREETYPE=ON
+          cmake --build /tmp/occt-build
+          sudo cmake --install /tmp/occt-build
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: apps/web/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Web app
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile && pnpm build
+      - name: Installer
+        working-directory: apps/desktop
+        env:
+          OCCT_DIR: /opt/occt
+        run: npm ci && node scripts/bundle.mjs
+      - name: Check the installed engine
+        run: |
+          deb=$(ls apps/desktop/dist/*.deb)
+          sudo apt-get install -y "./$deb"
+          package=$(dpkg-deb -f "$deb" Package)
+          # Its libraries resolve without the build's OpenCascade.
+          sudo mv /opt/occt /opt/occt-hidden
+          if ldd /usr/bin/de-server | grep "not found"; then exit 1; fi
+          root=$(dirname "$(dpkg -L "$package" | grep '/engine/apps/web/dist/index.html$')")/../../..
+          mkdir -p /tmp/ise-projects
+          ISE_ROOT="$root" /usr/bin/de-server --project /tmp/ise-projects/default.jsonl --web "$root/apps/web/dist" --port 7499 > /tmp/engine.log 2>&1 &
+          engine=$!
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:7499/projects > /dev/null && break; sleep 1; done
+          curl -sf http://127.0.0.1:7499/projects || { cat /tmp/engine.log; exit 1; }
+          curl -sf -o /dev/null http://127.0.0.1:7499/
+          kill $engine
+          sudo mv /opt/occt-hidden /opt/occt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: apps/desktop/dist/*.deb
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: installers
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "Iṣẹ́ Studio $GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --clobber installers/*

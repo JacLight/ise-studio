@@ -47,21 +47,38 @@ Open **http://127.0.0.1:7420**. The engine listens on your computer only; stop i
 
 ## The desktop app (optional)
 
-`apps/desktop` puts the same app in its own window, with a Dock icon and menus. It is a view of the same engine, not a second copy: the window and your browser tabs show the same projects at the same time, and changes in one appear in the other.
+The same app in its own window, with a Dock icon and menus. It is a view of an engine like the browser is: when an engine is already running at http://127.0.0.1:7420 the window uses it, so the window and your browser tabs show the same projects at the same time.
 
-```sh
-cd apps/desktop && npm install
-npm run build        # makes target/release/bundle/macos/Iṣẹ́ Studio.app; drag it to Applications
-npm run dev          # or run it straight from the source
-```
+### Install it
 
-When it opens, it looks for the engine at http://127.0.0.1:7420. If one is running (started in a terminal as above), it uses that one. If not, it starts the engine this checkout built (`target/release/de-server`, so build that first) with `projects/default.jsonl` and leaves it running when the window closes, so the browser and connected assistants keep working. **Iṣẹ́ Studio → Stop Engine and Quit** stops an engine the app started. The engine's output goes to `~/Library/Logs/studio.ise.desktop/engine.log`.
+Download from the [releases](https://github.com/JacLight/ise-studio/releases):
+
+- **macOS** (Apple silicon): `ISE-Studio-<version>-macos-arm64.dmg`. Open it and drag Iṣẹ́ Studio to Applications. Until the app is signed with an Apple Developer ID, macOS stops it the first time: open **System Settings → Privacy & Security** and choose **Open Anyway**.
+- **Linux** (Ubuntu 22.04 or newer, Debian 12 or newer): `ISE-Studio-<version>-linux-x64.deb`, installed with `sudo apt install ./ISE-Studio-<version>-linux-x64.deb`.
+
+Each carries its own engine (OpenCascade included), so nothing else needs installing. With no engine running, the app starts its own with your projects in **Documents/ISE Studio**, and leaves it running when the window closes so the browser and connected assistants keep working; **Iṣẹ́ Studio → Stop Engine and Quit** stops it. The engine's output goes to `~/Library/Logs/studio.ise.desktop/engine.log` on macOS. Iṣẹ́ AI needs Claude Code and Node.js installed, as in the browser.
 
 - **File → Open in Browser** opens the page in front, at the same project, in your browser (for Claude in Chrome, say).
 - Links to other sites open in your browser; the app's own "new tab" links open another window; downloads go to Downloads.
 - `ISE_PORT`, `ISE_PROJECT` and `ISE_ENGINE` pick another port, project file or engine program.
 
-The app is built with Tauri and uses the system's web view (WebKit on macOS), so it is about 10 MB. It is made for the computer that built it: it finds the engine, the web app and the projects in this checkout.
+### Run it from the source
+
+```sh
+cd apps/desktop && npm install
+npm run dev          # the window, using this checkout's engine (target/release/de-server) and projects/
+```
+
+### Build the installer
+
+```sh
+cd apps/desktop && npm install
+node scripts/bundle.mjs   # macOS: dist/ISE-Studio-<version>-macos-<arch>.dmg · Linux: dist/…-linux-<arch>.deb
+```
+
+It builds the engine, gathers what it reads (the web app, the AI's tools and guide, examples, the stock library) and the native libraries it loads, rewrites those to load from inside the app, and packages it all with Tauri. Build the web app first. On Linux, OpenCascade 7.8 or newer is needed (distributions ship 7.6; [the workflow](../.github/workflows/desktop.yml) builds 7.9 from source) and `patchelf`.
+
+[GitHub Actions](../.github/workflows/desktop.yml) builds both installers, installs each and checks the engine inside answers. Run it from the Actions tab, or push a version tag (`git tag v0.2.0 && git push origin v0.2.0`) to publish them as a release. With the secrets `APPLE_SIGNING_IDENTITY`, `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID` set, the Mac app is signed and notarized, and opens without the warning.
 
 ## Projects
 

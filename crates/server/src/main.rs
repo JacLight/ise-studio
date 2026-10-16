@@ -2183,7 +2183,9 @@ fn arg(args: &[String], name: &str) -> Option<String> {
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    // The checkout's files (the AI's tools and guide, examples, the web app):
+    // `ISE_ROOT` when they are installed elsewhere (the desktop app's bundle).
+    let root = std::env::var_os("ISE_ROOT").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let project_path = arg(&args, "--project").map(PathBuf::from).unwrap_or_else(|| root.join("projects/default.jsonl"));
     let web = arg(&args, "--web").map(PathBuf::from).unwrap_or_else(|| root.join("apps/web/dist"));
     let port: u16 = arg(&args, "--port").and_then(|p| p.parse().ok()).unwrap_or(7420);
