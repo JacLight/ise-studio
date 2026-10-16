@@ -94,8 +94,9 @@ jobs:
         if: steps.occt.outputs.cache-hit != 'true'
         run: |
           tag=V$(echo "$OCCT_VERSION" | tr . _)
-          curl -sL "https://github.com/Open-Cascade-SAS/OCCT/archive/refs/tags/$tag.tar.gz" | tar xz -C /tmp
-          cmake -S /tmp/OCCT-$tag -B /tmp/occt-build -G Ninja \
+          mkdir -p /tmp/occt-src
+          curl -sfL "https://github.com/Open-Cascade-SAS/OCCT/archive/refs/tags/$tag.tar.gz" | tar xz -C /tmp/occt-src --strip-components=1
+          cmake -S /tmp/occt-src -B /tmp/occt-build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DINSTALL_DIR=/opt/occt -DBUILD_LIBRARY_TYPE=Shared \
             -DBUILD_MODULE_Draw=OFF -DBUILD_DOC_Overview=OFF -DUSE_TK=OFF -DUSE_FREETYPE=ON
           cmake --build /tmp/occt-build
