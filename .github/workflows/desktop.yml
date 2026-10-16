@@ -85,7 +85,7 @@ jobs:
             libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev \
             libfreetype-dev libfontconfig1-dev libgl-dev libegl-dev libx11-dev libxext-dev libxi-dev
       # Linux distributions ship OpenCascade 7.6; the engine needs 7.8 or newer. Built once, then cached.
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
         id: occt
         with:
           path: /opt/occt
@@ -101,6 +101,12 @@ jobs:
             -DBUILD_MODULE_Draw=OFF -DBUILD_DOC_Overview=OFF -DUSE_TK=OFF -DUSE_FREETYPE=ON
           cmake --build /tmp/occt-build
           sudo cmake --install /tmp/occt-build
+      # Saved straight away, so a later step failing doesn't throw away the build.
+      - uses: actions/cache/save@v6
+        if: steps.occt.outputs.cache-hit != 'true'
+        with:
+          path: /opt/occt
+          key: occt-${{ env.OCCT_VERSION }}-ubuntu-22.04
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v6
