@@ -1,0 +1,3 @@
+# Shares the repository's build folder, so the app and the engine reuse each other's compiled crates.
+[build]
+target-dir = "../../../target"

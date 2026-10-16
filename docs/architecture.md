@@ -38,6 +38,10 @@
 
 React 19 and three.js, built with Vite. The live view draws thousands of parts with GPU instancing; photoreal renders path-trace a copy of the view (three-gpu-pathtracer) in a product studio; web exports write glTF with baked ambient occlusion. `agentApi.ts` is `ise`, the command object the console and assistants share.
 
+## The desktop app: `apps/desktop`
+
+An optional window around the same app (Tauri, the system's web view). It opens the engine at 127.0.0.1:7420, starting it if nothing answers there, so the window and the browser are two views of one engine. `src-tauri/src/main.rs` is all of it: finding or starting the engine, links, new windows, downloads, the menus.
+
 ## Tools: `tools/`
 
 | File | What it is |

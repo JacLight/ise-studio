@@ -130,7 +130,7 @@ cargo build --release -p de-server
 ./target/release/de-server --project projects/default.jsonl --web apps/web/dist
 ```
 
-Open **http://127.0.0.1:7420**. Everything runs on your computer. [Full setup](docs/getting-started.md), including the optional built-in assistant (Claude Code), circuit simulation and photogrammetry.
+Open **http://127.0.0.1:7420**. Everything runs on your computer. [Full setup](docs/getting-started.md), including the optional built-in assistant (Claude Code), circuit simulation and photogrammetry, and [the desktop app](docs/getting-started.md#the-desktop-app-optional): the same app in its own window, alongside the browser.
 
 ## Documentation
 

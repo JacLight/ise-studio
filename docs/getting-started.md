@@ -45,6 +45,24 @@ cargo build --release -p de-server
 
 Open **http://127.0.0.1:7420**. The engine listens on your computer only; stop it with Ctrl-C.
 
+## The desktop app (optional)
+
+`apps/desktop` puts the same app in its own window, with a Dock icon and menus. It is a view of the same engine, not a second copy: the window and your browser tabs show the same projects at the same time, and changes in one appear in the other.
+
+```sh
+cd apps/desktop && npm install
+npm run build        # makes target/release/bundle/macos/Iṣẹ́ Studio.app; drag it to Applications
+npm run dev          # or run it straight from the source
+```
+
+When it opens, it looks for the engine at http://127.0.0.1:7420. If one is running (started in a terminal as above), it uses that one. If not, it starts the engine this checkout built (`target/release/de-server`, so build that first) with `projects/default.jsonl` and leaves it running when the window closes, so the browser and connected assistants keep working. **Iṣẹ́ Studio → Stop Engine and Quit** stops an engine the app started. The engine's output goes to `~/Library/Logs/studio.ise.desktop/engine.log`.
+
+- **File → Open in Browser** opens the page in front, at the same project, in your browser (for Claude in Chrome, say).
+- Links to other sites open in your browser; the app's own "new tab" links open another window; downloads go to Downloads.
+- `ISE_PORT`, `ISE_PROJECT` and `ISE_ENGINE` pick another port, project file or engine program.
+
+The app is built with Tauri and uses the system's web view (WebKit on macOS), so it is about 10 MB. It is made for the computer that built it: it finds the engine, the web app and the projects in this checkout.
+
 ## Projects
 
 Each project is one file in `projects/` (`projects/<name>.jsonl`): an append-only journal of every change, so every revision can be shown, compared, restored or branched. Open one by name with `?project=<name>`:

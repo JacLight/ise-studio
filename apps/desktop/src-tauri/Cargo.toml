@@ -1,0 +1,20 @@
+[package]
+name = "ise-desktop"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Iṣẹ́ Studio desktop window"
+
+# Its own workspace: the engine's `cargo test --workspace` doesn't build the window.
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = [] }
+tauri-plugin-window-state = "2.5"
+serde_json = "1"
+
+[profile.release]
+lto = "thin"
