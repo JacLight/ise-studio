@@ -131,11 +131,15 @@ if (mac) {
 } else {
   // OpenCascade's libraries (built from source in CI: Linux distributions ship versions too old).
   // Everything else the engine uses comes from the system, named in the package's dependencies.
-  for (const line of out("ldd", [engine]).split("\n")) {
+  // A dependency's link arguments don't reach the engine binary, so it has no path to them yet:
+  // look where OpenCascade is installed (OCCT_DIR, as for the build).
+  const occt = join(process.env.OCCT_DIR || "/usr", "lib");
+  const ldd = execFileSync("ldd", [engine], { encoding: "utf8", env: { ...process.env, LD_LIBRARY_PATH: [occt, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":") } });
+  for (const line of ldd.split("\n")) {
     const m = line.match(/^\s*(\S+) => (\/\S+)/);
     if (m && /^libTK/.test(m[1])) libs.set(m[1], realpathSync(m[2]));
   }
-  if (!libs.size) throw new Error("ldd found no OpenCascade libraries in de-server");
+  if (!libs.size || ldd.includes("not found")) throw new Error(`de-server's libraries (looked in ${occt}):\n${ldd}`);
   for (const [name, path] of libs) {
     const copy = join(stage, "lib", name);
     copyFileSync(path, copy);
