@@ -120,7 +120,18 @@ Our assessment of where Iṣẹ́ Studio stands today. ✅ yes · ◐ partial ·
 | Real-time multi-user | ✅ | ❌ | ✅ | ❌ | ◐ | ❌ | ❌ | ◐ |
 | AI that builds and verifies whole products | ✅ | ◐ | ◐ | ◐ | ❌ | ❌ | ◐ | ◐ |
 
-## Quick start
+## Download
+
+The desktop app, with its engine inside: nothing else to install. [**Latest release →**](https://github.com/JacLight/ise-studio/releases/latest)
+
+| | File | Install |
+|---|---|---|
+| **macOS** (Apple silicon) | `ISE-Studio-<version>-macos-arm64.dmg` | Open it and drag Iṣẹ́ Studio to Applications. The first time, macOS asks: **System Settings → Privacy & Security → Open Anyway** (the app isn't notarized yet). |
+| **Linux** (Ubuntu 22.04+, Debian 12+) | `ISE-Studio-<version>-linux-x64.deb` | `sudo apt install ./ISE-Studio-<version>-linux-x64.deb` |
+
+Your projects go in **Documents/ISE Studio**, and the same app also opens in your browser at http://127.0.0.1:7420 while it runs. [More about the desktop app](docs/getting-started.md#the-desktop-app-optional).
+
+## Quick start (from the source)
 
 ```sh
 brew install opencascade node pnpm            # plus Rust: https://rustup.rs
