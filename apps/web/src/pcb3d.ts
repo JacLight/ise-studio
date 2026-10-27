@@ -45,7 +45,9 @@ export const SHOW_ALL: BoardShow = { mask: true, silk: true, copper: true, bodie
 function shown(scene: Scene3D, o: BoardShow): Scene3D {
   const kind = new Map((scene.parts ?? []).map((p) => [p.reference, p.kind]));
   const keep = (r: string) => o.bodies && o[kind.get(r) ?? "other"];
-  const side = (x: Side): Side => ({ pads: o.copper ? x.pads : [], openings: x.openings, tracks: o.copper ? x.tracks : [], zones: o.copper ? x.zones : [], silk: o.silk ? x.silk : [], silk_fill: o.silk ? x.silk_fill : [] });
+  // A board printed without a legend (silk "none") shows none.
+  const legend = o.silk && scene.silk.toLowerCase() !== "none";
+  const side = (x: Side): Side => ({ pads: o.copper ? x.pads : [], openings: x.openings, tracks: o.copper ? x.tracks : [], zones: o.copper ? x.zones : [], silk: legend ? x.silk : [], silk_fill: legend ? x.silk_fill : [] });
   return {
     ...scene,
     mask: o.mask ? scene.mask : "none",
@@ -89,7 +91,7 @@ const MASK: Record<string, string> = { green: "#14532f", black: "#0a0b0d", blue:
 function finishColor(finish: string) {
   const f = finish.toLowerCase();
   if (f.includes("enig") || f.includes("gold")) return { color: "#e0b45c", rough: 0.22 };
-  if (f.includes("osp")) return { color: "#c97e4b", rough: 0.3 };
+  if (f.includes("osp") || f === "none") return { color: "#c97e4b", rough: 0.3 };
   return { color: "#d3d6db", rough: 0.3 };
 }
 

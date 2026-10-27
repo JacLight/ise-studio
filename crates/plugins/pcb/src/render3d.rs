@@ -41,8 +41,14 @@ pub fn scene_of(view: &BoardView, board: &Board, items: &crate::Items) -> Value 
                 None => poly(&Prim { pts: p.prim.pts.clone(), r: p.prim.r + if p.kind == PadKind::Npth { 0.0 } else { e } }.outline(0.01)),
             })
             .collect();
-        let tracks: Vec<Value> = view.tracks.iter().filter(|t| t.layer == layer).map(|t| json!({ "w": r(t.width), "p": poly(&t.points) })).collect();
-        let zones: Vec<Value> = view.zones.iter().filter(|z| z.layer == layer).flat_map(|z| z.fill.iter().map(|island| Value::Array(island.iter().map(|c| poly(c)).collect()))).collect();
+        let mut tracks: Vec<Value> = view.tracks.iter().filter(|t| t.layer == layer).map(|t| json!({ "w": r(t.width), "p": poly(&t.points) })).collect();
+        let mut zones: Vec<Value> = view.zones.iter().filter(|z| z.layer == layer).flat_map(|z| z.fill.iter().map(|island| Value::Array(island.iter().map(|c| poly(c)).collect()))).collect();
+        // Graphics on the copper (lettering, logos, filled shapes) are copper too: strokes drawn
+        // as tracks of their width, filled shapes as pours.
+        for gv in view.graphics.iter().filter(|g| g.layer == layer) {
+            tracks.extend(gv.strokes.iter().filter(|l| l.len() >= 2).map(|l| json!({ "w": r(gv.width), "p": poly(l) })));
+            zones.extend(gv.fills.iter().map(|island| Value::Array(island.iter().map(|c| poly(c)).collect())));
+        }
         let s = if side == "top" { Side::Top } else { Side::Bottom };
         let mut silk: Vec<Value> = Vec::new();
         for c in view.components.iter().filter(|c| c.side == s) {

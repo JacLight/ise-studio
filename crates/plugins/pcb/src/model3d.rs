@@ -32,10 +32,11 @@ fn look_role(look: &str) -> &'static str {
 /// (material name, density kg/m³).
 fn material_for(role: &str, board: &Board, value: &str) -> (String, f64) {
     match role {
+        "Board" if board.mask.eq_ignore_ascii_case("none") => ("FR4 (bare)".into(), 1850.0),
         "Board" => (format!("FR4 {} mask", board.mask.to_ascii_lowercase()), 1850.0),
         "Copper" => {
             let f = board.finish.to_ascii_lowercase();
-            if f.contains("enig") || f.contains("gold") { ("ENIG gold".into(), 8900.0) } else if f.contains("osp") { ("OSP copper".into(), 8900.0) } else { ("HASL tin".into(), 8900.0) }
+            if f == "none" { ("Bare copper".into(), 8900.0) } else if f.contains("enig") || f.contains("gold") { ("ENIG gold".into(), 8900.0) } else if f.contains("osp") { ("OSP copper".into(), 8900.0) } else { ("HASL tin".into(), 8900.0) }
         }
         "Epoxy" => ("Epoxy moulding (black)".into(), 1900.0),
         "Ceramic" => ("Ceramic (MLCC)".into(), 4000.0),

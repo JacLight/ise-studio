@@ -304,8 +304,11 @@ pub fn readme(view: &BoardView, art: &Art) -> String {
          2. Select everything on ETCH and Hatch it: line spacing 0.02 to 0.03 mm, \"Enable contour\" on, and two or more hatch sets at different angles (0 and 90 degrees) so no lines are left. Copper inside burned areas (pads, traces, text) stays as islands, not filled.\n\
          3. Or import the .bmp instead (File > Import Bitmap), \"Fixed DPI\" {dpi}, no dithering: black dots burn.\n\
          \n\
-         Starting points for a MOPA fiber laser burning 35 µm (1 oz) copper off FR4. Every laser, lens and board differs, so treat these as a place to start, and use the test board to find yours: run passes until the fiberglass shows clean (dull, not shiny copper), then stop; extra passes only char the board.\n\
-         - Power 80 to 100 %, speed 800 to 2000 mm/s, frequency 100 to 300 kHz, pulse width 200 ns or more (MOPA), many passes (10 to 30 is common).\n\
+         Settings: starting points for a 30 W MOPA (JPT M7 class) with a 110 to 175 mm lens, burning 35 µm (1 oz) copper off FR4. Every laser, lens and board differs: find yours on the test board. In EZCAD the pulse width shows when the laser type is MOPA (Config Parameter). Focus on the copper's surface.\n\
+         Pass 1, bulk copper: power 90 to 100 %, pulse width 200 to 350 ns, frequency 40 to 60 kHz, speed 800 to 1500 mm/s, hatch 0.03 mm at 0 and 90 degrees (Auto rotate hatch angle on, if you have it). Loop count 5, look, repeat until the fiberglass shows through nearly everywhere.\n\
+         Pass 2, clean-up: power 60 to 80 %, pulse width 100 to 200 ns, frequency 100 to 200 kHz, speed 1500 to 2500 mm/s, hatch 0.02 mm, 2 to 5 loops, until no copper shine is left in the gaps. Then stop: more passes only char the fiberglass.\n\
+         - Long pulses at low frequency hit hardest (each pulse carries more energy); short pulses at high frequency clean gently. A 20 W laser: slow down by about a third; 60 W: speed up, or fewer loops.\n\
+         - Pass 1 too strong shows as brown, charred fiberglass and thinned fine traces; too weak as copper left after many loops.\n\
          - Clean the board first (isopropyl alcohol); afterwards scrub off the soot and check every gap with a meter or a magnifier before soldering.\n\
          - Burning copper and FR4 makes fumes: extract them.\n",
         name = view.name,

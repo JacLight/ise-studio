@@ -424,6 +424,7 @@ export type Look = { color: string; metalness: number; roughness: number; opacit
 
 const LOOKS: Record<string, Look> = {
   // Printed circuit boards (the PCB workspace's 3D part): exact names, matched before any family.
+  "fr4 (bare)": { color: "#a39468", metalness: 0.05, roughness: 0.6 },
   "fr4 green mask": { color: "#2b6e45", metalness: 0.05, roughness: 0.42 },
   "fr4 black mask": { color: "#1d2024", metalness: 0.05, roughness: 0.4 },
   "fr4 blue mask": { color: "#1f4f8a", metalness: 0.05, roughness: 0.42 },

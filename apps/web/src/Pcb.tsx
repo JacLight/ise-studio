@@ -212,7 +212,7 @@ const ANGLES: AngleMode[] = ["45", "90", "free"];
 const WIDTHS = [0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.5, 2.0];
 const LAYER_NAME = (l: string) => (l === "top" ? "Top" : l === "bottom" ? "Bottom" : l.replace(/^in/, "Inner "));
 
-const MASKS: Record<string, string> = { green: "#1d4a33", black: "#16181c", blue: "#173a63", red: "#6b1f22", white: "#d9dad6", purple: "#3f2463", yellow: "#8a7a1c" };
+const MASKS: Record<string, string> = { green: "#1d4a33", black: "#16181c", blue: "#173a63", red: "#6b1f22", white: "#d9dad6", purple: "#3f2463", yellow: "#8a7a1c", none: "#6e6447" };
 const COPPER: Record<string, string> = { top: "#e0614f", bottom: "#4f8fe6", in1: "#d6a43a", in2: "#5cc78a" };
 // Inner layers 3–30 cycle through distinct hues.
 for (let i = 3; i <= 30; i++) COPPER[`in${i}`] = `hsl(${(i * 47 + 20) % 360} 55% 58%)`;
@@ -2571,8 +2571,9 @@ function FabTab(props: { d: Detail; commit: (op: string, p: Record<string, unkno
       <div className="pcb-specs-grid">
         {sel("Layers", b.layers.length, [2, 4, 6, 8, 10, 12, 16, 20, 24, 32], "layers", true)}
         {sel("Thickness", b.thickness, [0.8, 1.0, 1.2, 1.6, 2.0], "thickness", true)}
-        {sel("Finish", b.finish, ["HASL lead-free", "HASL", "ENIG", "OSP"], "finish")}
-        {sel("Mask", b.mask, ["green", "black", "blue", "red", "white", "purple", "yellow"], "mask")}
+        {sel("Finish", b.finish, ["HASL lead-free", "HASL", "ENIG", "OSP", "none"], "finish")}
+        {sel("Mask", b.mask, ["green", "black", "blue", "red", "white", "purple", "yellow", "none"], "mask")}
+        {sel("Silk", b.silk, ["white", "black", "none"], "silk")}
         {sel("Copper", b.copper_oz, [1, 2], "copper_oz", true)}
         <label className="pcb-spec">
           <span>Quantity</span>

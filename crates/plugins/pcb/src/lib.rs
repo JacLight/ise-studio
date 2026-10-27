@@ -295,14 +295,16 @@ pub struct Board {
     pub layers: u8,
     /// Finished thickness (mm).
     pub thickness: f64,
-    /// "HASL lead-free", "HASL", "ENIG", "OSP", "Immersion silver".
+    /// "HASL lead-free", "HASL", "ENIG", "OSP", "Immersion silver"; "none" (bare copper).
     pub finish: String,
     /// Outer copper weight (oz/ft²).
     pub copper_oz: f64,
     #[serde(default = "one")]
     pub inner_copper_oz: f64,
-    /// Solder-mask colour: green, black, blue, red, white, purple, yellow.
+    /// Solder-mask colour: green, black, blue, red, white, purple, yellow; or none (bare copper on
+    /// the laminate, as a board etched at home comes out).
     pub mask: String,
+    /// Legend colour: white, black; or none (no legend printed).
     pub silk: String,
     #[serde(default)]
     pub rules: Rules,
