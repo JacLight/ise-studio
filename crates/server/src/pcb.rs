@@ -97,7 +97,7 @@ pub async fn show(State(server): State<Arc<Server>>, Path(id): Path<String>, Que
     };
     let lines = sourcing::bom_lines(&v, &b);
     let (totals, unpriced) = sourcing::totals(&lines, b.quantity);
-    let files: Vec<String> = de_pcb::gerber::files(&v).into_iter().map(|(n, _)| n).chain(["bom.csv".to_string(), "positions.csv".to_string(), "README.txt".to_string()]).chain(interop_names(&v)).collect();
+    let files: Vec<String> = de_pcb::gerber::files(&v).into_iter().map(|(n, _)| n).chain(["bom.csv".to_string(), "positions.csv".to_string(), "README.txt".to_string()]).chain(interop_names(&v)).chain(de_pcb::laser::names(&v)).collect();
     axum::Json(json!({
         "board": &*v,
         "size": v.size(),
@@ -162,6 +162,16 @@ pub async fn file(State(server): State<Arc<Server>>, Path((id, name)): Path<(Str
         let Some(model) = b.model else { return fail(StatusCode::NOT_FOUND, "the board has no 3D part") };
         let project = query.get("project").map(|p| format!("&project={p}")).unwrap_or_default();
         return axum::response::Redirect::temporary(&format!("/export/{model}.step?download=1{project}")).into_response();
+    }
+    // Laser etching (`?layer=&isolate=&pilot=&mirror=&dpi=`): see de_pcb::laser.
+    if let Some(made) = de_pcb::laser::file(&v, &name, &query) {
+        return match made {
+            Ok((kind, bytes)) => {
+                let disposition = if query.contains_key("download") || kind == "application/zip" { format!("attachment; filename=\"{name}\"") } else { "inline".into() };
+                ([(header::CONTENT_TYPE, kind.to_string()), (header::CONTENT_DISPOSITION, disposition)], bytes).into_response()
+            }
+            Err(e) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
+        };
     }
     let interop = if name == format!("{stem}.kicad_pcb") { Some(kicad_text(&server, &query, &id).unwrap_or_else(|| de_pcb::kicad::export(&v, &b))) } else { de_pcb::idf::files(&v, &b).into_iter().find(|(n, _)| *n == name).map(|(_, s)| s) };
     if let Some(body) = interop {

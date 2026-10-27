@@ -49,6 +49,7 @@ pub mod idf;
 pub mod io;
 pub mod kicad;
 pub mod kicad_lib;
+pub mod laser;
 pub mod libedit;
 pub mod library;
 pub mod model3d;
