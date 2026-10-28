@@ -3,9 +3,9 @@
 //!
 //! The copper comes from the layer's Gerber, the file a fab would get (and
 //! that the Gerber check reads back), so what is burned is exactly what is not
-//! copper there. The laser either clears every bit of unwanted copper, or
-//! burns a ring of `isolate` mm around each piece (faster; the rest stays as
-//! unconnected copper). Each hole gets a small dot burned at its centre for
+//! copper there. By default the laser burns a ring of `isolate` mm (0.3)
+//! around each piece and the rest stays as unconnected copper: several times
+//! less to burn than clearing every bit of unwanted copper (`isolate` 0). Each hole gets a small dot burned at its centre for
 //! the drill to start in.
 //!
 //! The art is centred on (0, 0), the middle of a galvo laser's field, and
@@ -29,7 +29,7 @@ const TOL: f64 = 0.005;
 pub struct Settings {
     /// The copper layer.
     pub layer: String,
-    /// Width of the ring burned around the copper (mm); 0 clears all unwanted copper.
+    /// Width of the ring burned around the copper (mm, default 0.3); 0 clears all unwanted copper.
     pub isolate: f64,
     /// Diameter of the dot burned at each hole's centre (mm); 0 for none.
     pub pilot: f64,
@@ -45,7 +45,7 @@ impl Settings {
         let num = |k: &str, d: f64| q.get(k).and_then(|v| v.parse::<f64>().ok()).filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(d);
         Settings {
             layer: q.get("layer").cloned().unwrap_or_else(|| default_layer(view)),
-            isolate: num("isolate", 0.0),
+            isolate: num("isolate", 0.3),
             pilot: num("pilot", 0.5),
             mirror: q.get("mirror").map(|m| m == "1" || m == "true"),
             dpi: num("dpi", 1000.0).clamp(100.0, 4000.0),
