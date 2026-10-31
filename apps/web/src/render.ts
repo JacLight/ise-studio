@@ -581,9 +581,18 @@ export function buildRenderScene(
  */
 function cameraFor(source: RenderSource, aspect: number) {
   const c = source.camera.clone();
-  // The view's sideways shift (it keeps the model clear of a floating panel) is the screen's, not the picture's.
+  // The view's sideways shift, zoom and lift (they keep the model clear of floating panels and bars) are the screen's, not the picture's.
   c.filmOffset = 0;
-  if (aspect < c.aspect) {
+  c.zoom = 1;
+  c.clearViewOffset();
+  // Framed tight (a fill) and not moved since: the model keeps that fill in the picture's own shape.
+  const fit = c.userData.fit as { spans: [number, number]; aspect: number; position: number[] } | undefined;
+  const still = !!fit && new THREE.Vector3().fromArray(fit.position).distanceTo(c.position) < 1e-6 * Math.max(1, c.position.length());
+  if (fit && still && fit.spans[0] > 0 && fit.spans[1] > 0) {
+    const [sx, sy] = fit.spans;
+    const k = Math.max((sx * fit.aspect) / aspect, sy) / Math.max(sx, sy);
+    c.fov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(c.fov / 2)) * k));
+  } else if (aspect < c.aspect) {
     const half = Math.tan(THREE.MathUtils.degToRad(c.fov / 2)) * (c.aspect / aspect);
     c.fov = THREE.MathUtils.radToDeg(2 * Math.atan(half));
   }

@@ -573,8 +573,23 @@ type Scene = {
   bounds: THREE.Box3;
 };
 
-/** `shift`: the camera's film offset (the picture moved sideways on screen, clear of a floating panel). */
-type View3 = { position: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3; shift?: number };
+/**
+ * `shift`: the camera's film offset (the picture moved sideways on screen, clear of a floating panel).
+ * `zoom` and `lift`: a framing asked for tight (a fill) is the picture's; on screen it is shrunk by
+ * `zoom` and moved down by `lift` (a share of the view's height) into what the bars and panels leave
+ * clear. Both are the screen's only: renders take the camera without them.
+ */
+type View3 = { position: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3; shift?: number; zoom?: number; lift?: number };
+
+/** The picture's place on screen: its sideways shift, its zoom and how far down it is moved (see View3). */
+function placePicture(t: Scene, shift: number, zoom: number, lift: number) {
+  t.camera.filmOffset = shift;
+  t.camera.zoom = zoom;
+  const c = t.renderer.domElement;
+  const [w, h] = [Math.max(1, c.clientWidth), Math.max(1, c.clientHeight)];
+  if (Math.abs(lift) > 1e-6) t.camera.setViewOffset(w, h, 0, -lift * h, w, h);
+  else t.camera.clearViewOffset();
+}
 /** A glide; its clock starts on its first drawn frame (null until then). */
 type Flight = { from: View3; to: View3; start: number | null; ms: number };
 
@@ -589,11 +604,12 @@ function glideTo(t: Scene, to: View3, ms = 700) {
     t.camera.position.copy(to.position);
     t.controls.target.copy(to.target);
     t.camera.up.copy(to.up);
-    if (to.shift !== undefined) t.camera.filmOffset = to.shift;
+    if (to.shift !== undefined) placePicture(t, to.shift, to.zoom ?? 1, to.lift ?? 0);
     settleCamera(t);
     return;
   }
-  t.flight = { from: { position: t.camera.position.clone(), target: t.controls.target.clone(), up: t.camera.up.clone(), shift: t.camera.filmOffset }, to, start: null, ms };
+  const lift = t.camera.view?.enabled ? -t.camera.view.offsetY / Math.max(1, t.camera.view.fullHeight) : 0;
+  t.flight = { from: { position: t.camera.position.clone(), target: t.controls.target.clone(), up: t.camera.up.clone(), shift: t.camera.filmOffset, zoom: t.camera.zoom, lift }, to, start: null, ms };
   t.invalidate();
 }
 
@@ -616,7 +632,10 @@ function stepFlight(t: Scene, now: number): boolean {
   t.camera.position.copy(target).add(a.normalize().applyQuaternion(turn).multiplyScalar(distance));
   const up = f.from.up.clone().lerp(f.to.up, e);
   t.camera.up.copy(up.lengthSq() > 1e-9 ? up.normalize() : f.to.up);
-  if (f.to.shift !== undefined) t.camera.filmOffset = THREE.MathUtils.lerp(f.from.shift ?? 0, f.to.shift, e);
+  if (f.to.shift !== undefined) {
+    const lerp = (a: number | undefined, b: number | undefined, d: number) => THREE.MathUtils.lerp(a ?? d, b ?? d, e);
+    placePicture(t, lerp(f.from.shift, f.to.shift, 0), lerp(f.from.zoom, f.to.zoom, 1), lerp(f.from.lift, f.to.lift, 0));
+  }
   if (k >= 1) t.flight = null;
   settleCamera(t);
   return k < 1;
@@ -1021,6 +1040,23 @@ function fitGround(t: Scene, bounds: THREE.Box3) {
  */
 /** The width of the canvas that no tall floating panel (properties, a floating AI panel) covers: the
  *  share of the width it is and its centre's offset from the canvas's (NDC, -1..1). */
+/**
+ * What the floating bars leave clear of the view across `left`–`right` (screen px): the band
+ * between the bars along its top and those along its bottom (the project and share pills, the
+ * view bar and tools, the small AI panel), as screen px.
+ */
+function clearBand(canvas: HTMLCanvasElement, left: number, right: number): [number, number] {
+  const box = canvas.getBoundingClientRect();
+  let [top, bottom] = [box.top, box.bottom];
+  for (const el of document.querySelectorAll<HTMLElement>(".project-pill.floating, .share-pill.floating, .view-bar.floating, .view-tools, .ai-panel.floating")) {
+    const r = el.getBoundingClientRect();
+    if (r.height === 0 || r.height >= box.height * 0.4 || r.right <= left || r.left >= right || r.bottom <= box.top || r.top >= box.bottom) continue;
+    if (r.top + r.height / 2 < box.top + box.height / 2) top = Math.max(top, r.bottom + 12);
+    else bottom = Math.min(bottom, r.top - 12);
+  }
+  return bottom - top < box.height * 0.4 ? [box.top, box.bottom] : [top, bottom];
+}
+
 function clearSpan(canvas: HTMLCanvasElement): { offset: number; share: number } {
   const box = canvas.getBoundingClientRect();
   let [left, right] = [box.left, box.right];
@@ -1057,6 +1093,7 @@ function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vecto
   const heading = t.flight ? t.flight.to : null;
   const dir = (direction ?? (heading ? heading.position.clone().sub(heading.target) : t.camera.position.clone().sub(t.controls.target))).normalize();
   const view: View3 = { position: new THREE.Vector3(), target: c, up: (up ?? heading?.up ?? t.camera.up).clone() };
+  let spans: [number, number] = [1, 1];
   if (fill) {
     // Tight: what is shown (its vertices, thinned to ~40 000; else the box's corners), seen from `dir`
     // in perspective, spans `fill` of the frame's height or width (whichever is reached first), centred.
@@ -1107,17 +1144,38 @@ function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vecto
         const sx = d.dot(right) / depth, sy = d.dot(screenUp) / depth;
         [x0, x1, y0, y1] = [Math.min(x0, sx), Math.max(x1, sx), Math.min(y0, sy), Math.max(y1, sy)];
       }
+      // How much of the whole frame it spans, each way.
+      const tan = Math.tan(THREE.MathUtils.degToRad(t.camera.fov / 2));
+      spans = [(x1 - x0) / (2 * tan * t.camera.aspect), (y1 - y0) / (2 * tan)];
       c = c.clone().addScaledVector(right, ((x0 + x1) / 2) * distance).addScaledVector(screenUp, ((y0 + y1) / 2) * distance);
     }
     view.target = c;
   }
   // The picture slides sideways on screen (the camera's film offset) so the model sits in the middle of
   // the clear part; the camera still aims at it, so orbiting turns about it and renders are centred.
-  view.shift = -span.offset * Math.tan(THREE.MathUtils.degToRad(t.camera.fov / 2)) * t.camera.aspect * t.camera.getFilmWidth();
+  // A tight framing is the picture's: on screen it shrinks into what the panels and bars leave clear.
+  view.zoom = 1;
+  view.lift = 0;
+  if (fill) {
+    const el = t.renderer.domElement;
+    const box = el.getBoundingClientRect();
+    if (box.width > 0 && box.height > 0) {
+      const [left, right] = [box.left + box.width * ((1 + span.offset - span.share) / 2), box.left + box.width * ((1 + span.offset + span.share) / 2)];
+      const [top, bottom] = clearBand(el, left, right);
+      // Shrunk just enough that it spans `fill` of the clear part at most, each way.
+      view.zoom = Math.min(1, ((right - left) / box.width) * (fill / Math.max(spans[0], 1e-6)), ((bottom - top) / box.height) * (fill / Math.max(spans[1], 1e-6)));
+      view.lift = ((top + bottom) / 2 - (box.top + box.height / 2)) / box.height;
+    }
+  }
+  view.shift = (-span.offset * Math.tan(THREE.MathUtils.degToRad(t.camera.fov / 2)) * t.camera.aspect * t.camera.getFilmWidth()) / view.zoom;
   view.position.copy(c).addScaledVector(dir, distance);
+  // A tight framing: how much of the frame the model spans each way, for a render of another shape
+  // taken from this very camera (render.ts cameraFor); any other framing forgets it.
+  if (fill) t.camera.userData.fit = { spans, aspect: t.camera.aspect, position: view.position.toArray() };
+  else delete t.camera.userData.fit;
   if (glide) return glideTo(t, view);
   t.flight = null;
-  t.camera.filmOffset = view.shift;
+  placePicture(t, view.shift, view.zoom, view.lift);
   t.camera.position.copy(view.position);
   t.controls.target.copy(view.target);
   t.camera.up.copy(view.up);
@@ -1716,7 +1774,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       const origin = s ? new THREE.Vector3(...pivotPoint(s, pivot.current)) : null;
       const selEntity = callbacks.current.selected ? callbacks.current.entities.get(callbacks.current.selected) : undefined;
       // A joint places what it holds: no handles to move it by hand.
-      const held = !!selEntity?.placed?.by || !!callbacks.current.poses;
+      // Shown pulled apart or turning, its pieces are not where the part is: no handles on it then.
+      const held = !!selEntity?.placed?.by || !!callbacks.current.poses || (!!callbacks.current.selected && turning.current?.id === callbacks.current.selected);
       gizmo.setTurnable(!!instance(selEntity) && !callbacks.current.also?.length);
       gizmo.root.visible = !!s && !f && !wire && !pivotMode && !held && !callbacks.current.edges && !callbacks.current.facePicks && !faceLayer.active && !connectorLayer.active && (!d || d.kind !== "push");
       connectorLayer.layout(camera, renderer.domElement.clientHeight, toScreen, connectorTags.current);
