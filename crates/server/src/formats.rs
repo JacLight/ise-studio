@@ -250,10 +250,14 @@ pub(crate) async fn import(State(server): State<Arc<Server>>, Path(file): Path<S
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::tests::{serve, server_in};
     use manifold_csg::Manifold;
+
+    /// Tests whose server stands in the folder of the process's imported files share its
+    /// default project, so they take turns.
+    pub(crate) static SHARED_FOLDER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     async fn http(at: std::net::SocketAddr, method: &str, path: &str, body: &[u8]) -> (u16, Vec<u8>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -273,6 +277,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn files_come_in_as_parts_and_sketches_and_leave_in_every_format() {
+        let _turn = SHARED_FOLDER.lock().await;
         // Imported files live where programs read them (one folder per process).
         let dir = std::env::temp_dir().join(format!("ise-formats-{}", StableId::new()));
         if de_shape::assets::dir().is_none() {

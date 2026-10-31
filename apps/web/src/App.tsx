@@ -31,7 +31,7 @@ import { PlaneMenu, useSketchEditor } from "./SketchEditor";
 import { Icon } from "./icons";
 import { sketchOf } from "./sketchModel";
 import { ComponentTree, ComponentsBody, InstanceBody, ParameterSets, StackingPlan, parameterSet, stackingSubject } from "./Components";
-import { playExploded } from "./AssemblyTools";
+import { closeExploded, playExploded } from "./AssemblyTools";
 import { beginMotion, cameraAsked, endMotion, frameEnd, motionNow, settled } from "./settle";
 import { type AiMode, type DockSide, type Group, type PanelKind, type UiPrefs, loadPrefs, savePrefs } from "./ui";
 import { DOCK_MIN_WINDOW, type DockPlace, type DockSlot, Splitter, StackSplitter, layoutDocks, useDockDrag, useWindowSize } from "./Dock";
@@ -367,7 +367,14 @@ export function App({ engine }: { engine: Engine }) {
             break;
           case "explode": {
             // An assembly pulled apart (value: the spread, or "off" to put it back).
-            if (!target) return;
+            if (!target) {
+              // Off, naming nothing: everything shown apart goes back.
+              if (value !== "off") return;
+              if (explodeNow.current?.open) beginMotion();
+              setExplode((e) => (e ? { ...e, open: false } : e));
+              closeExploded();
+              break;
+            }
             // A saved exploded view, or an assembly of instances (pulled apart along the lines from its middle):
             // its assembly's studio plays it, step by step (off closes it). A shape of several parts explodes below.
             const shown = entitiesNow.current.get(target);
@@ -385,7 +392,7 @@ export function App({ engine }: { engine: Engine }) {
               break;
             }
             // A shape's pieces easing apart or back: a render asked for next waits for them to rest.
-            beginMotion();
+            if (value !== "off" || explodeNow.current?.id === target) beginMotion();
             if (value === "off") setExplode((e) => (e?.id === target ? { ...e, open: false } : e));
             else {
               setSelected(target);
@@ -647,6 +654,9 @@ export function App({ engine }: { engine: Engine }) {
     (id) => frameEnd(motionNow(), () => viewport.current?.frame(id, true)),
     () => endMotion(motionNow()),
   );
+  /** The shape shown apart now, for the view requests (handled outside React's render). */
+  const explodeNow = useRef(explode);
+  explodeNow.current = explode;
   // A rebuilt shape is drawn afresh: lay its explode over it again.
   const explodedMesh = explode ? state.entities.get(explode.id)?.mesh : undefined;
   useEffect(() => {

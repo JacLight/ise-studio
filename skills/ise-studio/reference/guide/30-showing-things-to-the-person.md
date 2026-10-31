@@ -12,7 +12,7 @@ You can drive their view, not just the design. When they ask to see something, s
 ./ise view hide L19 / show L19 hide or show one item
 ./ise view color status        paint the building by sale status (color material to undo)
 ./ise view camera top          iso, front, back, left, right, top, bottom (glides there, everything framed)
-./ise view explode Bracket 1.5 pull a part's pieces or an assembly's instances apart (spread 0.25–2.5, default 1); a saved exploded view's name plays it step by step (`view explode Exploded`); `off` puts them back
+./ise view explode Bracket 1.5 pull a part's pieces or an assembly's instances apart (spread 0.25–2.5, default 1); a saved exploded view's name plays it step by step (`view explode Exploded`); `off` puts them back (`view explode off`, naming nothing: everything shown apart)
 ./ise view camera 35,20,20,0.85   any direction: azimuth (0 from the front, 90 from the right), elevation, and optionally the lens's vertical angle (default 36°; 15–25° for product shots with little perspective) and how much of the frame what is shown fills (0.85: a product shot framed tight and centred; left out: framed loosely); straight down (elevation 90) the azimuth says which way is up, as if the camera had tilted up from there (90,90: the +X end at the bottom)
 ./ise view render              photoreal render mode: the view path-traced live (studio light, physical metals, plastics, glass); `render white` in the white sweep
 ./ise view projection ortho    orthographic (true elevations) or perspective

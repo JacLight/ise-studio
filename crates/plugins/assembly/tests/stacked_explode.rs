@@ -3,7 +3,8 @@
 //! clear of the ones under it, top first; a product spread out sideways still
 //! comes apart from its middle.
 
-use de_assembly::views::{auto_steps, stack_layers};
+use de_assembly::views::auto_steps;
+use de_shape::stack::{PartMesh, lift_layers};
 use de_assembly::AssemblyPlugin;
 use de_core::{Actor, CommandError, Envelope, Project, Registry, SCHEMA_VERSION, StableId, Value, json};
 use de_shape::ShapePlugin;
@@ -27,17 +28,23 @@ fn id(v: &Value) -> StableId {
     serde_json::from_value(v["id"].clone()).unwrap()
 }
 
+/// A box as a part: its top and bottom faces are all the stack reads.
+fn block(min: [f64; 3], max: [f64; 3]) -> PartMesh {
+    let face = |z: f64| [[[min[0], min[1], z], [max[0], min[1], z], [max[0], max[1], z]], [[min[0], min[1], z], [max[0], max[1], z], [min[0], max[1], z]]];
+    PartMesh { triangles: [face(min[2]), face(max[2])].concat(), min, max }
+}
+
 #[test]
 fn layers_lift_clear_of_the_ones_under_them() {
     // A housing 0–20, two planets 2–14 inside it, a carrier 12–26 over them, a knob 0–40 through the middle.
-    let boxes = [
-        ([-50.0, -50.0, 0.0], [50.0, 50.0, 20.0]),
-        ([10.0, -6.0, 2.0], [22.0, 6.0, 14.0]),
-        ([-22.0, -6.0, 2.0], [-10.0, 6.0, 14.0]),
-        ([-30.0, -30.0, 12.0], [30.0, 30.0, 26.0]),
-        ([-8.0, -8.0, 0.0], [8.0, 8.0, 40.0]),
+    let parts = [
+        block([-50.0, -50.0, 0.0], [50.0, 50.0, 20.0]),
+        block([10.0, -6.0, 2.0], [22.0, 6.0, 14.0]),
+        block([-22.0, -6.0, 2.0], [-10.0, 6.0, 14.0]),
+        block([-30.0, -30.0, 12.0], [30.0, 30.0, 26.0]),
+        block([-8.0, -8.0, 0.0], [8.0, 8.0, 40.0]),
     ];
-    let layers = stack_layers(&boxes, 0, 5.0).expect("stacked");
+    let layers = lift_layers(&parts, 5.0).expect("stacked");
     let order: Vec<Vec<usize>> = layers.iter().map(|(m, _)| m.clone()).collect();
     assert_eq!(order, vec![vec![1, 2], vec![3], vec![4]], "planets, then the carrier, then the knob");
     // Planets clear the housing top (20) by the gap; the carrier clears the risen planets; the knob the carrier.
@@ -45,8 +52,7 @@ fn layers_lift_clear_of_the_ones_under_them() {
     assert_eq!(layers[1].1, (14.0 + 23.0) - 12.0 + 5.0);
     assert_eq!(layers[2].1, (26.0 + 30.0) - 0.0 + 5.0);
     // Side by side is not a stack.
-    let apart = [([0.0, 0.0, 0.0], [10.0, 10.0, 10.0]), ([40.0, 0.0, 0.0], [50.0, 10.0, 10.0])];
-    assert!(stack_layers(&apart, 0, 5.0).is_none());
+    assert!(lift_layers(&[block([0.0; 3], [10.0; 3]), block([40.0, 0.0, 0.0], [50.0, 10.0, 10.0])], 5.0).is_none());
 }
 
 #[test]

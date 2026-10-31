@@ -84,6 +84,8 @@ export type PartStats = {
   centroid: [number, number, number];
   index_start: number;
   index_count: number;
+  /** A stacked product's exploded view: how far this part lifts (mm, 0 for the base), worked out by the engine from the meshes. */
+  rise?: number;
 };
 
 /** A triangle mesh in metres. Meshes from the engine arrive as typed arrays, shared by every entity showing the same content. */

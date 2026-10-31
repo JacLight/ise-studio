@@ -627,6 +627,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_scan_is_added_repaired_inspected_against_its_part_and_made_a_part() {
+        let _turn = crate::formats::tests::SHARED_FOLDER.lock().await;
         let dir = std::env::temp_dir().join(format!("ise-scans-{}", StableId::new()));
         if de_shape::assets::dir().is_none() {
             de_shape::assets::set_dir(dir.join("assets"));

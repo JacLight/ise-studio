@@ -2595,7 +2595,7 @@ ise inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] [-
   let target = null;
   let value = null;
   // explode: how far apart (a number, 1 by default) or "off", after the name.
-  const how = action === "explode" ? arg.match(/\s+(off|\d*\.?\d+)$/) : null;
+  const how = action === "explode" ? arg.match(/(?:^|\s+)(off|\d*\.?\d+)$/) : null;
   if (how) {
     value = how[1];
     arg = arg.slice(0, how.index).trim();

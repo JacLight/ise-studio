@@ -1,6 +1,7 @@
 // Exploded view of an assembly: a stacked product (every part over the one
 // with the biggest footprint: a gearbox's housing, a case's base) comes apart
-// upwards, each layer lifted clear of the ones under it; anything else slides
+// upwards, each layer lifted clear of the ones under it, in the order the
+// engine works out from the meshes (part stats' `rise`); anything else slides
 // out from the assembly's centre along the line from it through each part,
 // and back. A way of looking, not a change: nothing is saved, the parts stay
 // pickable where they show, and a mechanism shown moving keeps moving while
@@ -18,49 +19,6 @@ type V3 = [number, number, number];
 export type Explode = { id: string; spread: number; open: boolean };
 
 const centreOf = (min: V3, max: V3): V3 => [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2];
-
-type Box = { bounds_min: V3; bounds_max: V3 };
-
-/**
- * How far each part rises when the parts are stacked over the biggest footprint
- * (as the engine's automatic exploded view does): layers of parts whose tops are
- * level, bottom up, each lifted clear of the risen layers under it plus `gap`.
- * Null when they are not stacked.
- */
-export function stackRises(parts: Box[], gap: number): number[] | null {
-  if (parts.length < 2) return null;
-  const foot = (p: Box) => Math.max(0, p.bounds_max[0] - p.bounds_min[0]) * Math.max(0, p.bounds_max[1] - p.bounds_min[1]);
-  let base = 0;
-  parts.forEach((p, i) => {
-    const d = foot(p) - foot(parts[base]);
-    if (d > 0 || (d === 0 && p.bounds_min[2] < parts[base].bounds_min[2])) base = i;
-  });
-  const b = parts[base];
-  const pad = [(b.bounds_max[0] - b.bounds_min[0]) * 0.05, (b.bounds_max[1] - b.bounds_min[1]) * 0.05];
-  const over = parts.every((p) => [0, 1].every((k) => {
-    const c = (p.bounds_min[k] + p.bounds_max[k]) / 2;
-    return c >= b.bounds_min[k] - pad[k] && c <= b.bounds_max[k] + pad[k];
-  }));
-  if (!over) return null;
-  const height = Math.max(...parts.map((p) => p.bounds_max[2])) - Math.min(...parts.map((p) => p.bounds_min[2]));
-  const level = height * 0.01 + 0.2;
-  const rest = parts.map((_, i) => i).filter((i) => i !== base).sort((i, j) => parts[i].bounds_max[2] - parts[j].bounds_max[2] || i - j);
-  const rises = parts.map(() => 0);
-  let [floor, rise] = [b.bounds_max[2], 0];
-  for (let k = 0; k < rest.length; ) {
-    const top = parts[rest[k]].bounds_max[2];
-    let n = k;
-    while (n < rest.length && parts[rest[n]].bounds_max[2] - top <= level) n++;
-    const layer = rest.slice(k, n);
-    k = n;
-    for (const i of layer) rise = Math.max(rise, floor - parts[i].bounds_min[2] + gap);
-    for (const i of layer) {
-      rises[i] = rise;
-      floor = Math.max(floor, parts[i].bounds_max[2] + rise);
-    }
-  }
-  return rises;
-}
 
 /**
  * Each part as its own body, pushed out from the assembly's centre by
@@ -80,7 +38,8 @@ export function explodedBodies(parts: PartStats[], motion: TurnBody[] | null, am
     }
   const centre = new THREE.Vector3(...centreOf(lo, hi));
   const diagonal = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
-  const rises = stackRises(parts, diagonal * 0.1);
+  // Stacked: the engine says how far each part lifts (layer by layer, from the meshes).
+  const rises = parts.every((p) => typeof p.rise === "number") ? parts.map((p) => p.rise!) : null;
   const offsets = parts.map((p, g) => {
     if (rises) return new THREE.Vector3(0, 0, rises[g] * amount);
     const out = new THREE.Vector3(...centreOf(p.bounds_min, p.bounds_max)).sub(centre);

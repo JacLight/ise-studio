@@ -160,6 +160,25 @@ fn leaf(world: &World, o: &Occurrence) -> Result<Option<Leaf>, String> {
     }))
 }
 
+/// An instance as a part to stack (`de_shape::stack`): every shape in it, where it is; its box alone
+/// (as its triangles) when a shape in it has no valid result.
+pub(crate) fn stack_part(world: &World, id: StableId, b: (V3, V3)) -> de_shape::stack::PartMesh {
+    let mut triangles = vec![];
+    for o in placed_occurrences(world, id) {
+        if let Ok(Some(l)) = leaf(world, &o)
+            && let Some(p) = de_shape::stack::part_of(&l.solid)
+        {
+            triangles.extend(p.triangles);
+        }
+    }
+    if triangles.is_empty() {
+        let (lo, hi) = b;
+        let top = [[lo[0], lo[1], hi[2]], [hi[0], lo[1], hi[2]], [hi[0], hi[1], hi[2]], [lo[0], hi[1], hi[2]]];
+        triangles = vec![[top[0], top[1], top[2]], [top[0], top[2], top[3]]];
+    }
+    de_shape::stack::PartMesh { triangles, min: b.0, max: b.1 }
+}
+
 /// Every shape in an instance or assembly; a shape placed on its own where its placement puts it.
 pub(crate) fn placed_occurrences(world: &World, id: StableId) -> Vec<Occurrence> {
     let mut occ = crate::occurrences(world, id);

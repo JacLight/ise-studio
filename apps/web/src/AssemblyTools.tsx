@@ -816,6 +816,9 @@ let playCount = 0;
 const PLAY_EVENT = "ise-play-exploded";
 
 const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+/** Puts back whatever exploded view is shown, in any assembly. */
+export const closeExploded = () => playExploded("*", "*", false);
+
 export function playExploded(id: string, scope: string, open = true, spread?: number) {
   // Begun now, not when the panel picks it up: a render asked for straight after waits for it.
   playRequest = { id, scope, spread, open, n: ++playCount, playback: open ? beginMotion() : undefined };
@@ -828,7 +831,7 @@ export function AssemblyStudio(props: { scope: string; frame: Transform; entitie
   useEffect(() => {
     const take = () => {
       const r = playRequest;
-      if (!r || r.scope !== props.scope) return;
+      if (!r || (r.scope !== props.scope && r.scope !== "*")) return;
       playRequest = null;
       if (r.open) setTab("explode");
       setPlay(r);
@@ -980,7 +983,7 @@ function Exploded({ scope, frame, entities, run, view, play }: StudioProps & { p
   useEffect(() => {
     if (!play) return;
     if (!play.open) {
-      if (open?.id === play.id) close();
+      if (open && (play.id === "*" || open.id === play.id)) close();
       return;
     }
     const p = play.playback ?? beginMotion();

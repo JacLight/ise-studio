@@ -36,6 +36,7 @@ pub mod runtime;
 pub mod scad;
 pub mod sheet;
 pub mod sheet_metal;
+pub mod stack;
 pub mod silhouette;
 pub mod sketch;
 pub mod sketch_tools;
@@ -756,6 +757,11 @@ pub struct PartStats {
     /// Range of the display mesh's index buffer that draws this part.
     pub index_start: usize,
     pub index_count: usize,
+    /// In an exploded view of a stacked product (every part over the biggest
+    /// footprint): how far this part lifts, layer by layer (`stack`); none
+    /// when the parts are not stacked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rise: Option<f64>,
 }
 
 /// The program evaluated at a chosen accuracy (mm), cached: requirement
@@ -1411,6 +1417,7 @@ pub fn preview(program: &ShapeProgram) -> Result<(ShapeStats, DisplayMesh), Stri
 }
 
 pub(crate) fn stats_of(e: &runtime::Evaluated) -> ShapeStats {
+    let rises = if e.parts.len() >= 2 { stack::rises(&e.parts.iter().filter_map(|p| stack::part_of(&p.solid)).collect::<Vec<_>>()).filter(|r| r.len() == e.parts.len()) } else { None };
     ShapeStats {
         volume_mm3: e.volume,
         area_mm2: e.area,
@@ -1422,7 +1429,9 @@ pub(crate) fn stats_of(e: &runtime::Evaluated) -> ShapeStats {
         parts: e
             .parts
             .iter()
-            .map(|p| PartStats {
+            .enumerate()
+            .map(|(i, p)| PartStats {
+                rise: rises.as_ref().map(|r| r[i]),
                 name: p.name.clone(),
                 material: p.material.clone(),
                 process: p.process.clone(),
