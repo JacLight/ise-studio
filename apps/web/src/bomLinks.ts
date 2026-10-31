@@ -4,7 +4,7 @@
 // scene says where each definition is drawn.
 
 import type { EntityView } from "./engine";
-import { box, configurations, instance, isPart, occurrences, program } from "./model";
+import { box, configurations, instance, occurrences, program, topParts } from "./model";
 
 /** One definition a BOM line's parts come from (the engine's `uses`). */
 export type LineUse = { shape: string; config?: string; part?: string };
@@ -34,7 +34,7 @@ export function sceneIndex(entities: ReadonlyMap<string, EntityView>, scope: str
   };
   const root = scope ? entities.get(scope) : undefined;
   if (root && (instance(root) || box(root) || !program(root))) visit(root);
-  else for (const e of entities.values()) if (isPart(e)) visit(e);
+  else for (const e of topParts(entities)) visit(e);
   return index;
 }
 

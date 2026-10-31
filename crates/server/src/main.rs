@@ -1257,13 +1257,15 @@ async fn export(State(server): State<Arc<Server>>, Path(file): Path<String>, Que
     let sources: Vec<Source> = {
         let project = app.project.lock().unwrap();
         if stem == "project" && ext == "zip" {
-            // Top-level items only: nested instances and definitions (assemblies, and
-            // shapes with no placement) come with the instances that use them.
+            // Top-level items only: nested instances and definitions (assemblies, shapes
+            // with no placement, and placed shapes put into an assembly) come with the
+            // instances that use them.
+            let instanced = de_assembly::instanced(project.world());
             project
                 .entity_ids()
                 .into_iter()
                 .filter(|id| project.get::<de_assembly::AssemblyDef>(*id).is_none() && project.get::<de_assembly::Instance>(*id).is_none_or(|i| i.parent.is_none()))
-                .filter(|id| project.get::<ShapeProgram>(*id).is_none() || project.get::<de_solid::Placement>(*id).is_some())
+                .filter(|id| project.get::<ShapeProgram>(*id).is_none() || (project.get::<de_solid::Placement>(*id).is_some() && !instanced.contains(id)))
                 .filter_map(|id| source(&project, id))
                 .collect()
         } else {

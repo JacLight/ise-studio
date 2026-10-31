@@ -290,6 +290,23 @@ export type GroupData = { name: string; members: string[] };
 export const groupOf = (e: EntityView | undefined) => e?.components["assembly.group"] as GroupData | undefined;
 export const isPart = (e: EntityView) => !!box(e) || (!!program(e) && !!placement(e)) || (!!instance(e) && !instance(e)!.parent);
 
+/** The shapes and assemblies that instances place. A placed shape put into an assembly stands in the
+ *  project through its instances only (drawn, listed and checked there), not a second time on its own. */
+export function instanced(entities: ReadonlyMap<string, EntityView>): Set<string> {
+  const used = new Set<string>();
+  for (const e of entities.values()) {
+    const i = instance(e);
+    if (i) used.add(i.of);
+  }
+  return used;
+}
+
+/** The items at the top of the project: boxes, placed shapes (unless put into an assembly) and top-level instances. */
+export function topParts(entities: ReadonlyMap<string, EntityView>): EntityView[] {
+  const used = instanced(entities);
+  return [...entities.values()].filter((e) => isPart(e) && !used.has(e.id));
+}
+
 /** Where the part's own origin sits relative to its bounds' minimum corner (mm). */
 export function originOffset(e: EntityView): [number, number, number] {
   // Instances are drawn in place; their group sits at the origin until moved.

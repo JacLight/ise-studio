@@ -1906,6 +1906,13 @@ dialog p {
   max-height: calc(100% - 236px);
 }
 
+/* The floating AI panel holds the bottom right: the view tools take the bottom left, under the view bar. */
+.app.view-narrow:has(.ai-panel.floating) .view-tools {
+  left: 20px;
+  transform: none;
+  align-items: flex-start;
+}
+
 .app.view-tight .share-pill,
 .app.view-tight .view-caption,
 .app.view-tight .concept {

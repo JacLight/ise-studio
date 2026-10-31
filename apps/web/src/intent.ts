@@ -3,7 +3,7 @@
 // is being dragged. On commit the engine's own verdict replaces the preview.
 
 import type { EntityView, RequirementResult } from "./engine";
-import { type Shape, fmt, formatMass, instance, isPart, material, materialRef, program, shapeOf } from "./model";
+import { type Shape, fmt, formatMass, instance, material, materialRef, program, shapeOf, topParts } from "./model";
 
 type Q = { value: number; unit: string };
 
@@ -91,8 +91,7 @@ export function displayedWorld(entities: ReadonlyMap<string, EntityView>, live: 
   const shapes = new Map<string, Shape>();
   const massKg = new Map<string, number | null>();
   const exact = new Set<string>();
-  for (const e of entities.values()) {
-    if (!isPart(e)) continue;
+  for (const e of topParts(entities)) {
     const s = live?.id === e.id ? live : shapeOf(e);
     shapes.set(e.id, s);
     if (program(e)) {

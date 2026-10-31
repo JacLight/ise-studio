@@ -19,7 +19,7 @@ import { type CanvasTool, canvasOf } from "./canvasLayer";
 import { CalibrateBar, CanvasInsertDialog, CanvasProperties, CanvasSection, CropBar, PerspectiveBar } from "./CanvasTools";
 import { RequirementsPanel } from "./RequirementsPanel";
 import { type Attachment, type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, type TeamCursor, mm, projectInfo, projectName, projectTitle, projectUrl } from "./engine";
-import { type ConfigRow, type EdgeFinish, type Frac, type LiveEdit, type Shape, assemblyParts, box, groupOf, instance, isPart, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
+import { type ConfigRow, type EdgeFinish, type Frac, type LiveEdit, type Shape, assemblyParts, box, groupOf, instance, isPart, topParts, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
 import { GroupList, HistoryBody, ObjectsBody, ProjectBody, PropertiesBody, ToolPanel, ViewsBody } from "./Panels";
 import { useEdgeEditor } from "./EdgeEditor";
 import { type FaceToolKind, useFaceTool } from "./FaceTool";
@@ -31,6 +31,7 @@ import { PlaneMenu, useSketchEditor } from "./SketchEditor";
 import { Icon } from "./icons";
 import { sketchOf } from "./sketchModel";
 import { ComponentTree, ComponentsBody, InstanceBody, ParameterSets, StackingPlan, parameterSet, stackingSubject } from "./Components";
+import { playExploded } from "./AssemblyTools";
 import { type AiMode, type DockSide, type Group, type PanelKind, type UiPrefs, loadPrefs, savePrefs } from "./ui";
 import { DOCK_MIN_WINDOW, type DockPlace, type DockSlot, Splitter, StackSplitter, layoutDocks, useDockDrag, useWindowSize } from "./Dock";
 import { IMPORT_ACCEPT, IMPORT_FORMATS, type ImportReply, importSummary, importable } from "./fileFormats";
@@ -258,6 +259,8 @@ export function App({ engine }: { engine: Engine }) {
       overlay: setAssemblyOverlay,
       geometry: (f) => setGeometryPick(() => f),
       snapshot: () => viewport.current?.snapshot() ?? null,
+      // After the poses are drawn.
+      fit: () => window.setTimeout(() => viewport.current?.frame(undefined, true), 80),
     }),
     [flexSamples],
   );
@@ -285,7 +288,7 @@ export function App({ engine }: { engine: Engine }) {
   const update = useCallback((patch: Partial<UiPrefs>) => setPrefs((p) => ({ ...p, ...patch })), []);
   useEffect(() => savePrefs(prefs), [prefs]);
 
-  const parts = useMemo(() => [...state.entities.values()].filter(isPart), [state.entities]);
+  const parts = useMemo(() => topParts(state.entities), [state.entities]);
   const materials = useMemo(() => [...state.entities.values()].filter((e) => material(e)), [state.entities]);
   const selectedPart = selected ? state.entities.get(selected) : undefined;
   /** What the viewport shows: engine state, with a previewed shape swapped in. */
@@ -356,9 +359,25 @@ export function App({ engine }: { engine: Engine }) {
           case "color":
             setColorBy(value === "status" ? "status" : "material");
             break;
-          case "explode":
+          case "explode": {
             // An assembly pulled apart (value: the spread, or "off" to put it back).
             if (!target) return;
+            // A saved exploded view, or an assembly of instances (pulled apart along the lines from its middle):
+            // its assembly's studio plays it, step by step (off closes it). A shape of several parts explodes below.
+            const shown = entitiesNow.current.get(target);
+            const saved = shown?.components["assembly.exploded_view"] as { assembly?: string } | undefined;
+            const of = instance(shown)?.of;
+            const scope = saved ? saved.assembly : of && entitiesNow.current.get(of)?.components["assembly.definition"] ? of : undefined;
+            if (scope) {
+              const holder = saved ? [...entitiesNow.current.values()].find((e) => instance(e)?.of === scope) : shown;
+              if (!holder) return;
+              playExploded(target, scope, value !== "off", saved ? undefined : Math.min(2.5, Math.max(0.25, Number(value) || 1)));
+              if (value !== "off") {
+                setSelected(holder.id);
+                setPanel("properties");
+              }
+              break;
+            }
             if (value === "off") setExplode((e) => (e?.id === target ? { ...e, open: false } : e));
             else {
               setSelected(target);
@@ -366,6 +385,7 @@ export function App({ engine }: { engine: Engine }) {
               setExplode({ id: target, spread: Math.min(2.5, Math.max(0.25, Number(value) || 1)), open: true });
             }
             break;
+          }
           case "render": {
             // A render asked for from ./ise render: made here, sent back to the engine.
             const job = value ? (JSON.parse(value) as { job?: string; width?: number; height?: number; samples?: number; open?: boolean; studio?: Studio; format?: string; skin?: string[] }) : {};
@@ -388,20 +408,21 @@ export function App({ engine }: { engine: Engine }) {
             const source = view && skins.length ? { ...view, skins } : view;
             const back = (body: BodyInit, error?: string) =>
               fetch(projectUrl(`/render/${job.job}${error ? `?error=${encodeURIComponent(error)}` : ""}`), { method: "POST", body }).catch(() => undefined);
-            if (!source) {
-              back("", "the view is not ready");
-              break;
-            }
+            // A picture is path-traced only by a view on screen (a background tab is throttled, and would hold
+            // the render up for minutes) and one ready to: else another view, or a headless browser, makes it.
+            if (!source || (job.format !== "glb" && document.visibilityState !== "visible")) break;
+            // The first view to take the job makes it.
+            const take = fetch(projectUrl(`/render/${job.job}?take=1`), { method: "POST" }).then((r) => r.status === 204, () => false);
             // A model for a website (./ise render --glb) rather than a picture.
             if (job.format === "glb") {
-              modelForWeb(source)
-                .then((glb) => back(new Blob([glb], { type: "model/gltf-binary" })))
-                .catch((e) => back("", String(e)));
+              take.then((mine) => {
+                if (mine) modelForWeb(source).then((glb) => back(new Blob([glb], { type: "model/gltf-binary" })), (e) => back("", String(e)));
+              });
               break;
             }
-            renderImage(source, { width: job.width ?? 1920, height: job.height ?? 1080, samples: job.samples ?? 256, studio: studioNow.current })
-              .then((png) => back(png))
-              .catch((e) => back("", String(e)));
+            take.then((mine) => {
+              if (mine) renderImage(source, { width: job.width ?? 1920, height: job.height ?? 1080, samples: job.samples ?? 256, studio: studioNow.current }).then((png) => back(png), (e) => back("", String(e)));
+            });
             break;
           }
           case "camera":

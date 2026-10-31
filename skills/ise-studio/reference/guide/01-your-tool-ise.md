@@ -24,6 +24,7 @@ Run it from your working folder. It acts on the open project. It is your only wa
 ./ise pcb add <schematic> <Library:Symbol> [--footprint L:F] [--at x,y] [--ref U3]   place a KiCad part (its footprint goes on the board too)
 ./ise pcb verify-footprints [names…]   every built-in footprint against KiCad's, pad by pad
 ./ise pcb gerber-check <board>     the fab files read back independently and compared with the board
+./ise pcb fab <board> [jlcpcb]     the board against each fab's published limits (the Fab tab's fab checks)
 ./ise pcb import <file> [--format f] [--name n] [--board id] [companions…]   a board/schematic from KiCad, Eagle, EasyEDA, Altium, CADSTAR, Fabmaster, PADS, gEDA
 ./ise pcb exports <id>             files a board (or schematic) can be written as for other EDA tools
 ./ise pcb export <id> <name|kind> [--out path]   one of them (kicad_sch, kicad_zip, net, ipc2581, odb, d356, gbrjob, drill_map, svg, pdf, glb, wrl, pos, x3_top, …)

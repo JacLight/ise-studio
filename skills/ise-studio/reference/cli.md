@@ -27,10 +27,10 @@
 | `study <study> [fps] [--out frames.json]` | play a motion study: what moves, clashes, binding; frames to a file |
 | `robot <tip> [fk '{"Shoulder":30}' \| ik x,y,z [--axis 0,0,-1] \| reach [samples] \| path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]' \| controller [json\|arduino] [--out f]] [--tool connector]` |  |
 | `stock [search]` | the stock library: families, or the sizes matching (M3×12, 608, servo) |
-| `render [--width 1920] [--height 1080] [--samples 256] [--studio white\|studio] [--skin "Left side,Top"] [--headless] [--timeout minutes] [--out f.png]` | a photoreal PNG of the model from the open view (headless Chrome if none is open); white: a seamless white sweep for product shots; --skin lays the product's calibrated photos (canvases) onto the faces they saw (none: off); --headless renders in a browser of its own even when a view is open |
+| `render [--width 1920] [--height 1080] [--samples 256] [--studio white\|studio] [--skin "Left side,Top"] [--headless] [--timeout minutes] [--out f.png]` | a photoreal PNG of the model from the open view (headless Chrome if no view on screen takes it: a background tab leaves it); white: a seamless white sweep for product shots; --skin lays the product's calibrated photos (canvases) onto the faces they saw (none: off); --headless renders in a browser of its own even when a view is open |
 | `render --glb product.glb` | the shown model as a .glb for a website (the render's materials and printed labels; metres, Y up, on the ground) |
 | `flat [id \| project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]` | sheet-metal parts: flat size, bend table, checks; the laser DXF |
-| `pcb parts\|add\|footprint\|verify-footprints\|gerber-check\|library …` | KiCad library parts, footprint and Gerber checks |
+| `pcb parts\|add\|footprint\|verify-footprints\|gerber-check\|fab\|library …` | KiCad library parts, footprint and Gerber checks, the board against each fab's limits (pcb fab <board> [jlcpcb]) |
 | `pcb calc\|panel\|gerbview\|glb …` | board calculators, panelization, the Gerber viewer, the board as glTF |
 | `pcb route\|drag\|cleanup\|optimize …` | the interactive router: pad to pad (walkaround/shove), drag a track or via, tidy copper |
 | `pcb import <file> [--format f] [--name n] [--board id] [companions…]` | a board/schematic from KiCad, Eagle, EasyEDA, Altium, CADSTAR, Fabmaster, PADS, gEDA |

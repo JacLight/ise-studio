@@ -806,8 +806,34 @@ type ExplodeData = { name: string; assembly?: string; steps: unknown[] };
 type StudyData = { name: string; assembly?: string; duration: number; tracks: unknown[] };
 const comp = <T,>(e: EntityView, k: string) => e.components[k] as T | undefined;
 
+// An exploded view asked for by name (./ise view explode "Exploded", Iṣẹ́ AI): the studio of its
+// assembly plays it as soon as it shows (it opens with the assembly's properties), or closes it.
+// `id`: a saved exploded view, or an instance of the assembly pulled apart by `spread` (nothing saved).
+type PlayRequest = { id: string; scope: string; spread?: number; open: boolean; n: number };
+let playRequest: PlayRequest | null = null;
+let playCount = 0;
+const PLAY_EVENT = "ise-play-exploded";
+const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+export function playExploded(id: string, scope: string, open = true, spread?: number) {
+  playRequest = { id, scope, spread, open, n: ++playCount };
+  window.dispatchEvent(new Event(PLAY_EVENT));
+}
+
 export function AssemblyStudio(props: { scope: string; frame: Transform; entities: ReadonlyMap<string, EntityView>; run: Run; view: JointView; onSelect: (id: string) => void }) {
   const [tab, setTab] = useState<Tab | null>(null);
+  const [play, setPlay] = useState<PlayRequest | null>(null);
+  useEffect(() => {
+    const take = () => {
+      const r = playRequest;
+      if (!r || r.scope !== props.scope) return;
+      playRequest = null;
+      if (r.open) setTab("explode");
+      setPlay(r);
+    };
+    take();
+    window.addEventListener(PLAY_EVENT, take);
+    return () => window.removeEventListener(PLAY_EVENT, take);
+  }, [props.scope]);
   return (
     <section className="props-section at-studio">
       <header>
@@ -822,7 +848,7 @@ export function AssemblyStudio(props: { scope: string; frame: Transform; entitie
         ))}
       </div>
       {tab === "poses" && <Poses key={props.scope} {...props} />}
-      {tab === "explode" && <Exploded key={props.scope} {...props} />}
+      {tab === "explode" && <Exploded key={props.scope} {...props} play={play} />}
       {tab === "motion" && <Studies key={props.scope} {...props} />}
       {tab === "robot" && <Robot key={props.scope} {...props} />}
       {tab === "clash" && <Interference key={props.scope} {...props} />}
@@ -882,7 +908,7 @@ function Poses({ scope, entities, run }: StudioProps) {
 
 type ExplodedResult = { name: string; instances: { id: string; name: string; moves: boolean }[]; steps: { name: string; poses: [V3, Quat][] }[]; trails: { instance: string; points: V3[] }[] };
 
-function Exploded({ scope, frame, entities, run, view }: StudioProps) {
+function Exploded({ scope, frame, entities, run, view, play }: StudioProps & { play?: PlayRequest | null }) {
   useCleanView(view);
   const views = [...entities.values()].filter((e) => comp<ExplodeData>(e, "assembly.exploded_view")?.assembly === scope);
   const [open, setOpen] = useState<{ id: string; r: ExplodedResult } | null>(null);
@@ -890,9 +916,10 @@ function Exploded({ scope, frame, entities, run, view }: StudioProps) {
   const [playing, setPlaying] = useState(false);
   const [spread, setSpread] = useState("1");
   const [error, setError] = useState<string | null>(null);
-  const show = async (id: string) => {
+  const fitAtEnd = useRef(false);
+  const show = async (id: string, spread?: number) => {
     try {
-      const r = await getJson<ExplodedResult>(`/explode/${id}`);
+      const r = await getJson<ExplodedResult>(`/explode/${id}${spread ? `?spread=${spread}` : ""}`);
       setOpen({ id, r });
       setAt(r.steps.length - 1);
       setError(null);
@@ -921,6 +948,10 @@ function Exploded({ scope, frame, entities, run, view }: StudioProps) {
       if (k >= last) {
         setAt(last);
         setPlaying(false);
+        if (fitAtEnd.current) {
+          fitAtEnd.current = false;
+          view.fit();
+        }
         return;
       }
       setAt(k);
@@ -930,6 +961,26 @@ function Exploded({ scope, frame, entities, run, view }: StudioProps) {
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing]);
+  // Asked for by name: played from closed to the last step (at once when motion is reduced), or closed.
+  useEffect(() => {
+    if (!play) return;
+    if (!play.open) {
+      if (open?.id === play.id) close();
+      return;
+    }
+    show(play.id, play.spread).then(() => {
+      // Ends framed: every part in view, pulled apart.
+      fitAtEnd.current = true;
+      if (reducedMotion()) {
+        fitAtEnd.current = false;
+        view.fit();
+        return;
+      }
+      setAt(0);
+      setPlaying(true);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [play]);
   const close = () => {
     setOpen(null);
     view.poses(null);

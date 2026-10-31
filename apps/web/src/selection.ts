@@ -2,7 +2,7 @@
 // duplicate parts and instances as new items (new ids) set off to one side.
 
 import type { EntityView } from "./engine";
-import { box, instance, isPart, placement, program, type Program } from "./model";
+import { box, instance, isPart, placement, program, topParts, type Program } from "./model";
 
 export type ItemType = "part" | "box" | "instance" | "assembly";
 
@@ -24,7 +24,7 @@ export function typeOf(e: EntityView, entities: ReadonlyMap<string, EntityView>)
 
 /** Top-level items that can be selected in the view (not hidden). */
 export function selectable(entities: ReadonlyMap<string, EntityView>, hidden: ReadonlySet<string> = new Set()): string[] {
-  return [...entities.values()].filter((e) => isPart(e) && !hidden.has(e.id)).map((e) => e.id);
+  return topParts(entities).filter((e) => !hidden.has(e.id)).map((e) => e.id);
 }
 
 export function ofType(entities: ReadonlyMap<string, EntityView>, type: ItemType, hidden?: ReadonlySet<string>): string[] {

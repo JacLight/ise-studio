@@ -64,6 +64,7 @@ import {
   partMaterial,
   instance,
   isDefinition,
+  instanced,
   occurrences,
   type Look,
   materialLook,
@@ -325,7 +326,8 @@ function groupsOf(g: THREE.BufferGeometry, keep: (i: number) => boolean) {
 export type ViewportHandle = {
   fit: () => void;
   /** Frames one item: a part, or an instance at any depth inside one. */
-  frame: (id: string, glide?: boolean) => void;
+  /** Frames that item, or everything shown (no id). */
+  frame: (id?: string, glide?: boolean) => void;
   /** Turns the camera to look straight at a sketch plane, centred on what is drawn (or back to normal with null). */
   faceSketch: (plane: Plane | null, focus?: { center: [number, number]; size: number }) => void;
   /** Leaving a sketch: glides from looking straight at it to a three-quarter view, everything framed. */
@@ -2843,9 +2845,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       lastSelected.current = selected;
     }
     // Drawn directly: boxes, placed shapes and top-level instances. Components
-    // (definitions) are drawn only through their instances.
+    // (definitions) are drawn only through their instances, as is a placed shape put into an assembly.
     pcbLooks.touch();
-    const drawn = (e: EntityView | undefined) => !!e && (instance(e) ? !instance(e)!.parent : !!e.mesh && !isDefinition(e));
+    const placedIn = instanced(entities);
+    const drawn = (e: EntityView | undefined) => !!e && (instance(e) ? !instance(e)!.parent : !!e.mesh && !isDefinition(e) && !placedIn.has(e.id));
     for (const [id, part] of t.parts) {
       if (!drawn(entities.get(id))) {
         t.scene.remove(part.group);

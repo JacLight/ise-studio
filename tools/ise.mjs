@@ -28,10 +28,10 @@
 //   node tools/ise.mjs study <study> [fps] [--out frames.json]   play a motion study: what moves, clashes, binding; frames to a file
 //   node tools/ise.mjs robot <tip> [fk '{"Shoulder":30}' | ik x,y,z [--axis 0,0,-1] | reach [samples] | path '[{"pose":"home"},{"to":[x,y,z],"linear":true}]' | controller [json|arduino] [--out f]] [--tool connector]
 //   node tools/ise.mjs stock [search]       the stock library: families, or the sizes matching (M3×12, 608, servo)
-//   node tools/ise.mjs render [--width 1920] [--height 1080] [--samples 256] [--studio white|studio] [--skin "Left side,Top"] [--headless] [--timeout minutes] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if none is open); white: a seamless white sweep for product shots; --skin lays the product's calibrated photos (canvases) onto the faces they saw (none: off); --headless renders in a browser of its own even when a view is open
+//   node tools/ise.mjs render [--width 1920] [--height 1080] [--samples 256] [--studio white|studio] [--skin "Left side,Top"] [--headless] [--timeout minutes] [--out f.png]   a photoreal PNG of the model from the open view (headless Chrome if no view on screen takes it: a background tab leaves it); white: a seamless white sweep for product shots; --skin lays the product's calibrated photos (canvases) onto the faces they saw (none: off); --headless renders in a browser of its own even when a view is open
 //   node tools/ise.mjs render --glb product.glb   the shown model as a .glb for a website (the render's materials and printed labels; metres, Y up, on the ground)
 //   node tools/ise.mjs flat [id | project] [part] [--dxf f.dxf] [--svg f.svg] [--csv f.csv]   sheet-metal parts: flat size, bend table, checks; the laser DXF
-//   node tools/ise.mjs pcb parts|add|footprint|verify-footprints|gerber-check|library …   KiCad library parts, footprint and Gerber checks
+//   node tools/ise.mjs pcb parts|add|footprint|verify-footprints|gerber-check|fab|library …   KiCad library parts, footprint and Gerber checks, the board against each fab's limits (pcb fab <board> [jlcpcb])
 //   node tools/ise.mjs pcb calc|panel|gerbview|glb …   board calculators, panelization, the Gerber viewer, the board as glTF
 //   node tools/ise.mjs pcb route|drag|cleanup|optimize …   the interactive router: pad to pad (walkaround/shove), drag a track or via, tidy copper
 //   node tools/ise.mjs pcb import <file> [--format f] [--name n] [--board id] [companions…]   a board/schematic from KiCad, Eagle, EasyEDA, Altium, CADSTAR, Fabmaster, PADS, gEDA
@@ -471,7 +471,8 @@ if (command === "run") {
     failed = !r.ok;
   }
 } else if (command === "render") {
-  // A photoreal PNG of the model as the person's view shows it; with no view open, a headless browser renders it.
+  // A photoreal PNG of the model as the person’s view shows it; when no view on screen takes it (none open, or only
+  // background tabs and scripts), a headless browser renders it.
   const http = base.replace(/^ws/, "http").replace(/\/ws(\?.*)?$/, "");
   const opt = (name, fallback) => {
     const i = args.indexOf(`--${name}`);
@@ -862,6 +863,20 @@ if (command === "run") {
       }
       for (const u of c.unreadable) console.log(`  ✗ ${u}`);
       failed = !c.ok;
+    } else if (sub === "fab") {
+      // The board against each fab's published limits (the Fab tab's fab checks): every fab, or the one named.
+      const [board, only] = [args[2], args[3]?.toLowerCase()];
+      if (!board) throw new Error("usage: ise pcb fab <board id> [jlcpcb|pcbway|…]");
+      const d = await get(`/pcb/${board}?${q()}`);
+      const reports = d.fabs.filter((r) => !only || r.fab.id === only || r.fab.name.toLowerCase().includes(only));
+      if (!reports.length) throw new Error(`no fab “${args[3]}” (fabs: ${d.fabs.map((r) => r.fab.id).join(", ")})`);
+      for (const r of reports) {
+        console.log(`${r.can_make ? "✓" : "✗"} ${r.fab.name} (${r.fab.id}, ${r.fab.country}): ${r.can_make ? "can make this board" : "cannot make this board as designed"}${r.estimate ? `, about ${r.estimate.amount.toFixed(2)} ${r.estimate.currency} (${r.estimate.working})` : ""}`);
+        for (const c of r.checks) if (only || !c.ok) console.log(`    ${c.ok ? "✓" : "✗"} ${c.what}: board ${c.board}, fab ${c.fab}`);
+        if (only) console.log(`    limits from ${r.fab.capabilities_source}`);
+      }
+      // The fab named must make it; of all of them, at least one.
+      failed = only ? reports.some((r) => !r.can_make) : reports.every((r) => !r.can_make);
     } else if (sub === "calc") {
       // Board calculators: no name lists them; key=value words set inputs.
       const [, , id, ...rest] = args;
@@ -2614,11 +2629,11 @@ ise inspect <scan> <part> --tolerance mm [--align icp|best] [--required 0.99] [-
       failed = true;
     } else [target, value] = found;
   } else if (arg) {
-    // An id, or a name: an instance (L26), a shape, an assembly or a parameter set.
+    // An id, or a name: an instance (L26), a shape, an assembly or a parameter set; for explode also a saved exploded view.
     const s = await engine.snapshot;
     const name = (e) => {
       const c = e.components;
-      return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["assembly.definition"]?.name ?? c["shape.parameter_set"]?.name;
+      return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["assembly.definition"]?.name ?? c["shape.parameter_set"]?.name ?? (action === "explode" ? c["assembly.exploded_view"]?.name : undefined);
     };
     const byId = s.entities.find((e) => e.id === arg);
     const named = byId ? [byId] : s.entities.filter((e) => name(e)?.toLowerCase() === arg.toLowerCase());

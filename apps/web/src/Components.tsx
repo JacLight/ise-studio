@@ -15,7 +15,7 @@ import {
   fmt,
   formatMass,
   instance,
-  isPart,
+  topParts,
   partName,
   program,
   subPartKey,
@@ -103,7 +103,7 @@ export function ComponentTree(props: {
   canvasesWithIsolate?: boolean;
   onCanvasesWithIsolate?: (keep: boolean) => void;
 }) {
-  const top = useMemo(() => [...props.entities.values()].filter(isPart), [props.entities]);
+  const top = useMemo(() => topParts(props.entities), [props.entities]);
   // Open rows are remembered across refreshes.
   const [open, setOpen] = usePersistedSet("treeOpen");
   const q = (props.query ?? "").trim().toLowerCase();

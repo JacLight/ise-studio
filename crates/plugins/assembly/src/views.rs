@@ -510,7 +510,24 @@ pub struct Trail {
 pub fn explode(world: &World, id: StableId) -> Result<Exploded, String> {
     let e = entity(world, id).ok_or("no such exploded view")?;
     let v = world.get::<ExplodedView>(e).ok_or_else(|| format!("{id} is not an exploded view"))?;
-    let list = scope_instances(world, v.assembly);
+    work_out(world, id, v.name.clone(), v.assembly, &v.steps)
+}
+
+/// An assembly pulled apart as `auto_steps` would save it (`spread` × its size), worked out
+/// without saving anything: `of` is the assembly, or an instance of it.
+pub fn explode_auto(world: &World, of: StableId, spread: f64) -> Result<Exploded, String> {
+    let e = entity(world, of).ok_or("nothing with that id")?;
+    let assembly = match world.get::<Instance>(e) {
+        Some(i) => i.of,
+        None => of,
+    };
+    let def = entity(world, assembly).and_then(|e| world.get::<crate::AssemblyDef>(e)).ok_or_else(|| format!("{of} is not an assembly or an instance of one"))?;
+    let steps = auto_steps(world, Some(assembly), spread)?;
+    work_out(world, of, format!("{} apart", def.name), Some(assembly), &steps)
+}
+
+fn work_out(world: &World, id: StableId, name: String, assembly: Option<StableId>, view_steps: &[ExplodeStep]) -> Result<Exploded, String> {
+    let list = scope_instances(world, assembly);
     let mut now: Vec<Transform> = list.iter().map(|(i, _)| entity(world, *i).and_then(|e| placement(world, e)).unwrap_or(Transform::IDENTITY)).collect();
     let middles: Vec<V3> = list.iter().map(|(i, _)| placed_box(world, *i).map(mid).unwrap_or([0.0; 3])).collect();
     let r6 = |x: f64| (x * 1e6).round() / 1e6;
@@ -518,7 +535,7 @@ pub fn explode(world: &World, id: StableId) -> Result<Exploded, String> {
     let mut steps = vec![ExplodedStep { name: "Assembled".into(), poses: pose(&now) }];
     let mut trails: Vec<Vec<V3>> = middles.iter().map(|m| vec![*m]).collect();
     let mut moved = vec![false; list.len()];
-    for (n, s) in v.steps.iter().enumerate() {
+    for (n, s) in view_steps.iter().enumerate() {
         for i in &s.instances {
             let Some(k) = list.iter().position(|(x, _)| x == i) else { continue };
             let m = *trails[k].last().unwrap(); // its middle, now
@@ -542,8 +559,8 @@ pub fn explode(world: &World, id: StableId) -> Result<Exploded, String> {
     }
     Ok(Exploded {
         id,
-        name: v.name.clone(),
-        assembly: v.assembly,
+        name,
+        assembly,
         instances: list.iter().enumerate().map(|(k, (i, inst))| crate::motion::SweptInstance { id: *i, name: inst.name.clone(), moves: moved[k] }).collect(),
         steps,
         trails: list.iter().zip(trails).zip(&moved).filter(|(_, m)| **m).map(|(((i, _), points), _)| Trail { instance: *i, points: points.into_iter().map(|p| p.map(r6)).collect() }).collect(),

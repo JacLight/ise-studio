@@ -254,6 +254,13 @@ fn id_of(world: &World, e: Entity) -> Option<StableId> {
 }
 
 /// Children of an assembly definition (its dependencies that are instances in it).
+/// The shapes and assemblies that instances place. A shape placed on its own (it has a placement)
+/// and also put into an assembly stands in the project through its instances only: drawn, checked,
+/// listed and exported there, not a second time where its own placement puts it.
+pub fn instanced(world: &World) -> std::collections::HashSet<StableId> {
+    world.resource::<IdIndex>().iter().filter_map(|(_, e)| world.get::<Instance>(e).map(|i| i.of)).collect()
+}
+
 pub fn children(world: &World, assembly: StableId) -> Vec<(StableId, Instance)> {
     match entity(world, assembly) {
         Some(e) => children_of(world, e, assembly),

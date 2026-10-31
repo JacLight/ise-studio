@@ -17,7 +17,7 @@ import { type Engine, type EntityView, projectUrl } from "./engine";
 /** An item's own name, whatever kind it is. */
 export const nameOf = (e: EntityView) => {
   const c = e.components as Record<string, { name?: string } | undefined>;
-  return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["assembly.definition"]?.name ?? c["shape.parameter_set"]?.name ?? c["shape.sheet"]?.name ?? c["draft.object"]?.name ?? c["shape.sketch"]?.name ?? c["draft.layer"]?.name ?? c["draft.plane"]?.name;
+  return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["assembly.definition"]?.name ?? c["shape.parameter_set"]?.name ?? c["shape.sheet"]?.name ?? c["draft.object"]?.name ?? c["shape.sketch"]?.name ?? c["draft.layer"]?.name ?? c["draft.plane"]?.name ?? c["assembly.exploded_view"]?.name;
 };
 
 /** What kind of item it is, in a few words. */

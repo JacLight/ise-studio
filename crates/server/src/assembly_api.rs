@@ -107,9 +107,19 @@ pub async fn interference(State(server): State<Arc<Server>>, Path(id): Path<Stri
 }
 
 /// `GET /explode/<view id or name>`: a saved exploded view worked out —
-/// every instance's placement after each step, and their trails.
+/// every instance's placement after each step, and their trails. Given an
+/// assembly (or an instance of one) instead: it pulled apart automatically,
+/// `?spread=1` × its size (nothing saved).
 pub async fn explode(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> Response {
-    read(server, &q, move |p, w| de_assembly::views::explode(w, named::<de_assembly::views::ExplodedView>(p, &id, |v| &v.name, "exploded view")?)).await
+    let spread = q.get("spread").and_then(|v| v.parse::<f64>().ok()).filter(|v| v.is_finite() && *v > 0.0).unwrap_or(1.0).min(5.0);
+    read(server, &q, move |p, w| match named::<de_assembly::views::ExplodedView>(p, &id, |v| &v.name, "exploded view") {
+        Ok(view) => de_assembly::views::explode(w, view),
+        Err(e) => match serde_json::from_value::<StableId>(json!(id)) {
+            Ok(of) if p.get::<de_assembly::AssemblyDef>(of).is_some() || p.get::<de_assembly::Instance>(of).is_some() => de_assembly::views::explode_auto(w, of, spread),
+            _ => Err(e),
+        },
+    })
+    .await
 }
 
 /// `GET /motion-study/<study id or name>?fps=24&gaps=off`: the study played:

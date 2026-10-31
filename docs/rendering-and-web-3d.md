@@ -16,7 +16,7 @@ node tools/ise.mjs render --width 2000 --height 2000 --samples 512 --studio whit
 
 - **The product studio** (white sweep) lights like a product photographer and turns with the camera: a low key light raking across the sides so slots, grooves and ribs cast crisp shadows, faint fill, bright rim strips behind tracing the edges, black cards round the camera so gloss and chrome read as themselves.
 - **Lens**: straight side, front and top views read best with a narrow lens (`…,10,…`), as in catalogue photos; three-quarter hero shots with 22–26°.
-- **`--headless`** renders in a browser of its own, so a background tab (which browsers slow down) cannot hold a render up. With no app tab open, a headless browser is used anyway.
+- **`--headless`** renders in a browser of its own even when the app is on screen. Without it, the app tab renders the picture when it is on screen; when no app tab is open, or only background ones (which browsers slow down), a headless browser is used anyway.
 - **`--timeout <minutes>`** stops waiting after that long.
 
 ### Materials from their names

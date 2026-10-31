@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { type EntityView, projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
-import { isPart, partName, program } from "./model";
+import { partName, program, topParts } from "./model";
 import { PhotoScan } from "./PhotoScan";
 import { DEVIATION_STOPS, type ScanLayer, deviationColor } from "./scanLayer";
 import "./ScanTools.css";
@@ -98,7 +98,7 @@ export function ScanTools(props: {
   const fileInput = useRef<HTMLInputElement>(null);
 
   const entry = scans.find((s) => s.id === active) ?? null;
-  const parts = useMemo(() => [...props.entities.values()].filter((e) => isPart(e) && (program(e) || e.components["assembly.instance"])), [props.entities]);
+  const parts = useMemo(() => topParts(props.entities).filter((e) => program(e) || e.components["assembly.instance"]), [props.entities]);
 
   const refresh = useCallback(async (select?: string) => {
     const list = await call<Entry[]>("GET", "/scans");

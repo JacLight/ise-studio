@@ -810,13 +810,15 @@ pub fn compute(world: &World, scope: Scope, options: &Options, sources: &[&dyn B
             let mut ids: Vec<StableId> = index.iter().map(|(id, _)| id).collect();
             ids.sort();
             let mut top_instances = vec![];
+            // A placed shape put into an assembly is listed there, through its instances.
+            let instanced = de_assembly::instanced(world);
             for id in &ids {
                 let Some(e) = entity(world, *id) else { continue };
                 if let Some(inst) = world.get::<Instance>(e) {
                     if inst.parent.is_none() {
                         top_instances.push((*id, inst.clone()));
                     }
-                } else if (world.get::<ShapeProgram>(e).is_some() && world.get::<Placement>(e).is_some()) || world.get::<BoxFeature>(e).is_some() {
+                } else if ((world.get::<ShapeProgram>(e).is_some() && world.get::<Placement>(e).is_some()) || world.get::<BoxFeature>(e).is_some()) && !instanced.contains(id) {
                     if let Some(n) = w.visit(*id, None, Overrides::new(), 1, 1, &mut vec![], 0) {
                         tree.push(n);
                     }

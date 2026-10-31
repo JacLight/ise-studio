@@ -8,7 +8,7 @@ import { type CommentPin, type CommentsView, CommentsPanel, ThreadCard, pinsFor,
 import { ComponentTree } from "./Components";
 import { type Engine, projectName } from "./engine";
 import { Icon } from "./icons";
-import { formatMass, isPart, partName } from "./model";
+import { formatMass, isPart, partName, topParts } from "./model";
 import { Compare, useVersionActions } from "./Versions";
 import { type ViewName, Viewport, type ViewportHandle } from "./Viewport";
 
@@ -35,7 +35,7 @@ export function Viewer({ engine }: { engine: Engine }) {
   }, [state.connection]);
   useEffect(() => setSelectedPart(null), [selected]);
 
-  const parts = useMemo(() => [...state.entities.values()].filter(isPart), [state.entities]);
+  const parts = useMemo(() => topParts(state.entities), [state.entities]);
   const threads = useThreads(state.entities);
   const title = ro?.title ?? "";
   useEffect(() => {

@@ -173,12 +173,13 @@ pub(crate) fn placed_occurrences(world: &World, id: StableId) -> Vec<Occurrence>
 }
 
 /// What stands at the top of the project: instances at the top, and shapes
-/// placed on their own (a building, a part).
+/// placed on their own (a building, a part) and not put into an assembly.
 pub(crate) fn tops(world: &World) -> Vec<StableId> {
+    let instanced = crate::instanced(world);
     let mut tops: Vec<StableId> = world
         .resource::<IdIndex>()
         .iter()
-        .filter(|(_, e)| world.get::<Instance>(*e).is_some_and(|i| i.parent.is_none()) || (world.get::<de_shape::ShapeProgram>(*e).is_some() && world.get::<de_solid::Placement>(*e).is_some()))
+        .filter(|(id, e)| world.get::<Instance>(*e).is_some_and(|i| i.parent.is_none()) || (world.get::<de_shape::ShapeProgram>(*e).is_some() && world.get::<de_solid::Placement>(*e).is_some() && !instanced.contains(id)))
         .map(|(id, _)| id)
         .collect();
     tops.sort();

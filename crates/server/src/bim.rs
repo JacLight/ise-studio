@@ -84,9 +84,11 @@ fn gather(project: &Project, scope: &str) -> Result<Vec<Placed>, String> {
         }
     };
     if scope == "project" {
+        let instanced = de_assembly::instanced(project.world());
         for id in project.entity_ids() {
             let top_instance = project.get::<de_assembly::Instance>(id).is_some_and(|i| i.parent.is_none());
-            let placed_shape = project.get::<ShapeProgram>(id).is_some() && project.get::<de_solid::Placement>(id).is_some();
+            // A placed shape put into an assembly comes with its instances.
+            let placed_shape = project.get::<ShapeProgram>(id).is_some() && project.get::<de_solid::Placement>(id).is_some() && !instanced.contains(&id);
             if top_instance || placed_shape {
                 add(project, id);
             }

@@ -45,6 +45,8 @@ export type JointView = {
   geometry: (f: ((hit: GeometryHit) => void) | null) => void;
   /** The view as a PNG data URL, rendered now. */
   snapshot: () => string | null;
+  /** Frames everything shown, as placed now (an exploded view at its last step). */
+  fit: () => void;
 };
 
 const KINDS: { kind: JointKind; label: string; hint: string }[] = [

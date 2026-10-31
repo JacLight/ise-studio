@@ -10,7 +10,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { type EntityView, projectUrl } from "./engine";
 import { Icon, IconButton } from "./icons";
-import { assemblyDef, isPart, materialLook, shapeOf } from "./model";
+import { assemblyDef, materialLook, shapeOf, topParts } from "./model";
 import "./StockBrowser.css";
 
 type Run = (operation: string, parameters: Record<string, unknown>) => Promise<unknown>;
@@ -442,7 +442,7 @@ export function StockBrowser(props: {
     // Beside what is already placed, standing on the ground.
     let at: [number, number, number] = [0, 0, 0];
     if (!parent) {
-      const placed = [...props.entities.values()].filter(isPart).map(shapeOf);
+      const placed = topParts(props.entities).map(shapeOf);
       const right = placed.length ? Math.max(...placed.map((s) => s.x + s.width)) : null;
       const w = size.size?.[0] ?? 0;
       const min = size.min ?? [-w / 2, 0, 0];

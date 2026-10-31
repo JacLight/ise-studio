@@ -309,14 +309,18 @@ pub async fn look(State(server): State<Arc<Server>>, Query(query): Query<HashMap
                 Ok(sid) if project.entity(sid).is_some() => vec![sid],
                 _ => return fail(StatusCode::NOT_FOUND, format!("nothing with id {id} in this project")),
             },
-            None => project
-                .entity_ids()
-                .into_iter()
-                .filter(|id| match project.get::<de_assembly::Instance>(*id) {
-                    Some(i) => i.parent.is_none(),
-                    None => project.get::<de_solid::Placement>(*id).is_some() && (project.get::<de_shape::ShapeProgram>(*id).is_some() || project.get::<de_solid::BoxFeature>(*id).is_some()),
-                })
-                .collect(),
+            None => {
+                // A placed shape put into an assembly shows there, through its instances.
+                let instanced = de_assembly::instanced(project.world());
+                project
+                    .entity_ids()
+                    .into_iter()
+                    .filter(|id| match project.get::<de_assembly::Instance>(*id) {
+                        Some(i) => i.parent.is_none(),
+                        None => !instanced.contains(id) && project.get::<de_solid::Placement>(*id).is_some() && (project.get::<de_shape::ShapeProgram>(*id).is_some() || project.get::<de_solid::BoxFeature>(*id).is_some()),
+                    })
+                    .collect()
+            }
         };
         // One thing asked for by id may be a component (a definition placed only through instances): drawn as it is.
         let one = query.get("id").is_some_and(|s| !s.is_empty());
