@@ -315,9 +315,44 @@ fn mid(b: (V3, V3)) -> V3 {
     tf::scale(tf::add(b.0, b.1), 0.5)
 }
 
-/// Steps that pull every instance out from the middle along the line through
-/// it (`spread` × the assembly's size), last assembled first when instances
-/// carry an assembly "step" property.
+/// A stack: every box stands over the one with the biggest footprint (`base`;
+/// the gearbox's housing, the case's base), as products assembled from above
+/// do. Then each layer (the boxes whose tops are level) lifts straight up
+/// clear of the layers under it, plus `gap`: returned bottom layer first, each
+/// with how far it rises. None when the boxes are not stacked.
+pub fn stack_layers(boxes: &[(V3, V3)], base: usize, gap: f64) -> Option<Vec<(Vec<usize>, f64)>> {
+    let b = boxes.get(base)?;
+    let pad = [(b.1[0] - b.0[0]) * 0.05, (b.1[1] - b.0[1]) * 0.05];
+    let over = boxes.iter().all(|x| {
+        let c = mid(*x);
+        (0..2).all(|k| c[k] >= b.0[k] - pad[k] && c[k] <= b.1[k] + pad[k])
+    });
+    if !over || boxes.len() < 2 {
+        return None;
+    }
+    let height = boxes.iter().map(|x| x.1[2]).fold(f64::NEG_INFINITY, f64::max) - boxes.iter().map(|x| x.0[2]).fold(f64::INFINITY, f64::min);
+    let level = height * 0.01 + 0.2;
+    let mut rest: Vec<usize> = (0..boxes.len()).filter(|&i| i != base).collect();
+    rest.sort_by(|&i, &j| boxes[i].1[2].total_cmp(&boxes[j].1[2]).then(i.cmp(&j)));
+    let (mut floor, mut rise) = (b.1[2], 0.0f64);
+    let mut layers: Vec<(Vec<usize>, f64)> = vec![];
+    let mut k = 0;
+    while k < rest.len() {
+        let top = boxes[rest[k]].1[2];
+        let members: Vec<usize> = rest[k..].iter().copied().take_while(|&i| boxes[i].1[2] - top <= level).collect();
+        k += members.len();
+        rise = members.iter().map(|&i| floor - boxes[i].0[2] + gap).fold(rise, f64::max);
+        floor = members.iter().map(|&i| boxes[i].1[2] + rise).fold(floor, f64::max);
+        layers.push((members, rise));
+    }
+    Some(layers)
+}
+
+/// Steps that take an assembly apart. Stacked (see `stack_layers`): the top
+/// layer lifts off first, then the one under it, each clear of the rest
+/// (`spread` × that). Otherwise every instance moves out from the middle along
+/// the line through it (`spread` × the assembly's size), last assembled first
+/// when instances carry an assembly "step" property.
 pub fn auto_steps(world: &World, scope: Option<StableId>, spread: f64) -> Result<Vec<ExplodeStep>, String> {
     let list: Vec<(StableId, Instance, (V3, V3))> = scope_instances(world, scope).into_iter().filter_map(|(id, i)| Some((id, i, placed_box(world, id)?))).collect();
     if list.len() < 2 {
@@ -337,6 +372,29 @@ pub fn auto_steps(world: &World, scope: Option<StableId>, spread: f64) -> Result
     let keep = list.iter().max_by(|x, y| volume(&x.2).total_cmp(&volume(&y.2))).map(|x| x.0);
     // By assembly step, last first; otherwise all at once.
     let step_of = |i: &Instance| i.properties.get("step").and_then(|s| s.trim().parse::<f64>().ok());
+    // Stacked (and no assembly steps given): layer by layer from the top, straight up.
+    let footprint = |b: &(V3, V3)| (b.1[0] - b.0[0]).max(0.0) * (b.1[1] - b.0[1]).max(0.0);
+    let boxes: Vec<(V3, V3)> = list.iter().map(|x| x.2).collect();
+    let base = (0..list.len()).max_by(|&i, &j| footprint(&boxes[i]).total_cmp(&footprint(&boxes[j])).then(boxes[j].0[2].total_cmp(&boxes[i].0[2]))).unwrap_or(0);
+    if list.iter().all(|(_, i, _)| step_of(i).is_none())
+        && let Some(layers) = stack_layers(&boxes, base, size * 0.1)
+    {
+        return Ok(layers
+            .into_iter()
+            .rev()
+            .map(|(members, rise)| {
+                let names: Vec<&str> = members.iter().map(|&m| list[m].1.name.as_str()).collect();
+                let name = names.join(", ");
+                ExplodeStep {
+                    name: if name.chars().count() > 60 { format!("{} and {} more", names[0], names.len() - 1) } else { name },
+                    instances: members.iter().map(|&m| list[m].0).collect(),
+                    by: [0.0, 0.0, (rise * spread * 1000.0).round() / 1000.0],
+                    moves: BTreeMap::new(),
+                    turn: None,
+                }
+            })
+            .collect());
+    }
     let mut groups: BTreeMap<i64, Vec<(StableId, V3)>> = BTreeMap::new();
     for (id, inst, b) in &list {
         if Some(*id) == keep {

@@ -415,8 +415,17 @@ function physical(m: THREE.Material): THREE.Material {
     out.clearcoat = rough < 0.3 ? 0.35 : 0;
     out.clearcoatRoughness = Math.max(0.04, rough * 0.5);
   }
+  if (!seeThrough && metal < 0.5) {
+    // No paint or plastic sends back all the light (white PLA, paint, paper: about 70–80 %). Held to
+    // that, a white part reads a shade under the white studio's floor (90 %) instead of melting into it.
+    const top = Math.max(out.color.r, out.color.g, out.color.b);
+    if (top > ALBEDO_MAX) out.color.multiplyScalar(ALBEDO_MAX / top);
+  }
   return out;
 }
+
+/** The most light an opaque dielectric reflects (linear), as real white materials do. */
+const ALBEDO_MAX = 0.72;
 
 const split = new WeakMap<THREE.BufferGeometry, THREE.BufferGeometry[]>();
 
@@ -597,7 +606,7 @@ function environment(studio: Studio) {
 function expose(renderer: THREE.WebGLRenderer, studio: Studio, white: number) {
   if (studio !== "white") {
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.85;
+    renderer.toneMappingExposure = 0.55;
     return;
   }
   renderer.toneMapping = THREE.LinearToneMapping;
