@@ -1906,6 +1906,11 @@ dialog p {
   max-height: calc(100% - 236px);
 }
 
+/* A floating panel stops above the stepped-up view bar instead of running over it. */
+.app.view-narrow .tool-panel.floating {
+  max-height: calc(100dvh - 212px);
+}
+
 /* The floating AI panel holds the bottom right: the view tools take the bottom left, under the view bar. */
 .app.view-narrow:has(.ai-panel.floating) .view-tools {
   left: 20px;
@@ -3272,6 +3277,51 @@ dialog p {
   color: #e6e1f5;
   font: 10px/1.6 ui-monospace, "SF Mono", Menlo, monospace;
   white-space: pre;
+}
+
+.source-edit {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 10px 12px 12px;
+  border: 0;
+  border-top: 1px solid #ece8f2;
+  background: #1f1b2e;
+  color: #e6e1f5;
+  caret-color: #b9a4ff;
+  font: 10px/1.6 ui-monospace, "SF Mono", Menlo, monospace;
+  white-space: pre;
+  overflow: auto;
+  resize: vertical;
+  tab-size: 2;
+  outline: none;
+}
+
+.source-edit:focus-visible {
+  box-shadow: inset 0 0 0 2px #7c5cf0;
+}
+
+.source-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid #ece8f2;
+}
+
+.source-actions small {
+  margin-left: auto;
+  font-size: 10px;
+  color: #9a93ab;
+}
+
+.source-edited {
+  margin-left: auto;
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 650;
+  color: #7c5cf0;
 }
 
 /* ---- Export ---------------------------------------------------------------- */

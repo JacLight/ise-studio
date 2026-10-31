@@ -64,6 +64,7 @@ import {
   partMaterial,
   instance,
   isDefinition,
+  unplacedDefinitions,
   instanced,
   occurrences,
   type Look,
@@ -1015,8 +1016,26 @@ function fitGround(t: Scene, bounds: THREE.Box3) {
  * Frames every part (or only `only`'s meshes), keeping the viewing direction
  * (or the one a glide is heading for, or `direction`); gliding there if asked.
  */
+/** The width of the canvas that no tall floating panel (properties, a floating AI panel) covers: the
+ *  share of the width it is and its centre's offset from the canvas's (NDC, -1..1). */
+function clearSpan(canvas: HTMLCanvasElement): { offset: number; share: number } {
+  const box = canvas.getBoundingClientRect();
+  let [left, right] = [box.left, box.right];
+  if (box.width > 0)
+    for (const el of document.querySelectorAll<HTMLElement>(".tool-panel.floating, .ai-panel.floating")) {
+      const r = el.getBoundingClientRect();
+      if (r.height < box.height * 0.4 || r.right <= box.left || r.left >= box.right || r.bottom <= box.top || r.top >= box.bottom) continue;
+      if (r.left + r.width / 2 < box.left + box.width / 2) left = Math.max(left, r.right + 12);
+      else right = Math.min(right, r.left - 12);
+    }
+  if (right - left < box.width * 0.4) return { offset: 0, share: 1 };
+  return { offset: ((left + right) / 2 - (box.left + box.width / 2)) / (box.width / 2), share: (right - left) / box.width };
+}
+
 function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vector3, up?: THREE.Vector3, box?: THREE.Box3, fill?: number) {
   if (t.parts.size === 0 && !box) return;
+  // Framed in what a floating panel leaves clear, so a panel opened beside the model does not cover it.
+  const span = clearSpan(t.renderer.domElement);
   // Only what is shown: an isolated floor frames itself, not the whole tower.
   const bounds = box?.clone() ?? new THREE.Box3();
   for (const [id, part] of box ? [] : t.parts) {
@@ -1031,6 +1050,7 @@ function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vecto
   let c = bounds.getCenter(new THREE.Vector3());
   const radius = bounds.getBoundingSphere(new THREE.Sphere()).radius;
   let distance = (radius / Math.sin(THREE.MathUtils.degToRad(t.camera.fov / 2))) * 1.2;
+  if (span.share < 1) distance = Math.max(distance, (radius / Math.sin(Math.atan(Math.tan(THREE.MathUtils.degToRad(t.camera.fov / 2)) * t.camera.aspect * span.share))) * 1.2);
   const heading = t.flight ? t.flight.to : null;
   const dir = (direction ?? (heading ? heading.position.clone().sub(heading.target) : t.camera.position.clone().sub(t.controls.target))).normalize();
   const view = { position: new THREE.Vector3(), target: c, up: (up ?? heading?.up ?? t.camera.up).clone() };
@@ -1040,7 +1060,7 @@ function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vecto
     const right = new THREE.Vector3().crossVectors(view.up, dir).normalize();
     const screenUp = new THREE.Vector3().crossVectors(dir, right);
     const tanV = Math.tan(THREE.MathUtils.degToRad(t.camera.fov / 2)) * fill;
-    const tanH = tanV * t.camera.aspect;
+    const tanH = tanV * t.camera.aspect * span.share;
     const points: THREE.Vector3[] = [];
     const meshes = box ? [] : [...t.parts].flatMap(([id, part]) => (part.group.visible ? part.meshes.filter((m) => m.visible && (!only || id === only || (m.userData.path as string[] | undefined)?.includes(only))) : []));
     const total = meshes.reduce((n, m) => n + m.geometry.getAttribute("position").count, 0);
@@ -1070,6 +1090,14 @@ function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vecto
       c = c.clone().addScaledVector(right, ((x0 + x1) / 2) * distance).addScaledVector(screenUp, ((y0 + y1) / 2) * distance);
     }
     view.target = c;
+  }
+  if (span.offset !== 0) {
+    // Aim off to the panel's side so the model sits in the middle of the clear part.
+    const right = new THREE.Vector3().crossVectors(view.up, dir);
+    if (right.lengthSq() > 1e-6) {
+      c = c.clone().addScaledVector(right.normalize(), -span.offset * distance * Math.tan(THREE.MathUtils.degToRad(t.camera.fov / 2)) * t.camera.aspect);
+      view.target = c;
+    }
   }
   view.position.copy(c).addScaledVector(dir, distance);
   if (glide) return glideTo(t, view);
@@ -2845,10 +2873,13 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       lastSelected.current = selected;
     }
     // Drawn directly: boxes, placed shapes and top-level instances. Components
-    // (definitions) are drawn only through their instances, as is a placed shape put into an assembly.
+    // (definitions) are drawn only through their instances, as is a placed shape put into an assembly;
+    // a component nothing places yet is drawn on its own, so a part being built shows as it is made.
     pcbLooks.touch();
     const placedIn = instanced(entities);
-    const drawn = (e: EntityView | undefined) => !!e && (instance(e) ? !instance(e)!.parent : !!e.mesh && !isDefinition(e) && !placedIn.has(e.id));
+    const unplaced = new Set(unplacedDefinitions(entities, placedIn).map((e) => e.id));
+    const drawn = (e: EntityView | undefined) =>
+      !!e && (instance(e) ? !instance(e)!.parent : !!e.mesh && (!isDefinition(e) || unplaced.has(e.id)) && !placedIn.has(e.id));
     for (const [id, part] of t.parts) {
       if (!drawn(entities.get(id))) {
         t.scene.remove(part.group);

@@ -1006,8 +1006,18 @@ function BoardCanvas(props: {
     let [x0, y0, x1, y1] = b.bounds;
     for (const c of b.components) for (const p of [...c.courtyard, [c.label[0], c.label[1] + 1] as P]) [x0, y0, x1, y1] = [Math.min(x0, p[0]), Math.min(y0, p[1]), Math.max(x1, p[0]), Math.max(y1, p[1])];
     const pad = 36;
-    const top = 56;
-    const bottom = 40;
+    // Clear of the bars floating over the canvas (the layers above, the router below), as tall as they are now.
+    let [top, bottom] = [56, 40];
+    const el = host.current;
+    if (el) {
+      const box = el.getBoundingClientRect();
+      for (const bar of el.querySelectorAll<HTMLElement>(".pcb-toolbar.floating, .pcb-tools.floating")) {
+        const r = bar.getBoundingClientRect();
+        if (r.height === 0) continue;
+        if (r.top - box.top < box.height / 2) top = Math.max(top, r.bottom - box.top + 16);
+        else bottom = Math.max(bottom, box.bottom - r.top + 16);
+      }
+    }
     const s = Math.min((size[0] - 2 * pad) / Math.max(x1 - x0, 1), (size[1] - top - bottom) / Math.max(y1 - y0, 1));
     const cx = (x0 + x1) / 2;
     const cy = (y0 + y1) / 2;

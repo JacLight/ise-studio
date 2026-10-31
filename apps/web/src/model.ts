@@ -301,6 +301,12 @@ export function instanced(entities: ReadonlyMap<string, EntityView>): Set<string
   return used;
 }
 
+/** Shapes made as components that nothing places yet (not stock-library ones): drawn where their own
+ *  program puts them, so a part being built shows while it is made, until an instance places it. */
+export function unplacedDefinitions(entities: ReadonlyMap<string, EntityView>, used = instanced(entities)): EntityView[] {
+  return [...entities.values()].filter((e) => !!e.mesh && !!program(e) && !placement(e) && !used.has(e.id) && !e.components["shape.stock_family"]);
+}
+
 /** The items at the top of the project: boxes, placed shapes (unless put into an assembly) and top-level instances. */
 export function topParts(entities: ReadonlyMap<string, EntityView>): EntityView[] {
   const used = instanced(entities);

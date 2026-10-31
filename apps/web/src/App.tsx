@@ -19,7 +19,7 @@ import { type CanvasTool, canvasOf } from "./canvasLayer";
 import { CalibrateBar, CanvasInsertDialog, CanvasProperties, CanvasSection, CropBar, PerspectiveBar } from "./CanvasTools";
 import { RequirementsPanel } from "./RequirementsPanel";
 import { type Attachment, type CheckReport, type Engine, type EngineError, type EntityView, type Fix, type MeshData, type ShapeStats, type TeamCursor, mm, projectInfo, projectName, projectTitle, projectUrl } from "./engine";
-import { type ConfigRow, type EdgeFinish, type Frac, type LiveEdit, type Shape, assemblyParts, box, groupOf, instance, isPart, topParts, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
+import { type ConfigRow, type EdgeFinish, type Frac, type LiveEdit, type Shape, assemblyParts, box, groupOf, instance, isPart, topParts, unplacedDefinitions, material, originOffset, partName, pivotOf, placement, program, shapeOf, toMm } from "./model";
 import { GroupList, HistoryBody, ObjectsBody, ProjectBody, PropertiesBody, ToolPanel, ViewsBody } from "./Panels";
 import { useEdgeEditor } from "./EdgeEditor";
 import { type FaceToolKind, useFaceTool } from "./FaceTool";
@@ -289,6 +289,8 @@ export function App({ engine }: { engine: Engine }) {
   useEffect(() => savePrefs(prefs), [prefs]);
 
   const parts = useMemo(() => topParts(state.entities), [state.entities]);
+  /** Components nothing places yet: the view draws them, so the empty-project hint does not show over them. */
+  const unplaced = useMemo(() => unplacedDefinitions(state.entities).length, [state.entities]);
   const materials = useMemo(() => [...state.entities.values()].filter((e) => material(e)), [state.entities]);
   const selectedPart = selected ? state.entities.get(selected) : undefined;
   /** What the viewport shows: engine state, with a previewed shape swapped in. */
@@ -1909,10 +1911,10 @@ export function App({ engine }: { engine: Engine }) {
         <div className="view-caption">
           <span>{projectTitle().toUpperCase()}</span>
           <span>
-            {view[0].toUpperCase() + view.slice(1)} · {parts.length} {parts.length === 1 ? "part" : "parts"}
+            {view[0].toUpperCase() + view.slice(1)} · {parts.length + unplaced} {parts.length + unplaced === 1 ? "part" : "parts"}
           </span>
         </div>
-        {state.connection === "online" && parts.length === 0 && !sketcher.editing && !planeMenu && (
+        {state.connection === "online" && parts.length === 0 && unplaced === 0 && !sketcher.editing && !planeMenu && (
           <div className="empty-hint">
             <p>Start with a part, ask Iṣẹ́ AI, or drop a file here: STEP, IGES, STL, OBJ, PLY, glTF, 3MF, or a DXF/SVG drawing.</p>
             <div className="empty-actions">

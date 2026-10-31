@@ -412,6 +412,84 @@ function configUsers(id: string, entities: ReadonlyMap<string, EntityView>) {
   return out;
 }
 
+/** A shape's program: read here, or edited by hand and applied through the engine (one change, undoable,
+ *  synced like any other); the engine refuses a program that does not run and the draft stays open. */
+function ProgramSource(props: { id: string; source: string; run: PropertiesProps["run"] }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const editor = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (draft !== null) editor.current?.focus();
+  }, [draft !== null]); // eslint-disable-line react-hooks/exhaustive-deps
+  const apply = async () => {
+    if (draft === null || busy) return;
+    if (draft === props.source) return setDraft(null);
+    setBusy(true);
+    const out = await props.run("shape.update", { target: props.id, source: draft });
+    setBusy(false);
+    if (out !== null) setDraft(null);
+  };
+  const lines = (draft ?? props.source).split("\n").length;
+  return (
+    <details className="source">
+      <summary>
+        <Icon name="spark" /> Program · {lines} {lines === 1 ? "line" : "lines"}
+        {draft !== null && draft !== props.source && <em className="source-edited">edited</em>}
+      </summary>
+      {draft === null ? (
+        <pre>
+          <code>{props.source}</code>
+        </pre>
+      ) : (
+        <textarea
+          ref={editor}
+          className="source-edit"
+          aria-label="Program"
+          value={draft}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          rows={Math.min(24, Math.max(8, lines + 1))}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Tab" && !e.shiftKey) {
+              // Two spaces, not a jump out of the editor.
+              e.preventDefault();
+              const t = e.currentTarget;
+              const [a, b] = [t.selectionStart, t.selectionEnd];
+              setDraft(t.value.slice(0, a) + "  " + t.value.slice(b));
+              requestAnimationFrame(() => editor.current?.setSelectionRange(a + 2, a + 2));
+            } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              void apply();
+            } else if (e.key === "Escape") {
+              e.stopPropagation();
+              setDraft(null);
+            }
+          }}
+        />
+      )}
+      <div className="source-actions">
+        {draft === null ? (
+          <button type="button" className="fit-run" title="Edit this shape's program by hand" onClick={() => setDraft(props.source)}>
+            Edit program
+          </button>
+        ) : (
+          <>
+            <button type="button" className="fit-run" disabled={busy} onClick={() => void apply()} title="Run the program and keep it (⌘↩)">
+              {busy ? "Applying…" : "Apply"}
+            </button>
+            <button type="button" className="fit-run quiet" disabled={busy} onClick={() => setDraft(null)} title="Put the program back as it was (Esc)">
+              Cancel
+            </button>
+            <small>⌘↩ applies · Esc cancels</small>
+          </>
+        )}
+      </div>
+    </details>
+  );
+}
+
 export function PropertiesBody(props: PropertiesProps) {
   const { part, shape } = props;
   if (!part || !shape) {
@@ -735,21 +813,12 @@ export function PropertiesBody(props: PropertiesProps) {
         run={props.run}
       />
 
-      {prog && (
-        <details className="source">
-          <summary>
-            <Icon name="spark" /> Program · {prog.source.split("\n").length} lines · written by Iṣẹ́ AI
-          </summary>
-          <pre>
-            <code>{prog.source}</code>
-          </pre>
-        </details>
-      )}
+      {prog && <ProgramSource key={part.id} id={part.id} source={prog.source} run={props.run} />}
 
       <p className="props-hint">
         <Icon name="spark" />{" "}
         {prog ? (
-          <>Drag a parameter to reshape it live. Ask Iṣẹ́ AI for anything the parameters can’t do; it rewrites the program.</>
+          <>Drag a parameter to reshape it live. Ask Iṣẹ́ AI for anything the parameters can’t do (it rewrites the program), or edit the program yourself.</>
         ) : (
           <>
             Drag the arrows on the part, drag a field label to scrub, or type math like <kbd>+10</kbd> <kbd>2in</kbd>
