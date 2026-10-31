@@ -111,6 +111,9 @@
 // project) and the command goes to the engine under an id made from the key
 // (the engine never applies one id twice), so running a file again skips
 // what is already in the project and continues where it stopped.
+// A shape.create step edited since it ran rewrites the shape it made
+// (shape.update), so editing a program and running the file again keeps one
+// shape; other edited steps are applied anew.
 
 import fsModule, { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
@@ -307,6 +310,26 @@ if (command === "run") {
     }
     // The same step with other parameters before (an edited step): applied as it is now.
     const earlier = Object.values(mine).find((d) => (step.id != null ? d.id === step.id : d.index === i && d.id == null) && d.operation === step.operation && d.key !== key && d.file === scope);
+    // An edited shape: the shape it made before is rewritten (its instances, views and the steps after it keep it), not made twice.
+    if (earlier && step.operation === "shape.create" && isId(earlier.output?.id) && live.has(earlier.output.id)) {
+      const kept = ["description", "display_tolerance", "levels", "materials", "name", "params", "source"].filter((k) => k in parameters);
+      const commandId = `run-${key}-${nonce}`;
+      const started = Date.now();
+      const r = await engine.commit("shape.update", { target: earlier.output.id, ...Object.fromEntries(kept.map((k) => [k, parameters[k]])) }, commandId);
+      if (!r.ok) {
+        console.error(`✗ ${label}: ${r.error.code} ${r.error.message}`);
+        failed = true;
+        break;
+      }
+      outputs.push(earlier.output);
+      delete mine[earlier.key];
+      mine[key] = { key, index: i, ...(step.id != null ? { id: step.id } : {}), file: scope, operation: step.operation, command_id: commandId, revision: r.value.revision, at: new Date().toISOString(), output: earlier.output };
+      save();
+      applied++;
+      const ignored = ["definition", "material", "placement"].filter((k) => k in parameters);
+      console.log(`✓ ${label}: changed since it was applied, so the shape it made (${earlier.output.id}) was updated to it (rev ${r.value.revision}, ${Date.now() - started} ms)${ignored.length ? `; ${ignored.join(", ")} stay as made (change them with their own operations)` : ""}`);
+      continue;
+    }
     if (earlier) console.log(`! ${label}: changed since it was applied (rev ${earlier.revision}); applying it as it is now (what the earlier one made stays: undo or remove it if it should not)`);
     // Applied before but undone or deleted since: a new command id (the engine would take the old one as done).
     const commandId = done ? `run-${key}-${nonce}` : fresh ? `run-${key}-${nonce}` : `run-${key}`;

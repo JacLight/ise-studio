@@ -43,7 +43,8 @@ Run it from your working folder. It acts on the open project. It is your only wa
 ./ise run steps.json [--from N] [--fresh]   run several; "$N.id" refers to step N's output, {"$file": "x.js"} inlines a file. Resumable: when a step fails,
                                      fix it and run the file again: the steps already applied (same step, same parameters) are skipped (↷) and it continues
                                      from the failure. Give a step an "id" ({"id": "base", "operation": …}) to keep its key when steps before it change;
-                                     --from N starts at step N; --fresh applies every step again (makes them twice)
+                                     --from N starts at step N; --fresh applies every step again (makes them twice). Edited a program
+                                     and run the file again: its shape.create step updates the shape it made (one shape, same id)
 ./ise sheet <name>                 a spreadsheet as a grid (what each cell shows), its aliases, formulas and errors
 ./ise draft                        draft objects (dimensions with their values), layers, working planes, arrays
 ./ise import <file> [--name N] [--as sheet|parameters|configurations] [--target id] [--sheet name]
