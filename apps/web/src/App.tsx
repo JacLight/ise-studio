@@ -31,7 +31,8 @@ import { PlaneMenu, useSketchEditor } from "./SketchEditor";
 import { Icon } from "./icons";
 import { sketchOf } from "./sketchModel";
 import { ComponentTree, ComponentsBody, InstanceBody, ParameterSets, StackingPlan, parameterSet, stackingSubject } from "./Components";
-import { cameraAsked, explodeSettled, playExploded } from "./AssemblyTools";
+import { playExploded } from "./AssemblyTools";
+import { beginMotion, cameraAsked, endMotion, frameEnd, motionNow, settled } from "./settle";
 import { type AiMode, type DockSide, type Group, type PanelKind, type UiPrefs, loadPrefs, savePrefs } from "./ui";
 import { DOCK_MIN_WINDOW, type DockPlace, type DockSlot, Splitter, StackSplitter, layoutDocks, useDockDrag, useWindowSize } from "./Dock";
 import { IMPORT_ACCEPT, IMPORT_FORMATS, type ImportReply, importSummary, importable } from "./fileFormats";
@@ -383,6 +384,8 @@ export function App({ engine }: { engine: Engine }) {
               }
               break;
             }
+            // A shape's pieces easing apart or back: a render asked for next waits for them to rest.
+            beginMotion();
             if (value === "off") setExplode((e) => (e?.id === target ? { ...e, open: false } : e));
             else {
               setSelected(target);
@@ -423,7 +426,7 @@ export function App({ engine }: { engine: Engine }) {
               .then((r) => r.status === 204, () => false)
               .then(async (mine) => {
                 if (!mine) return;
-                await explodeSettled();
+                await settled();
                 const view = viewport.current?.renderSource();
                 if (!view) return back("", "the view closed before it could render");
                 const source = withSkins(view);
@@ -637,7 +640,13 @@ export function App({ engine }: { engine: Engine }) {
   const entitiesNow = useRef(state.entities);
   entitiesNow.current = state.entities;
   const partsOf = useCallback((id: string) => assemblyParts(entitiesNow.current.get(id)), []);
-  const { explode, setExplode, turn, apply: reshow } = useExplode(showTurned, partsOf, (id) => viewport.current?.frame(id, true));
+  const { explode, setExplode, turn, apply: reshow } = useExplode(
+    showTurned,
+    partsOf,
+    // Framed where the pieces came to rest (as a camera asked for meanwhile, if one was).
+    (id) => frameEnd(motionNow(), () => viewport.current?.frame(id, true)),
+    () => endMotion(motionNow()),
+  );
   // A rebuilt shape is drawn afresh: lay its explode over it again.
   const explodedMesh = explode ? state.entities.get(explode.id)?.mesh : undefined;
   useEffect(() => {

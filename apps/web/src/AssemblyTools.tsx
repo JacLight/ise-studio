@@ -9,6 +9,7 @@ import { type EntityView, projectUrl } from "./engine";
 import { Icon } from "./icons";
 import type { JointView } from "./Joints";
 import type { FlexShape } from "./flexPlayback";
+import { type Motion, beginMotion, endMotion, frameEnd } from "./settle";
 import { type Quat, type Transform, type V3, applyT, childrenOf, fmt, instance, invertT, qrotate, worldOf } from "./model";
 import type { GeometryHit } from "./Viewport";
 
@@ -809,36 +810,15 @@ const comp = <T,>(e: EntityView, k: string) => e.components[k] as T | undefined;
 // An exploded view asked for by name (./ise view explode "Exploded", Iṣẹ́ AI): the studio of its
 // assembly plays it as soon as it shows (it opens with the assembly's properties), or closes it.
 // `id`: a saved exploded view, or an instance of the assembly pulled apart by `spread` (nothing saved).
-type PlayRequest = { id: string; scope: string; spread?: number; open: boolean; n: number; playback?: Playback };
+type PlayRequest = { id: string; scope: string; spread?: number; open: boolean; n: number; playback?: Motion };
 let playRequest: PlayRequest | null = null;
 let playCount = 0;
 const PLAY_EVENT = "ise-play-exploded";
 
-/** An exploded view asked for and still playing: a render waits for it to end, and a camera asked for
- *  meanwhile (./ise view camera, frame) is asked again on the parts pulled apart, instead of the usual fit. */
-type Playback = { done: Promise<void>; end: () => void; camera?: () => void };
-let playback: Playback | null = null;
-function beginPlayback(): Playback {
-  playback?.end();
-  let finish = () => {};
-  const done = new Promise<void>((r) => (finish = r));
-  const p: Playback = { done, end: () => (playback === p && (playback = null), finish()) };
-  playback = p;
-  // Never holds a render up for long, whatever happens to the panel playing it.
-  window.setTimeout(p.end, 8000);
-  return p;
-}
-/** Resolves once no exploded view is playing (at once if none is). */
-export const explodeSettled = () => playback?.done ?? Promise.resolve();
-/** The camera was set by name or numbers (`again` sets it once more): an exploded view now playing
- *  ends framed that way, measured on where its parts end up. */
-export function cameraAsked(again: () => void) {
-  if (playback) playback.camera = again;
-}
 const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 export function playExploded(id: string, scope: string, open = true, spread?: number) {
   // Begun now, not when the panel picks it up: a render asked for straight after waits for it.
-  playRequest = { id, scope, spread, open, n: ++playCount, playback: open ? beginPlayback() : undefined };
+  playRequest = { id, scope, spread, open, n: ++playCount, playback: open ? beginMotion() : undefined };
   window.dispatchEvent(new Event(PLAY_EVENT));
 }
 
@@ -941,9 +921,9 @@ function Exploded({ scope, frame, entities, run, view, play }: StudioProps & { p
   const [error, setError] = useState<string | null>(null);
   const fitAtEnd = useRef(false);
   /** The playback a request started (renders wait for it). */
-  const playing0 = useRef<Playback | null>(null);
+  const playing0 = useRef<Motion | null>(null);
   /** Framed at the end: as a camera asked for while it played, else every part in view (once the last poses are drawn). */
-  const endFramed = (p: Playback | null) => (p?.camera ? window.setTimeout(p.camera, 80) : view.fit());
+  const endFramed = (p: Motion | null) => frameEnd(p, () => view.fit());
   useEffect(() => () => playing0.current?.end(), []);
   const show = async (id: string, spread?: number) => {
     try {
@@ -986,7 +966,7 @@ function Exploded({ scope, frame, entities, run, view, play }: StudioProps & { p
         }
         // Ended once the last poses are drawn and the fit has begun (a render waiting for it sees the
         // parts apart, from where the camera is going).
-        if (p) window.setTimeout(() => requestAnimationFrame(p.end), 150);
+        endMotion(p);
         return;
       }
       setAt(k);
@@ -1003,14 +983,14 @@ function Exploded({ scope, frame, entities, run, view, play }: StudioProps & { p
       if (open?.id === play.id) close();
       return;
     }
-    const p = play.playback ?? beginPlayback();
+    const p = play.playback ?? beginMotion();
     playing0.current = p;
     show(play.id, play.spread).then((ok) => {
       if (!ok || reducedMotion()) {
         // Shown at its end at once (or not at all): framed now, unless a camera was asked for.
         playing0.current = null;
         if (ok) endFramed(p);
-        window.setTimeout(() => requestAnimationFrame(p.end), 150);
+        endMotion(p);
         return;
       }
       // Ends framed: every part in view, pulled apart.

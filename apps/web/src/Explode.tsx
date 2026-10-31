@@ -120,15 +120,15 @@ const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce
  * over it, easing open and shut. `apply` re-shows a shape (after it is rebuilt).
  * `settled` is told when it has finished opening or shutting (to frame it).
  */
-export function useExplode(show: (id: string, bodies: TurnBody[] | null, options?: TurnOptions) => void, partsOf: (id: string) => PartStats[], settled?: (id: string) => void) {
+export function useExplode(show: (id: string, bodies: TurnBody[] | null, options?: TurnOptions) => void, partsOf: (id: string) => PartStats[], settled?: (id: string) => void, rest?: () => void) {
   const [explode, setExplode] = useState<Explode | null>(null);
   const motion = useRef(new Map<string, { bodies: TurnBody[]; options?: TurnOptions }>());
   // How far open (0..1, before easing) each exploded shape is now.
   const amount = useRef<{ id: string; t: number } | null>(null);
   // Which split each shape is shown with, so a change of split puts it back first.
   const split = useRef(new Map<string, "motion" | "explode">());
-  const latest = useRef({ show, partsOf, explode, settled });
-  latest.current = { show, partsOf, explode, settled };
+  const latest = useRef({ show, partsOf, explode, settled, rest });
+  latest.current = { show, partsOf, explode, settled, rest };
   // Whether the last ease was opening, and the spread last framed: opening or
   // shutting frames at once, a new spread once it stops changing.
   const wasOpen = useRef(false);
@@ -191,17 +191,20 @@ export function useExplode(show: (id: string, bodies: TurnBody[] | null, options
       else {
         const turned = wasOpen.current !== open;
         wasOpen.current = open;
+        // At rest (`rest`), once framed where the parts now are.
         if (turned) {
           framedSpread.current = open ? spread : null;
           latest.current.settled?.(id);
+          latest.current.rest?.();
         } else if (open && framedSpread.current !== spread) {
           // A new spread (the slider, or Iṣẹ́ AI asking again): frame the
           // parts where they now are once it stops changing.
           timer = window.setTimeout(() => {
             framedSpread.current = spread;
             latest.current.settled?.(id);
+            latest.current.rest?.();
           }, 260);
-        }
+        } else latest.current.rest?.();
         if (!open) {
           amount.current = null;
           setExplode(null);

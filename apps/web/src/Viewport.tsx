@@ -1066,13 +1066,29 @@ function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vecto
     // The whole frame's width, not just what panels leave clear: a fill asked for is the picture's framing.
     const tanH = tanV * t.camera.aspect;
     const points: THREE.Vector3[] = [];
-    const meshes = box ? [] : [...t.parts].flatMap(([id, part]) => (part.group.visible ? part.meshes.filter((m) => m.visible && (!only || id === only || (m.userData.path as string[] | undefined)?.includes(only))) : []));
-    const total = meshes.reduce((n, m) => n + m.geometry.getAttribute("position").count, 0);
+    // What is drawn: each mesh and the pieces split out of it (a turning or exploded shape), and of a
+    // mesh drawn by groups only the vertices its groups use (the split pieces share its vertex data).
+    const meshes: THREE.Mesh[] = [];
+    for (const [id, part] of box ? [] : t.parts) {
+      if (!part.group.visible) continue;
+      for (const top of part.meshes)
+        top.traverseVisible((o) => {
+          const m = o as THREE.Mesh;
+          if (m.isMesh && (!only || id === only || (m.userData.path as string[] | undefined)?.includes(only))) meshes.push(m);
+        });
+    }
+    const ranges = (m: THREE.Mesh): [number, number][] => {
+      const g = m.geometry;
+      const n = g.index ? g.index.count : g.getAttribute("position").count;
+      return Array.isArray(m.material) ? g.groups.map((gr) => [gr.start, Math.min(gr.start + gr.count, n)]) : [[0, n]];
+    };
+    const total = meshes.reduce((n, m) => n + ranges(m).reduce((k, [a, b]) => k + b - a, 0), 0);
     const step = Math.max(1, Math.floor(total / 40000));
     for (const m of meshes) {
       m.updateMatrixWorld(true);
       const pos = m.geometry.getAttribute("position");
-      for (let i = 0; i < pos.count; i += step) points.push(new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld));
+      const index = m.geometry.index;
+      for (const [a, b] of ranges(m)) for (let k = a; k < b; k += step) points.push(new THREE.Vector3().fromBufferAttribute(pos, index ? index.getX(k) : k).applyMatrix4(m.matrixWorld));
     }
     if (!points.length) for (let i = 0; i < 8; i++) points.push(new THREE.Vector3(i & 1 ? bounds.max.x : bounds.min.x, i & 2 ? bounds.max.y : bounds.min.y, i & 4 ? bounds.max.z : bounds.min.z));
     const d = new THREE.Vector3();

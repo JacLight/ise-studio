@@ -438,9 +438,12 @@ const split = new WeakMap<THREE.BufferGeometry, THREE.BufferGeometry[]>();
 function pieces(mesh: THREE.Mesh): [THREE.BufferGeometry, THREE.Material | undefined][] {
   const g = mesh.geometry;
   if (!Array.isArray(mesh.material)) return [[g, mesh.material]];
+  // Several materials and no groups draws nothing, in the view as here: the part a turning or
+  // exploded shape leaves behind when every piece of it has moved out to a mesh of its own.
+  if (!g.groups.length) return [];
   const index = g.getIndex();
   const total = index ? index.count : g.getAttribute("position").count;
-  const groups = g.groups.length ? g.groups : [{ start: 0, count: total, materialIndex: 0 }];
+  const groups = g.groups;
   let parts = split.get(g);
   if (!parts) {
     parts = groups.map(({ start, count }) => {
