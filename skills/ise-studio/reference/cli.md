@@ -8,8 +8,8 @@
 |---|---|
 | `run steps.json [--from N] [--fresh] [--project name] [--url ws://127.0.0.1:7420/ws]` | steps already applied (same step, same parameters) are skipped, so a rerun after a failure continues from it; --from N starts at step N; --fresh applies every step again |
 | `check` |  |
-| `gears <id> [torque N·m] [rpm]` | turn a gear train through a full turn; tooth strength with a load |
-| `motion <joint id> [steps] [--set '{"Elbow":40}']` | sweep a joint through its limits: what moves, closest approaches, clashes, where it binds |
+| `gears <shape id or name> [torque N·m] [rpm]` | turn a gear train through a full turn (on its hinges, or on its joints: planetary trains); tooth strength with a load |
+| `motion <joint id \| shape id or name> [steps] [--set '{"Elbow":40}']` | sweep a joint through its limits (a shape: its program's joints through its drive): what moves, closest approaches, clashes, where it binds |
 | `fit <assembly or instance id \| project> [--motion]` | do screws, inserts, nuts, bearings and joined parts fit (and, with --motion, every joint's sweep) |
 | `check-geometry <id> [part]` | the exact kernel's check of each part: valid, self-intersections, tolerances |
 | `surfaces <id> [part] [--pull x,y,z] [--min deg]` | surface analysis: continuity across every seam (gap, crease, curvature jump), tightest bend, draft |

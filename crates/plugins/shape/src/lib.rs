@@ -731,7 +731,11 @@ pub struct ShapeStats {
     pub motion: Option<gears::Motion>,
     /// The program joins its parts with joint(): its motion is solved as a linkage.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub linkage: bool,    /// What the configuration it is shown in leaves out: parts, and the
+    pub linkage: bool,
+    /// The program declares gears in mesh (mesh()): the gear check applies.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub gears: bool,
+    /// What the configuration it is shown in leaves out: parts, and the
     /// hinges, joints and gear meshes that went with them.
     #[serde(skip_serializing_if = "runtime::LeftOut::is_empty")]
     pub left_out: runtime::LeftOut,
@@ -1447,6 +1451,7 @@ pub(crate) fn stats_of(e: &runtime::Evaluated) -> ShapeStats {
         moves: e.mechanism.is_some(),
         motion: e.mechanism.as_ref().and_then(|m| gears::Mechanism::parse(m).ok()).and_then(|m| m.motion().ok()),
         linkage: e.mechanism.as_ref().is_some_and(|m| m.get("joints").and_then(serde_json::Value::as_array).is_some_and(|j| !j.is_empty())),
+        gears: e.mechanism.as_ref().is_some_and(|m| m.get("meshes").and_then(serde_json::Value::as_array).is_some_and(|g| !g.is_empty())),
         left_out: e.left_out.clone(),
         declared: e.declared.clone(),
         sheet_metal: e.sheets.iter().map(|s| (s.part.clone(), s.data.clone())).collect(),

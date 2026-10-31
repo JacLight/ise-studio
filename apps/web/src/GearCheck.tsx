@@ -163,6 +163,7 @@ export function GearCheck({
   version,
   motion,
   linkage,
+  gears,
   parts,
   onTurn,
   onShowStress,
@@ -172,6 +173,7 @@ export function GearCheck({
   version: unknown;
   motion?: Motion;
   linkage: boolean;
+  gears?: boolean;
   parts: PartStats[];
   onTurn: (id: string, bodies: TurnBody[] | null, options?: { ghost?: boolean }) => void;
   onShowStress: (id: string, view: StressView | null) => void;
@@ -206,7 +208,7 @@ export function GearCheck({
         <span className="section-note">{linkage ? "Solved exactly at every step" : "Turn it here, or check it through a full turn"}</span>
       </header>
       {linkage ? <LinkageMotion id={id} version={version} parts={parts} onTurn={onTurn} onShowStress={onShowStress} onGrab={onGrab} /> : motion && motion.bodies.length > 0 && <Turn id={id} version={version} motion={motion} parts={parts} onTurn={onTurn} />}
-      {(!linkage || (motion && motion.bodies.length > 0)) && (
+      {(!linkage || gears || (motion && motion.bodies.length > 0)) && (
         <>
       <div className="gear-load">
         <label>

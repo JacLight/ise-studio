@@ -1,7 +1,8 @@
 //! Gear checks: does a gear train turn cleanly, and are its teeth strong enough?
 //!
-//! A program declares how its parts move (`hinge`) and which gears drive which
-//! (`mesh`). From that:
+//! A program declares how its parts move (`hinge` for gears on fixed axes, or
+//! joints, a drive and couplings for gears on a turning carrier: a planetary
+//! train) and which gears drive which (`mesh`). From that:
 //!
 //! - the **sweep** turns every hinged body at its gear ratio through one full
 //!   turn of the driving gear, in steps fine enough that each tooth passes in
@@ -17,6 +18,7 @@
 //!   stresses of each part's material. Design guidance, not certification:
 //!   the allowable values are typical figures, and the report says so.
 
+use crate::mechanism::{self, Kind, Linkage};
 use crate::runtime::Evaluated;
 use manifold_csg::Manifold;
 use de_core::schemars::{self, JsonSchema};
@@ -115,7 +117,7 @@ impl Mechanism {
     /// which body drives: the first mesh's driver, else the first hinge.
     pub fn speeds(&self) -> Result<(usize, Vec<f64>), String> {
         if self.bodies.is_empty() {
-            return Err("nothing is hinged: declare hinge(…) for the parts that turn".into());
+            return Err("nothing is hinged: declare hinge(…) for the parts that turn (or joint(…)s and a drive(…))".into());
         }
         let driver = match self.meshes.first() {
             Some(g) => self.body_of(&g.driver).ok_or_else(|| format!("“{}” drives a gear but is not hinged", g.driver))?,
@@ -126,8 +128,9 @@ impl Mechanism {
         // Spread speeds through the meshes until nothing changes.
         for _ in 0..self.meshes.len() + 1 {
             for g in &self.meshes {
-                let a = self.body_of(&g.driver).ok_or_else(|| format!("“{}” is in a mesh but not hinged", g.driver))?;
-                let b = self.body_of(&g.driven).ok_or_else(|| format!("“{}” is in a mesh but not hinged", g.driven))?;
+                let unhinged = |p: &str| format!("“{p}” is in a mesh but not hinged (gears whose axes are carried round, as a planetary's planets, and a ring that stays put: join the gears with joint(…), drive(…) and couple(…) instead of hinges, and the check follows the joints)");
+                let a = self.body_of(&g.driver).ok_or_else(|| unhinged(&g.driver))?;
+                let b = self.body_of(&g.driven).ok_or_else(|| unhinged(&g.driven))?;
                 let ratio = g.teeth[0] as f64 / g.teeth[1] as f64 * if g.internal { 1.0 } else { -1.0 };
                 if speed[a].is_finite() && !speed[b].is_finite() {
                     speed[b] = speed[a] * ratio;
@@ -185,67 +188,135 @@ pub struct Sweep {
     pub resolution: f64,
 }
 
+/// How the check moves the parts: which body each part is on, and every
+/// body's pose at each step of one full turn of the driving gear.
+struct Train {
+    /// The driving body's parts.
+    driver: Vec<String>,
+    bodies: Vec<Vec<String>>,
+    /// The driving joint's value at each step (degrees).
+    at: Vec<f64>,
+    /// Each step's pose of each body (Manifold's 3×4); None: as drawn.
+    poses: Vec<Vec<Option<[f64; 12]>>>,
+}
+
+const IDENTITY: [f64; 12] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
+
+impl Train {
+    fn body_of(&self, part: &str) -> Option<usize> {
+        self.bodies.iter().position(|b| b.iter().any(|p| p == part))
+    }
+
+    /// Gears on hinges about fixed axes, each turning at its gear ratio.
+    fn of_hinges(m: &Mechanism) -> Result<Train, String> {
+        let (driver, speed) = m.speeds()?;
+        // A tooth passes 16 steps or more, for every mesh.
+        let passes = m.meshes.iter().filter_map(|g| m.body_of(&g.driver).map(|b| speed[b].abs() * g.teeth[0] as f64)).fold(0.0_f64, f64::max);
+        let steps = ((passes * 16.0).ceil() as usize).clamp(72, 1440);
+        let at: Vec<f64> = (0..steps).map(|k| 360.0 * k as f64 / steps as f64).collect();
+        let poses = at.iter().map(|a| m.bodies.iter().zip(&speed).map(|(b, s)| (*s != 0.0).then(|| about(b.at, b.axis, a * s))).collect()).collect();
+        Ok(Train { driver: m.bodies[driver].parts.clone(), bodies: m.bodies.iter().map(|b| b.parts.clone()).collect(), at, poses })
+    }
+
+    /// Gears that follow the program's joints, from the linkage's frames
+    /// through one full turn of its drive (the last frame, back at the
+    /// start, left off).
+    fn of_joints(l: &Linkage, frames: &[mechanism::Frame]) -> Train {
+        let steps = frames.len().saturating_sub(1).max(1);
+        let driver = l.drive.as_ref().and_then(|d| driven_side(&l.joints[d.joint])).map(|b| l.bodies[b].clone()).unwrap_or_default();
+        Train {
+            driver,
+            bodies: l.bodies.clone(),
+            at: frames[..steps].iter().map(|f| f.drive).collect(),
+            poses: frames[..steps].iter().map(|f| f.bodies.iter().map(|(t, q)| Some(mechanism::pose_matrix(*t, *q))).collect()).collect(),
+        }
+    }
+
+    /// The step whose angle is nearest `at`.
+    fn step_at(&self, at: f64) -> usize {
+        (0..self.at.len()).min_by(|&i, &j| (self.at[i] - at).abs().total_cmp(&(self.at[j] - at).abs())).unwrap_or(0)
+    }
+
+    /// A part posed at a step (wrapping round the turn).
+    fn posed(&self, e: &Evaluated, name: &str, step: isize) -> Option<Manifold> {
+        let p = e.parts.iter().find(|p| p.name == name)?;
+        let k = step.rem_euclid(self.at.len() as isize) as usize;
+        Some(match self.body_of(name).and_then(|b| self.poses[k][b]) {
+            Some(m) => p.solid.transform(&m),
+            None => p.solid.translate(0.0, 0.0, 0.0),
+        })
+    }
+}
+
+/// The moving side of a joint (the other one is the ground, or comes second).
+fn driven_side(j: &mechanism::Joint) -> Option<usize> {
+    if j.a.is_none() { j.b } else { j.a }
+}
+
 /// Turns the mechanism through one full turn of its driving body.
 pub fn sweep(e: &Evaluated, m: &Mechanism, search: f64) -> Result<Sweep, String> {
-    let (driver, speed) = m.speeds()?;
-    for b in &m.bodies {
-        for p in &b.parts {
+    sweep_train(e, &Train::of_hinges(m)?, search)
+}
+
+fn sweep_train(e: &Evaluated, t: &Train, search: f64) -> Result<Sweep, String> {
+    for b in &t.bodies {
+        for p in b {
             if !e.parts.iter().any(|q| &q.name == p) {
-                return Err(format!("“{p}” is hinged but the program has no part of that name"));
+                return Err(format!("“{p}” turns in the mechanism but the program has no part of that name"));
             }
         }
     }
-    let body_of: Vec<Option<usize>> = e.parts.iter().map(|p| m.body_of(&p.name)).collect();
-    // A tooth passes 16 steps or more, for every mesh.
-    let passes = m
-        .meshes
+    let body_of: Vec<Option<usize>> = e.parts.iter().map(|p| t.body_of(&p.name)).collect();
+    let moves: Vec<bool> = (0..t.bodies.len()).map(|b| t.poses.iter().any(|s| s[b].is_some_and(|m| m.iter().zip(IDENTITY).any(|(x, y)| (x - y).abs() > 1e-9)))).collect();
+    // Each part's box over the turn: its corners carried round, with a margin for between the steps.
+    let boxes: Vec<([f64; 3], [f64; 3])> = e
+        .parts
         .iter()
-        .filter_map(|g| m.body_of(&g.driver).map(|b| speed[b].abs() * g.teeth[0] as f64))
-        .fold(0.0_f64, f64::max);
-    let steps = ((passes * 16.0).ceil() as usize).clamp(72, 1440);
-    // Pairs that move relative to each other and can come close (boxes within `search`).
+        .zip(&body_of)
+        .map(|(p, b)| {
+            let (lo, hi) = (p.bounds_min, p.bounds_max);
+            let Some(b) = b.filter(|&b| moves[b]) else { return (lo, hi) };
+            let pad = 0.05 * (0..3).map(|d| (hi[d] - lo[d]).powi(2)).sum::<f64>().sqrt();
+            let (mut a, mut z) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+            for m in t.poses.iter().map(|s| s[b].unwrap_or(IDENTITY)) {
+                for c in 0..8 {
+                    let v = [if c & 1 == 0 { lo[0] } else { hi[0] }, if c & 2 == 0 { lo[1] } else { hi[1] }, if c & 4 == 0 { lo[2] } else { hi[2] }];
+                    for i in 0..3 {
+                        let x = m[i] * v[0] + m[3 + i] * v[1] + m[6 + i] * v[2] + m[9 + i];
+                        a[i] = a[i].min(x - pad);
+                        z[i] = z[i].max(x + pad);
+                    }
+                }
+            }
+            (a, z)
+        })
+        .collect();
+    // Pairs that move relative to each other and can come close.
     let mut pairs = Vec::new();
     for i in 0..e.parts.len() {
         for j in i + 1..e.parts.len() {
             let (bi, bj) = (body_of[i], body_of[j]);
-            let si = bi.map(|b| speed[b]).unwrap_or(0.0);
-            let sj = bj.map(|b| speed[b]).unwrap_or(0.0);
-            if bi == bj || (si == 0.0 && sj == 0.0) {
+            let moving = |b: Option<usize>| b.is_some_and(|b| moves[b]);
+            if bi == bj || !(moving(bi) || moving(bj)) {
                 continue; // they move together, or neither moves
             }
-            // A body turning about its own axis keeps the same swept shape: use its swept box.
-            let reach = |k: usize| {
-                let p = &e.parts[k];
-                let r = body_of[k]
-                    .map(|b| {
-                        let at = m.bodies[b].at;
-                        (0..3).map(|d| (p.bounds_min[d] - at[d]).abs().max((p.bounds_max[d] - at[d]).abs())).fold(0.0, f64::max)
-                    })
-                    .unwrap_or(0.0);
-                (p.bounds_min, p.bounds_max, r, body_of[k].map(|b| m.bodies[b].at))
-            };
-            let (ai, bi_, ri, ci) = reach(i);
-            let (aj, bj_, rj, cj) = reach(j);
-            let lo = |a: [f64; 3], r: f64, c: Option<[f64; 3]>| c.map(|c| c.map(|v| v - r * 1.75)).unwrap_or(a);
-            let hi = |b: [f64; 3], r: f64, c: Option<[f64; 3]>| c.map(|c| c.map(|v| v + r * 1.75)).unwrap_or(b);
-            let (li, hi_i, lj, hj) = (lo(ai, ri, ci), hi(bi_, ri, ci), lo(aj, rj, cj), hi(bj_, rj, cj));
-            if (0..3).all(|d| li[d] - search <= hj[d] && lj[d] - search <= hi_i[d]) {
+            let ((li, hi), (lj, hj)) = (boxes[i], boxes[j]);
+            if (0..3).all(|d| li[d] - search <= hj[d] && lj[d] - search <= hi[d]) {
                 pairs.push((i, j));
             }
         }
     }
     let mut closest: Vec<(f64, f64)> = vec![(f64::INFINITY, 0.0); pairs.len()];
-    for step in 0..steps {
-        let angle = 360.0 * step as f64 / steps as f64;
+    for (step, pose) in t.poses.iter().enumerate() {
         let posed: Vec<Option<Manifold>> = (0..e.parts.len())
             .map(|k| {
                 if !pairs.iter().any(|(i, j)| *i == k || *j == k) {
                     return None;
                 }
                 let solid = &e.parts[k].solid;
-                Some(match body_of[k] {
-                    Some(b) if speed[b] != 0.0 => solid.transform(&about(m.bodies[b].at, m.bodies[b].axis, angle * speed[b])),
-                    _ => solid.translate(0.0, 0.0, 0.0),
+                Some(match body_of[k].and_then(|b| pose[b]) {
+                    Some(m) => solid.transform(&m),
+                    None => solid.translate(0.0, 0.0, 0.0),
                 })
             })
             .collect();
@@ -253,7 +324,7 @@ pub fn sweep(e: &Evaluated, m: &Mechanism, search: f64) -> Result<Sweep, String>
             let (Some(a), Some(b)) = (&posed[*i], &posed[*j]) else { continue };
             let g = a.min_gap(b, search);
             if g < closest[n].0 {
-                closest[n] = (g, angle);
+                closest[n] = (g, t.at[step]);
             }
         }
     }
@@ -265,7 +336,7 @@ pub fn sweep(e: &Evaluated, m: &Mechanism, search: f64) -> Result<Sweep, String>
         .collect();
     out.sort_by(|a, b| a.gap.total_cmp(&b.gap));
     let clashes = out.iter().filter(|p| p.gap < 1e-4).cloned().collect();
-    Ok(Sweep { driver: m.bodies[driver].parts.clone(), steps, pairs: out, clashes, search, resolution: 0.0 })
+    Ok(Sweep { driver: t.driver.clone(), steps: t.at.len(), pairs: out, clashes, search, resolution: 0.0 })
 }
 
 /// A mesh's geometry: ratio, contact ratio and backlash.
@@ -360,18 +431,38 @@ pub struct Strength {
     pub materials: [String; 2],
 }
 
+/// Where a gear turns, how fast (turns per turn of the drive, about its
+/// axis), and how fast what carries its axis turns (a planet's carrier; 0
+/// for an axis that stays put).
+#[derive(Clone, Copy, Debug)]
+struct Axis {
+    at: [f64; 3],
+    axis: [f64; 3],
+    speed: f64,
+    carrier: f64,
+}
+
 /// The geometry and (with a load) strength of every mesh. `materials` gives a
 /// part's material name; `torque`/`rpm` are at the driving body.
 pub fn meshes(m: &Mechanism, load: Option<(f64, f64)>, material: &dyn Fn(&str) -> Option<String>) -> Result<Vec<MeshReport>, String> {
     let (_, speed) = m.speeds()?;
+    let axis = |part: &str| -> Result<Axis, String> {
+        let b = m.body_of(part).ok_or_else(|| format!("“{part}” is not hinged"))?;
+        Ok(Axis { at: m.bodies[b].at, axis: m.bodies[b].axis, speed: speed[b], carrier: 0.0 })
+    };
+    mesh_reports(&m.meshes, &|g| Ok((axis(&g.driver)?, axis(&g.driven)?, 1.0)), load, material)
+}
+
+/// Each mesh's report, given its two gears' axes and the drive's own speed
+/// about the first one's axis.
+fn mesh_reports(list: &[Mesh], axes: &dyn Fn(&Mesh) -> Result<(Axis, Axis, f64), String>, load: Option<(f64, f64)>, material: &dyn Fn(&str) -> Option<String>) -> Result<Vec<MeshReport>, String> {
     let mut out = Vec::new();
-    for g in &m.meshes {
-        let a = m.body_of(&g.driver).ok_or_else(|| format!("“{}” is not hinged", g.driver))?;
-        let b = m.body_of(&g.driven).ok_or_else(|| format!("“{}” is not hinged", g.driven))?;
-        let (pa, pb) = (m.bodies[a].at, m.bodies[b].at);
+    for g in list {
+        let (ga, gb, input) = axes(g)?;
+        let (pa, pb) = (ga.at, gb.at);
         // Distance between the two (parallel) axes.
         let d = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
-        let n = m.bodies[a].axis;
+        let n = ga.axis;
         let along = d[0] * n[0] + d[1] * n[1] + d[2] * n[2];
         let a_w = ((d[0] - along * n[0]).powi(2) + (d[1] - along * n[1]).powi(2) + (d[2] - along * n[2]).powi(2)).sqrt();
         let alpha = g.pressure_angle.to_radians();
@@ -400,9 +491,17 @@ pub fn meshes(m: &Mechanism, load: Option<(f64, f64)>, material: &dyn Fn(&str) -
         let strength = match load {
             None => None,
             Some((torque_in, rpm_in)) => {
-                // Torque and speed on this mesh's driving gear (no losses assumed).
-                let s = speed[a].abs().max(1e-12);
-                let torque = torque_in / s;
+                // Seen from what carries the gears' axes (a planetary's carrier), the
+                // train is an ordinary one: the power the drive puts in there flows
+                // through each mesh, shared by identical meshes side by side (the
+                // planets). No losses assumed.
+                let frame = if ga.carrier != 0.0 { ga.carrier } else { gb.carrier };
+                let shared = list.iter().filter(|h| h.teeth == g.teeth && h.module == g.module && h.internal == g.internal && (h.driver == g.driver || h.driven == g.driven)).count().max(1);
+                if shared > 1 {
+                    notes.push(format!("the load is taken as shared equally by the {shared} identical meshes"));
+                }
+                let s = (ga.speed - frame).abs().max(1e-12);
+                let torque = torque_in * (input - frame).abs() / (s * shared as f64);
                 let rpm = rpm_in * s;
                 let wt = torque * 1000.0 / r1; // N (torque in N·m, radius in mm)
                 let v = rpm * 2.0 * PI / 60.0 * r1 / 1000.0; // m/s
@@ -469,17 +568,66 @@ pub fn meshes(m: &Mechanism, load: Option<(f64, f64)>, material: &dyn Fn(&str) -
     Ok(out)
 }
 
-/// The gap between two parts with the mechanism turned to `angle` (degrees of the driving body).
-fn gap_at(e: &Evaluated, m: &Mechanism, a: &str, b: &str, angle: f64, search: f64) -> Option<f64> {
-    let (_, speed) = m.speeds().ok()?;
-    let pose = |name: &str| {
-        let p = e.parts.iter().find(|p| p.name == name)?;
-        Some(match m.body_of(name) {
-            Some(k) if speed[k] != 0.0 => p.solid.transform(&about(m.bodies[k].at, m.bodies[k].axis, angle * speed[k])),
-            _ => p.solid.translate(0.0, 0.0, 0.0),
-        })
-    };
-    Some(pose(a)?.min_gap(&pose(b)?, search))
+/// Turns a body makes about `axis` over the frames (None: the ground, which stays).
+fn spin(frames: &[mechanism::Frame], body: Option<usize>, axis: [f64; 3]) -> f64 {
+    let Some(b) = body else { return 0.0 };
+    let mut total = 0.0;
+    for w in frames.windows(2) {
+        // The turn from one frame to the next: q1 · q0⁻¹.
+        let ([x0, y0, z0, w0], [x1, y1, z1, w1]) = (w[0].bodies[b].1, w[1].bodies[b].1);
+        let (bx, by, bz, bw) = (-x0, -y0, -z0, w0);
+        let x = w1 * bx + x1 * bw + y1 * bz - z1 * by;
+        let y = w1 * by - x1 * bz + y1 * bw + z1 * bx;
+        let z = w1 * bz + x1 * by - y1 * bx + z1 * bw;
+        let s = w1 * bw - x1 * bx - y1 * by - z1 * bz;
+        let along = x * axis[0] + y * axis[1] + z * axis[2];
+        let (along, s) = if s < 0.0 { (-along, -s) } else { (along, s) };
+        total += 2.0 * along.atan2(s);
+    }
+    total / (2.0 * PI)
+}
+
+/// The joint a body turns on, and what is on its other side (None: the
+/// ground), preferring the one to the ground (a carrier's bearing, not the
+/// pins its planets turn on).
+fn pivot(l: &Linkage, b: usize) -> Option<(&mechanism::Joint, Option<usize>)> {
+    let turning = l.joints.iter().filter(|j| matches!(j.kind, Kind::Hinge | Kind::Cylinder));
+    let sides: Vec<_> = turning.filter_map(|j| if j.a == Some(b) { Some((j, j.b)) } else if j.b == Some(b) { Some((j, j.a)) } else { None }).collect();
+    sides.iter().find(|(_, o)| o.is_none()).or(sides.first()).copied()
+}
+
+/// A gear's axis and speeds in a linkage. A gear on no joint stays put (a
+/// ring gear in its housing) and turns about the axis its partner is carried
+/// round.
+fn joint_axis(l: &Linkage, frames: &[mechanism::Frame], part: &str, partner: &str) -> Result<Axis, String> {
+    match l.body_of(part) {
+        Some(b) => {
+            let (j, other) = pivot(l, b).ok_or_else(|| format!("“{part}” is in a mesh but turns on no hinge joint"))?;
+            Ok(Axis { at: j.at, axis: j.axis, speed: spin(frames, Some(b), j.axis), carrier: spin(frames, other, j.axis) })
+        }
+        None => {
+            let carrier = l.body_of(partner).and_then(|p| pivot(l, p)).and_then(|(_, o)| o).and_then(|c| pivot(l, c));
+            let (j, _) = carrier.ok_or_else(|| format!("“{part}” stays put and “{partner}” turns about a fixed axis, so the two cannot turn in mesh"))?;
+            Ok(Axis { at: j.at, axis: j.axis, speed: 0.0, carrier: 0.0 })
+        }
+    }
+}
+
+/// The linkage turned through one full turn of its drive (a slider drive
+/// through its travel), in `steps` steps.
+fn turn_joints(l: &Linkage, size: f64, steps: usize) -> Result<Vec<mechanism::Frame>, String> {
+    let mut l = l.clone();
+    let joint = l.drive.as_ref().ok_or("the joints have no drive: drive(…) the joint that turns the gears")?.joint;
+    if l.joints[joint].kind != Kind::Slider
+        && let Some(d) = l.drive.as_mut()
+    {
+        d.to = d.from + 360.0;
+    }
+    let s = l.sweep(steps, size);
+    if s.frames.len() < steps + 1 {
+        return Err(format!("the gears cannot turn on their joints: {}", s.notes.join(" ")));
+    }
+    Ok(s.frames)
 }
 
 /// The whole check: sweep plus every mesh.
@@ -492,28 +640,73 @@ pub struct Check {
 }
 
 /// Runs the check on a shape evaluated at display accuracy. `finer`, if
-/// given, evaluates it again much more finely: a pair that seems to touch is
-/// measured there at the angles it touched, so a running fit tighter than the
-/// display facets (a shaft in its bearing) is not mistaken for a clash.
+/// given, evaluates it again much more finely, and every pair that came
+/// close is measured there where it came closest, so the gaps reported are
+/// the ones drawn, not the display facets' (a running fit tighter than the
+/// facets is not mistaken for a clash either).
 pub fn check(e: &Evaluated, load: Option<(f64, f64)>, finer: Option<&dyn Fn() -> Result<Evaluated, String>>) -> Result<Check, String> {
     check_at(e, load, finer, (0.0, 0.0))
 }
 
 /// As [`check`], knowing the accuracy of the two evaluations (mm), to report the check's resolution.
+///
+/// The gears turn as their hinges say (`hinge`: fixed axes at the meshes'
+/// ratios) or, when the program joins them with joints instead (`joint`,
+/// `drive`, `couple`: planets on a turning carrier, a ring that stays put),
+/// exactly as the joints move them.
 pub fn check_at(e: &Evaluated, load: Option<(f64, f64)>, finer: Option<&dyn Fn() -> Result<Evaluated, String>>, tolerances: (f64, f64)) -> Result<Check, String> {
-    let m = Mechanism::parse(e.mechanism.as_ref().ok_or("the program declares no mechanism: use hinge(…) and mesh(…)")?)?;
+    let raw = e.mechanism.as_ref().ok_or("the program declares no mechanism: use hinge(…) and mesh(…), or joint(…), drive(…) and mesh(…)")?;
+    let m = Mechanism::parse(raw)?;
+    let hinged = |p: &str| m.body_of(p).is_some();
+    let by_joints = if m.meshes.is_empty() { m.bodies.is_empty() } else { !m.meshes.iter().any(|g| hinged(&g.driver) || hinged(&g.driven)) };
+    let linkage = if by_joints { Linkage::parse(raw).transpose()? } else { None };
     let material = |part: &str| e.parts.iter().find(|p| p.name == part).and_then(|p| p.material.clone());
-    let mut sweep = sweep(e, &m, 1.0)?;
+    let (train, meshes, speeds) = match &linkage {
+        None => {
+            let train = Train::of_hinges(&m)?;
+            let (_, speed) = m.speeds()?;
+            let speeds = m.bodies.iter().zip(speed).map(|(b, s)| (b.parts.clone(), (s * 1e6).round() / 1e6)).collect();
+            (train, meshes(&m, load, &material)?, speeds)
+        }
+        Some(l) => {
+            let size = (0..3).map(|k| e.bounds_max[k] - e.bounds_min[k]).fold(0.0, f64::max);
+            let axes = |frames: &[mechanism::Frame], g: &Mesh| -> Result<(Axis, Axis, f64), String> {
+                let a = joint_axis(l, frames, &g.driver, &g.driven)?;
+                let b = joint_axis(l, frames, &g.driven, &g.driver)?;
+                let input = l.drive.as_ref().map_or(1.0, |d| spin(frames, driven_side(&l.joints[d.joint]), a.axis));
+                Ok((a, b, input))
+            };
+            // A first pass to see how fast the teeth pass, then fine enough that each passes in 16 steps or more.
+            let rough = turn_joints(l, size, 72)?;
+            let mut passes = 0.0_f64;
+            for g in &m.meshes {
+                let (a, b, _) = axes(&rough, g)?;
+                let frame = if a.carrier != 0.0 { a.carrier } else { b.carrier };
+                passes = passes.max((a.speed - frame).abs() * g.teeth[0] as f64);
+            }
+            let steps = ((passes * 16.0).ceil() as usize).clamp(72, 1440);
+            let frames = if steps > 72 { turn_joints(l, size, steps)? } else { rough };
+            let reports = mesh_reports(&m.meshes, &|g| axes(&frames, g), load, &material)?;
+            let speeds = (0..l.bodies.len())
+                .map(|b| {
+                    let axis = pivot(l, b).map_or([0.0, 0.0, 1.0], |(j, _)| j.axis);
+                    (l.bodies[b].clone(), (spin(&frames, Some(b), axis) * 1e6).round() / 1e6)
+                })
+                .collect();
+            (Train::of_joints(l, &frames), reports, speeds)
+        }
+    };
+    let mut sweep = sweep_train(e, &train, 1.0)?;
     sweep.resolution = 2.0 * tolerances.0;
-    if !sweep.clashes.is_empty()
+    if !sweep.pairs.is_empty()
         && let Some(finer) = finer
     {
         sweep.resolution = 2.0 * tolerances.1;
         let fine = finer()?;
-        let step = 360.0 / sweep.steps as f64;
-        for pair in sweep.pairs.iter_mut().filter(|p| p.gap < 1e-4) {
-            // The worst of the touching angle and its neighbours, measured finely.
-            let g = [-1.0, 0.0, 1.0].iter().filter_map(|k| gap_at(&fine, &m, &pair.a, &pair.b, pair.at + k * step, 1.0)).fold(f64::INFINITY, f64::min);
+        for pair in sweep.pairs.iter_mut() {
+            // The worst of the closest step and its neighbours, measured finely.
+            let k = train.step_at(pair.at) as isize;
+            let g = [-1, 0, 1].iter().filter_map(|d| Some(train.posed(&fine, &pair.a, k + d)?.min_gap(&train.posed(&fine, &pair.b, k + d)?, 1.0))).fold(f64::INFINITY, f64::min);
             if g.is_finite() {
                 pair.gap = (g * 1e4).round() / 1e4;
             }
@@ -521,9 +714,6 @@ pub fn check_at(e: &Evaluated, load: Option<(f64, f64)>, finer: Option<&dyn Fn()
         sweep.pairs.sort_by(|a, b| a.gap.total_cmp(&b.gap));
         sweep.clashes = sweep.pairs.iter().filter(|p| p.gap < 1e-4).cloned().collect();
     }
-    let meshes = meshes(&m, load, &material)?;
-    let (_, speed) = m.speeds()?;
-    let speeds = m.bodies.iter().zip(speed).map(|(b, s)| (b.parts.clone(), (s * 1e6).round() / 1e6)).collect();
     Ok(Check { sweep, meshes, speeds })
 }
 

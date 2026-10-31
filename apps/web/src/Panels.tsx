@@ -767,7 +767,7 @@ export function PropertiesBody(props: PropertiesProps) {
         </div>
       </div>
 
-      {prog && part.shape?.moves && <GearCheck id={part.id} version={part.mesh} motion={part.shape.motion} linkage={!!part.shape.linkage} parts={part.shape.parts ?? []} onTurn={props.onTurn} onShowStress={props.onShowStress} onGrab={props.onGrab} />}
+      {prog && part.shape?.moves && <GearCheck id={part.id} version={part.mesh} motion={part.shape.motion} linkage={!!part.shape.linkage} gears={!!part.shape.gears} parts={part.shape.parts ?? []} onTurn={props.onTurn} onShowStress={props.onShowStress} onGrab={props.onGrab} />}
 
       {prog && (!part.shape?.parts?.length || props.selectedPart) && (
         <StressStudy

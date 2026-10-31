@@ -51,6 +51,8 @@ export type ShapeStats = {
   motion?: Motion;
   /** The program joins parts with joint(): a linkage the engine solves. */
   linkage?: boolean;
+  /** The program declares gears in mesh: the gear check applies (on hinges or joints). */
+  gears?: boolean;
   /** For assemblies: every fabricable part, each owning a range of the mesh's indices. */
   parts?: PartStats[];
   /** What the configuration shown leaves out (absent when nothing). */

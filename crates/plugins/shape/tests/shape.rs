@@ -471,6 +471,59 @@ fn gear_trains_turn_cleanly_through_a_full_turn() {
 }
 
 #[test]
+fn a_planetary_train_on_joints_turns_with_its_planets_carried_round() {
+    // Sun 12, three planets 18 on a carrier, ring 48 fixed in the housing: 5 : 1.
+    // Smooth discs at the pitch circles, 0.5 mm apart, so every gap holds all
+    // the way round only if the planets really orbit with the carrier.
+    let src = r#"
+const Zs = 12, Zp = 18, Zr = 48, m = 2, c = 0.25, H = 8, a = m * (Zs + Zp) / 2;
+const at = (k) => [a * Math.cos(k * 2 * Math.PI / 3), a * Math.sin(k * 2 * Math.PI / 3), 0];
+const ring = cylinder(H, m * Zr / 2 + 6).subtract(cylinder(H, m * Zr / 2 + c));
+const carrier = cylinder(3, a + 6).translate([0, 0, H + 1]);
+joint("hinge", "Sun", "ground", { name: "Input" });
+joint("hinge", "Carrier", "ground", { name: "Output" });
+for (let k = 0; k < 3; k++) joint("hinge", `Planet ${k + 1}`, "Carrier", { at: at(k), name: `Pin ${k + 1}` });
+drive("Input");
+const out = Zs / (Zs + Zr);
+couple("Input", "Output", out);
+for (let k = 0; k < 3; k++) {
+  couple("Input", `Pin ${k + 1}`, -(Zs / Zp) * (1 - out));
+  mesh("Sun", `Planet ${k + 1}`, { module: m, teeth: [Zs, Zp], width: H });
+  mesh(`Planet ${k + 1}`, "Housing", { module: m, teeth: [Zp, Zr], width: H, internal: true });
+}
+return [
+  part("Housing", ring, { material: "PLA" }),
+  part("Sun", cylinder(H, m * Zs / 2 - c), { material: "PLA" }),
+  part("Carrier", carrier, { material: "PLA" }),
+  ...[0, 1, 2].map((k) => part(`Planet ${k + 1}`, cylinder(H, m * Zp / 2 - c).translate(at(k)), { material: "PLA" })),
+];
+"#;
+    let e = runtime::evaluate(src, &[], 0.05).unwrap();
+    let finer = || runtime::evaluate(src, &[], 0.0025);
+    let c = de_shape::gears::check(&e, Some((1.0, 60.0)), Some(&finer)).expect("the check follows the joints");
+    assert!(c.sweep.clashes.is_empty(), "clashes: {:?}", c.sweep.clashes);
+    let speed = |name: &str| c.speeds.iter().find(|(parts, _)| parts.contains(&name.to_string())).unwrap().1;
+    assert!((speed("Carrier") - 0.2).abs() < 1e-3, "the carrier turns once for five turns in: {}", speed("Carrier"));
+    assert!((speed("Planet 1") + 1.0 / 3.0).abs() < 1e-3, "a planet turns backwards a third of a turn: {}", speed("Planet 1"));
+    // Every gap the discs were drawn with, measured finely through the whole turn.
+    for name in ["Planet 1", "Planet 2", "Planet 3"] {
+        for other in ["Sun", "Housing"] {
+            let p = c.sweep.pairs.iter().find(|p| (p.a == name && p.b == other) || (p.a == other && p.b == name)).unwrap_or_else(|| panic!("{name} ↔ {other} watched: {:?}", c.sweep.pairs));
+            assert!((p.gap - 0.5).abs() < 0.01, "{name} ↔ {other}: {} mm", p.gap);
+        }
+    }
+    // The ring's axis is the carrier's; both meshes at 30 mm.
+    assert!(c.meshes.iter().all(|m| (m.center_distance - 30.0).abs() < 1e-6), "{:?}", c.meshes.iter().map(|m| m.center_distance).collect::<Vec<_>>());
+    // 1 N·m in, shared by three planets: a third on the sun at each mesh, and
+    // the same tooth force (1/3 N·m over 12 mm) at each planet's 18 mm with the ring.
+    let sun = c.meshes[0].strength.as_ref().unwrap();
+    let ring = c.meshes[1].strength.as_ref().unwrap();
+    assert!((sun.torque - 1.0 / 3.0).abs() < 1e-3, "{}", sun.torque);
+    assert!((ring.torque - 0.5).abs() < 1e-3, "{}", ring.torque);
+    assert!((sun.tangential_force - ring.tangential_force).abs() < 0.05);
+}
+
+#[test]
 fn the_print_in_place_gearbox_turns_without_touching_its_housing() {
     // The herringbone redesign declares its train, so the gear check turns it (the printed one is examples/gearbox-print).
     let (src, params) = example("gearbox-herringbone", "print-in-place.js");

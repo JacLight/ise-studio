@@ -6,8 +6,8 @@
 //        steps already applied (same step, same parameters) are skipped, so a rerun after a failure
 //        continues from it; --from N starts at step N; --fresh applies every step again
 //   node tools/ise.mjs check
-//   node tools/ise.mjs gears <id> [torque N·m] [rpm]   turn a gear train through a full turn; tooth strength with a load
-//   node tools/ise.mjs motion <joint id> [steps] [--set '{"Elbow":40}']   sweep a joint through its limits: what moves, closest approaches, clashes, where it binds
+//   node tools/ise.mjs gears <shape id or name> [torque N·m] [rpm]   turn a gear train through a full turn (on its hinges, or on its joints: planetary trains); tooth strength with a load
+//   node tools/ise.mjs motion <joint id | shape id or name> [steps] [--set '{"Elbow":40}']   sweep a joint through its limits (a shape: its program's joints through its drive): what moves, closest approaches, clashes, where it binds
 //   node tools/ise.mjs fit <assembly or instance id | project> [--motion]   do screws, inserts, nuts, bearings and joined parts fit (and, with --motion, every joint's sweep)
 //   node tools/ise.mjs check-geometry <id> [part]   the exact kernel's check of each part: valid, self-intersections, tolerances
 //   node tools/ise.mjs surfaces <id> [part] [--pull x,y,z] [--min deg]   surface analysis: continuity across every seam (gap, crease, curvature jump), tightest bend, draft
@@ -222,14 +222,17 @@ let failed = false;
 
 // Names work wherever an id does: a shape's, instance's or assembly's name
 // (any case) stands for its id in the commands that read one part.
-if (["check-geometry", "surfaces", "drawing", "flat"].includes(command) && args[1] && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(args[1]) && args[1] !== "project") {
+if (["check-geometry", "surfaces", "drawing", "flat", "gears", "motion"].includes(command) && args[1] && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(args[1]) && args[1] !== "project") {
   const snap = await engine.snapshot;
   const want = args[1].toLowerCase();
   const nameOf = (e) => {
     const c = e.components ?? {};
     return c["assembly.instance"]?.name ?? c["shape.program"]?.name ?? c["assembly.definition"]?.name;
   };
-  const hits = snap.entities.filter((e) => nameOf(e)?.toLowerCase() === want);
+  let hits = snap.entities.filter((e) => nameOf(e)?.toLowerCase() === want);
+  // Gears and motion turn a shape's program: its name over an instance showing it.
+  const shapes = hits.filter((e) => e.components?.["shape.program"]);
+  if (["gears", "motion"].includes(command) && shapes.length === 1) hits = shapes;
   if (hits.length === 1) args[1] = hits[0].id;
   else if (hits.length > 1) {
     console.error(`✗ “${args[1]}” names ${hits.length} things: use an id (${hits.map((e) => e.id).join(", ")})`);
@@ -428,7 +431,12 @@ if (command === "run") {
   }
   const q = new URLSearchParams(project ? { project } : {});
   let path;
-  if (command === "motion") {
+  // A shape whose program joins its parts with joints moves by its own linkage.
+  const shapeMotion = command === "motion" && (await engine.snapshot).entities.some((e) => e.id === id && e.components?.["shape.program"]);
+  if (shapeMotion) {
+    path = `motion/${id}`;
+    if (extra) q.set("steps", extra);
+  } else if (command === "motion") {
     path = `assembly-motion/${id}`;
     if (extra) q.set("steps", extra);
     if (set) q.set("set", set);
@@ -446,6 +454,18 @@ if (command === "run") {
     failed = true;
   } else if (command === "bom") {
     process.stdout.write(await res.text());
+  } else if (shapeMotion) {
+    const s = await res.json();
+    const d = s.drive != null ? s.joints[s.drive] : null;
+    const range = s.frames.length ? `${s.frames[0].drive}…${s.frames.at(-1).drive}${d?.unit ?? ""}` : "";
+    const bad = s.clashes.length > 0 || s.binds_at != null;
+    console.log(`${bad ? "✗" : "✓"} ${d ? `${d.name} ${range} in ${s.frames.length - 1} steps` : "no drive(…): as drawn"}; ${s.bodies.length} moving bodies, ${s.freedom} way${s.freedom === 1 ? "" : "s"} to move${s.binds_at != null ? `; binds at ${s.binds_at}${d?.unit ?? ""}` : ""}`);
+    for (const c of s.clashes) console.log(`  clash  ${c.a} ↔ ${c.b} at ${c.at}${d?.unit ?? ""}`);
+    for (const p of s.pairs.filter((p) => !p.joined && p.gap >= 1e-4).slice(0, 8)) console.log(`  close  ${p.a} ↔ ${p.b}: ${p.gap} mm at ${p.at}${d?.unit ?? ""}`);
+    const touching = s.pairs.filter((p) => p.joined && p.gap < 1e-4).length;
+    if (touching) console.log(`  (${touching} joined pairs touch at their joints as designed)`);
+    for (const n of s.notes) console.log(`  ! ${n}`);
+    failed = bad;
   } else if (command === "motion") {
     const s = await res.json();
     const moving = s.instances.filter((i) => i.moves).map((i) => i.name);
