@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExt
 import { usePersisted, usePersistedSet } from "./persist";
 import { AiPanel } from "./AiPanel";
 import { RenderView } from "./RenderView";
-import { type Studio, renderImage } from "./render";
+import { type RenderSource, type Studio, renderImage } from "./render";
 import { modelForWeb } from "./webModel";
 import { type Proposal, interpret } from "./assistant";
 import { Collapsed, ProjectPill, Restore, ToolRail, ViewBar } from "./Chrome";
@@ -31,7 +31,7 @@ import { PlaneMenu, useSketchEditor } from "./SketchEditor";
 import { Icon } from "./icons";
 import { sketchOf } from "./sketchModel";
 import { ComponentTree, ComponentsBody, InstanceBody, ParameterSets, StackingPlan, parameterSet, stackingSubject } from "./Components";
-import { playExploded } from "./AssemblyTools";
+import { cameraAsked, explodeSettled, playExploded } from "./AssemblyTools";
 import { type AiMode, type DockSide, type Group, type PanelKind, type UiPrefs, loadPrefs, savePrefs } from "./ui";
 import { DOCK_MIN_WINDOW, type DockPlace, type DockSlot, Splitter, StackSplitter, layoutDocks, useDockDrag, useWindowSize } from "./Dock";
 import { IMPORT_ACCEPT, IMPORT_FORMATS, type ImportReply, importSummary, importable } from "./fileFormats";
@@ -336,7 +336,10 @@ export function App({ engine }: { engine: Engine }) {
             later(() => viewport.current?.frame(target));
             break;
           case "frame":
-            if (target) viewport.current?.frame(target);
+            if (target) {
+              cameraAsked(() => viewport.current?.frame(target));
+              viewport.current?.frame(target);
+            }
             break;
           case "isolate":
             if (!target) return;
@@ -400,43 +403,51 @@ export function App({ engine }: { engine: Engine }) {
               if (job.open !== false) setRendering(true);
               break;
             }
-            const view = viewport.current?.renderSource();
             // The photo skins asked for: the project's canvases of those names.
-            const skins = skinNow.current.flatMap((name) => {
-              const hit = [...entitiesNow.current.values()].find((e) => canvasOf(e)?.name.toLowerCase() === name.toLowerCase());
-              const canvas = canvasOf(hit);
-              return canvas ? [{ name: canvas.name, canvas }] : [];
-            });
-            const source = view && skins.length ? { ...view, skins } : view;
+            const withSkins = (view: RenderSource) => {
+              const skins = skinNow.current.flatMap((name) => {
+                const hit = [...entitiesNow.current.values()].find((e) => canvasOf(e)?.name.toLowerCase() === name.toLowerCase());
+                const canvas = canvasOf(hit);
+                return canvas ? [{ name: canvas.name, canvas }] : [];
+              });
+              return skins.length ? { ...view, skins } : view;
+            };
             const back = (body: BodyInit, error?: string) =>
               fetch(projectUrl(`/render/${job.job}${error ? `?error=${encodeURIComponent(error)}` : ""}`), { method: "POST", body }).catch(() => undefined);
             // A picture is path-traced only by a view on screen (a background tab is throttled, and would hold
             // the render up for minutes) and one ready to: else another view, or a headless browser, makes it.
-            if (!source || (job.format !== "glb" && document.visibilityState !== "visible")) break;
-            // The first view to take the job makes it.
-            const take = fetch(projectUrl(`/render/${job.job}?take=1`), { method: "POST" }).then((r) => r.status === 204, () => false);
-            // A model for a website (./ise render --glb) rather than a picture.
-            if (job.format === "glb") {
-              take.then((mine) => {
-                if (mine) modelForWeb(source).then((glb) => back(new Blob([glb], { type: "model/gltf-binary" })), (e) => back("", String(e)));
+            if (!viewport.current?.renderSource() || (job.format !== "glb" && document.visibilityState !== "visible")) break;
+            // The first view to take the job makes it, from the view as it stands once an exploded view
+            // asked for just before has finished playing (not part way apart).
+            fetch(projectUrl(`/render/${job.job}?take=1`), { method: "POST" })
+              .then((r) => r.status === 204, () => false)
+              .then(async (mine) => {
+                if (!mine) return;
+                await explodeSettled();
+                const view = viewport.current?.renderSource();
+                if (!view) return back("", "the view closed before it could render");
+                const source = withSkins(view);
+                // A model for a website (./ise render --glb) rather than a picture.
+                const made = job.format === "glb" ? modelForWeb(source).then((glb) => new Blob([glb], { type: "model/gltf-binary" })) : renderImage(source, { width: job.width ?? 1920, height: job.height ?? 1080, samples: job.samples ?? 256, studio: studioNow.current });
+                return made.then((out) => back(out), (e) => back("", String(e)));
               });
-              break;
-            }
-            take.then((mine) => {
-              if (mine) renderImage(source, { width: job.width ?? 1920, height: job.height ?? 1080, samples: job.samples ?? 256, studio: studioNow.current }).then((png) => back(png), (e) => back("", String(e)));
-            });
             break;
           }
-          case "camera":
-            if (value && ["perspective", "iso", "front", "back", "left", "right", "top", "bottom"].includes(value)) {
-              setView(value as ViewName);
-              viewport.current?.view(value as ViewName);
-            } else if (value && /^\s*-?\d/.test(value)) {
-              // azimuth,elevation[,lens angle[,fill]] in degrees (fill 0–1), as ./ise look takes them.
-              const [az, el, fov, fill] = value.split(",").map(Number);
-              if (Number.isFinite(az) && Number.isFinite(el)) viewport.current?.lookFrom(az, el, Number.isFinite(fov) ? fov : undefined, Number.isFinite(fill) ? fill : undefined);
-            }
+          case "camera": {
+            const look = () => {
+              if (value && ["perspective", "iso", "front", "back", "left", "right", "top", "bottom"].includes(value)) {
+                setView(value as ViewName);
+                viewport.current?.view(value as ViewName);
+              } else if (value && /^\s*-?\d/.test(value)) {
+                // azimuth,elevation[,lens angle[,fill]] in degrees (fill 0–1), as ./ise look takes them.
+                const [az, el, fov, fill] = value.split(",").map(Number);
+                if (Number.isFinite(az) && Number.isFinite(el)) viewport.current?.lookFrom(az, el, Number.isFinite(fov) ? fov : undefined, Number.isFinite(fill) ? fill : undefined);
+              }
+            };
+            cameraAsked(look);
+            look();
             break;
+          }
           case "projection":
             viewport.current?.tools()?.setOrthographic(/^ortho/i.test(value ?? ""));
             break;

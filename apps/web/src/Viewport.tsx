@@ -573,7 +573,8 @@ type Scene = {
   bounds: THREE.Box3;
 };
 
-type View3 = { position: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3 };
+/** `shift`: the camera's film offset (the picture moved sideways on screen, clear of a floating panel). */
+type View3 = { position: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3; shift?: number };
 /** A glide; its clock starts on its first drawn frame (null until then). */
 type Flight = { from: View3; to: View3; start: number | null; ms: number };
 
@@ -588,10 +589,11 @@ function glideTo(t: Scene, to: View3, ms = 700) {
     t.camera.position.copy(to.position);
     t.controls.target.copy(to.target);
     t.camera.up.copy(to.up);
+    if (to.shift !== undefined) t.camera.filmOffset = to.shift;
     settleCamera(t);
     return;
   }
-  t.flight = { from: { position: t.camera.position.clone(), target: t.controls.target.clone(), up: t.camera.up.clone() }, to, start: null, ms };
+  t.flight = { from: { position: t.camera.position.clone(), target: t.controls.target.clone(), up: t.camera.up.clone(), shift: t.camera.filmOffset }, to, start: null, ms };
   t.invalidate();
 }
 
@@ -614,6 +616,7 @@ function stepFlight(t: Scene, now: number): boolean {
   t.camera.position.copy(target).add(a.normalize().applyQuaternion(turn).multiplyScalar(distance));
   const up = f.from.up.clone().lerp(f.to.up, e);
   t.camera.up.copy(up.lengthSq() > 1e-9 ? up.normalize() : f.to.up);
+  if (f.to.shift !== undefined) t.camera.filmOffset = THREE.MathUtils.lerp(f.from.shift ?? 0, f.to.shift, e);
   if (k >= 1) t.flight = null;
   settleCamera(t);
   return k < 1;
@@ -1053,14 +1056,15 @@ function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vecto
   if (span.share < 1) distance = Math.max(distance, (radius / Math.sin(Math.atan(Math.tan(THREE.MathUtils.degToRad(t.camera.fov / 2)) * t.camera.aspect * span.share))) * 1.2);
   const heading = t.flight ? t.flight.to : null;
   const dir = (direction ?? (heading ? heading.position.clone().sub(heading.target) : t.camera.position.clone().sub(t.controls.target))).normalize();
-  const view = { position: new THREE.Vector3(), target: c, up: (up ?? heading?.up ?? t.camera.up).clone() };
+  const view: View3 = { position: new THREE.Vector3(), target: c, up: (up ?? heading?.up ?? t.camera.up).clone() };
   if (fill) {
     // Tight: what is shown (its vertices, thinned to ~40 000; else the box's corners), seen from `dir`
     // in perspective, spans `fill` of the frame's height or width (whichever is reached first), centred.
     const right = new THREE.Vector3().crossVectors(view.up, dir).normalize();
     const screenUp = new THREE.Vector3().crossVectors(dir, right);
     const tanV = Math.tan(THREE.MathUtils.degToRad(t.camera.fov / 2)) * fill;
-    const tanH = tanV * t.camera.aspect * span.share;
+    // The whole frame's width, not just what panels leave clear: a fill asked for is the picture's framing.
+    const tanH = tanV * t.camera.aspect;
     const points: THREE.Vector3[] = [];
     const meshes = box ? [] : [...t.parts].flatMap(([id, part]) => (part.group.visible ? part.meshes.filter((m) => m.visible && (!only || id === only || (m.userData.path as string[] | undefined)?.includes(only))) : []));
     const total = meshes.reduce((n, m) => n + m.geometry.getAttribute("position").count, 0);
@@ -1091,17 +1095,13 @@ function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vecto
     }
     view.target = c;
   }
-  if (span.offset !== 0) {
-    // Aim off to the panel's side so the model sits in the middle of the clear part.
-    const right = new THREE.Vector3().crossVectors(view.up, dir);
-    if (right.lengthSq() > 1e-6) {
-      c = c.clone().addScaledVector(right.normalize(), -span.offset * distance * Math.tan(THREE.MathUtils.degToRad(t.camera.fov / 2)) * t.camera.aspect);
-      view.target = c;
-    }
-  }
+  // The picture slides sideways on screen (the camera's film offset) so the model sits in the middle of
+  // the clear part; the camera still aims at it, so orbiting turns about it and renders are centred.
+  view.shift = -span.offset * Math.tan(THREE.MathUtils.degToRad(t.camera.fov / 2)) * t.camera.aspect * t.camera.getFilmWidth();
   view.position.copy(c).addScaledVector(dir, distance);
   if (glide) return glideTo(t, view);
   t.flight = null;
+  t.camera.filmOffset = view.shift;
   t.camera.position.copy(view.position);
   t.controls.target.copy(view.target);
   t.camera.up.copy(view.up);

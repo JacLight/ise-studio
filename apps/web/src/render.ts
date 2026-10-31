@@ -569,6 +569,8 @@ export function buildRenderScene(
  */
 function cameraFor(source: RenderSource, aspect: number) {
   const c = source.camera.clone();
+  // The view's sideways shift (it keeps the model clear of a floating panel) is the screen's, not the picture's.
+  c.filmOffset = 0;
   if (aspect < c.aspect) {
     const half = Math.tan(THREE.MathUtils.degToRad(c.fov / 2)) * (c.aspect / aspect);
     c.fov = THREE.MathUtils.radToDeg(2 * Math.atan(half));
