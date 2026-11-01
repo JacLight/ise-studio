@@ -2948,6 +2948,14 @@ return [
     for p in &c.sweep.pairs {
         assert!(p.gap > 0.03, "{} ↔ {}: {} mm", p.a, p.b, p.gap);
     }
+    // Asked for a clearance, the gears turn with that gap between flanks (the helix allowed for).
+    let src = src.replace("backlash: 0.3", "clearance: 0.4");
+    let e = runtime::evaluate(&src, &[], 0.05).unwrap();
+    let finer = || runtime::evaluate(&src, &[], 0.01);
+    let c = de_shape::gears::check(&e, None, Some(&finer)).unwrap();
+    for p in c.sweep.pairs.iter().filter(|p| p.a != "Carrier" && p.b != "Carrier") {
+        assert!((0.36..0.46).contains(&p.gap), "{} ↔ {}: {} mm, not the 0.4 asked for", p.a, p.b, p.gap);
+    }
     // A name the library lacks says what it has.
     let err = runtime::evaluate("return use('sprocket').thing();", &[], 0.05).unwrap_err();
     assert!(err.contains("gear"), "{err}");
