@@ -54,6 +54,7 @@ const take = (path) => cpSync(join(repo, path), join(files, path), { recursive: 
 take("apps/web/dist");
 take("examples");
 take("library/stock");
+take("library/parts");
 take("tools/ise-ai.md");
 for (const f of ["prelude.js", "sheet_metal.js", "bim.js"]) take(`crates/plugins/shape/src/${f}`);
 // The `ise` command line the AI uses, with every module it imports.
