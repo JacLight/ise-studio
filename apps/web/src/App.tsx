@@ -451,7 +451,11 @@ export function App({ engine }: { engine: Engine }) {
               } else if (value && /^\s*-?\d/.test(value)) {
                 // azimuth,elevation[,lens angle[,fill]] in degrees (fill 0–1), as ./ise look takes them.
                 const [az, el, fov, fill] = value.split(",").map(Number);
-                if (Number.isFinite(az) && Number.isFinite(el)) viewport.current?.lookFrom(az, el, Number.isFinite(fov) ? fov : undefined, Number.isFinite(fill) ? fill : undefined);
+                if (Number.isFinite(az) && Number.isFinite(el)) {
+                  // A free angle: no named view any more.
+                  setView("perspective");
+                  viewport.current?.lookFrom(az, el, Number.isFinite(fov) ? fov : undefined, Number.isFinite(fill) ? fill : undefined);
+                }
               }
             };
             cameraAsked(look);
