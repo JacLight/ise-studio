@@ -2951,4 +2951,9 @@ return [
     // A name the library lacks says what it has.
     let err = runtime::evaluate("return use('sprocket').thing();", &[], 0.05).unwrap_err();
     assert!(err.contains("gear"), "{err}");
+    // A wrong setting is named with what is accepted, before any geometry.
+    let wrong = |call: &str| runtime::evaluate(&format!("const {{ gear, ring }} = use('gear'); return {call};"), &[], 0.05).unwrap_err();
+    assert!(wrong("gear({ module: 2, teeth: 12, width: 8, hand: 'right' })").contains("hand is 1 or -1"));
+    assert!(wrong("gear({ module: 2, teeth: 12, width: 8, colour: 'red' })").contains("no setting “colour”"));
+    assert!(wrong("ring({ module: 2, teeth: 48, width: 8, outside: 50 })").contains("outer diameter"));
 }

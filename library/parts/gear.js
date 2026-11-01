@@ -56,8 +56,29 @@ function toothed({ m, z, alpha, ra, rf, half }) {
 
 const pitchRadius = (module, teeth) => (module * teeth) / 2;
 
+/** Settings checked before any geometry: a wrong one is named with what is accepted. */
+function settings(what, given, accepted) {
+  if (given === null || typeof given !== "object") throw new Error(`${what}: give its settings as an object, e.g. ${what}({ module: 2, teeth: 18, width: 10 })`);
+  const unknown = Object.keys(given).filter((k) => !accepted.includes(k));
+  if (unknown.length) throw new Error(`${what}: no setting ${unknown.map((k) => `“${k}”`).join(", ")} (it takes ${accepted.join(", ")})`);
+  const positive = (k) => {
+    if (!(typeof given[k] === "number" && given[k] > 0)) throw new Error(`${what}: ${k} must be a number above 0 (mm${k === "teeth" ? ", or a whole count" : ""}), not ${JSON.stringify(given[k])}`);
+  };
+  positive("module");
+  positive("teeth");
+  if (!Number.isInteger(given.teeth) || given.teeth < 5) throw new Error(`${what}: teeth must be a whole number of 5 or more, not ${given.teeth}`);
+  if ("width" in given || what !== "outline") positive("width");
+  if ("hand" in given && given.hand !== 1 && given.hand !== -1) throw new Error(`${what}: hand is 1 or -1 (the twist's direction; mating external gears take opposite hands, a ring its planets' hand), not ${JSON.stringify(given.hand)}`);
+  for (const k of ["helix", "backlash", "bore", "rim", "outside", "pressureAngle"]) {
+    if (k in given && !(typeof given[k] === "number" && given[k] >= 0)) throw new Error(`${what}: ${k} must be a number, 0 or more, not ${JSON.stringify(given[k])}`);
+  }
+  if ((given.helix ?? 0) >= 60) throw new Error(`${what}: helix is the tooth angle at the pitch circle in degrees, below 60 (25–30 is usual), not ${given.helix}`);
+}
+
 /** An external gear's outline (2D), tooth 0 on +X. */
-function outline({ module, teeth, pressureAngle = 20, backlash = 0.1 }) {
+function outline(options) {
+  settings("outline", options, ["module", "teeth", "pressureAngle", "backlash"]);
+  const { module, teeth, pressureAngle = 20, backlash = 0.1 } = options;
   const r = pitchRadius(module, teeth);
   return toothed({ m: module, z: teeth, alpha: pressureAngle, ra: r + module, rf: r - 1.25 * module, half: Math.PI / (2 * teeth) - backlash / (4 * r) });
 }
@@ -84,8 +105,11 @@ function teethSolid(shape, r, width, helix, hand, herringbone) {
  * backlash (mm, 0.1); helix (° at the pitch circle, 0: spur), hand (1 or -1:
  * mating external gears take opposite hands), herringbone; bore (diameter, mm).
  */
-function gear({ module, teeth, width, pressureAngle = 20, backlash = 0.1, helix = 0, hand = 1, herringbone = false, bore = 0 }) {
+function gear(options) {
+  settings("gear", options, ["module", "teeth", "width", "pressureAngle", "backlash", "helix", "hand", "herringbone", "bore"]);
+  const { module, teeth, width, pressureAngle = 20, backlash = 0.1, helix = 0, hand = 1, herringbone = false, bore = 0 } = options;
   const r = pitchRadius(module, teeth);
+  if (bore >= 2 * (r - 1.25 * module)) throw new Error(`gear: a ${bore} mm bore cuts through the roots (root diameter ${(2 * (r - 1.25 * module)).toFixed(2)} mm)`);
   let g = teethSolid(outline({ module, teeth, pressureAngle, backlash }), r, width, helix, hand, herringbone);
   if (bore > 0) g = g.subtract(cylinder(width + 2, bore / 2).translate(0, 0, -1));
   return g;
@@ -95,9 +119,13 @@ function gear({ module, teeth, width, pressureAngle = 20, backlash = 0.1, helix 
  * A ring (internal) gear: teeth inside a rim `rim` mm thick outside their
  * roots (or outer diameter `outside`). It takes its planets' hand.
  */
-function ring({ module, teeth, width, rim = 5, outside = 0, pressureAngle = 20, backlash = 0.1, helix = 0, hand = 1, herringbone = false }) {
+function ring(options) {
+  settings("ring", options, ["module", "teeth", "width", "rim", "outside", "pressureAngle", "backlash", "helix", "hand", "herringbone"]);
+  const { module, teeth, width, rim = 5, outside = 0, pressureAngle = 20, backlash = 0.1, helix = 0, hand = 1, herringbone = false } = options;
   const r = pitchRadius(module, teeth);
-  const outer = outside > 0 ? outside / 2 : r + 1.25 * module + rim;
+  const roots = 2 * (r + 1.25 * module);
+  if (outside > 0 && outside <= roots) throw new Error(`ring: outside is the ring's outer diameter, more than its tooth roots' ${roots.toFixed(2)} mm, not ${outside} (or give rim, the wall outside the roots)`);
+  const outer = outside > 0 ? outside / 2 : roots / 2 + rim;
   const space = teethSolid(ringSpace({ module, teeth, pressureAngle, backlash }), r, width + 0.02, helix, hand, herringbone).translate(0, 0, -0.01);
   return cylinder(width, outer).subtract(space);
 }
