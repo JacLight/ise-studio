@@ -2883,3 +2883,32 @@ fn a_program_declares_its_stock_item_and_where_things_attach() {
         assert!(err.contains(says), "{bad}: {err}");
     }
 }
+
+#[test]
+fn the_gear_check_reads_the_material_a_part_key_stands_for() {
+    // A pair of discs whose table names its keys by role: "Gear" stands for PLA.
+    let mut p = project();
+    let pla = id(run(&mut p, "solid.material.create", json!({ "name": "PLA", "density": { "value": 1240, "unit": "kg/m3" } })).unwrap());
+    let src = r#"
+joint("hinge", "Pinion", "ground", { name: "In" });
+joint("hinge", "Wheel", "ground", { at: [50, 0, 0], name: "Out" });
+drive("In");
+couple("In", "Out", -20 / 30);
+mesh("Pinion", "Wheel", { module: 2, teeth: [20, 30], width: 8 });
+return [
+  part("Pinion", cylinder(8, 19.5), { material: "Gear" }),
+  part("Wheel", cylinder(8, 29.5).translate([50, 0, 0]), { material: "Gear" }),
+];
+"#;
+    let shape = id(run(&mut p, "shape.create", json!({ "name": "Pair", "source": src, "params": [], "materials": { "Gear": pla } })).unwrap());
+    let entity = p.entity(shape).unwrap();
+    let program = de_shape::resolved_program(p.world(), entity).unwrap();
+    let (names, default) = de_shape::material_names(p.world(), entity);
+    assert_eq!(names.get("Gear").map(String::as_str), Some("PLA"));
+    let c = de_shape::gear_check_with(&program, Some((0.5, 60.0)), &names, default).unwrap();
+    let s = c.meshes[0].strength.as_ref().unwrap();
+    assert!(s.bending_safety.iter().all(Option::is_some) && s.materials.iter().all(|m| m.contains("PLA")), "{:?}", s.materials);
+    // Read as the key alone, there are no figures for "Gear".
+    let bare = de_shape::gear_check(&program, Some((0.5, 60.0))).unwrap();
+    assert!(bare.meshes[0].strength.as_ref().unwrap().bending_safety.iter().all(Option::is_none));
+}

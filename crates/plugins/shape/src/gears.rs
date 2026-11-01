@@ -655,12 +655,18 @@ pub fn check(e: &Evaluated, load: Option<(f64, f64)>, finer: Option<&dyn Fn() ->
 /// `drive`, `couple`: planets on a turning carrier, a ring that stays put),
 /// exactly as the joints move them.
 pub fn check_at(e: &Evaluated, load: Option<(f64, f64)>, finer: Option<&dyn Fn() -> Result<Evaluated, String>>, tolerances: (f64, f64)) -> Result<Check, String> {
+    check_with(e, load, finer, tolerances, &|m| m)
+}
+
+/// As [`check_at`], each part's material (its name in the program, or None)
+/// read through `material`: a shape's material table key to the material it stands for.
+pub fn check_with(e: &Evaluated, load: Option<(f64, f64)>, finer: Option<&dyn Fn() -> Result<Evaluated, String>>, tolerances: (f64, f64), material: &dyn Fn(Option<String>) -> Option<String>) -> Result<Check, String> {
     let raw = e.mechanism.as_ref().ok_or("the program declares no mechanism: use hinge(…) and mesh(…), or joint(…), drive(…) and mesh(…)")?;
     let m = Mechanism::parse(raw)?;
     let hinged = |p: &str| m.body_of(p).is_some();
     let by_joints = if m.meshes.is_empty() { m.bodies.is_empty() } else { !m.meshes.iter().any(|g| hinged(&g.driver) || hinged(&g.driven)) };
     let linkage = if by_joints { Linkage::parse(raw).transpose()? } else { None };
-    let material = |part: &str| e.parts.iter().find(|p| p.name == part).and_then(|p| p.material.clone());
+    let material = |part: &str| e.parts.iter().find(|p| p.name == part).and_then(|p| material(p.material.clone()));
     let (train, meshes, speeds) = match &linkage {
         None => {
             let train = Train::of_hinges(&m)?;

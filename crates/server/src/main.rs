@@ -1369,17 +1369,20 @@ async fn gear_check(State(server): State<Arc<Server>>, Path(id): Path<String>, Q
         Ok(app) => app,
         Err(e) => return fail(StatusCode::BAD_REQUEST, e),
     };
-    let program = {
+    let found = {
         let project = app.project.lock().unwrap();
-        serde_json::from_value::<StableId>(json!(id)).ok().and_then(|id| project.entity(id)).and_then(|e| de_shape::resolved_program(project.world(), e))
+        serde_json::from_value::<StableId>(json!(id))
+            .ok()
+            .and_then(|id| project.entity(id))
+            .and_then(|e| Some((de_shape::resolved_program(project.world(), e)?, de_shape::material_names(project.world(), e))))
     };
-    let Some(program) = program else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
+    let Some((program, (names, default))) = found else { return fail(StatusCode::NOT_FOUND, format!("{id} is not a shape")) };
     let num = |k: &str| query.get(k).and_then(|v| v.parse::<f64>().ok()).filter(|v| v.is_finite() && *v >= 0.0);
     let load = match (num("torque"), num("rpm")) {
         (Some(t), Some(r)) if t > 0.0 => Some((t, r)),
         _ => None,
     };
-    match tokio::task::spawn_blocking(move || de_shape::gear_check(&program, load)).await {
+    match tokio::task::spawn_blocking(move || de_shape::gear_check_with(&program, load, &names, default)).await {
         Ok(Ok(c)) => axum::Json(c).into_response(),
         Ok(Err(e)) => fail(StatusCode::UNPROCESSABLE_ENTITY, e),
         Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),

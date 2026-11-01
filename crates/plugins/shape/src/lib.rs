@@ -1162,11 +1162,31 @@ fn face_offset(e: &runtime::Evaluated, part: Option<&str>, point: [f64; 3], n: [
 /// The gear check of a program (see `gears`), at its display accuracy and, for
 /// pairs that seem to touch, twenty times finer. `load` is input torque (N·m) and speed (rpm).
 pub fn gear_check(program: &ShapeProgram, load: Option<(f64, f64)>) -> Result<gears::Check, String> {
+    gear_check_with(program, load, &Default::default(), None)
+}
+
+/// The material each key of shape `entity`'s material table stands for (by
+/// name, e.g. "PLA Basic Orange"), and the shape's own material, which parts
+/// naming none are made of.
+pub fn material_names(world: &World, entity: Entity) -> (std::collections::BTreeMap<String, String>, Option<String>) {
+    let index = world.resource::<IdIndex>();
+    let name = |id: StableId| index.get(id).and_then(|e| world.get::<Material>(e)).map(|m| m.name.clone());
+    let table = world.get::<PartMaterials>(entity).map(|t| t.0.iter().filter_map(|(k, id)| Some((k.clone(), name(*id)?))).collect()).unwrap_or_default();
+    (table, world.get::<MaterialRef>(entity).and_then(|m| name(m.0)))
+}
+
+/// As [`gear_check`], each part's material read through the shape's material
+/// table (see [`material_names`]), so tooth strength uses the material itself.
+pub fn gear_check_with(program: &ShapeProgram, load: Option<(f64, f64)>, names: &std::collections::BTreeMap<String, String>, default: Option<String>) -> Result<gears::Check, String> {
     let tol = program.display_tolerance();
     let e = evaluated_at(program, tol)?;
+    let resolve = |key: Option<String>| match key {
+        Some(key) => Some(names.get(&key).cloned().unwrap_or(key)),
+        None => default.clone(),
+    };
     let fine = (tol / 20.0).max(0.0005);
     let finer = || runtime::evaluate_in(&program.source, &program.values(), fine, &program.inputs);
-    gears::check_at(&e, load, Some(&finer), (tol, fine))
+    gears::check_with(&e, load, Some(&finer), (tol, fine), &resolve)
 }
 
 /// A linkage's motion through its drive's range (the program declared joints).
