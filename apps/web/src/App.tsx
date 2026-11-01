@@ -135,6 +135,22 @@ export function App({ engine }: { engine: Engine }) {
   // Items picked to insert from another project, waiting for a click in the view.
   const [placing, setPlacing] = useState<{ req: InsertRequest; names: string[] } | null>(null);
   const [pcbOpen, setPcbOpen] = usePersisted("pcbOpen", false);
+  // The view follows Iṣẹ́ AI's work for the person it is working for: a schematic change shows the
+  // schematic, a board change the board with its copper, a footprint the library, a part or case the 3D view.
+  const [pcbFollow, setPcbFollow] = useState<{ pane: "schematic" | "board" | "library"; n: number } | null>(null);
+  useEffect(() => {
+    const change = state.lastChange;
+    if (!change?.byAi) return;
+    const asker = [...state.ai.chat].reverse().find((r) => r.role === "user")?.user;
+    if (asker && asker !== state.userId) return;
+    const op = change.operation;
+    if (op.startsWith("pcb.")) {
+      const pane = op.startsWith("pcb.schematic.") ? "schematic" : op.startsWith("pcb.lib.") ? "library" : "board";
+      setPcbOpen(true);
+      setPcbFollow((f) => ({ pane, n: (f?.n ?? 0) + 1 }));
+    } else if (/^(shape|assembly|solid|sketch|stock)\./.test(op)) setPcbOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.lastChange]);
   const [scansOpen, setScansOpen] = usePersisted("scansOpen", false);
   // Reference pictures: placing them, and a canvas being calibrated (the points clicked on it so far).
   const [canvasInsert, setCanvasInsert] = useState(false);
@@ -2558,6 +2574,7 @@ export function App({ engine }: { engine: Engine }) {
           notify={notify}
           canEdit={state.connection === "online"}
           onClose={() => setPcbOpen(false)}
+          follow={pcbFollow}
           onShow3D={(model) => {
             setPcbOpen(false);
             select(model);

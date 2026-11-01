@@ -310,7 +310,16 @@ function GraphicShape(props: { g: GraphicV; color: string; opacity: number }) {
   );
 }
 
-export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: string) => void; onClose: () => void; onShow3D: (model: string) => void; canEdit: boolean }) {
+export function PcbWorkspace(props: {
+  revision: number;
+  run: Run;
+  notify: (m: string) => void;
+  onClose: () => void;
+  onShow3D: (model: string) => void;
+  canEdit: boolean;
+  /** A pane to show (each new `n`): what Iṣẹ́ AI is changing now. */
+  follow?: { pane: "schematic" | "board" | "library"; n: number } | null;
+}) {
   const { run, notify } = props;
   const [boards, setBoards] = useState<BoardEntry[] | null>(null);
   const [boardId, setBoardId] = useState<string | null>(null);
@@ -343,6 +352,11 @@ export function PcbWorkspace(props: { revision: number; run: Run; notify: (m: st
       return "board";
     }
   });
+  // Following Iṣẹ́ AI: the pane it is working in, unless both are showing side by side.
+  useEffect(() => {
+    const want = props.follow?.pane;
+    if (want) setPane((p) => (p === "split" && want !== "library" ? p : want));
+  }, [props.follow?.n]); // eslint-disable-line react-hooks/exhaustive-deps
   const schKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
   const keyPane = useRef<"schematic" | "board" | "library">("board");
   useEffect(() => {

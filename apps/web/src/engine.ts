@@ -289,7 +289,8 @@ export type EngineState = {
   entities: ReadonlyMap<string, EntityView>;
   /** Newest first. */
   history: HistoryEntry[];
-  lastChange: { revision: number; operation: string; byMe: boolean } | null;
+  /** The last change: `byAi` when Iṣẹ́ AI made it. */
+  lastChange: { revision: number; operation: string; byMe: boolean; byAi: boolean } | null;
   ai: AiState;
   /** Set when this session is read-only: a past version, or a view-only link. */
   readOnly: ReadOnlyInfo | null;
@@ -676,6 +677,7 @@ export class Engine {
             revision: message.revision,
             operation: message.operation,
             byMe: message.actor.user_id === this.state.userId,
+            byAi: message.actor.user_id === "ise-ai",
           },
         });
         break;
