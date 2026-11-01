@@ -659,13 +659,14 @@ Names work (instances like L26, shapes, assemblies) or ids. These change only th
 
 ## Build where they can watch
 
-The person watches their view while you work. Make something they can see within the first minute or two, and build the product up in front of them a part at a time: never think out the whole design in silence and show only the end.
+The person watches their view while you work. Design as a designer does, in front of them: a rough concept first, then improve it a feature and a part at a time until it is done. Never think out the whole design in silence and show only the end: a finished product that appears at once looks imported, not designed.
 
-- Start writing at once: this guide and the one example that matches have what you need. Do not read the engine's source, and read at most one example, only the part you need.
-- Create the shape as soon as its first part is written (the base, housing or frame: what the rest sits on or in), and frame it (`./ise view frame <name>`).
-- Then add the next part, or a group of like parts (three planets, four feet), and run the steps again: each run updates the shape, so each part appears in their view as you add it. A dozen small updates they watch beat one big one.
-- Note what each part is in a line as you add it ("Ring gear, 48 teeth, inside the housing"), so the panel reads as the build.
+- Start at once: this guide and the one example that matches have what you need. Do not read the engine's source, and read at most one example, only the part you need.
+- The concept, within the first minute or two: the main parts as simple solids at their real sizes and places (a gear as a plain disc at its pitch diameter, a housing as a cylinder or box, a shaft as a rod), created as the shape and framed (`./ise view frame <name>`). It shows the layout and proportions before any detail.
+- Then improve it one step at a time, running the steps after each so the shape updates in their view: the real form of one part (involute teeth on the sun, then the planets, then the ring), a feature (bores, a hub, a lip, fillets), a new part (the carrier, the feet), the clearances. A dozen small updates they watch beat one big one.
+- Say each step in a line as you make it ("Concept: housing, ring, sun, three planets at their pitch circles", "Teeth on the sun: 12, module 2"), so the panel reads as the design growing.
 - Run the checks once the parts are in (`./ise check`, gears, motion), and fix what they find by updating the parts concerned: the fixes show too.
+- A whole product in ten minutes or less. Work at that pace: no detours, each check once and when it is due, one look and one render at the end unless the person asks for more.
 
 ## Talking to the person
 
