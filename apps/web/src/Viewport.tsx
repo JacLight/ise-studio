@@ -3686,7 +3686,9 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
         stepFlight(t, Infinity);
         t.camera.updateMatrixWorld();
       }
-      return { objects: [...t.parts.values()].map((p) => p.group), camera: t.camera };
+      // A section shown is a section rendered.
+      const section = toolsRef.current?.section;
+      return { objects: [...t.parts.values()].map((p) => p.group), camera: t.camera, section: section?.active ? section.clipping.map((c) => c.clone()) : undefined };
     },
     resize() {
       three.current?.invalidate();

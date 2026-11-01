@@ -19,6 +19,7 @@ You can drive their view, not just the design. When they ask to see something, s
 ./ise view display edges       shaded, edges, wireframe, hidden (hidden line) or xray; zebra, curvature or draft (surface analysis)
 ./ise view section x 25        cut at x = 25 mm, cut faces filled and hatched (add `flip` to keep the other side; one plane per axis, together a section box)
 ./ise view section box x0 y0 z0 x1 y1 z1   six planes round a region (bare `box`: the model's middle); `section off` clears
+                               a section shown is rendered: `./ise render` then pictures the cut model, each cut face capped in its part's own finish
 ./ise view measure Block Pin    measure one item (mass, inertia) or one to another in their view, with dimension lines
 ```
 

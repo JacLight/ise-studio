@@ -5,6 +5,7 @@
 // render works on a copy of what is shown, from the view's camera.
 
 import * as THREE from "three";
+import { cutSolid } from "./section";
 import { WebGLPathTracer } from "three-gpu-pathtracer";
 import { picturesReady } from "./pictures";
 import { type PreparedSkin, type Skin, type SkinWorld, prepareSkins, skinPieces, skinWorld } from "./skins";
@@ -13,7 +14,7 @@ import { type PreparedSkin, type Skin, type SkinWorld, prepareSkins, skinPieces,
  * What the view shows: its part groups and its camera; `skins`, product photos to lay onto the
  * model (see skins.ts), `prepared` once they are loaded (withSkins).
  */
-export type RenderSource = { objects: THREE.Object3D[]; camera: THREE.PerspectiveCamera; skins?: Skin[]; prepared?: PreparedSkin[] };
+export type RenderSource = { objects: THREE.Object3D[]; camera: THREE.PerspectiveCamera; skins?: Skin[]; prepared?: PreparedSkin[]; section?: THREE.Plane[] };
 
 /** The source with its photo skins loaded, ready for buildRenderScene. */
 export async function withSkins(source: RenderSource): Promise<RenderSource> {
@@ -530,13 +531,23 @@ export function buildRenderScene(
           parts = cached.pieces.map(([g, k]) => [k < 0 ? (material.userData.texture ? boxUvs(g, 1000 * scale) : g) : g, k < 0 ? material : skinMaterial(material, skins[k])]);
         }
         for (const [g, mat] of parts) {
+          if (source.section?.length) {
+            // The view's section: the path tracer has no clipping, so the solid is cut for real, its cut capped.
+            const cut = cutSolid(g.clone().applyMatrix4(mesh.matrixWorld), source.section);
+            if (!cut) continue;
+            cut.computeBoundingBox();
+            bounds.union(cut.boundingBox!);
+            scene.add(new THREE.Mesh(cut, mat));
+            added = true;
+            continue;
+          }
           const copy = new THREE.Mesh(g, mat);
           mesh.matrixWorld.decompose(copy.position, copy.quaternion, copy.scale);
           scene.add(copy);
+          added = true;
         }
-        added = true;
       }
-      if (!added) return;
+      if (!added || source.section?.length) return;
       if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
       bounds.union(mesh.geometry.boundingBox!.clone().applyMatrix4(mesh.matrixWorld));
     });
