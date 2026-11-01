@@ -80,6 +80,10 @@ A program is a JavaScript function body. It reads parameters from `p` (mm, degre
 
 Processes: 3d_print, cnc_mill, lathe, cnc_router, laser, sheet_metal, weld, cast, extrusion, glazing, buy. Sheet processes export a layered DXF (sheet-metal parts built with `sheet()`: their flat pattern); all parts export STL.
 
+Made parts are written once and used again with other settings, as a designer clones a part and changes it: `use(name)` gives a program the functions of a part in the library (`library/parts`), so do not write their geometry again.
+
+- `const { gear, ring, centerDistance, meshTurn, ringTurn, outline } = use("gear")`: involute gears. `gear({ module, teeth, width, helix?, hand?, herringbone?, backlash?, pressureAngle?, bore? })` is an external gear (tooth 0 on +X, on the origin, from z = 0 up; mating external gears take opposite hands); `ring({ module, teeth, width, rim | outside, ... })` a ring gear with its teeth inside (it takes its planets' hand); `centerDistance(module, z1, z2, internal?)`; `meshTurn(zA, zB, at, turnA?)` how far to turn gear B centred at angle `at` round gear A so their teeth fit; `ringTurn(zPlanet, zRing, at, turnPlanet)` the same for a ring round its planet; `outline(...)` the 2D profile. A gear train is this gear with other tooth counts: sun, planets and ring, or every stage of a reducer.
+
 Material names in parts map to material entities through the shape's `materials` table (`{"Steel": "<material id>"}`); create materials with `solid.material.create` (realistic densities).
 
 ## Pictures, lettering, reliefs, threads
@@ -666,7 +670,6 @@ The person watches their view while you work. Design as a designer does, in fron
 - Then improve it one step at a time, running the steps after each so the shape updates in their view: the real form of one part (involute teeth on the sun, then the planets, then the ring), a feature (bores, a hub, a lip, fillets), a new part (the carrier, the feet), the clearances. A dozen small updates they watch beat one big one.
 - Say each step in a line as you make it ("Concept: housing, ring, sun, three planets at their pitch circles", "Teeth on the sun: 12, module 2"), so the panel reads as the design growing.
 - Run the checks once the parts are in (`./ise check`, gears, motion), and fix what they find by updating the parts concerned: the fixes show too.
-- A whole product in ten minutes or less. Work at that pace: no detours, each check once and when it is due, one look and one render at the end unless the person asks for more.
 
 ## Talking to the person
 

@@ -156,6 +156,14 @@ pub(crate) fn arg(args: &[f64], i: usize, ctx: &Ctx<'_>, what: &str) -> rquickjs
     if v.is_finite() { Ok(v) } else { Err(throw(ctx, format!("{what}: argument {i} must be a finite number"))) }
 }
 
+/// The made parts library (`library/parts/*.js`): (file name, program).
+pub fn parts_library() -> &'static [(&'static str, &'static str)] {
+    mod embedded {
+        include!(concat!(env!("OUT_DIR"), "/parts_files.rs"));
+    }
+    embedded::FILES
+}
+
 /// Accuracy for the viewport: curves within 0.01 mm of the true formula.
 pub const DISPLAY_TOLERANCE: f64 = 0.01;
 
@@ -185,6 +193,13 @@ pub(crate) fn run_program<'f>(
         ctx.globals().set("__inputs", if inputs.is_empty() { "{}" } else { inputs }).map_err(|e| e.to_string())?;
         run(&ctx, PRELUDE, "prelude")?;
         run(&ctx, BIM_PRELUDE, "bim")?;
+        // The made parts a program can use() (library/parts), for programs that use one.
+        if source.contains("use(") {
+            let parts: serde_json::Map<String, serde_json::Value> = parts_library().iter().map(|(n, src)| (n.trim_end_matches(".js").to_string(), serde_json::Value::from(*src))).collect();
+            let text = serde_json::Value::Object(parts).to_string();
+            let parts = ctx.json_parse(text).map_err(|e| e.to_string())?;
+            ctx.globals().set("__parts", parts).map_err(|e| e.to_string())?;
+        }
         // OpenSCAD files are read by an interpreter that only programs using it load.
         if source.contains("openscad(") {
             run(&ctx, SCAD, "openscad")?;

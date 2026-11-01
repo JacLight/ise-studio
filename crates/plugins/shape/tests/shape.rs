@@ -2912,3 +2912,43 @@ return [
     let bare = de_shape::gear_check(&program, Some((0.5, 60.0))).unwrap();
     assert!(bare.meshes[0].strength.as_ref().unwrap().bending_safety.iter().all(Option::is_none));
 }
+
+#[test]
+fn one_gear_from_the_library_used_again_makes_a_planetary_that_turns_clear() {
+    // The sun, three planets and the ring are the same gear with other settings.
+    let src = r#"
+const { gear, ring, centerDistance, meshTurn, ringTurn } = use("gear");
+const m = 2, Zs = 12, Zp = 18, Zr = 48, H = 10;
+const a = centerDistance(m, Zs, Zp);
+const look = { module: m, width: H, helix: 25, herringbone: true, backlash: 0.3 };
+const at = (k) => k * 120;
+const planetTurn = (k) => meshTurn(Zs, Zp, at(k));
+joint("hinge", "Sun", "ground", { name: "Input" });
+joint("hinge", "Carrier", "ground", { name: "Output" });
+for (let k = 0; k < 3; k++) joint("hinge", `Planet ${k + 1}`, "Carrier", { at: [a * Math.cos(rad(at(k))), a * Math.sin(rad(at(k))), 0], name: `Pin ${k + 1}` });
+drive("Input");
+const out = Zs / (Zs + Zr);
+couple("Input", "Output", out);
+for (let k = 0; k < 3; k++) {
+  couple("Input", `Pin ${k + 1}`, -(Zs / Zp) * (1 - out));
+  mesh("Sun", `Planet ${k + 1}`, { module: m, teeth: [Zs, Zp], width: H });
+  mesh(`Planet ${k + 1}`, "Ring", { module: m, teeth: [Zp, Zr], width: H, internal: true });
+}
+return [
+  part("Ring", ring({ ...look, teeth: Zr, rim: 5, hand: -1 }).rotate(0, 0, ringTurn(Zp, Zr, at(0), planetTurn(0))), { material: "PLA" }),
+  part("Sun", gear({ ...look, teeth: Zs, hand: 1 }), { material: "PLA" }),
+  part("Carrier", cylinder(3, a + 6).translate([0, 0, H + 1]), { material: "PLA" }),
+  ...[0, 1, 2].map((k) => part(`Planet ${k + 1}`, gear({ ...look, teeth: Zp, hand: -1 }).rotate(0, 0, planetTurn(k)).translate([a * Math.cos(rad(at(k))), a * Math.sin(rad(at(k))), 0]), { material: "PLA" })),
+];
+"#;
+    let e = runtime::evaluate(src, &[], 0.05).unwrap();
+    let finer = || runtime::evaluate(src, &[], 0.01);
+    let c = de_shape::gears::check(&e, None, Some(&finer)).expect("the check turns it");
+    assert!(c.sweep.clashes.is_empty(), "clashes: {:?}", c.sweep.clashes);
+    for p in &c.sweep.pairs {
+        assert!(p.gap > 0.03, "{} ↔ {}: {} mm", p.a, p.b, p.gap);
+    }
+    // A name the library lacks says what it has.
+    let err = runtime::evaluate("return use('sprocket').thing();", &[], 0.05).unwrap_err();
+    assert!(err.contains("gear"), "{err}");
+}

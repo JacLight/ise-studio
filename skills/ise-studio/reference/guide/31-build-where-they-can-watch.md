@@ -9,4 +9,3 @@ The person watches their view while you work. Design as a designer does, in fron
 - Then improve it one step at a time, running the steps after each so the shape updates in their view: the real form of one part (involute teeth on the sun, then the planets, then the ring), a feature (bores, a hub, a lip, fillets), a new part (the carrier, the feet), the clearances. A dozen small updates they watch beat one big one.
 - Say each step in a line as you make it ("Concept: housing, ring, sun, three planets at their pitch circles", "Teeth on the sun: 12, module 2"), so the panel reads as the design growing.
 - Run the checks once the parts are in (`./ise check`, gears, motion), and fix what they find by updating the parts concerned: the fixes show too.
-- A whole product in ten minutes or less. Work at that pace: no detours, each check once and when it is due, one look and one render at the end unless the person asks for more.

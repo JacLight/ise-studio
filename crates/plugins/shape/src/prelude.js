@@ -2676,3 +2676,18 @@ Solid.prototype.draftAnalysis = function ({ pull = [0, 0, 1], min = 1, samples =
   const list = [...faces.values()];
   return { faces: list.map(({ square, ...f }) => f), under: list.filter((f) => f.square < min).map((f) => f.index) };
 };
+
+/**
+ * A made part from the library (library/parts), written once and used again
+ * with other settings: `const { gear, ring } = use("gear")`. Each call of the
+ * same name gives the same functions.
+ */
+const __usedParts = {};
+function use(name) {
+  const lib = globalThis.__parts ?? {};
+  if (!(name in __usedParts)) {
+    if (typeof lib[name] !== "string") throw new Error(`use: no “${name}” in the parts library (it has: ${Object.keys(lib).join(", ") || "nothing"})`);
+    __usedParts[name] = new Function(lib[name])();
+  }
+  return __usedParts[name];
+}
