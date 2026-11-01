@@ -533,7 +533,7 @@ if (command === "run") {
     console.error(`✗ --studio is white or studio, not ${studio}`);
     process.exit(1);
   }
-  // To every open view of the project, as the render job itself goes to whichever view answers first
+  // To every open view of the project, as the render job may go to any of them (the person the AI talks to first, any other if theirs is closed)
   // (sent only to the person the AI last spoke to, a view opened since rendered the grey studio).
   // --skin "Left side,Top": lay those calibrated photos (canvases) onto the model, as photographed; --skin none clears it.
   const skinArg = opt("skin", null);

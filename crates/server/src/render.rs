@@ -40,6 +40,8 @@ fn untaken() -> &'static Mutex<HashMap<String, oneshot::Sender<()>>> {
 
 /// How long a job waits for a view to take it.
 const TAKE_WITHIN: Duration = Duration::from_secs(10);
+/// How long the view asked for first has to take a render before any open view may.
+const THEIRS_WITHIN: Duration = Duration::from_secs(4);
 
 pub async fn request(State(server): State<Arc<Server>>, Query(query): Query<HashMap<String, String>>) -> axum::response::Response {
     let fail = |code: StatusCode, message: String| (code, message).into_response();
@@ -58,12 +60,25 @@ pub async fn request(State(server): State<Arc<Server>>, Query(query): Query<Hash
     }
     let job = de_core::StableId::new().to_string();
     let (tx, rx) = oneshot::channel();
-    let (take_tx, take_rx) = oneshot::channel();
+    let (take_tx, mut take_rx) = oneshot::channel();
     jobs().lock().unwrap().insert(job.clone(), tx);
     untaken().lock().unwrap().insert(job.clone(), take_tx);
     let value = json!({ "job": job, "width": width, "height": height, "samples": samples, "format": if glb { "glb" } else { "png" } }).to_string();
-    let _ = app.events.send(json!({ "type": "view", "to": query.get("user"), "action": "render", "target": null, "value": value }).to_string().into());
-    if !matches!(tokio::time::timeout(TAKE_WITHIN, take_rx).await, Ok(Ok(()))) {
+    // The view of the person asked for (by default the one the AI is talking to) renders it, so the
+    // picture is of what they see, not of another open view (a teammate's, cut or turned another way);
+    // when theirs does not take it (closed, or in a background tab), any open view.
+    let ask = |to: Option<&str>| app.events.send(json!({ "type": "view", "to": to, "action": "render", "target": null, "value": value }).to_string().into());
+    let first = query.get("user").cloned().or_else(|| app.ai.audience()).filter(|u| u != "*");
+    let mut taken = false;
+    if let Some(user) = &first {
+        let _ = ask(Some(user));
+        taken = matches!(tokio::time::timeout(THEIRS_WITHIN, &mut take_rx).await, Ok(Ok(())));
+    }
+    if !taken {
+        let _ = ask(None);
+        taken = matches!(tokio::time::timeout(TAKE_WITHIN, &mut take_rx).await, Ok(Ok(())));
+    }
+    if !taken {
         untaken().lock().unwrap().remove(&job);
         jobs().lock().unwrap().remove(&job);
         return fail(
