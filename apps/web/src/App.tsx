@@ -396,9 +396,12 @@ export function App({ engine }: { engine: Engine }) {
             const shown = entitiesNow.current.get(target);
             const saved = shown?.components["assembly.exploded_view"] as { assembly?: string } | undefined;
             const of = instance(shown)?.of;
-            const scope = saved ? saved.assembly : of && entitiesNow.current.get(of)?.components["assembly.definition"] ? of : undefined;
-            if (scope) {
-              const holder = saved ? [...entitiesNow.current.values()].find((e) => instance(e)?.of === scope) : shown;
+            // A saved view made for no assembly belongs to the top of the project (""): any part placed there holds its player.
+            const scope = saved ? (saved.assembly ?? "") : of && entitiesNow.current.get(of)?.components["assembly.definition"] ? of : undefined;
+            if (scope !== undefined) {
+              const holder = saved
+                ? [...entitiesNow.current.values()].find((e) => (scope ? instance(e)?.of === scope : !!instance(e) && !instance(e)?.parent))
+                : shown;
               if (!holder) return;
               playExploded(target, scope, value !== "off", saved ? undefined : Math.min(2.5, Math.max(0.25, Number(value) || 1)));
               if (value !== "off") {

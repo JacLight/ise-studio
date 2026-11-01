@@ -57,6 +57,19 @@ function StatusChip({ status }: { status?: string }) {
 type PieceNode = { name: string; path: string; children: PieceNode[] };
 
 /** Nests a part's pieces by the "/" in their names, in the order they were made. */
+
+/** Instances placed at the top of the project (in no assembly) make a product of their own when there are several, or it has exploded views. */
+function topLevelProduct(entities: ReadonlyMap<string, EntityView>) {
+  let placed = 0;
+  for (const e of entities.values()) {
+    const view = e.components["assembly.exploded_view"] as { assembly?: string } | undefined;
+    if (view && !view.assembly) return true;
+    const i = e.components["assembly.instance"] as { parent?: string | null } | undefined;
+    if (i && !i.parent && ++placed > 1) return true;
+  }
+  return false;
+}
+
 export function pieceTree(names: string[]): PieceNode[] {
   const root: PieceNode = { name: "", path: "", children: [] };
   for (const full of names) {
@@ -617,6 +630,7 @@ export function InstanceBody(props: { entity: EntityView; entities: ReadonlyMap<
       )}
       {assemblyDef(def) && <FitCheck instance={entity.id} onSelect={props.onSelect} />}
       {assemblyDef(def) && <AssemblyStudio scope={inst.of} frame={worldOf(entity.id, entities)} entities={entities} run={run} view={props.joints} onSelect={props.onSelect} />}
+      {!inst.parent && topLevelProduct(entities) && <AssemblyStudio scope="" frame={IDENTITY} tabs={["explode"]} entities={entities} run={run} view={props.joints} onSelect={props.onSelect} />}
       <PatternSection entity={entity} entities={entities} run={run} onSelect={props.onSelect} />
 
       {prog && def && <InstanceConfig entity={entity} def={def} config={inst.config} run={run} />}

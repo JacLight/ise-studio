@@ -13051,8 +13051,9 @@ a.file-chip:hover {
   position: absolute;
   z-index: 7;
   top: 76px;
-  left: 78px;
-  right: 18px;
+  /* Clear of docked panels (the AI beside it), so the board fits where it can be seen. */
+  left: calc(var(--dock-l, 0px) + 78px);
+  right: calc(var(--dock-r, 0px) + 18px);
   bottom: 18px;
   display: flex;
   flex-direction: column;

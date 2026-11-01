@@ -825,7 +825,11 @@ export function playExploded(id: string, scope: string, open = true, spread?: nu
   window.dispatchEvent(new Event(PLAY_EVENT));
 }
 
-export function AssemblyStudio(props: { scope: string; frame: Transform; entities: ReadonlyMap<string, EntityView>; run: Run; view: JointView; onSelect: (id: string) => void }) {
+/**
+ * An assembly's saved views and motion. `scope` "" is the top of the project
+ * (instances placed in no assembly): there only its exploded views (`tabs`).
+ */
+export function AssemblyStudio(props: { scope: string; frame: Transform; entities: ReadonlyMap<string, EntityView>; run: Run; view: JointView; onSelect: (id: string) => void; tabs?: Tab[] }) {
   const [tab, setTab] = useState<Tab | null>(null);
   const [play, setPlay] = useState<PlayRequest | null>(null);
   useEffect(() => {
@@ -847,7 +851,7 @@ export function AssemblyStudio(props: { scope: string; frame: Transform; entitie
         <span className="section-note">saved views and motion</span>
       </header>
       <div className="seg-toggle at-tabs" role="tablist">
-        {TABS.map((t) => (
+        {TABS.filter((t) => !props.tabs || props.tabs.includes(t.tab)).map((t) => (
           <button title={t.tip} key={t.tab} type="button" role="tab" aria-selected={tab === t.tab} className={tab === t.tab ? "on" : ""} onClick={() => setTab((x) => (x === t.tab ? null : t.tab))}>
             {t.label}
           </button>
@@ -916,7 +920,8 @@ type ExplodedResult = { name: string; instances: { id: string; name: string; mov
 
 function Exploded({ scope, frame, entities, run, view, play }: StudioProps & { play?: PlayRequest | null }) {
   useCleanView(view);
-  const views = [...entities.values()].filter((e) => comp<ExplodeData>(e, "assembly.exploded_view")?.assembly === scope);
+  // The top of the project ("") holds the views made for no assembly.
+  const views = [...entities.values()].filter((e) => e.components["assembly.exploded_view"] && (comp<ExplodeData>(e, "assembly.exploded_view")?.assembly ?? "") === scope);
   const [open, setOpen] = useState<{ id: string; r: ExplodedResult } | null>(null);
   const [at, setAt] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -1052,7 +1057,7 @@ function Exploded({ scope, frame, entities, run, view, play }: StudioProps & { p
           type="button"
           className="primary"
           onClick={async () => {
-            const out = (await run("assembly.explode.create", { assembly: scope, name: `Exploded ${views.length + 1}`, auto: { spread: Number(spread) || 1 } })) as { id: string } | null;
+            const out = (await run("assembly.explode.create", { assembly: scope || undefined, name: `Exploded ${views.length + 1}`, auto: { spread: Number(spread) || 1 } })) as { id: string } | null;
             if (out) void show(out.id);
           }}
         >
