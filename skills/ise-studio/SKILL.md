@@ -66,4 +66,5 @@ The guide (how to model well in Iṣẹ́ Studio; read the page for the task at 
 - [Measuring](reference/guide/28-measuring.md)
 - [Checking your work](reference/guide/29-checking-your-work.md)
 - [Showing things to the person](reference/guide/30-showing-things-to-the-person.md)
-- [Talking to the person](reference/guide/31-talking-to-the-person.md)
+- [Build where they can watch](reference/guide/31-build-where-they-can-watch.md)
+- [Talking to the person](reference/guide/32-talking-to-the-person.md)

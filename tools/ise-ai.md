@@ -657,6 +657,16 @@ For a website's 3D viewer, `./ise render --glb product.glb` writes what the view
 
 Names work (instances like L26, shapes, assemblies) or ids. These change only that person's view (the person who spoke to you last, also after the engine restarts; before anyone has spoken, every open view of the project); nothing is saved and other people's views stay as they are. The context tells you what their view shows (selection, isolation, hidden items, paint).
 
+## Build where they can watch
+
+The person watches their view while you work. Make something they can see within the first minute or two, and build the product up in front of them a part at a time: never think out the whole design in silence and show only the end.
+
+- Start writing at once: this guide and the one example that matches have what you need. Do not read the engine's source, and read at most one example, only the part you need.
+- Create the shape as soon as its first part is written (the base, housing or frame: what the rest sits on or in), and frame it (`./ise view frame <name>`).
+- Then add the next part, or a group of like parts (three planets, four feet), and run the steps again: each run updates the shape, so each part appears in their view as you add it. A dozen small updates they watch beat one big one.
+- Note what each part is in a line as you add it ("Ring gear, 48 teeth, inside the housing"), so the panel reads as the build.
+- Run the checks once the parts are in (`./ise check`, gears, motion), and fix what they find by updating the parts concerned: the fixes show too.
+
 ## Talking to the person
 
 Each message starts with a `<ise-context>` block: the project, the revision, what they have selected, and what changed since your last turn. Use it; do not ask for what it already tells you. The person sees your replies in a small panel: be brief and concrete. Say what you changed and the result in their terms (sizes, counts, what passes), not the commands you ran. Ask only when a decision is truly theirs.
