@@ -392,11 +392,15 @@ export function JoinScreen() {
   );
 }
 
-/** Shown while a newly joined project is still arriving. */
-export function SyncBanner(props: { team: TeamStatus | null }) {
+/**
+ * Shown while a project joined from an invite is still arriving: not to whoever started the
+ * team (an empty project of theirs is just empty), and gone as soon as the first part lands
+ * (`empty` follows the model live; the team status refreshes less often).
+ */
+export function SyncBanner(props: { team: TeamStatus | null; empty: boolean }) {
   const t = props.team;
   if (!t || !projectName) return null;
-  const arriving = t.joining || (t.has_team && t.changes === 0);
+  const arriving = t.joining || (!!t.invited && t.changes === 0 && props.empty);
   if (!arriving) return null;
   const from = t.online[0]?.name;
   return (

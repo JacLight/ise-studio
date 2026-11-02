@@ -193,6 +193,8 @@ export type TeamStatus = {
   public_url: string | null;
   addresses: string[];
   has_team: boolean;
+  /** This engine joined from someone's invite (it did not start the team). */
+  invited?: boolean;
   joining: boolean;
   members: { id: string; name: string; email: string; role: "editor" | "viewer"; joined: boolean; me: boolean; online: boolean }[];
   online: { engine: string; name: string; address: string; direction: string; since: number }[];

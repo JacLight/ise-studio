@@ -965,6 +965,8 @@ pub fn status(server: &Server, app: &App) -> Value {
         "addresses": my_addresses(server.port, &team),
         "has_team": !team.key.is_empty(),
         "joining": team.joining.is_some(),
+        // Joined from someone's invite (not the one who started the team): a copy of the project is on its way.
+        "invited": team.members.iter().any(|m| m.engine.as_deref() == Some(server.engine.as_str()) && !m.invited_by.is_empty()),
         "members": members,
         "online": peers,
         "waiting": project.waiting(),

@@ -2068,7 +2068,7 @@ export function App({ engine }: { engine: Engine }) {
             )}
           </div>
         )}
-        <SyncBanner team={team} />
+        <SyncBanner team={team} empty={state.entities.size === 0} />
         {planeMenu && !sketcher.editing && (
           <PlaneMenu
             onPick={(p, offset) => {
