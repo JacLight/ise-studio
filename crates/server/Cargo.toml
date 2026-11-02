@@ -29,3 +29,7 @@ axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "signal", "process", "io-util", "time"] }
 tower-http = { version = "0.7", features = ["fs"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+
+# The local date on drawings and exports (the engine runs on the person's computer).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

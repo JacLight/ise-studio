@@ -8,6 +8,8 @@
 #include <array>
 #include <algorithm>
 #include <GC_MakeArcOfCircle.hxx>
+#include <GeomAPI_Interpolate.hxx>
+#include <TColgp_HArray1OfPnt.hxx>
 #include <BRepTools_WireExplorer.hxx>
 #include <HLRAlgo_Projector.hxx>
 #include <HLRBRep_Algo.hxx>
@@ -232,6 +234,66 @@ TopoDS_Wire section(const TopoDS_Wire& w, double z, double twist_deg, double sx,
   gp_Trsf t;
   t.SetTranslation(gp_Vec(0, 0, z));
   return TopoDS::Wire(transformed(transformed(s, r), t));
+}
+
+/// A polygon whose sides trace curves (a gear's involute flanks, an arc
+/// sampled to the tolerance) as those curves: each run of sides turning less
+/// than 10° at a corner becomes one smooth curve through the same corners, and
+/// sharper corners stay corners. A loft through it then makes a face per curve,
+/// not one per side: a few per gear tooth instead of dozens, which booleans,
+/// hidden-line views and drawings handle many times faster (and draw clean).
+/// A wire with any side that is not straight is left as it is.
+TopoDS_Wire smooth_wire(const TopoDS_Wire& w) {
+  std::vector<gp_Pnt> pts;
+  for (BRepTools_WireExplorer e(w); e.More(); e.Next()) {
+    if (BRepAdaptor_Curve(e.Current()).GetType() != GeomAbs_Line) return w;
+    gp_Pnt q = BRep_Tool::Pnt(e.CurrentVertex());
+    if (pts.empty() || pts.back().Distance(q) > 1e-9) pts.push_back(q);
+  }
+  while (pts.size() > 1 && pts.front().Distance(pts.back()) <= 1e-9) pts.pop_back();
+  const int n = (int)pts.size();
+  if (n < 8) return w;
+  const double corner = 10.0 * M_PI / 180.0;
+  std::vector<bool> sharp(n);
+  int first = -1;
+  for (int i = 0; i < n; i++) {
+    gp_Vec a(pts[(i + n - 1) % n], pts[i]), b(pts[i], pts[(i + 1) % n]);
+    sharp[i] = a.Angle(b) > corner;
+    if (sharp[i] && first < 0) first = i;
+  }
+  auto curve = [](const std::vector<gp_Pnt>& run, bool periodic) -> TopoDS_Edge {
+    Handle(TColgp_HArray1OfPnt) arr = new TColgp_HArray1OfPnt(1, (int)run.size());
+    for (int k = 0; k < (int)run.size(); k++) arr->SetValue(k + 1, run[k]);
+    GeomAPI_Interpolate fit(arr, periodic, 1e-9);
+    fit.Perform();
+    if (!fit.IsDone()) throw Standard_Failure("smooth_wire: no curve through the points");
+    return BRepBuilderAPI_MakeEdge(fit.Curve()).Edge();
+  };
+  try {
+    BRepBuilderAPI_MakeWire mw;
+    if (first < 0) {
+      mw.Add(curve(pts, true));  // no corner at all: one closed curve
+    } else {
+      int i = first;
+      do {
+        std::vector<gp_Pnt> run{pts[i]};
+        int j = i;
+        do {
+          j = (j + 1) % n;
+          run.push_back(pts[j]);
+        } while (!sharp[j]);
+        mw.Add(run.size() == 2 ? BRepBuilderAPI_MakeEdge(run[0], run[1]).Edge() : curve(run, false));
+        i = j;
+      } while (i != first);
+    }
+    if (!mw.IsDone() || !mw.Wire().Closed()) return w;
+    TopoDS_Wire out = mw.Wire();
+    // The same way round as the polygon (an outline or a hole).
+    out.Orientation(w.Orientation());
+    return out;
+  } catch (const Standard_Failure&) {
+    return w;
+  }
 }
 
 /// The shape as the view meshes it (big free-form faces cut into patches; surfaces.cpp).
@@ -721,14 +783,14 @@ int occ_extrude(void* p, int h, double height, double twist_deg, double sx, doub
     for (auto& f : faces_of(*s)) {
       TopoDS_Wire outer = BRepTools::OuterWire(f);
       for (TopExp_Explorer e(f, TopAbs_WIRE); e.More(); e.Next()) {
-        TopoDS_Wire w = TopoDS::Wire(e.Current());
+        TopoDS_Wire w = smooth_wire(TopoDS::Wire(e.Current()));
         BRepOffsetAPI_ThruSections loft(true, false);
         for (int i = 0; i <= n; i++) {
           double t = (double)i / n;
           loft.AddWire(section(w, t * height, t * twist_deg, 1 + t * (sx - 1), 1 + t * (sy - 1)));
         }
         loft.Build();
-        (w.IsSame(outer) ? solids : holes).push_back(loft.Shape());
+        (TopoDS::Wire(e.Current()).IsSame(outer) ? solids : holes).push_back(loft.Shape());
       }
     }
     TopoDS_Shape r = fuse_all(solids);
@@ -854,7 +916,13 @@ double occ_distance(void* p, int x, int y) {
   const TopoDS_Shape* t = get(a, y);
   if (!s || !t) return NAN;
   try {
-    BRepExtrema_DistShapeShape d(*s, *t);
+    // The smallest distance only (not the largest too), the face pairs shared out over the cores.
+    BRepExtrema_DistShapeShape d;
+    d.SetFlag(Extrema_ExtFlag_MIN);
+    d.SetMultiThread(true);
+    d.LoadS1(*s);
+    d.LoadS2(*t);
+    d.Perform();
     return d.IsDone() ? d.Value() : NAN;
   } catch (Standard_Failure&) {
     return NAN;

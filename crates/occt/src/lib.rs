@@ -518,6 +518,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_twisted_polygon_tracing_curves_lofts_into_a_face_per_curve() {
+        let mut a = Arena::new();
+        // A gear-like outline: 8 teeth, each flank a run of short sides turning a little, square corners between.
+        let mut pts = vec![];
+        for k in 0..8 {
+            let c = k as f64 * std::f64::consts::TAU / 8.0;
+            for i in 0..=40 {
+                let r = 20.0 + i as f64 * 0.1;
+                let th = c - 0.12 + 0.0001 * (i * i) as f64;
+                pts.push([r * th.cos(), r * th.sin()]);
+            }
+            for i in (0..=40).rev() {
+                let r = 20.0 + i as f64 * 0.1;
+                let th = c + 0.12 - 0.0001 * (i * i) as f64 + 0.25;
+                pts.push([r * th.cos(), r * th.sin()]);
+            }
+        }
+        let outline = a.polygons(&[pts.clone()]).unwrap();
+        let twisted = a.extrude(outline, 10.0, 20.0, [1.0, 1.0], 8).unwrap();
+        let sides = a.faces(twisted).unwrap().len() - 2;
+        // Per tooth: two flanks, the tip and the root (not one face per short side: 8 × 82 sides).
+        assert!(sides <= 8 * 4, "{sides} side faces");
+        // The same solid: a twist moves no material, so its volume is the straight prism's (within
+        // what a loft through a section per 15° of twist and curves through the corners give).
+        let straight = a.extrude(outline, 10.0, 0.0, [1.0, 1.0], 1).unwrap();
+        let (v, v0) = (a.volume(twisted), a.volume(straight));
+        assert!((v - v0).abs() < 5e-3 * v0, "twisted {v} vs straight {v0}");
+        // A circle sampled finely has no corner: one closed curve, one side face.
+        let circle: Vec<[f64; 2]> = (0..64).map(|i| (i as f64 * std::f64::consts::TAU / 64.0)).map(|t| [10.0 * t.cos(), 10.0 * t.sin()]).collect();
+        let disc = a.polygons(&[circle]).unwrap();
+        let rod = a.extrude(disc, 10.0, 30.0, [1.0, 1.0], 8).unwrap();
+        assert_eq!(a.faces(rod).unwrap().len(), 3);
+    }
+
+    #[test]
     fn exact_solids_measure_exactly() {
         let mut a = Arena::new();
         let c = a.cylinder(10.0, 5.0, 5.0, false).unwrap();

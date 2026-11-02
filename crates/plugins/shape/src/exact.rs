@@ -493,7 +493,15 @@ fn install<'js>(ctx: &Ctx<'js>, state: &Rc<RefCell<State>>) -> rquickjs::Result<
         native.set(
             "minGap",
             Function::new(ctx.clone(), move |_ctx: Ctx<'js>, a: u32, b: u32, search: f64| -> rquickjs::Result<f64> {
-                Ok(st.borrow().arena.distance(shape(a), shape(b)).unwrap_or(search).min(search))
+                let st = st.borrow();
+                // Boxes further apart than the search: the solids are too (no surface-to-surface search).
+                if let (Ok(p), Ok(q)) = (st.arena.bounds(shape(a)), st.arena.bounds(shape(b))) {
+                    let gap = (0..3).map(|k| (p[k] - q[k + 3]).max(q[k] - p[k + 3]).max(0.0)).fold(0.0, |s: f64, d| s + d * d).sqrt();
+                    if gap >= search {
+                        return Ok(search);
+                    }
+                }
+                Ok(st.arena.distance(shape(a), shape(b)).unwrap_or(search).min(search))
             })?,
         )?;
     }

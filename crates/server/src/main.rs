@@ -1685,10 +1685,9 @@ async fn motion_stress(State(server): State<Arc<Server>>, Path(id): Path<String>
             let e = project.entity(sid)?;
             let program = de_shape::resolved_program(project.world(), e)?;
             let masses = de_shape::part_masses(project.world(), e).unwrap_or_default();
-            let material = project.get::<ShapeSolid>(sid)?.stats.parts.iter().find(|p| p.name == part).and_then(|p| p.material.clone()).or_else(|| {
-                let m = project.get::<de_solid::MaterialRef>(sid)?;
-                project.get::<de_solid::Material>(m.0).map(|m| m.name.clone())
-            });
+            // A part's material is a key in the shape's material table: the check uses the material it stands for.
+            let (table, whole) = de_shape::material_names(project.world(), e);
+            let material = project.get::<ShapeSolid>(sid)?.stats.parts.iter().find(|p| p.name == part).and_then(|p| p.material.clone()).map(|k| table.get(&k).cloned().unwrap_or(k)).or(whole);
             Some((program, masses, material))
         })
     };
@@ -1752,8 +1751,29 @@ async fn study(State(server): State<Arc<Server>>, Path(id): Path<String>, Query(
 }
 
 /// Today as YYYY-MM-DD (UTC), for title blocks.
+/// Today's date where the engine runs (on the person's own computer, so their
+/// date, not Greenwich's), as YYYY-MM-DD.
 fn today() -> String {
-    let days = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() / 86_400).unwrap_or(0) as i64;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    civil_date((now + utc_offset(now)).div_euclid(86_400))
+}
+
+/// Seconds the local time zone is ahead of UTC at `at` (Unix seconds), daylight saving included.
+#[cfg(unix)]
+fn utc_offset(at: i64) -> i64 {
+    let t = at as libc::time_t;
+    // SAFETY: localtime_r only writes the tm it is given; a zeroed tm is a valid value.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() { 0 } else { tm.tm_gmtoff as i64 }
+}
+
+#[cfg(not(unix))]
+fn utc_offset(_at: i64) -> i64 {
+    0
+}
+
+/// Days since 1970-01-01 as YYYY-MM-DD.
+fn civil_date(days: i64) -> String {
     // Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -1820,15 +1840,18 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
                 None => (de_shape::resolved_program(project.world(), e)?, project.get::<ShapeSolid>(sid)?.stats.clone(), de_shape::part_masses(project.world(), e).unwrap_or_default()),
             };
             let stats = &all_stats.parts;
+            // A part's material is a key in the shape's material table: the sheet names the material it stands for.
+            let (table, _) = de_shape::material_names(project.world(), e);
+            let named = |key: &Option<String>| key.as_ref().map(|k| table.get(k).cloned().unwrap_or_else(|| k.clone()));
             // The saved setup: its sheets, sections, dimensions and annotations.
             let setup = project.get::<de_shape::ShapeDrawings>(sid).and_then(|all| all.0.iter().find(|d| d.part == base.part).cloned()).unwrap_or_default();
             // What a sheet's title block says of the part it draws.
             let about = |part: &Option<String>| {
-                let part_material = part.as_ref().and_then(|n| stats.iter().find(|p| &p.name == n)?.material.clone());
+                let part_material = part.as_ref().and_then(|n| named(&stats.iter().find(|p| &p.name == n)?.material));
                 // The part's own material; else the whole thing's; else the one all parts share.
                 let shared = || {
-                    let first = stats.first()?.material.clone()?;
-                    stats.iter().all(|p| p.material.as_ref() == Some(&first)).then_some(first)
+                    let first = named(&stats.first()?.material)?;
+                    stats.iter().all(|p| named(&p.material).as_ref() == Some(&first)).then_some(first)
                 };
                 let material = part_material
                     .or_else(|| {
@@ -1848,7 +1871,7 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
                 if part.is_none() {
                     for (i, p) in stats.iter().enumerate() {
                         let base = de_sourcing::bom::base_name(&p.name).to_string();
-                        let same = |r: &de_shape::drawing::PartRow, v: f64| (r.name == p.name || de_sourcing::bom::base_name(&r.name) == base) && r.material == p.material.clone().unwrap_or_else(|| "—".into()) && r.process == p.process.clone().unwrap_or_default() && (v - p.volume_mm3).abs() <= 1e-6 * v.abs().max(1.0);
+                        let same = |r: &de_shape::drawing::PartRow, v: f64| (r.name == p.name || de_sourcing::bom::base_name(&r.name) == base) && r.material == named(&p.material).unwrap_or_else(|| "—".into()) && r.process == p.process.clone().unwrap_or_default() && (v - p.volume_mm3).abs() <= 1e-6 * v.abs().max(1.0);
                         if let Some(j) = parts.iter().zip(&volumes).position(|(r, v)| same(r, *v)) {
                             let row = &mut parts[j];
                             row.quantity += 1;
@@ -1865,7 +1888,7 @@ async fn drawing(State(server): State<Arc<Server>>, Path(file): Path<String>, Qu
                         parts.push(de_shape::drawing::PartRow {
                             name: p.name.clone(),
                             quantity: 1,
-                            material: p.material.clone().unwrap_or_else(|| "—".into()),
+                            material: named(&p.material).unwrap_or_else(|| "—".into()),
                             mass: kg.map(kg_text).unwrap_or_else(|| "—".into()),
                             process: p.process.clone().unwrap_or_default(),
                             members: vec![p.name.clone()],
