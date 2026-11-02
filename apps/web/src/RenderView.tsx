@@ -3,6 +3,7 @@
 // Save 3D for web: the same materials as a .glb for a website's 3D viewer.
 
 import { useEffect, useRef, useState } from "react";
+import type * as THREE from "three";
 import { LiveRender, renderImage, type RenderSource, type Studio } from "./render";
 import { modelForWeb } from "./webModel";
 
@@ -13,6 +14,17 @@ const SIZES: { label: string; width: number; height: number }[] = [
   { label: "3840 × 2160 (4K)", width: 3840, height: 2160 },
 ];
 
+/** What the picture is made of: each mesh shown, its geometry and where it stands. */
+function modelSignature(objects: THREE.Object3D[]) {
+  const parts: string[] = [];
+  for (const o of objects)
+    o.traverseVisible((m) => {
+      const mesh = m as THREE.Mesh;
+      if (mesh.isMesh) parts.push(mesh.geometry.uuid, ...mesh.matrixWorld.elements.map((v) => v.toFixed(3)));
+    });
+  return parts.join();
+}
+
 export function RenderView(props: { source: () => RenderSource | null; name: string; studio: Studio; onStudio: (studio: Studio) => void; onClose: () => void }) {
   const host = useRef<HTMLDivElement>(null);
   const [samples, setSamples] = useState(-1);
@@ -20,6 +32,21 @@ export function RenderView(props: { source: () => RenderSource | null; name: str
   const [quality, setQuality] = useState(256);
   const [saving, setSaving] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // The model as it stands: the picture starts over when it changes (a part edited while it renders, or
+  // a project still arriving when render mode opened), checked each second.
+  const [rev, setRev] = useState(0);
+  useEffect(() => {
+    let last = modelSignature(props.source()?.objects ?? []);
+    const timer = window.setInterval(() => {
+      const now = modelSignature(props.source()?.objects ?? []);
+      if (now !== last) {
+        last = now;
+        setRev((r) => r + 1);
+      }
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [props.source]);
 
   useEffect(() => {
     const source = props.source();
@@ -36,7 +63,7 @@ export function RenderView(props: { source: () => RenderSource | null; name: str
       live?.canvas.remove();
       live?.dispose();
     };
-  }, [props.source, props.studio]);
+  }, [props.source, props.studio, rev]);
 
   const save = async () => {
     const source = props.source();

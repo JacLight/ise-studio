@@ -15118,6 +15118,11 @@ a.button .icon {
   width: 100%;
   height: 100%;
 }
+/* The view's display tools do not apply to a rendered picture, and would sit on its bar. */
+body:has(.render-view) .view-tools {
+  display: none;
+}
+
 .render-bar {
   position: absolute;
   left: 50%;

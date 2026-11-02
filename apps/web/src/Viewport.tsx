@@ -1080,7 +1080,8 @@ function fitView(t: Scene, only?: string, glide = false, direction?: THREE.Vecto
   for (const [id, part] of box ? [] : t.parts) {
     if (!part.group.visible) continue;
     for (const m of part.meshes) {
-      if (!m.visible) continue;
+      // A body a stress result is drawn over in its place is still where the part is.
+      if (!m.visible && !m.userData.studied) continue;
       if (only && id !== only && !(m.userData.path as string[] | undefined)?.includes(only)) continue;
       bounds.expandByObject(m);
     }
@@ -1776,8 +1777,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
       // A joint places what it holds: no handles to move it by hand.
       // Shown pulled apart or turning, its pieces are not where the part is: no handles on it then.
       const held = !!selEntity?.placed?.by || !!callbacks.current.poses || (!!callbacks.current.selected && turning.current?.id === callbacks.current.selected);
+      // A stress result on it is read, not moved: no handles over the colours.
+      const studied = !!callbacks.current.selected && stressShown.current?.id === callbacks.current.selected;
       gizmo.setTurnable(!!instance(selEntity) && !callbacks.current.also?.length);
-      gizmo.root.visible = !!s && !f && !wire && !pivotMode && !held && !callbacks.current.edges && !callbacks.current.facePicks && !faceLayer.active && !connectorLayer.active && (!d || d.kind !== "push");
+      gizmo.root.visible = !!s && !f && !wire && !pivotMode && !held && !studied && !callbacks.current.edges && !callbacks.current.facePicks && !faceLayer.active && !connectorLayer.active && (!d || d.kind !== "push");
       connectorLayer.layout(camera, renderer.domElement.clientHeight, toScreen, connectorTags.current);
       const ff = faceLayer.frame();
       if (ff) faceLayer.scale(gizmoScale(ff.origin));
@@ -3421,7 +3424,10 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
           }
         });
         const body = t.parts.get(old.id)?.body;
-        if (body) body.visible = true;
+        if (body) {
+          body.visible = true;
+          body.userData.studied = false;
+        }
         stressShown.current = null;
       }
       const part = t.parts.get(id);
@@ -3481,6 +3487,8 @@ export const Viewport = forwardRef<ViewportHandle, Props>(function Viewport(prop
           group.add(stressMesh(r, view.deform ? (view.deform * size * 0.04) / Math.max(r.max_displacement, 1e-9) : 0));
         }
         part.body.visible = false;
+        // Framing still counts it (see fitView): the colours stand where it is.
+        part.body.userData.studied = true;
       }
       for (const mk of view.result && !view.oscillate ? view.markers ?? [] : []) {
         // A ring and a dot, always on top.
