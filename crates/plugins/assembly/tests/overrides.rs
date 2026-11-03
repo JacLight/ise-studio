@@ -118,6 +118,22 @@ fn an_own_value_follows_its_joint_live_and_through_a_sweep() {
 }
 
 #[test]
+fn a_sweep_reaches_an_own_value_through_a_parameter_set_that_follows_the_joint() {
+    // Twelve legs read “Crank.angle”, and Crank follows the drive joint: sweeping the joint poses the legs.
+    let mut p = project();
+    let (j, _, d) = arm(&mut p);
+    let crank = id(&run(&mut p, "parameters.create", json!({ "name": "Crank", "params": [{ "key": "angle", "label": "Angle", "value": 0, "expr": "=Swing.angle" }] })).unwrap());
+    run(&mut p, "assembly.instance.update", json!({ "target": d, "params": { "turn": "=Crank.angle / 2" } })).unwrap();
+    run(&mut p, "parameters.set", json!({ "target": j, "values": { "angle": 40 } })).unwrap();
+    assert!((shown(&p, d) - 4.0 * 2.0 * 2.0).abs() < 1e-6, "live: 20° makes 4 mm, {}", shown(&p, d));
+    let s = de_assembly::motion::sweep(p.world(), j, None, Some(0.0), Some(90.0), 9, &HashMap::new(), true).unwrap();
+    let f = s.flex.iter().find(|f| f.instance == d).expect("the dial follows the joint through Crank");
+    assert_eq!(f.values[3].get("turn"), Some(&15.0), "30° swept, Crank 30, turn 15: {:?}", f.values[3]);
+    assert_eq!(f.values[9].get("turn"), Some(&45.0), "{:?}", f.values[9]);
+    let _ = crank;
+}
+
+#[test]
 fn sweeps_measure_again_only_the_pairs_a_change_moves() {
     let mut p = project();
     let (j, a, _) = arm(&mut p);

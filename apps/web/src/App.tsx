@@ -347,7 +347,12 @@ export function App({ engine }: { engine: Engine }) {
         const later = (f: () => void) => requestAnimationFrame(() => requestAnimationFrame(f));
         switch (action) {
           case "select":
-            if (!target) return;
+            // Nothing named: nothing selected (the view loses its handles and outline).
+            if (!target) {
+              setSelected(null);
+              setAlso([]);
+              return;
+            }
             setSelected(target);
             setPanel("properties");
             later(() => viewport.current?.frame(target));

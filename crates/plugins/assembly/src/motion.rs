@@ -161,9 +161,23 @@ fn program_given(world: &World, o: &Occurrence, joints: &JointValues) -> Result<
 /// gives of its own) reading a joint's value: its geometry changes as the
 /// joints move.
 fn reads_joints(world: &World, o: &Occurrence) -> bool {
-    let joint = |r: &StableId| entity(world, *r).is_some_and(|e| world.get::<Joint>(e).is_some());
+    let mut seen = std::collections::HashSet::new();
     let program = entity(world, o.shape).and_then(|e| world.get::<de_shape::ShapeProgram>(e));
-    program.is_some_and(|p| de_shape::params::references(&p.params).iter().any(joint)) || de_shape::configs::override_references(&o.params).iter().any(joint)
+    program.is_some_and(|p| de_shape::params::references(&p.params).iter().any(|r| reaches_joint(world, *r, &mut seen)))
+        || de_shape::configs::override_references(&o.params).iter().any(|r| reaches_joint(world, *r, &mut seen))
+}
+
+/// Whether `id` is a joint, or has values whose formulas read one, directly or
+/// through other parameter sets (legs reading “Crank.angle”, Crank following the joint).
+fn reaches_joint(world: &World, id: StableId, seen: &mut std::collections::HashSet<StableId>) -> bool {
+    if !seen.insert(id) {
+        return false;
+    }
+    let Some(e) = entity(world, id) else { return false };
+    if world.get::<Joint>(e).is_some() {
+        return true;
+    }
+    de_shape::params::params_of(world, e).is_some_and(|(_, ps)| de_shape::params::references(ps).into_iter().any(|r| reaches_joint(world, r, seen)))
 }
 
 /// Whether some shape the instance shows follows a joint's value: a sweep

@@ -508,6 +508,16 @@ pub fn resolve_with(world: &World, params: &[Param], given: &dyn Fn(StableId, &s
                         Some(id) if given(id, k).is_some() => Ok(given(id, k).unwrap()),
                         Some(id) => {
                             let ent = world.resource::<IdIndex>().get(id).ok_or_else(|| format!("{}: a referenced object was deleted", p.label))?;
+                            // A value worked out by a formula of its own is worked out again here, so a value
+                            // given for this evaluation (a joint at one step of a sweep) reaches through a
+                            // parameter set that follows it: legs reading “Crank.angle”, Crank following the joint.
+                            if let Some((_, theirs)) = params_of(world, ent).filter(|(_, ps)| ps.iter().any(|q| q.key == k && q.expr.is_some())) {
+                                return resolve_with(world, theirs, given)
+                                    .map_err(|e| format!("{}: {e}", p.label))?
+                                    .get(k)
+                                    .copied()
+                                    .ok_or_else(|| format!("{}: “{k}” of a referenced object has no value", p.label));
+                            }
                             world
                                 .get::<ResolvedParams>(ent)
                                 .and_then(|r| r.0.get(k).copied())

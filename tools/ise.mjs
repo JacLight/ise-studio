@@ -61,7 +61,7 @@
 //        the model drawn square to the canvas over its photo: silhouette IoU, outline distance, regions of extra/missing material
 //   node tools/ise.mjs ops [filter]         the commands the engine accepts, with schemas
 //   node tools/ise.mjs view <action> [what] show something in the person's view (not saved):
-//        select L26 · frame L26 · isolate L26 · show_all · hide L19 · show L19
+//        select L26 (none: clears it) · frame L26 · isolate L26 · show_all · hide L19 · show L19
 //        color status|material · camera iso|front|back|left|right|top|bottom · camera az,el[,lens°[,fill]]
 //        render [white|studio]   (render mode; white: the seamless white sweep)
 //        explode Bracket [spread] · explode Bracket off

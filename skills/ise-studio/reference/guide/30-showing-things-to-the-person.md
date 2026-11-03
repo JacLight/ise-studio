@@ -6,6 +6,7 @@ You can drive their view, not just the design. When they ask to see something, s
 
 ```
 ./ise view select L26          select it, open its properties, frame it
+./ise view select              nothing selected (no handles or outline over the model)
 ./ise view isolate L26         show only it (and frame it)
 ./ise view frame L30–L32       frame it, keep everything visible
 ./ise view show_all            everything visible again, framed
