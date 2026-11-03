@@ -120,7 +120,7 @@ impl Plugin for AssemblyPlugin {
                 compute: joints::placed,
             })
             // An instance in a configuration of its shape, before the totals that read it.
-            .derived(Derived {
+            .derived_heavy(Derived {
                 name: "assembly.configured",
                 inputs: &[Instance::KIND],
                 reads_dependencies: true,

@@ -134,6 +134,14 @@ impl Registry {
         self
     }
 
+    /// A derived computation that takes milliseconds per entity (running a
+    /// shape program, meshing): computed on all cores once two or more are
+    /// stale, so twelve instances of a leg posed by one crank evaluate together.
+    pub fn derived_heavy<Out: Component>(&mut self, spec: Derived<Out>) -> &mut Self {
+        self.derived.push(DerivedInfo::with_threshold(spec, crate::derived::HEAVY_PARALLEL_THRESHOLD));
+        self
+    }
+
     /// A check run after every command (see [`Guard`]).
     pub fn guard(&mut self, guard: Guard) -> &mut Self {
         self.guards.push(guard);

@@ -66,12 +66,20 @@ pub(crate) struct DerivedInfo {
 
 /// Below this, parallel dispatch costs more than it saves.
 const PARALLEL_THRESHOLD: usize = 512;
+/// For computations that take milliseconds each (a shape program run, a mesh
+/// made): two are already worth spreading over the cores.
+pub(crate) const HEAVY_PARALLEL_THRESHOLD: usize = 2;
 
 impl DerivedInfo {
     pub fn new<Out: Component>(spec: Derived<Out>) -> Self {
+        Self::with_threshold(spec, PARALLEL_THRESHOLD)
+    }
+
+    /// Run in parallel from `threshold` entities up.
+    pub fn with_threshold<Out: Component>(spec: Derived<Out>, threshold: usize) -> Self {
         let compute = spec.compute;
         let run: Runner = Box::new(move |world: &World, entities: &[Entity]| {
-            let results: Vec<(Entity, Option<Result<Out, String>>)> = if entities.len() >= PARALLEL_THRESHOLD {
+            let results: Vec<(Entity, Option<Result<Out, String>>)> = if entities.len() >= threshold {
                 entities.par_iter().map(|&e| (e, compute(world, e))).collect()
             } else {
                 entities.iter().map(|&e| (e, compute(world, e))).collect()

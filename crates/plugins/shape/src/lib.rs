@@ -146,20 +146,20 @@ impl Plugin for ShapePlugin {
                 reads_dependencies: true,
                 compute: sketch::solve_sketch,
             })
-            .derived(Derived {
+            .derived_heavy(Derived {
                 name: "shape.evaluate",
                 // The active configuration can leave finishes off.
                 inputs: &[ShapeProgram::KIND, ShapeConfigurations::KIND],
                 reads_dependencies: true,
                 compute: evaluate_program,
             })
-            .derived(Derived {
+            .derived_heavy(Derived {
                 name: "shape.display_mesh",
                 inputs: &[ShapeProgram::KIND, ShapeConfigurations::KIND],
                 reads_dependencies: true,
                 compute: display_mesh,
             })
-            .derived(Derived {
+            .derived_heavy(Derived {
                 name: "shape.mass_properties",
                 inputs: &[ShapeProgram::KIND, ShapeConfigurations::KIND, MaterialRef::KIND, PartMaterials::KIND],
                 reads_dependencies: true,
