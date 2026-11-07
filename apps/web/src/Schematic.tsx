@@ -194,7 +194,10 @@ const kindOf = (v: SchematicV, id: string): SelKind | null => {
 };
 
 export function SchematicPane(props: {
-  boardId: string;
+  /** The board the schematic belongs to, or null for one drawn before there is a board. */
+  boardId: string | null;
+  /** Show this schematic rather than the board's (one with no board yet). */
+  schematicId?: string;
   boardRefs: { id: string; reference: string }[];
   revision: number;
   commit: Commit;
@@ -263,13 +266,13 @@ export function SchematicPane(props: {
       .then((r) => r.json())
       .then((list: { id: string; board: string | null }[]) => {
         if (!live) return;
-        setSchId(list.find((s) => s.board === props.boardId)?.id ?? null);
+        setSchId(props.schematicId && list.some((s) => s.id === props.schematicId) ? props.schematicId : (list.find((s) => s.board === props.boardId)?.id ?? null));
       })
       .catch(() => live && setSchId(null));
     return () => {
       live = false;
     };
-  }, [props.revision, props.boardId]);
+  }, [props.revision, props.boardId, props.schematicId]);
 
   useEffect(() => {
     if (!schId) {
@@ -523,7 +526,7 @@ export function SchematicPane(props: {
               <button
                 type="button"
                 className="primary"
-                disabled={!props.canEdit || !!busy}
+                disabled={!props.canEdit || !!busy || !props.boardId}
                 title="Draw a schematic from this board: a symbol per part, nets as labels and power ports"
                 onClick={async () => {
                   setBusy("Drawing…");

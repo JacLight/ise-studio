@@ -323,6 +323,8 @@ export function PcbWorkspace(props: {
   const { run, notify } = props;
   const [boards, setBoards] = useState<BoardEntry[] | null>(null);
   const [boardId, setBoardId] = useState<string | null>(null);
+  // A schematic drawn before there is a board (schematic first, then the layout): shown on its own.
+  const [loose, setLoose] = useState<{ id: string; name: string } | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("parts");
@@ -375,6 +377,16 @@ export function PcbWorkspace(props: {
       .then((r) => r.json())
       .then((list: BoardEntry[]) => {
         if (!live) return;
+        if (list.length) setLoose(null);
+        else
+          fetch(projectUrl("/pcb/schematics"))
+            .then((r) => r.json())
+            .then((sch: { id: string; name: string; board: string | null }[]) => {
+              if (!live) return;
+              const x = sch.find((y) => !y.board) ?? null;
+              setLoose(x && { id: x.id, name: x.name });
+            })
+            .catch(() => live && setLoose(null));
         setBoards(list);
         setBoardId((b) => (b && list.some((x) => x.id === b) ? b : (list[0]?.id ?? null)));
       })
@@ -615,7 +627,7 @@ export function PcbWorkspace(props: {
               ))}
             </select>
           ) : (
-            <h2>{b?.name ?? "Electronics"}</h2>
+            <h2>{b?.name ?? loose?.name ?? "Electronics"}</h2>
           )}
           {b && (
             <span className="pcb-specs">
@@ -658,7 +670,26 @@ export function PcbWorkspace(props: {
           <IconButton icon="close" label="Close (Esc)" onClick={props.onClose} />
         </div>
       </header>
-      {!b && boards.length === 0 ? (
+      {!b && boards.length === 0 && loose ? (
+        <div className="pcb-body">
+          <div className="pcb-sch-host" onPointerDownCapture={() => (keyPane.current = "schematic")}>
+            <SchematicPane
+              boardId={null}
+              schematicId={loose.id}
+              boardRefs={[]}
+              revision={props.revision}
+              commit={commit}
+              notify={notify}
+              canEdit={props.canEdit}
+              probeRef={null}
+              onProbe={() => {}}
+              net={net}
+              onNet={setNet}
+              keys={schKeys}
+            />
+          </div>
+        </div>
+      ) : !b && boards.length === 0 ? (
         <NewBoard run={commit} canEdit={props.canEdit} onMade={(id) => setBoardId(id)} />
       ) : !b ? (
         <div className="pcb-empty">{error ? <p className="pcb-error">{error}</p> : <div className="pcb-spinner" />}</div>
