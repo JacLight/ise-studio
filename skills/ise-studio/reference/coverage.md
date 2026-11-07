@@ -2,7 +2,7 @@
 
 # Documentation coverage
 
-225 of 229 operations describe themselves in the code; 528 of 1413 parameters do. Undocumented operations (add a `///` doc comment on the command's struct):
+225 of 229 operations describe themselves in the code; 529 of 1414 parameters do. Undocumented operations (add a `///` doc comment on the command's struct):
 
 - `core.entity.delete`
 - `intent.requirement.create`

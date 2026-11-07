@@ -104,6 +104,7 @@ route the board's unrouted nets (or the ones named).
 | `pairs` | boolean |  | Route differential pairs together first, where they fit (default true). |
 | `replace` | boolean |  | Remove earlier autorouted copper of these nets first (default true); dragged tracks (`reroute`) of these nets that now break a rule go too. |
 | `rip_up` | boolean |  | Rip up and reroute nets in the way of one that cannot finish (default true). |
+| `seconds` | number |  | Longest the router may work, in seconds (default 120, 5 to 1800). The engine waits on it, so it stops at the limit and keeps what it has routed; the nets it did not reach are reported, and routing again (`replace: false`) carries on from there. |
 | `skip` | string[] |  | Nets to leave alone (a ground left to a pour). |
 | `via_cost` | number |  | What a via costs, in millimetres of track (default 5). |
 

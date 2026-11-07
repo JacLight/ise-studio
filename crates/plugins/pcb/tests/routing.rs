@@ -249,6 +249,9 @@ fn the_autorouter_rips_up_a_net_in_the_way_and_routes_both() {
     let out = ok(&mut p, "pcb.autoroute", json!({ "board": board, "layers": ["top"] }));
     assert!(out["failed"].as_array().unwrap().is_empty(), "{out}");
     assert_eq!(out["passes"], 1, "rip-up solved it within the first pass: {out}");
+    assert_eq!(out["stopped_at_limit"], false, "{out}");
+    // The time limit is bounded, so the engine is never held for long.
+    assert!(run(&mut p, "pcb.autoroute", json!({ "board": board, "seconds": 3600 })).is_err());
     assert!(out["ripped"].as_u64().unwrap() >= 1, "{out}");
     let v = de_pcb::view(p.world(), board).unwrap();
     assert!(v.nets.iter().all(|n| n.routed), "{:?}", v.nets);

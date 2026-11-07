@@ -51,6 +51,10 @@ pub struct Autoroute {
     pub via_cost: Option<f64>,
     /// Route differential pairs together first, where they fit (default true).
     pub pairs: Option<bool>,
+    /// Longest the router may work, in seconds (default 120, 5 to 1800). The engine waits on
+    /// it, so it stops at the limit and keeps what it has routed; the nets it did not reach are
+    /// reported, and routing again (`replace: false`) carries on from there.
+    pub seconds: Option<f64>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -467,6 +471,12 @@ impl Command for Autoroute {
         if !(0.05..=2.0).contains(&g) {
             return Err(CommandError::new(ErrorCode::InvalidParameters, "grid is 0.05 to 2 mm"));
         }
+        let seconds = self.seconds.unwrap_or(120.0);
+        if !(5.0..=1800.0).contains(&seconds) {
+            return Err(CommandError::new(ErrorCode::InvalidParameters, "seconds is 5 to 1800"));
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs_f64(seconds);
+        let mut stopped = false;
         let via_cost = self.via_cost.unwrap_or(5.0);
         if !(0.0..=100.0).contains(&via_cost) {
             return Err(CommandError::new(ErrorCode::InvalidParameters, "via_cost is 0 to 100 mm"));
@@ -571,6 +581,14 @@ impl Command for Autoroute {
             let mut queue: VecDeque<String> = order.iter().cloned().collect();
             let mut budget = 6 * order.len().max(1);
             while let Some(net) = queue.pop_front() {
+                if stopped || std::time::Instant::now() >= deadline {
+                    // Out of time: what is routed stays, the rest is reported.
+                    stopped = true;
+                    if !copper.contains_key(&net) {
+                        failed.insert(net, format!("not reached in the {seconds:.0} s limit: route again with replace false to carry on, or allow more seconds"));
+                    }
+                    continue;
+                }
                 failed.remove(&net);
                 let outcome = route_net(tx, self.board, &ctx, &net, &base, &copper, false)?;
                 match outcome {
@@ -634,7 +652,8 @@ impl Command for Autoroute {
             let made_tracks: usize = copper.values().map(|c| c.tracks).sum();
             let made_vias: usize = copper.values().map(|c| c.vias).sum();
             let failed_list: Vec<Value> = failed.iter().map(|(n, r)| json!({ "net": n, "reason": r })).collect();
-            if failed.is_empty() {
+            if failed.is_empty() || stopped || std::time::Instant::now() >= deadline {
+                stopped |= !failed.is_empty();
                 break (routed, failed_list, made_tracks, made_vias);
             }
             if best.as_ref().is_none_or(|(n, _)| failed.len() < *n) {
@@ -656,7 +675,7 @@ impl Command for Autoroute {
                 order = next;
             }
         };
-        Ok(json!({ "board": self.board, "routed": routed, "failed": failed, "tracks": made_tracks, "vias": made_vias, "grid": g, "passes": pass, "ripped": ripped_total, "pairs": paired, "pair_notes": pair_notes }))
+        Ok(json!({ "board": self.board, "routed": routed, "failed": failed, "tracks": made_tracks, "vias": made_vias, "grid": g, "passes": pass, "ripped": ripped_total, "pairs": paired, "pair_notes": pair_notes, "stopped_at_limit": stopped, "seconds": seconds }))
     }
 }
 
