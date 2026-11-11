@@ -8,7 +8,7 @@ use crate::{
     value::CompValue,
 };
 use bevy_ecs::{component::Component, entity::Entity, world::World};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// A transaction over the shared project space. Commands read anything and
@@ -23,19 +23,24 @@ pub struct Tx<'a> {
     /// updates that op (first before, last after) instead of adding one, so a
     /// list grown one item at a time (an assembly's dependencies, joint by
     /// joint) journals once, not once per item with the whole list each time.
-    /// Only writes after the last entity created fold (a value naming the new
-    /// entity must not replay before it exists).
+    /// A write made before the last entity was created moves to the end
+    /// instead (a value naming the new entity must not replay before it
+    /// exists): its old place is dropped, listed in `dropped`.
     written: HashMap<(StableId, &'static str), usize>,
     created_at: usize,
+    dropped: HashSet<usize>,
 }
 
 impl<'a> Tx<'a> {
     pub(crate) fn new(world: &'a mut World, registry: &'a Registry, actor: &'a Actor) -> Self {
-        Self { world, registry, actor, ops: Vec::new(), written: HashMap::new(), created_at: 0 }
+        Self { world, registry, actor, ops: Vec::new(), written: HashMap::new(), created_at: 0, dropped: HashSet::new() }
     }
 
     pub(crate) fn into_ops(self) -> Vec<Op> {
-        self.ops
+        if self.dropped.is_empty() {
+            return self.ops;
+        }
+        self.ops.into_iter().enumerate().filter(|(i, _)| !self.dropped.contains(i)).map(|(_, op)| op).collect()
     }
 
     pub fn actor(&self) -> &Actor {
@@ -157,13 +162,20 @@ impl<'a> Tx<'a> {
     }
 
     /// Records a write, folding it into an earlier write of the same component.
+    /// One written before an entity was created since moves to the end, so a
+    /// board's dependency list grown track by track journals once, not once per
+    /// track with the whole list before and after.
     fn record_set(&mut self, id: StableId, kind: &'static str, before: Option<CompValue>, after: Option<CompValue>) {
-        if let Some(&i) = self.written.get(&(id, kind))
-            && i >= self.created_at
-            && let Some(Op::Set { after: last, .. }) = self.ops.get_mut(i)
-        {
-            *last = after;
-            return;
+        let mut before = before;
+        if let Some(&i) = self.written.get(&(id, kind)) {
+            if let Some(Op::Set { before: first, after: last, .. }) = self.ops.get_mut(i) {
+                if i >= self.created_at {
+                    *last = after;
+                    return;
+                }
+                before = first.take();
+                self.dropped.insert(i);
+            }
         }
         self.written.insert((id, kind), self.ops.len());
         self.ops.push(Op::Set { id, kind, before, after });
@@ -212,7 +224,7 @@ impl<'a> Tx<'a> {
     }
 
     /// Ops recorded so far (what a preview shows).
-    pub fn ops(&self) -> &[Op] {
-        &self.ops
+    pub fn ops(&self) -> impl Iterator<Item = &Op> {
+        self.ops.iter().enumerate().filter(|(i, _)| !self.dropped.contains(i)).map(|(_, op)| op)
     }
 }

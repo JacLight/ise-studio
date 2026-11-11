@@ -2191,6 +2191,137 @@ fn load(name: &str, path: &PathBuf, registry: Arc<Registry>, engine: &str) -> st
     Ok(project)
 }
 
+/// One op of a saved change, its values kept as the exact text they were
+/// saved as (reading and re-writing a number can move its last digit).
+#[derive(serde::Deserialize, serde::Serialize)]
+struct RawOp<'a> {
+    op: &'a str,
+    id: &'a str,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    kind: Option<&'a str>,
+    #[serde(default, borrow, skip_serializing_if = "is_create_or_delete")]
+    before: Option<&'a serde_json::value::RawValue>,
+    #[serde(default, borrow, skip_serializing_if = "is_create_or_delete")]
+    after: Option<&'a serde_json::value::RawValue>,
+}
+
+fn is_create_or_delete(_: &Option<&serde_json::value::RawValue>) -> bool {
+    false
+}
+
+/// Folds repeated writes of one component in one change into one, at the last
+/// write (the first one's before, the last one's after), as a transaction now
+/// records them: changes saved before that wrote a board's whole dependency
+/// list once per routed track, gigabytes for one route. A write back to where
+/// it started is dropped. Returns the ops left, or None when nothing folds.
+fn fold_raw<'a>(ops: Vec<RawOp<'a>>) -> Option<Vec<RawOp<'a>>> {
+    use std::collections::HashMap;
+    let n = ops.len();
+    let mut out: Vec<Option<RawOp<'a>>> = Vec::with_capacity(n);
+    let mut at: HashMap<(&'a str, &'a str), usize> = HashMap::new();
+    let mut kinds: HashMap<&'a str, Vec<&'a str>> = HashMap::new();
+    let mut folded = false;
+    for mut op in ops {
+        match (op.op, op.kind) {
+            ("set", Some(kind)) => {
+                let key = (op.id, kind);
+                match at.get(&key).and_then(|&i| out[i].take()) {
+                    Some(first) => {
+                        op.before = first.before;
+                        folded = true;
+                    }
+                    None => kinds.entry(op.id).or_default().push(kind),
+                }
+                at.insert(key, out.len());
+            }
+            ("delete", _) => {
+                for k in kinds.remove(op.id).unwrap_or_default() {
+                    at.remove(&(op.id, k));
+                }
+            }
+            _ => {}
+        }
+        out.push(Some(op));
+    }
+    if !folded {
+        return None;
+    }
+    let same = |o: &RawOp| o.op == "set" && o.before.map(|v| v.get()).unwrap_or("null") == o.after.map(|v| v.get()).unwrap_or("null");
+    Some(out.into_iter().flatten().filter(|o| !same(o)).collect())
+}
+
+/// `--compact a.jsonl …`: rewrites each project file with repeated writes in
+/// one change folded together (see `fold_raw`), then loads the old and new
+/// files and swaps the new one in only if they give the same design, keeping
+/// the old one as `<name>.jsonl.before-compact`. The
+/// engine must not have the project open. Changes merged from another copy are
+/// kept exactly as they arrived.
+fn compact(path: &PathBuf, registry: Arc<Registry>) -> std::io::Result<()> {
+    use serde_json::value::RawValue;
+    use std::collections::BTreeMap;
+    use std::io::Write;
+    let before_size = std::fs::metadata(path)?.len();
+    let tmp = path.with_extension("jsonl.compact");
+    let mut removed = 0usize;
+    {
+        let mut out = std::io::BufWriter::new(File::create(&tmp)?);
+        for (n, line) in BufReader::new(File::open(path)?).lines().enumerate() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let bad = |e: serde_json::Error| std::io::Error::other(format!("{}:{}: {e}", path.display(), n + 1));
+            let mut change: BTreeMap<&str, &RawValue> = serde_json::from_str(&line).map_err(bad)?;
+            let merged = change.get("merged").is_some_and(|v| v.get() == "true");
+            let folded = match change.get("ops") {
+                Some(ops) if !merged => {
+                    let ops: Vec<RawOp> = serde_json::from_str(ops.get()).map_err(bad)?;
+                    let count = ops.len();
+                    fold_raw(ops).map(|ops| (count - ops.len(), ops))
+                }
+                _ => None,
+            };
+            match folded {
+                None => out.write_all(line.as_bytes())?,
+                Some((r, ops)) => {
+                    removed += r;
+                    let ops = serde_json::value::to_raw_value(&ops).map_err(std::io::Error::other)?;
+                    change.insert("ops", &ops);
+                    serde_json::to_writer(&mut out, &change).map_err(std::io::Error::other)?;
+                }
+            }
+            out.write_all(b"\n")?;
+        }
+        out.flush()?;
+    }
+    let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("project");
+    let (want, want_rev) = {
+        let p = load(name, path, registry.clone(), "compact")?;
+        (p.export_state(), p.revision())
+    };
+    let got = load(name, &tmp, registry, "compact")?;
+    let have = got.export_state();
+    if got.revision() != want_rev || have != want {
+        let _ = std::fs::remove_file(&tmp);
+        let first = want
+            .iter()
+            .find_map(|(id, comps)| match have.get(id) {
+                None => Some(format!("{id} missing")),
+                Some(h) => comps.iter().find(|(k, v)| h.get(*k) != Some(v)).map(|(k, _)| format!("{id} {k} differs")).or_else(|| (h.len() != comps.len()).then(|| format!("{id} has other components"))),
+            })
+            .or_else(|| have.keys().find(|id| !want.contains_key(id)).map(|id| format!("{id} is extra")))
+            .unwrap_or_else(|| "the revision differs".into());
+        return Err(std::io::Error::other(format!("{}: the compacted file gives a different design ({first}); left as it was", path.display())));
+    }
+    drop(got);
+    // The old file stays beside it until someone deletes it.
+    std::fs::rename(path, path.with_extension("jsonl.before-compact"))?;
+    std::fs::rename(&tmp, path)?;
+    let after_size = std::fs::metadata(path)?.len();
+    println!("{}: {} ops folded, {:.1} MB → {:.1} MB, same design at revision {:?}", path.display(), removed, before_size as f64 / 1e6, after_size as f64 / 1e6, want_rev);
+    Ok(())
+}
+
 /// This engine's permanent name among peers, made once per projects folder.
 fn engine_id(dir: &std::path::Path) -> std::io::Result<String> {
     let path = dir.join(".engine-id");
@@ -2222,6 +2353,16 @@ async fn main() -> std::io::Result<()> {
     std::fs::create_dir_all(&dir)?;
     let default = project_path.file_stem().and_then(|s| s.to_str()).unwrap_or("default").to_string();
     let registry = Arc::new(Registry::with_plugins(&[&SolidPlugin, &ShapePlugin, &de_assembly::AssemblyPlugin, &de_draft::DraftPlugin, &IntentPlugin, &de_sourcing::SourcingPlugin, &de_pcb::PcbPlugin]));
+    if let Some(i) = args.iter().position(|a| a == "--compact") {
+        let mut failed = false;
+        for f in &args[i + 1..] {
+            if let Err(e) = compact(&PathBuf::from(f), registry.clone()) {
+                eprintln!("{e}");
+                failed = true;
+            }
+        }
+        std::process::exit(if failed { 1 } else { 0 });
+    }
     let claude = ai::AiConfig::find_claude();
     match &claude {
         Some(p) => println!("ISE AI: Claude Code at {}", p.display()),

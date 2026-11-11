@@ -3,7 +3,7 @@
 
 use de_core::{
     Actor, Command, CommandError, DependsOn, Derived, Envelope, ErrorCode, IdIndex, Persist, Plugin, Project,
-    Registry, Revision, SCHEMA_VERSION, StableId, Status, Tx, Value, bevy_ecs, json, schemars,
+    Registry, Revision, SCHEMA_VERSION, StableId, Status, Tx, Value, WireOp, bevy_ecs, json, schemars,
 };
 use bevy_ecs::{component::Component, entity::Entity, world::World};
 use serde::{Deserialize, Serialize};
@@ -46,6 +46,27 @@ impl Command for SetNum {
     }
 }
 
+/// `count` new entities, each made a dependency of `target` as it is made (a
+/// router adding tracks to a board one at a time).
+#[derive(Deserialize, schemars::JsonSchema)]
+struct Grow {
+    target: StableId,
+    count: i64,
+}
+
+impl Command for Grow {
+    const NAME: &'static str = "test.grow";
+
+    fn apply(self, tx: &mut Tx) -> Result<Value, CommandError> {
+        for v in 0..self.count {
+            let id = tx.create();
+            tx.set(id, Num(v))?;
+            tx.add_dependency(self.target, id)?;
+        }
+        Ok(Value::Null)
+    }
+}
+
 fn total(world: &World, entity: Entity) -> Option<Result<Total, String>> {
     let own = world.get::<Num>(entity)?.0;
     if own < 0 {
@@ -67,7 +88,7 @@ impl Plugin for TestPlugin {
     }
 
     fn register(&self, r: &mut Registry) {
-        r.component::<Num>().command::<SetNum>().derived(Derived {
+        r.component::<Num>().command::<SetNum>().command::<Grow>().derived(Derived {
             name: "total",
             inputs: &[Num::KIND],
             reads_dependencies: true,
@@ -218,6 +239,30 @@ fn a_component_written_many_times_in_one_change_journals_once() {
     p.redo(&alice()).unwrap();
     assert_eq!(p.get::<DependsOn>(c).unwrap().0, deps);
     assert_eq!(total_of(&p, c), Some(12));
+}
+
+#[test]
+fn a_list_grown_between_creates_journals_once_at_the_end() {
+    let mut p = Project::new("p", registry());
+    let board = set(&mut p, json!({ "value": 1 }));
+    let grow = json!({ "target": board, "count": 50 });
+    // Each item is created before it is added, so the list's writes can't fold
+    // in place: one write of the whole list, after the last create, not fifty.
+    let preview = p.preview(&env(&p, "test.grow", grow.clone())).unwrap();
+    assert_eq!(preview.ops.len(), 50 * 2 + 1, "{:?}", preview.ops);
+    let list = |o: &WireOp| matches!(o, WireOp::Set { kind, .. } if kind == "core.depends_on");
+    assert_eq!(preview.ops.iter().filter(|o| list(o)).count(), 1);
+    assert!(list(preview.ops.last().unwrap()));
+    p.commit(env(&p, "test.grow", grow)).unwrap();
+    assert_eq!(p.get::<DependsOn>(board).unwrap().0.len(), 50);
+    assert_eq!(total_of(&p, board), Some(1 + (0..50).sum::<i64>()));
+    // Undo takes the list and the items away; redo puts them back.
+    p.undo(&alice()).unwrap();
+    assert!(p.get::<DependsOn>(board).is_none());
+    assert_eq!(total_of(&p, board), Some(1));
+    p.redo(&alice()).unwrap();
+    assert_eq!(p.get::<DependsOn>(board).unwrap().0.len(), 50);
+    assert_eq!(total_of(&p, board), Some(1 + (0..50).sum::<i64>()));
 }
 
 #[test]

@@ -21,7 +21,7 @@ de-occt = { path = "crates/occt" }
 de-scan = { path = "crates/plugins/scan" }
 bevy_ecs = "0.19"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["raw_value"] }
 schemars = { version = "1", features = ["uuid1"] }
 uuid = { version = "1", features = ["v7", "serde"] }
 rayon = "1"
